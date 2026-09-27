@@ -190,90 +190,6 @@ services:
       start_period: 5m
     logging: *json-logging
 
-  # --- MONITORING SERVICES ---
-  loki:
-    image: grafana/loki:2.9.0
-    container_name: loki
-    ports:
-      - "127.0.0.1:3100:3100"
-    volumes:
-      - ./monitoring/loki:/etc/loki
-      - loki-data:/loki
-    command: -config.file=/etc/loki/local-config.yaml
-    restart: unless-stopped
-    networks:
-      - prohelper-network
-    logging: *json-logging
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  promtail:
-    image: grafana/promtail:2.9.0
-    container_name: promtail
-    volumes:
-      - ./storage/logs:/var/log/laravel:ro
-      - ./monitoring/promtail:/etc/promtail
-      - /var/log:/var/log/host:ro
-    command: -config.file=/etc/promtail/config.yml
-    restart: unless-stopped
-    networks:
-      - prohelper-network
-    logging: *json-logging
-    depends_on:
-      loki:
-        condition: service_healthy
-
-  prometheus:
-    image: prom/prometheus:v2.47.0
-    container_name: prometheus
-    ports:
-      - "127.0.0.1:9090:9090"
-    volumes:
-      - ./monitoring/prometheus:/etc/prometheus
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=5d'
-      - '--storage.tsdb.retention.size=8GB'
-      - '--storage.tsdb.wal-compression'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
-    restart: unless-stopped
-    networks:
-      - prohelper-network
-    logging: *json-logging
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  alertmanager:
-    image: prom/alertmanager:v0.27.0
-    container_name: alertmanager
-    ports:
-      - "127.0.0.1:9093:9093"
-    volumes:
-      - ./monitoring/alertmanager:/etc/alertmanager:ro
-      - alertmanager-data:/alertmanager
-    command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
-      - '--web.external-url=http://localhost:9093'
-    restart: unless-stopped
-    networks:
-      - prohelper-network
-    logging: *json-logging
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9093/-/healthy || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: cadvisor
@@ -290,27 +206,6 @@ services:
     networks:
       - prohelper-network
     logging: *json-logging
-
-  grafana:
-    image: grafana/grafana:10.1.0
-    container_name: grafana
-    ports:
-      - "127.0.0.1:3000:3000"
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
-      - GF_USERS_ALLOW_SIGN_UP=false
-    restart: unless-stopped
-    networks:
-      - prohelper-network
-    logging: *json-logging
-    depends_on:
-      prometheus:
-        condition: service_healthy
 
   node-exporter:
     image: prom/node-exporter:v1.6.1
@@ -388,7 +283,3 @@ networks:
 
 volumes:
   clamav-data:
-  grafana-data:
-  prometheus-data:
-  alertmanager-data:
-  loki-data:
