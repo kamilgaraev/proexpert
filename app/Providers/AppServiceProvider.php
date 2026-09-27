@@ -41,6 +41,8 @@ use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\RateCoefficient\RateCoefficientService;
 use App\Services\Report\MaterialReportService;
 use Illuminate\Support\Facades\App;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
@@ -254,6 +256,21 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $slowQueryThreshold = (float) config('monitoring.slow_query_threshold_ms', 500);
+        if (App::isProduction() && $slowQueryThreshold > 0) {
+            DB::listen(static function (QueryExecuted $query) use ($slowQueryThreshold): void {
+                if ($query->time < $slowQueryThreshold) {
+                    return;
+                }
+
+                Log::channel('slow_queries')->warning('slow_database_query', [
+                    'duration_ms' => round($query->time, 2),
+                    'connection' => $query->connectionName,
+                    'sql' => mb_substr($query->sql, 0, 4000),
+                ]);
+            });
+        }
+
         // Автоматическая синхронизация системных шаблонов отчетов при первом запуске
         $this->syncReportTemplatesOnBoot();
 

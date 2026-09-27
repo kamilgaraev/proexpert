@@ -56,6 +56,15 @@ return [
 
     'channels' => [
 
+        'slow_queries' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/slow-query.log'),
+            'level' => 'warning',
+            'days' => 7,
+            'formatter' => JsonFormatter::class,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
+        ],
+
         'estimate_revisions' => [
             'driver' => 'daily',
             'path' => storage_path('logs/estimate-revisions.log'),
