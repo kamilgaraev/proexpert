@@ -24,6 +24,14 @@ class WarehouseTaskController extends Controller
 
     public function index(Request $request, int $warehouseId): JsonResponse
     {
+        $paginationRequested = $request->hasAny(['page', 'per_page']);
+        $paginationFilters = $paginationRequested
+            ? $request->validate([
+                'page' => ['sometimes', 'integer', 'min:1'],
+                'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            ])
+            : [];
+
         try {
             $projectId = $request->integer('project_id');
 
@@ -36,27 +44,39 @@ class WarehouseTaskController extends Controller
                 );
             }
 
-            return MobileResponse::success(
-                $this->taskService->listTasks(
-                    (int) $request->user()->current_organization_id,
-                    $warehouseId,
-                    $request->only([
-                        'status',
-                        'task_type',
-                        'priority',
-                        'assigned_to_id',
-                        'zone_id',
-                        'cell_id',
-                        'logistic_unit_id',
-                        'material_id',
-                        'project_id',
-                        'entity_type',
-                        'entity_id',
-                        'q',
-                        'limit',
-                    ])
-                )
+            $filters = $request->only([
+                'status',
+                'task_type',
+                'priority',
+                'assigned_to_id',
+                'zone_id',
+                'cell_id',
+                'logistic_unit_id',
+                'material_id',
+                'project_id',
+                'entity_type',
+                'entity_id',
+                'q',
+                'limit',
+            ]);
+
+            if ($paginationRequested) {
+                $filters = array_merge($filters, $paginationFilters);
+                $filters['page'] ??= 1;
+                $filters['per_page'] ??= 60;
+            }
+
+            $result = $this->taskService->listTasks(
+                (int) $request->user()->current_organization_id,
+                $warehouseId,
+                $filters
             );
+
+            if ($paginationRequested) {
+                return MobileResponse::paginated($result['items'], $result['meta']);
+            }
+
+            return MobileResponse::success($result);
         } catch (ModelNotFoundException) {
             return MobileResponse::error(trans_message('basic_warehouse.task.warehouse_not_found'), 404);
         } catch (DomainException $exception) {
@@ -80,6 +100,8 @@ class WarehouseTaskController extends Controller
                     'entity_id',
                     'q',
                     'limit',
+                    'page',
+                    'per_page',
                 ]),
                 'error' => $exception->getMessage(),
             ]);
