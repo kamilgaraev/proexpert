@@ -37,7 +37,7 @@ final class TracingServiceProvider extends ServiceProvider
         $redis = $this->app->make('redis');
         if ($redis instanceof RedisManager) {
             $redis->enableEvents();
-            foreach ($redis->connections() as $connection) {
+            foreach ($redis->connections() ?? [] as $connection) {
                 $connection->setEventDispatcher($this->app->make('events'));
             }
         }
