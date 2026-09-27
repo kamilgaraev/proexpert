@@ -128,6 +128,27 @@ final class TimeTrackingMobileTest extends TestCase
             ->assertJsonPath('error_code', 'PERMISSION_DENIED');
     }
 
+    public function test_mobile_entry_list_is_limited_to_the_actor_and_organization(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $ownEntry = $this->timeEntry($context, $project, ['title' => 'Моя запись']);
+        $otherUser = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $this->timeEntry($context, $project, ['user_id' => $otherUser->id, 'title' => 'Чужая запись']);
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $foreignEntry = $this->timeEntry($foreignContext, $foreignProject, ['title' => 'Другая организация']);
+        $this->allowAccess(['time_tracking.view']);
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/time-tracking/entries?project_id=' . $project->id)
+            ->assertOk()
+            ->assertJsonPath('data.items.0.id', $ownEntry->id);
+
+        self::assertSame([$ownEntry->id], array_column($response->json('data.items'), 'id'));
+        self::assertNotContains($foreignEntry->id, array_column($response->json('data.items'), 'id'));
+    }
+
     public function test_mobile_rejection_requires_its_permission_and_submitted_state(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'worker');
