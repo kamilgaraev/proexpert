@@ -10,6 +10,8 @@ final readonly class DispatchDocumentProcessingUnits
 
     public const RECOVERY_DELAY_SECONDS = 300;
 
+    public const MAX_DISPATCH_ATTEMPTS = 32767;
+
     public function __construct(
         private DocumentUnitDispatchStore $store,
         private EstimateGenerationUnitJobDispatcher $jobs,
