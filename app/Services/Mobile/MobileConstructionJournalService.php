@@ -360,16 +360,18 @@ class MobileConstructionJournalService
 
     private function transformWorkVolumePayload(array $volume): array
     {
-        $title = trim((string) ($volume['estimateItem']['name'] ?? $volume['workType']['name'] ?? ''));
+        $title = trim((string) ($volume['estimateItem']['name'] ?? ''));
+        if ($title === '') {
+            $title = trim((string) ($volume['workType']['name'] ?? ''));
+        }
+        if ($title === '') {
+            $title = trans_message('mobile_construction_journal.labels.work_volume_unnamed');
+        }
         $measurementUnitName = trim((string) (
             $volume['measurementUnit']['short_name']
             ?? $volume['measurementUnit']['name']
             ?? ''
         ));
-
-        if ($title === '') {
-            throw new DomainException(trans_message('mobile_construction_journal.errors.work_volume_title_missing'));
-        }
 
         if ($measurementUnitName === '') {
             throw new DomainException(trans_message('mobile_construction_journal.errors.work_volume_measurement_unit_missing'));

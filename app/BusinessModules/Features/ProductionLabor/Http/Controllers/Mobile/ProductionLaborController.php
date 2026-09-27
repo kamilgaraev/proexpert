@@ -78,6 +78,13 @@ final class ProductionLaborController extends Controller
     public function storeOutput(Request $request): JsonResponse
     {
         try {
+            $idempotencyKey = trim((string) $request->header('Idempotency-Key', ''));
+            if ($idempotencyKey !== '' && ! preg_match('/\A[A-Za-z0-9_-]{16,128}\z/', $idempotencyKey)) {
+                throw ValidationException::withMessages([
+                    'idempotency_key' => [trans_message('production_labor.errors.idempotency_key_invalid')],
+                ]);
+            }
+
             $validated = $this->validated($request, [
                 'work_order_line_id' => ['required', 'integer'],
                 'work_date' => ['required', 'date', 'before_or_equal:today'],
@@ -92,7 +99,8 @@ final class ProductionLaborController extends Controller
                     (int) $request->attributes->get('current_organization_id'),
                     (int) $request->user()?->id,
                     $validated,
-                    false
+                    false,
+                    $idempotencyKey !== '' ? $idempotencyKey : null
                 )),
                 trans_message('production_labor.messages.output_created'),
                 201
@@ -104,7 +112,7 @@ final class ProductionLaborController extends Controller
                 $exception->errors()
             );
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'output.store');
         }
