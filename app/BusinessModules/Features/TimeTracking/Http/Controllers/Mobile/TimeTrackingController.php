@@ -10,6 +10,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Models\User;
+use App\Services\Mobile\MobileMutationIdempotency;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,7 +23,8 @@ final class TimeTrackingController extends Controller
 {
     public function __construct(
         private readonly MobileTimeTrackingService $service,
-        private readonly AuthorizationService $authorizationService
+        private readonly AuthorizationService $authorizationService,
+        private readonly MobileMutationIdempotency $idempotency
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -128,12 +130,18 @@ final class TimeTrackingController extends Controller
 
         try {
             $validated = $this->validated($request, $this->entryRules(requireHours: true));
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $user = $this->mobileUser($request);
 
             return MobileResponse::success(
-                new MobileTimeEntryResource($this->service->createManualEntry(
-                    (int) $request->attributes->get('current_organization_id'),
-                    $this->mobileUser($request),
-                    $validated
+                new MobileTimeEntryResource($this->idempotency->run(
+                    $organizationId,
+                    (int) $user->id,
+                    $request->header('Idempotency-Key'),
+                    'time_tracking.manual_entry',
+                    $validated,
+                    fn () => $this->service->createManualEntry($organizationId, $user, $validated),
+                    fn (int $entryId) => $this->service->findEntry($organizationId, (int) $user->id, $entryId)
                 )),
                 trans_message('time_tracking.mobile.messages.entry_created'),
                 201
@@ -141,7 +149,7 @@ final class TimeTrackingController extends Controller
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception));
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'store');
         }
@@ -155,12 +163,18 @@ final class TimeTrackingController extends Controller
 
         try {
             $validated = $this->validated($request, $this->entryRules(requireHours: false, requireStartTime: true));
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $user = $this->mobileUser($request);
 
             return MobileResponse::success(
-                new MobileTimeEntryResource($this->service->startTimer(
-                    (int) $request->attributes->get('current_organization_id'),
-                    $this->mobileUser($request),
-                    $validated
+                new MobileTimeEntryResource($this->idempotency->run(
+                    $organizationId,
+                    (int) $user->id,
+                    $request->header('Idempotency-Key'),
+                    'time_tracking.start_timer',
+                    $validated,
+                    fn () => $this->service->startTimer($organizationId, $user, $validated),
+                    fn (int $entryId) => $this->service->findEntry($organizationId, (int) $user->id, $entryId)
                 )),
                 trans_message('time_tracking.mobile.messages.timer_started'),
                 201
@@ -168,7 +182,7 @@ final class TimeTrackingController extends Controller
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception));
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'start_timer');
         }
@@ -186,20 +200,29 @@ final class TimeTrackingController extends Controller
                 'break_time' => ['required', 'numeric', 'min:0', 'max:24'],
                 'notes' => ['nullable', 'string', 'max:1000'],
             ]);
-            $model = $this->service->findEntry(
-                (int) $request->attributes->get('current_organization_id'),
-                (int) $request->user()?->id,
-                $entry
-            );
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()?->id;
 
             return MobileResponse::success(
-                new MobileTimeEntryResource($this->service->stopTimer($model, (int) $request->user()?->id, $validated)),
+                new MobileTimeEntryResource($this->idempotency->run(
+                    $organizationId,
+                    $userId,
+                    $request->header('Idempotency-Key'),
+                    'time_tracking.stop_timer',
+                    ['entry_id' => $entry, ...$validated],
+                    fn () => $this->service->stopTimer(
+                        $this->service->findEntry($organizationId, $userId, $entry),
+                        $userId,
+                        $validated
+                    ),
+                    fn (int $entryId) => $this->service->findEntry($organizationId, $userId, $entryId)
+                )),
                 trans_message('time_tracking.mobile.messages.timer_stopped')
             );
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception));
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'stop_timer');
         }
@@ -334,6 +357,11 @@ final class TimeTrackingController extends Controller
             422,
             $exception->errors()
         );
+    }
+
+    private function domainStatus(DomainException $exception): int
+    {
+        return in_array($exception->getCode(), [409, 422], true) ? $exception->getCode() : 422;
     }
 
     private function failed(Request $request, \Throwable $exception, string $action): JsonResponse

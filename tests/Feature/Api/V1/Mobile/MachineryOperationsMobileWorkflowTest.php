@@ -19,6 +19,7 @@ use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperation
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Material;
 use App\Models\Project;
 use App\Models\User;
@@ -32,6 +33,88 @@ use Tests\TestCase;
 
 final class MachineryOperationsMobileWorkflowTest extends TestCase
 {
+    public function test_mobile_foreman_can_approve_and_reject_submitted_shifts(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $asset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
+            'asset_code' => 'MOB-REVIEW-1',
+            'name' => 'Review excavator',
+            'current_project_id' => $project->id,
+        ]);
+        $approvedShift = $this->createSubmittedShift($context, $project, $asset);
+        $rejectedShift = $this->createSubmittedShift($context, $project, $asset);
+        $this->allowAccess();
+
+        $this->withHeaders([...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'mobile-shift-approve'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$approvedShift->id}/approve")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved');
+        $this->withHeaders([...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'mobile-shift-reject'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$rejectedShift->id}/reject", ['reason' => 'Недостаточно данных'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'rejected')
+            ->assertJsonPath('data.rejection_reason', 'Недостаточно данных');
+        $this->withHeaders([...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'mobile-shift-reject'])
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$rejectedShift->id}/reject", ['reason' => 'Другое основание'])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', trans_message('machinery_operations.errors.idempotency_conflict'));
+
+        $this->assertDatabaseHas('machinery_shift_reports', ['id' => $approvedShift->id, 'status' => 'approved']);
+        $this->assertDatabaseHas('machinery_shift_reports', ['id' => $rejectedShift->id, 'status' => 'rejected']);
+    }
+
+    public function test_mobile_shift_review_enforces_permission_and_organization_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'machine_operator');
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $foreignAsset = MachineryOperationsAssetFactory::create((int) $foreignContext->organization->id, [
+            'asset_code' => 'MOB-REVIEW-FOREIGN',
+            'name' => 'Foreign review excavator',
+            'current_project_id' => $foreignProject->id,
+        ]);
+        $foreignShift = $this->createSubmittedShift($foreignContext, $foreignProject, $foreignAsset);
+
+        $this->allowAccess(skipAuthorizationMiddleware: false, authorized: false);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$foreignShift->id}/approve")
+            ->assertForbidden();
+
+        $this->allowAccess();
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$foreignShift->id}/approve")
+            ->assertNotFound();
+    }
+
+    public function test_mobile_shift_review_rejects_project_outside_user_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
+        $allowedProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $hiddenProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->user->assignedProjects()->attach($allowedProject->id, [
+            'is_active' => true,
+            'role' => 'member',
+            'assigned_by_user_id' => $context->user->id,
+            'assigned_at' => now(),
+        ]);
+        $asset = MachineryOperationsAssetFactory::create((int) $context->organization->id, [
+            'asset_code' => 'MOB-REVIEW-HIDDEN-PROJECT',
+            'name' => 'Hidden project excavator',
+            'current_project_id' => $hiddenProject->id,
+        ]);
+        $shift = $this->createSubmittedShift($context, $hiddenProject, $asset);
+        $this->allowAccess();
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$shift->id}/approve")
+            ->assertUnprocessable()
+            ->assertJsonPath('message', trans_message('machinery_operations.errors.project_not_found'));
+    }
+
     public function test_mobile_rejects_same_organization_shift_link_mismatch(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'machine_operator');
@@ -853,9 +936,11 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
         ]);
     }
 
-    private function allowAccess(): void
+    private function allowAccess(bool $skipAuthorizationMiddleware = true, bool $authorized = true): void
     {
-        $this->withoutMiddleware(AuthorizeMiddleware::class);
+        if ($skipAuthorizationMiddleware) {
+            $this->withoutMiddleware(AuthorizeMiddleware::class);
+        }
         Gate::define('access-mobile-app', static fn (): bool => true);
 
         $this->mock(AccessController::class, function (MockInterface $mock): void {
@@ -867,9 +952,9 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
             );
         });
 
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($authorized): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can')->andReturn($authorized);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['foreman']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
@@ -881,6 +966,22 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
                 }
             );
         });
+    }
+
+    private function createSubmittedShift(AdminApiTestContext $context, Project $project, MachineryAsset $asset): MachineryShiftReport
+    {
+        return MachineryShiftReport::query()->create([
+            'organization_id' => $context->organization->id,
+            'asset_id' => $asset->id,
+            'project_id' => $project->id,
+            'reported_by_user_id' => $context->user->id,
+            'report_date' => now()->toDateString(),
+            'status' => 'submitted',
+            'planned_hours' => 8,
+            'actual_hours' => 8,
+            'fuel_consumed' => 10,
+            'submitted_at' => now(),
+        ]);
     }
 
     private function createActiveAssignment(MachineryAsset $asset, int $projectId, int $userId): void

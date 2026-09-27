@@ -147,6 +147,14 @@ Route::prefix('api/v1/mobile/machinery-operations')
             ->whereNumber('id')
             ->middleware('authorize:machinery-operations.shifts.create')
             ->name('shift_reports.finish');
+        Route::post('/shift-reports/{id}/approve', [MobileMachineryOperationsController::class, 'approveShift'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.shifts.approve')
+            ->name('shift_reports.approve');
+        Route::post('/shift-reports/{id}/reject', [MobileMachineryOperationsController::class, 'rejectShift'])
+            ->whereNumber('id')
+            ->middleware('authorize:machinery-operations.shifts.approve')
+            ->name('shift_reports.reject');
         Route::post('/downtimes', [MobileMachineryOperationsController::class, 'storeDowntime'])
             ->middleware('authorize:machinery-operations.downtime.manage')
             ->name('downtimes.store');
