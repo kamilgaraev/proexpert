@@ -11,6 +11,7 @@ use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Models\User;
+use App\Services\Mobile\MobileMutationIdempotency;
 use App\Services\Mobile\MobileProjectAccessResolver;
 use DomainException;
 use Illuminate\Http\JsonResponse;
@@ -22,6 +23,7 @@ final class QualityDefectController extends Controller
     public function __construct(
         private readonly QualityDefectService $service,
         private readonly MobileProjectAccessResolver $projectAccess,
+        private readonly MobileMutationIdempotency $idempotency,
     ) {}
 
     public function index(MobileQualityDefectRequest $request): JsonResponse
@@ -120,7 +122,16 @@ final class QualityDefectController extends Controller
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validated();
-            $defect = $this->service->create($organizationId, (int) auth()->id(), $validated);
+            $userId = (int) $request->user()->id;
+            $defect = $this->idempotency->run(
+                $organizationId,
+                $userId,
+                $request->header('Idempotency-Key'),
+                'quality.defect.create',
+                $validated,
+                fn () => $this->service->create($organizationId, $userId, $validated),
+                fn (int $id) => $this->service->find($id, $organizationId, $this->accessibleProjectIds($request)),
+            );
 
             return MobileResponse::success(
                 new QualityDefectResource($defect),
@@ -128,7 +139,7 @@ final class QualityDefectController extends Controller
                 201
             );
         } catch (DomainException $e) {
-            return MobileResponse::error($e->getMessage(), 422);
+            return MobileResponse::error($e->getMessage(), $e->getCode() === 409 ? 409 : 422);
         } catch (\Throwable $e) {
             Log::error('quality_control.mobile.defects.store.error', [
                 'user_id' => auth()->id(),

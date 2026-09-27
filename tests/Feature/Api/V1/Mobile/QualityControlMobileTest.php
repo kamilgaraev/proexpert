@@ -92,6 +92,44 @@ final class QualityControlMobileTest extends TestCase
         $this->assertSame(QualityDefectStatusEnum::READY_FOR_REVIEW, $defect->status);
     }
 
+    public function test_mobile_quality_defect_create_replays_one_result_for_the_same_key(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $headers = [
+            ...$context->mobileAuthHeaders(),
+            'Idempotency-Key' => 'quality-create-replay-20260927',
+        ];
+        $payload = [
+            'project_id' => $project->id,
+            'title' => 'Проверка повторной отправки',
+            'severity' => 'minor',
+            'inspection_required' => false,
+        ];
+
+        $first = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/quality-control/defects', $payload);
+        $replay = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/quality-control/defects', $payload);
+
+        $first->assertCreated();
+        $replay->assertCreated()
+            ->assertJsonPath('data.id', $first->json('data.id'));
+        $this->assertDatabaseCount('quality_defects', 1);
+        $this->assertDatabaseCount('quality_defect_status_history', 1);
+        $this->assertDatabaseCount('mobile_mutation_idempotencies', 1);
+
+        $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/quality-control/defects', [
+                ...$payload,
+                'title' => 'Другое замечание',
+            ])
+            ->assertStatus(409);
+        $this->assertDatabaseCount('quality_defects', 1);
+    }
+
     public function test_mobile_quality_defect_filters_are_validated_and_applied(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
