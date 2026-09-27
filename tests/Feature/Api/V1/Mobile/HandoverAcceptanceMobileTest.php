@@ -73,7 +73,7 @@ final class HandoverAcceptanceMobileTest extends TestCase
         $this->allowAccess();
         $storedPath = "org-{$context->organization->id}/handover-acceptance/acceptance_findings/1/evidence.jpg";
         $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath): void {
-            $mock->shouldReceive('upload')->once()->andReturn($storedPath);
+            $mock->shouldReceive('upload')->twice()->andReturn($storedPath);
             $mock->shouldReceive('temporaryUrl')->times(3)->andReturn('https://files.test/evidence.jpg');
         });
 

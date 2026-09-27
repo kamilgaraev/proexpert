@@ -31,7 +31,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $employee = $this->employee($employeeContext, $employeeContext->user->id);
         $this->allowAccess();
 
-        $issue = $this->withHeaders($employeeContext->authHeaders())
+        $issue = $this->withHeaders($employeeContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-16',
@@ -48,7 +48,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $this->assertNotEmpty($token);
         $this->assertDatabaseMissing('workforce_attendance_qr_tokens', ['token_hash' => $token]);
 
-        $scan = $this->withHeaders($scannerContext->authHeaders())
+        $scan = $this->withHeaders($scannerContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr/scan', [
                 'qr_token' => $token,
                 'device_id' => 'foreman-phone',
@@ -62,7 +62,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
             ->assertJsonPath('data.status_label', trans_message('workforce.attendance.qr_status_confirmed'))
             ->assertJsonPath('data.source_label', trans_message('workforce.attendance.qr_source_label'));
 
-        $this->withHeaders($scannerContext->authHeaders())
+        $this->withHeaders($scannerContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr/scan', ['qr_token' => $token])
             ->assertStatus(409)
             ->assertJsonPath('message', trans_message('workforce.errors.qr_token_already_used'))
@@ -82,7 +82,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $this->employee($employeeContext, $employeeContext->user->id);
         $this->allowAccess();
 
-        $this->withHeaders($employeeContext->authHeaders())
+        $this->withHeaders($employeeContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr', [])
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('errors.validation_failed'));
@@ -99,7 +99,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $ownerContext->organization->id]);
         $this->allowAccess();
 
-        $this->withHeaders($ownerContext->authHeaders())
+        $this->withHeaders($ownerContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-16',
@@ -124,7 +124,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $employee = $this->employee($employeeContext, $employeeContext->user->id);
         $this->allowAccess();
 
-        $self = $this->withHeaders($employeeContext->authHeaders())
+        $self = $this->withHeaders($employeeContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/self', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-16',
@@ -138,7 +138,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
             ->assertJsonPath('data.source', 'self_attendance')
             ->assertJsonPath('data.source_label', trans_message('workforce.attendance.self_source_label'));
 
-        $this->withHeaders($employeeContext->authHeaders())
+        $this->withHeaders($employeeContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/self', [
                 'project_id' => $project->id,
                 'work_date' => '2026-05-16',
@@ -146,7 +146,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
             ->assertStatus(409)
             ->assertJsonPath('errors.code', 'duplicate_attendance');
 
-        $history = $this->withHeaders($employeeContext->authHeaders())
+        $history = $this->withHeaders($employeeContext->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/workforce/attendance/history?date_from=2026-05-01&date_to=2026-05-31&project_id=' . $project->id);
 
         $history->assertOk()
@@ -162,7 +162,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
         $this->employee($employeeContext, $employeeContext->user->id);
         $this->allowAccess();
 
-        $token = (string) $this->withHeaders($employeeContext->authHeaders())
+        $token = (string) $this->withHeaders($employeeContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr', ['work_date' => '2026-05-16'])
             ->assertOk()
             ->json('data.qr_token');
@@ -172,7 +172,7 @@ final class WorkforceAttendanceQrWorkflowTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $this->withHeaders($scannerContext->authHeaders())
+        $this->withHeaders($scannerContext->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/workforce/attendance/qr/scan', ['qr_token' => $token])
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.qr_token_expired'));

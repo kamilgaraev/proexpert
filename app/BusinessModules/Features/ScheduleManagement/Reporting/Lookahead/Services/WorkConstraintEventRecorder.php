@@ -35,7 +35,7 @@ final readonly class WorkConstraintEventRecorder
 
         return $this->record(
             $constraint,
-            $status,
+            $latest === null ? null : $status,
             $status,
             $actorId,
             $occurredAt,
