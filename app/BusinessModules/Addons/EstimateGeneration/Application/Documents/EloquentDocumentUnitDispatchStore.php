@@ -77,7 +77,7 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
                 ->where('source_version', $candidate->sourceVersion)
                 ->lockForUpdate()
                 ->first();
-            if ($unit === null) {
+            if ($unit === null || (int) $unit->dispatch_attempt_count >= DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS) {
                 return false;
             }
 
@@ -96,6 +96,7 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
     private function due(DateTimeImmutable $now): Builder
     {
         return $this->query()
+            ->where('dispatch_attempt_count', '<', DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS)
             ->whereHas('document', static fn (Builder $query): Builder => $query
                 ->whereColumn('estimate_generation_documents.source_version', 'estimate_generation_processing_units.source_version')
                 ->where('estimate_generation_documents.processing_control_status', 'active')
@@ -106,6 +107,7 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
                     ->where(static fn (Builder $due): Builder => $due->whereNull('next_dispatch_at')->orWhere('next_dispatch_at', '<=', $now)))
                     ->orWhere(static fn (Builder $running): Builder => $running
                         ->where('status', DocumentProcessingUnitStatus::Running->value)
+                        ->where('attempt_count', '<', ProcessDocumentUnit::MAX_ATTEMPTS)
                         ->where('lease_expires_at', '<=', $now))
                     ->orWhere(static fn (Builder $failed): Builder => $failed
                         ->where('status', DocumentProcessingUnitStatus::Failed->value)
