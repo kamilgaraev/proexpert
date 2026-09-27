@@ -83,6 +83,8 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // 2. CORS - должен быть первым в реальной цепочке для обработки preflight запросов
         $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
 
+        $middleware->prepend(\App\Http\Middleware\TraceHttpRequest::class);
+
         // 3. Prometheus - метрики в конце цепочки для корректного измерения времени
         $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
 

@@ -38,6 +38,7 @@ $providers = [
     App\BusinessModules\Features\SiteRequests\SiteRequestsServiceProvider::class,
     App\BusinessModules\Features\VideoMonitoring\VideoMonitoringServiceProvider::class,
     App\Providers\AppServiceProvider::class,
+    App\Providers\TracingServiceProvider::class,
     App\Providers\AuthServiceProvider::class,
     App\Providers\BroadcastServiceProvider::class,
     App\Providers\Filament\AdminPanelProvider::class,

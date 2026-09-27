@@ -267,6 +267,7 @@ class AppServiceProvider extends ServiceProvider
                     'duration_ms' => round($query->time, 2),
                     'connection' => $query->connectionName,
                     'sql' => mb_substr($query->sql, 0, 4000),
+                    'trace_id' => \App\Services\Monitoring\TracingService::currentTraceId(),
                 ]);
             });
         }
