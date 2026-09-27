@@ -56,6 +56,15 @@ return [
 
     'channels' => [
 
+        'api_latency' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/api-latency.log'),
+            'level' => 'info',
+            'days' => 7,
+            'formatter' => JsonFormatter::class,
+            'tap' => [EnsureLogFailuresAreNonFatal::class],
+        ],
+
         'slow_queries' => [
             'driver' => 'daily',
             'path' => storage_path('logs/slow-query.log'),
