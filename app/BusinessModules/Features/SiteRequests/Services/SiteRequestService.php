@@ -738,6 +738,7 @@ class SiteRequestService
     public function mobileFiles(SiteRequest $request, User $actor): array
     {
         $this->assertMobileRequestAccess($request, $actor, 'site_requests.view');
+        $canDelete = $this->actorHasPermission($actor, $request->organization_id, 'site_requests.files.delete');
         return $request->files->map(fn (File $file): array => [
             'id' => $file->id,
             'name' => $file->name,
@@ -745,6 +746,7 @@ class SiteRequestService
             'size' => $file->size,
             'mime_type' => $file->mime_type,
             'created_at' => $file->created_at?->toIso8601String(),
+            'can_delete' => $canDelete,
         ])->values()->all();
     }
 
@@ -773,6 +775,7 @@ class SiteRequestService
             'size' => $file->size,
             'mime_type' => $file->mime_type,
             'created_at' => $file->created_at?->toIso8601String(),
+            'can_delete' => $this->actorHasPermission($actor, $request->organization_id, 'site_requests.files.delete'),
         ];
     }
 

@@ -490,13 +490,16 @@ final class SiteRequestsMobileTest extends TestCase
 
         $uploaded = $this->withHeaders($context->mobileAuthHeaders())
             ->post("/api/v1/mobile/site-requests/{$siteRequest->id}/files", ['file' => UploadedFile::fake()->create('site-photo.pdf', 32, 'application/pdf')]);
-        $uploaded->assertCreated()->assertJsonPath('data.name', 'site-photo.pdf');
+        $uploaded->assertCreated()
+            ->assertJsonPath('data.name', 'site-photo.pdf')
+            ->assertJsonPath('data.can_delete', true);
         $fileId = (int) $uploaded->json('data.id');
 
         $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}/files")
             ->assertOk()
-            ->assertJsonPath('data.0.id', $fileId);
+            ->assertJsonPath('data.0.id', $fileId)
+            ->assertJsonPath('data.0.can_delete', true);
 
         $this->withHeaders($context->mobileAuthHeaders())
             ->deleteJson("/api/v1/mobile/site-requests/{$siteRequest->id}/files/{$fileId}")
