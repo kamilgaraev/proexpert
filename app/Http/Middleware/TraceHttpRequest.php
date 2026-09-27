@@ -1,0 +1,53 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Http\Middleware;
+
+use App\Services\Monitoring\TracingService;
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Throwable;
+
+final class TraceHttpRequest
+{
+    public function __construct(private readonly TracingService $tracing)
+    {
+    }
+
+    public function handle(Request $request, Closure $next): Response
+    {
+        if (! config('monitoring.tracing_enabled') || in_array($request->path(), ['up', 'ready', 'metrics'], true)) {
+            return $next($request);
+        }
+
+        try {
+            [$span, $scope] = $this->tracing->startHttp($request);
+        } catch (Throwable) {
+            return $next($request);
+        }
+
+        try {
+            $response = $next($request);
+            $this->tracing->finishHttp($span, $request, $response);
+
+            if ($span->getContext()->isSampled()) {
+                $response->headers->set('X-Trace-ID', $span->getContext()->getTraceId());
+            }
+
+            return $response;
+        } catch (Throwable $exception) {
+            $this->tracing->markError($span, $exception);
+
+            throw $exception;
+        } finally {
+            $span->end();
+            $scope->detach();
+            if ($span->getContext()->isSampled()) {
+                $this->tracing->logCompletedTrace($span, 'http');
+                $this->tracing->flush();
+            }
+        }
+    }
+}
