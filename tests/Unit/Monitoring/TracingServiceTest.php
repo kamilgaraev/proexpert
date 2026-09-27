@@ -51,13 +51,14 @@ final class TracingServiceTest extends TestCase
         ));
         $tracing->recordRedis(new CommandExecuted('get', ['private-cache-key'], 3.0, $connection));
         $payload = $tracing->queuePayload();
+        $payload['displayName'] = 'App\\Jobs\\ExampleJob';
 
         $httpSpan->end();
         $scope->detach();
 
         $job = Mockery::mock(Job::class);
         $job->shouldReceive('payload')->andReturn($payload);
-        $job->shouldReceive('getName')->andReturn('App\\Jobs\\ExampleJob');
+        $job->shouldReceive('getName')->andReturn('App\\Jobs\\ExampleJob@call');
         $tracing->startJob(new JobProcessing('redis', $job));
         $tracing->recordSql(new QueryExecuted('select 1', [], 1.0, $connection));
         $tracing->finishJob($job, new RuntimeException('secret@example.com'));
