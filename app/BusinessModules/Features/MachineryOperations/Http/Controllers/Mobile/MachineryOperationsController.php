@@ -237,6 +237,63 @@ final class MachineryOperationsController extends Controller
         }
     }
 
+    public function approveShift(Request $request, int $id): JsonResponse
+    {
+        try {
+            $shift = $this->service->findShift((int) $request->attributes->get('current_organization_id'), $id);
+            if ($shift === null) {
+                return MobileResponse::error(trans_message('machinery_operations.errors.shift_not_found'), 404);
+            }
+            $this->assertProjectAccess($request, $shift->project_id);
+
+            $approved = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'shift.approve',
+                ['shift_id' => $id],
+                fn () => $this->service->approveShift($shift, (int) $request->user()?->id),
+            );
+
+            return MobileResponse::success(new MachineryShiftReportResource($approved));
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'shifts.approve');
+        }
+    }
+
+    public function rejectShift(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, [
+                'reason' => ['required', 'string', 'max:1000'],
+            ]);
+            $shift = $this->service->findShift((int) $request->attributes->get('current_organization_id'), $id);
+            if ($shift === null) {
+                return MobileResponse::error(trans_message('machinery_operations.errors.shift_not_found'), 404);
+            }
+            $this->assertProjectAccess($request, $shift->project_id);
+
+            $rejected = $this->idempotency->execute(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $request->header('Idempotency-Key'),
+                'shift.reject',
+                ['shift_id' => $id, ...$validated],
+                fn () => $this->service->rejectShift($shift, (int) $request->user()?->id, $validated['reason']),
+            );
+
+            return MobileResponse::success(new MachineryShiftReportResource($rejected));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(trans_message('machinery_operations.errors.validation_failed'), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failed($request, $exception, 'shifts.reject');
+        }
+    }
+
     public function storeDowntime(Request $request): JsonResponse
     {
         try {

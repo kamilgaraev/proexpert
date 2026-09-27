@@ -10,6 +10,7 @@ use App\Models\Project;
 use App\Models\TimeEntry;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Mobile\MobileMutationIdempotency;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
@@ -80,6 +81,147 @@ final class TimeTrackingMobileTest extends TestCase
             'id' => $manual['id'],
             'status' => 'submitted',
         ]);
+    }
+
+    public function test_mobile_manual_entry_and_timer_start_replay_without_duplicate_mutations(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.create']);
+        $headers = [...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'manual-replay-key-0001'];
+        $manualPayload = [
+            'project_id' => $project->id,
+            'work_date' => '2026-05-22',
+            'hours_worked' => 2.25,
+            'title' => 'Проверка геометрии',
+            'is_billable' => false,
+        ];
+
+        $manualFirst = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries', $manualPayload)
+            ->assertCreated()
+            ->json();
+        $manualReplay = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries', $manualPayload)
+            ->assertCreated()
+            ->json();
+
+        self::assertSame($manualFirst['data'], $manualReplay['data']);
+        self::assertDatabaseCount('time_entries', 1);
+
+        $timerHeaders = [...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'timer-replay-key-0001'];
+        $timerPayload = [
+            'project_id' => $project->id,
+            'work_date' => '2026-05-23',
+            'start_time' => '08:00',
+            'title' => 'Монтаж опалубки',
+            'is_billable' => true,
+        ];
+        $timerFirst = $this->withHeaders($timerHeaders)
+            ->postJson('/api/v1/mobile/time-tracking/timer/start', $timerPayload)
+            ->assertCreated()
+            ->json();
+        $timerReplay = $this->withHeaders($timerHeaders)
+            ->postJson('/api/v1/mobile/time-tracking/timer/start', $timerPayload)
+            ->assertCreated()
+            ->json();
+
+        self::assertSame($timerFirst['data'], $timerReplay['data']);
+        self::assertDatabaseCount('time_entries', 2);
+    }
+
+    public function test_mobile_idempotency_key_conflicts_on_changed_payload_and_is_scoped_by_org_and_user(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.create']);
+        $headers = [...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'same-idempotency-key-001'];
+        $payload = [
+            'project_id' => $project->id,
+            'work_date' => '2026-05-22',
+            'hours_worked' => 2,
+            'title' => 'Проверка',
+            'is_billable' => true,
+        ];
+
+        $first = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries', $payload)
+            ->assertCreated()
+            ->json('data.id');
+        $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries', [...$payload, 'hours_worked' => 3])
+            ->assertStatus(409);
+
+        $otherContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $otherProject = Project::factory()->create(['organization_id' => $otherContext->organization->id]);
+        $otherEntry = $this->timeEntry($otherContext, $otherProject);
+        $otherUser = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $userScopedEntry = $this->timeEntry($context, $project, ['user_id' => $otherUser->id]);
+        $idempotency = app(MobileMutationIdempotency::class);
+
+        $otherOrganizationReplay = $idempotency->run(
+            (int) $otherContext->organization->id,
+            (int) $otherContext->user->id,
+            'same-idempotency-key-001',
+            'time_tracking.manual_entry',
+            $payload,
+            fn () => $otherEntry,
+            fn (int $entryId): ?TimeEntry => TimeEntry::query()
+                ->where('organization_id', $otherContext->organization->id)
+                ->where('user_id', $otherContext->user->id)
+                ->find($entryId)
+        );
+        $otherUserReplay = $idempotency->run(
+            (int) $context->organization->id,
+            (int) $otherUser->id,
+            'same-idempotency-key-001',
+            'time_tracking.manual_entry',
+            $payload,
+            fn () => $userScopedEntry,
+            fn (int $entryId): ?TimeEntry => TimeEntry::query()
+                ->where('organization_id', $context->organization->id)
+                ->where('user_id', $otherUser->id)
+                ->find($entryId)
+        );
+
+        self::assertNotSame($first, $otherOrganizationReplay->getKey());
+        self::assertSame($otherEntry->getKey(), $otherOrganizationReplay->getKey());
+        self::assertSame($userScopedEntry->getKey(), $otherUserReplay->getKey());
+        $this->assertDatabaseCount('mobile_mutation_idempotencies', 3);
+    }
+
+    public function test_mobile_timer_stop_replay_is_scoped_to_the_entry_id(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $entry = $this->timeEntry($context, $project, [
+            'start_time' => '08:00',
+            'hours_worked' => null,
+            'custom_fields' => ['mobile_time_tracking' => ['active_timer' => true, 'corrections' => []]],
+        ]);
+        $this->allowAccess(['time_tracking.edit']);
+        $headers = [...$context->mobileAuthHeaders(), 'Idempotency-Key' => 'timer-stop-replay-0001'];
+        $payload = ['end_time' => '12:00', 'break_time' => 0.5];
+        $first = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/stop', $payload)
+            ->assertOk()
+            ->json();
+        $replay = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/stop', $payload)
+            ->assertOk()
+            ->json();
+
+        self::assertSame($first['data'], $replay['data']);
+        self::assertDatabaseCount('time_entries', 1);
+        $otherEntry = $this->timeEntry($context, $project, [
+            'start_time' => '08:00',
+            'hours_worked' => null,
+            'custom_fields' => ['mobile_time_tracking' => ['active_timer' => true, 'corrections' => []]],
+        ]);
+        $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $otherEntry->id . '/stop', $payload)
+            ->assertStatus(409);
+        $this->assertDatabaseHas('time_entries', ['id' => $otherEntry->id, 'hours_worked' => null]);
     }
 
     public function test_mobile_user_submits_rejected_entry_correction(): void
