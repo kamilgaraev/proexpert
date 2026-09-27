@@ -1371,6 +1371,15 @@ final class SafetyManagementService
         return $this->createViolation($organizationId, $userId, $data);
     }
 
+    public function findMobileViolationCreateReplay(int $organizationId, int $userId, int $projectId, int $id): ?SafetyViolation
+    {
+        $this->assertMobileMutationActor($organizationId, $userId, $projectId, 'safety-management.violations.create');
+
+        $violation = $this->findViolation($organizationId, $id);
+
+        return $violation !== null && (int) $violation->project_id === $projectId ? $violation : null;
+    }
+
     public function findViolation(int $organizationId, int $id): ?SafetyViolation
     {
         return SafetyViolation::forOrganization($organizationId)
