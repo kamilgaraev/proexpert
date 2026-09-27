@@ -11,6 +11,7 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Redis\Events\CommandExecuted;
+use Illuminate\Redis\RedisManager;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
@@ -33,6 +34,13 @@ final class TracingServiceProvider extends ServiceProvider
 
         DB::listen(static fn (QueryExecuted $event) => $tracing->recordSql($event));
         Event::listen(CommandExecuted::class, static fn (CommandExecuted $event) => $tracing->recordRedis($event));
+        $redis = $this->app->make('redis');
+        if ($redis instanceof RedisManager) {
+            $redis->enableEvents();
+            foreach ($redis->connections() as $connection) {
+                $connection->setEventDispatcher($this->app->make('events'));
+            }
+        }
         Queue::createPayloadUsing(static fn (): array => $tracing->queuePayload());
         Event::listen(JobProcessing::class, static fn (JobProcessing $event) => $tracing->startJob($event));
         Event::listen(JobProcessed::class, static fn (JobProcessed $event) => $tracing->finishJob($event->job));
