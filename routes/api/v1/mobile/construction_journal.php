@@ -5,7 +5,13 @@ use App\Http\Controllers\Api\V1\Mobile\ConstructionJournalEntryController;
 use App\Http\Controllers\Api\V1\Mobile\JournalExportController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
+Route::middleware([
+    'auth:api_mobile',
+    'auth.jwt:api_mobile',
+    'organization.context',
+    'can:access-mobile-app',
+    'budget-estimates.active',
+])->group(function () {
     Route::get('/construction-journals', [ConstructionJournalController::class, 'index'])->name('construction-journals.index');
     Route::get('/construction-journals/form-options', [ConstructionJournalController::class, 'formOptions'])
         ->name('construction-journals.form-options');
