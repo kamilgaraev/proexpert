@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
@@ -395,6 +396,63 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $this->assertSame(['pages_excluded_from_estimation'], $document->quality_flags);
         $this->assertStringContainsString('РЎС‚СЂР°РЅРёС†Р° 1', (string) $document->extracted_text);
         $this->assertStringNotContainsString('РЎС‚СЂР°РЅРёС†Р° 2', (string) $document->extracted_text);
+    }
+
+    public function test_recovery_skips_legacy_documents_without_current_units_before_applying_limit(): void
+    {
+        [, , $session] = $this->makeSession();
+        $legacy = $this->makeDocument($session, 'ready');
+        $legacy->forceFill([
+            'checksum_sha256' => str_repeat('b', 64),
+            'source_version' => 'sha256:'.str_repeat('b', 64),
+        ])->save();
+        EstimateGenerationDocument::query()->whereKey($legacy->id)->update(['updated_at' => now()->subMinutes(10)]);
+
+        $current = $this->makeDocument($session, 'ready');
+        $current->forceFill([
+            'checksum_sha256' => str_repeat('c', 64),
+            'source_version' => 'sha256:'.str_repeat('c', 64),
+        ])->save();
+        EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $session->organization_id,
+            'project_id' => $session->project_id,
+            'session_id' => $session->id,
+            'document_id' => $current->id,
+            'unit_type' => 'pdf_page',
+            'unit_index' => 1,
+            'source_version' => (string) $current->source_version,
+            'status' => 'completed',
+            'attempt_count' => 1,
+            'output_version' => 'sha256:'.str_repeat('d', 64),
+            'output_count' => 1,
+            'locator' => [
+                'source_kind' => 'pdf',
+                'source_version' => (string) $current->source_version,
+                'coordinate_space' => 'pdf_page_pixels',
+                'artifact_path' => 'tests/page-1.png',
+                'artifact_sha256' => 'sha256:'.str_repeat('d', 64),
+                'artifact_version_id' => 'test-page-1',
+            ],
+            'metadata' => (object) [],
+            'completed_at' => now(),
+        ]);
+        EstimateGenerationDocument::query()->whereKey($current->id)->update(['updated_at' => now()->subMinutes(10)]);
+
+        $reconciled = [];
+        $reconciler = Mockery::mock(DocumentUnitAggregateReconciler::class);
+        $reconciler->shouldReceive('reconcile')->once()->andReturnUsing(
+            static function (int $documentId, string $sourceVersion) use (&$reconciled): void {
+                $reconciled[] = $documentId;
+                EstimateGenerationDocument::query()->whereKey($documentId)->update([
+                    'units_reconciled_source_version' => $sourceVersion,
+                ]);
+            },
+        );
+        $this->app->instance(DocumentUnitAggregateReconciler::class, $reconciler);
+
+        $this->assertSame(1, app(RecoverStalledEstimateGenerationDocuments::class)->handle(120, 1));
+        $this->assertSame([$current->id], $reconciled);
+        $this->assertNull($legacy->fresh()->units_reconciled_source_version);
     }
 
     public function test_retry_is_forbidden_for_ready_document(): void

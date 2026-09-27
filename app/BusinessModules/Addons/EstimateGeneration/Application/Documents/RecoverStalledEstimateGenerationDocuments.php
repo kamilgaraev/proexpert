@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -105,9 +106,12 @@ final class RecoverStalledEstimateGenerationDocuments
                     ->whereNull('units_reconciled_source_version')
                     ->orWhereColumn('units_reconciled_source_version', '<>', 'source_version');
             })
+            ->whereHas('processingUnits', static function (Builder $query): void {
+                $query->whereColumn('estimate_generation_processing_units.source_version', 'estimate_generation_documents.source_version');
+            })
             ->orderBy('id')
             ->limit($limit)
-            ->get();
+            ->get(['id', 'checksum_sha256']);
 
         $reconciled = 0;
 
@@ -115,8 +119,10 @@ final class RecoverStalledEstimateGenerationDocuments
             try {
                 $sourceVersion = DocumentSourceVersion::fromDocument($document);
                 $this->unitAggregates->reconcile((int) $document->getKey(), $sourceVersion);
-                $document->refresh();
-                if ((string) $document->units_reconciled_source_version === $sourceVersion) {
+                $reconciledVersion = EstimateGenerationDocument::query()
+                    ->whereKey($document->getKey())
+                    ->value('units_reconciled_source_version');
+                if ((string) $reconciledVersion === $sourceVersion) {
                     $reconciled++;
                 }
             } catch (RuntimeException) {
