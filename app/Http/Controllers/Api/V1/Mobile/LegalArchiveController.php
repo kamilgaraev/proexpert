@@ -39,11 +39,13 @@ final class LegalArchiveController extends Controller
                 'sync_after_id' => ['sometimes', 'integer', 'min:0'],
                 'sync_max_id' => ['sometimes', 'integer', 'min:0'],
             ]);
+            $page = isset($validated['page']) ? (int) $validated['page'] : null;
+            $perPage = isset($validated['per_page']) ? (int) $validated['per_page'] : null;
             if (isset($validated['sync_max_id']) && ! array_key_exists('sync_after_id', $validated)) {
                 return MobileResponse::error(trans_message('legal_archive.messages.validation_error'), 422);
             }
             $cursorMode = array_key_exists('sync_after_id', $validated);
-            if ($cursorMode && ($validated['page'] ?? 1) > 1) {
+            if ($cursorMode && ($page ?? 1) > 1) {
                 return MobileResponse::error(trans_message('legal_archive.messages.validation_error'), 422);
             }
             $syncMaxId = $cursorMode
@@ -53,8 +55,8 @@ final class LegalArchiveController extends Controller
                 $actor,
                 (int) $actor->current_organization_id,
                 $request->integer('project_id'),
-                $cursorMode ? 1 : ($validated['page'] ?? null),
-                $validated['per_page'] ?? null,
+                $cursorMode ? 1 : $page,
+                $perPage,
                 $cursorMode ? (int) $validated['sync_after_id'] : null,
                 $syncMaxId,
             );

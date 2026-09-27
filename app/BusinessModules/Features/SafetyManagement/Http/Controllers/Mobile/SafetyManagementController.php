@@ -20,6 +20,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
 use App\Models\User;
 use App\Services\Mobile\MobileProjectAccessResolver;
+use App\Services\Mobile\MobileMutationIdempotency;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -78,6 +79,7 @@ final class SafetyManagementController extends Controller
     public function __construct(
         private readonly SafetyManagementService $service,
         private readonly MobileProjectAccessResolver $projectAccess,
+        private readonly MobileMutationIdempotency $idempotency,
     ) {}
 
     public function dashboard(Request $request): JsonResponse
@@ -468,12 +470,20 @@ final class SafetyManagementController extends Controller
                 'metadata' => ['nullable', 'array'],
             ]);
 
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()?->id;
+            $incident = $this->idempotency->run(
+                $organizationId,
+                $userId,
+                $request->header('Idempotency-Key'),
+                'safety.incident.create',
+                $validated,
+                fn () => $this->service->createIncident($organizationId, $userId, $validated),
+                fn (int $id) => $this->service->findIncident($organizationId, $id),
+            );
+
             return MobileResponse::success(
-                new SafetyIncidentResource($this->service->createIncident(
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
-                    $validated
-                )),
+                new SafetyIncidentResource($incident),
                 trans_message('safety_management.messages.incident_created'),
                 201
             );
@@ -484,7 +494,7 @@ final class SafetyManagementController extends Controller
                 $exception->errors()
             );
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.incidents.store.error', [
                 'user_id' => $request->user()?->id,
@@ -498,12 +508,21 @@ final class SafetyManagementController extends Controller
     public function storeViolation(StoreViolationRequest $request): JsonResponse
     {
         try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()?->id;
+            $validated = $request->validated();
+            $violation = $this->idempotency->run(
+                $organizationId,
+                $userId,
+                $request->header('Idempotency-Key'),
+                'safety.violation.create',
+                $validated,
+                fn () => $this->service->createMobileViolation($organizationId, $userId, $validated),
+                fn (int $id) => $this->service->findMobileViolationCreateReplay($organizationId, $userId, (int) $validated['project_id'], $id),
+            );
+
             return MobileResponse::success(
-                new SafetyViolationResource($this->service->createMobileViolation(
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
-                    $request->validated(),
-                )),
+                new SafetyViolationResource($violation),
                 trans_message('safety_management.messages.violation_created'),
                 201
             );
@@ -516,7 +535,7 @@ final class SafetyManagementController extends Controller
         } catch (BusinessLogicException $exception) {
             return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 403);
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.violations.store.error', [
                 'user_id' => $request->user()?->id,
@@ -544,12 +563,20 @@ final class SafetyManagementController extends Controller
             ]);
             $validated['assigned_to_user_id'] = $validated['assigned_to_user_id'] ?? (int) $request->user()?->id;
 
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $userId = (int) $request->user()?->id;
+            $finding = $this->idempotency->run(
+                $organizationId,
+                $userId,
+                $request->header('Idempotency-Key'),
+                'safety.finding.create',
+                $validated,
+                fn () => $this->service->createInspectionFinding($organizationId, $userId, $validated),
+                fn (int $id) => $this->service->findInspectionFinding($organizationId, $id),
+            );
+
             return MobileResponse::success(
-                new SafetyInspectionFindingResource($this->service->createInspectionFinding(
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
-                    $validated
-                )),
+                new SafetyInspectionFindingResource($finding),
                 trans_message('safety_management.messages.inspection_finding_created'),
                 201
             );
@@ -560,7 +587,7 @@ final class SafetyManagementController extends Controller
                 $exception->errors()
             );
         } catch (DomainException $exception) {
-            return MobileResponse::error($exception->getMessage(), 422);
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.inspection_findings.store.error', [
                 'user_id' => $request->user()?->id,

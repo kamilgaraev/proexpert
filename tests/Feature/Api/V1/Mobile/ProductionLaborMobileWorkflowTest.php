@@ -48,13 +48,13 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
             'requires_safety_permit' => false,
         ]);
 
-        $list = $this->withHeaders($context->authHeaders())
+        $list = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/production-labor/work-orders?project_id={$project->id}");
         $list->assertOk()
             ->assertJsonPath('data.data.0.id', $workOrder->id)
             ->assertJsonPath('data.data.0.workflow_summary.status', 'in_progress');
 
-        $output = $this->withHeaders($context->authHeaders())
+        $output = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/production-labor/output-entries', [
                 'work_order_line_id' => $line->id,
                 'work_date' => now()->toDateString(),
@@ -64,7 +64,7 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
         $output->assertCreated()
             ->assertJsonPath('data.quantity', 5);
 
-        $timesheet = $this->withHeaders($context->authHeaders())
+        $timesheet = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/production-labor/timesheets', [
                 'work_order_id' => $workOrder->id,
                 'shift_date' => now()->toDateString(),
@@ -92,7 +92,7 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
             'planned_quantity' => 2,
         ]);
 
-        $foreignOutput = $this->withHeaders($context->authHeaders())
+        $foreignOutput = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/production-labor/output-entries', [
                 'work_order_line_id' => $foreignLine->id,
                 'work_date' => now()->toDateString(),
@@ -123,21 +123,25 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'name' => 'Concrete works',
             'unit' => 'm3',
-            'planned_quantity' => 12,
+            'planned_quantity' => 8,
             'accepted_quantity' => 3,
             'unit_rate' => 500,
             'planned_hours' => 16,
             'requires_safety_permit' => false,
         ]);
 
-        $response = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/mobile/production-labor/output-entries', [
-                'work_order_line_id' => $line->id,
-                'work_date' => now()->toDateString(),
-                'quantity' => 4.5,
-                'hours' => 6.25,
-                'comment' => 'Pouring completed',
-            ]);
+        $headers = array_merge($context->mobileAuthHeaders(), [
+            'Idempotency-Key' => 'production-output-mobile-retry-0001',
+        ]);
+        $payload = [
+            'work_order_line_id' => $line->id,
+            'work_date' => now()->toDateString(),
+            'quantity' => 4.5,
+            'hours' => 6.25,
+            'comment' => 'Pouring completed',
+        ];
+        $response = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/production-labor/output-entries', $payload);
 
         $response->assertCreated()
             ->assertJsonPath('data.quantity', 4.5)
@@ -150,6 +154,21 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
             'hours' => 6.25,
             'comment' => 'Pouring completed',
         ]);
+
+        $workOrder->update(['status' => 'submitted']);
+        $retry = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/production-labor/output-entries', $payload);
+        $retry->assertCreated()->assertJsonPath('data.id', $response->json('data.id'));
+        $this->assertDatabaseCount('production_labor_output_entries', 1);
+        $this->assertEquals(7.5, (float) $line->fresh()->accepted_quantity);
+
+        $conflict = $this->withHeaders($headers)
+            ->postJson('/api/v1/mobile/production-labor/output-entries', [
+                ...$payload,
+                'quantity' => 5,
+            ]);
+        $conflict->assertStatus(409);
+        $this->assertDatabaseCount('production_labor_output_entries', 1);
     }
 
     public function test_mobile_production_actual_rejects_missing_quantity(): void
@@ -177,7 +196,7 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
             'requires_safety_permit' => false,
         ]);
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/production-labor/output-entries', [
                 'work_order_line_id' => $line->id,
                 'work_date' => now()->toDateString(),
@@ -218,7 +237,7 @@ final class ProductionLaborMobileWorkflowTest extends TestCase
             'requires_safety_permit' => false,
         ]);
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/production-labor/output-entries', [
                 'work_order_line_id' => $line->id,
                 'work_date' => now()->toDateString(),

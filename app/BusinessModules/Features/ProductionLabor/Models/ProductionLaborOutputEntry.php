@@ -32,6 +32,8 @@ final class ProductionLaborOutputEntry extends Model
         'approved_at',
         'comment',
         'metadata',
+        'idempotency_key',
+        'payload_fingerprint',
     ];
 
     protected $casts = [

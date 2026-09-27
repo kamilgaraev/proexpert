@@ -260,7 +260,7 @@ final class HandoverAcceptanceService
                 throw new DomainException(trans_message('handover_acceptance.errors.invalid_status'));
             }
             $item->update(['status' => $data['status'], 'comment' => $data['comment'] ?? null]);
-            $this->storePhotoEvidence($item, $data['photos'] ?? [], $userId);
+            $this->storePhotoEvidence($item, $data['photos'] ?? [], $userId, (int) $checklist->organization_id);
             $this->refreshChecklistStatus($checklist);
 
             return $item->fresh(['checklist.items.files.organization', 'files.organization']);
@@ -579,7 +579,7 @@ final class HandoverAcceptanceService
         ]);
     }
 
-    private function storePhotoEvidence(Model $owner, array $photos, int $userId): void
+    private function storePhotoEvidence(Model $owner, array $photos, int $userId, ?int $organizationId = null): void
     {
         if ($photos === []) {
             return;
@@ -588,7 +588,7 @@ final class HandoverAcceptanceService
             throw new DomainException(trans_message('handover_acceptance.errors.validation_failed'));
         }
 
-        $organization = Organization::query()->find((int) $owner->getAttribute('organization_id'));
+        $organization = Organization::query()->find($organizationId ?? (int) $owner->getAttribute('organization_id'));
         if ($organization === null) {
             throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
         }

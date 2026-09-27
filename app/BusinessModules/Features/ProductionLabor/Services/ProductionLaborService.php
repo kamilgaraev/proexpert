@@ -218,25 +218,46 @@ final class ProductionLaborService
         return $workOrder->refresh()->load(['project:id,name', 'lines']);
     }
 
-    public function recordOutput(int $organizationId, int $userId, array $payload, bool $allowOverrun = false): ProductionLaborOutputEntry
+    public function recordOutput(int $organizationId, int $userId, array $payload, bool $allowOverrun = false, ?string $idempotencyKey = null): ProductionLaborOutputEntry
     {
-        $line = $this->findLine($organizationId, (int) $payload['work_order_line_id']);
-        $workOrder = $line->workOrder;
+        $fingerprint = $idempotencyKey === null ? null : hash('sha256', json_encode([
+            'work_order_line_id' => (int) $payload['work_order_line_id'],
+            'work_date' => (string) $payload['work_date'],
+            'quantity' => number_format((float) $payload['quantity'], 4, '.', ''),
+            'hours' => number_format((float) $payload['hours'], 2, '.', ''),
+            'comment' => $payload['comment'] ?? null,
+            'metadata' => $payload['metadata'] ?? null,
+        ], JSON_THROW_ON_ERROR));
 
-        if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
-            throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
-        }
-
-        $quantity = (float) $payload['quantity'];
-        $accepted = (float) $line->accepted_quantity;
-        $planned = (float) $line->planned_quantity;
-
-        if (! $allowOverrun && $planned > 0 && round($accepted + $quantity, 4) > $planned) {
-            throw new DomainException(trans_message('production_labor.errors.output_over_plan'));
-        }
-
-        return DB::transaction(function () use ($organizationId, $userId, $payload, $line, $workOrder): ProductionLaborOutputEntry {
+        return DB::transaction(function () use ($organizationId, $userId, $payload, $allowOverrun, $idempotencyKey, $fingerprint): ProductionLaborOutputEntry {
             $this->lockOrganization($organizationId);
+            if ($idempotencyKey !== null) {
+                $existing = ProductionLaborOutputEntry::withTrashed()
+                    ->where('organization_id', $organizationId)
+                    ->where('recorded_by_user_id', $userId)
+                    ->where('idempotency_key', $idempotencyKey)
+                    ->first();
+                if ($existing !== null) {
+                    if ($existing->trashed() || $existing->payload_fingerprint !== $fingerprint) {
+                        throw new DomainException(trans_message('production_labor.errors.idempotency_conflict'), 409);
+                    }
+
+                    return $existing->load(['workOrder:id,order_number,title', 'line:id,name,unit', 'project:id,name']);
+                }
+            }
+
+            $line = $this->findLine($organizationId, (int) $payload['work_order_line_id']);
+            $workOrder = $line->workOrder;
+            if (! in_array($workOrder->status, ['issued', 'in_progress'], true)) {
+                throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
+            }
+
+            $quantity = (float) $payload['quantity'];
+            $planned = (float) $line->planned_quantity;
+            if (! $allowOverrun && $planned > 0 && round((float) $line->accepted_quantity + $quantity, 4) > $planned) {
+                throw new DomainException(trans_message('production_labor.errors.output_over_plan'));
+            }
+
             $this->assertPayrollPeriodOpenForWorkDate(
                 $organizationId,
                 (int) $workOrder->project_id,
@@ -258,6 +279,8 @@ final class ProductionLaborService
                 'approved_at' => now(),
                 'comment' => $payload['comment'] ?? null,
                 'metadata' => $payload['metadata'] ?? null,
+                'idempotency_key' => $idempotencyKey,
+                'payload_fingerprint' => $fingerprint,
             ]);
 
             $line->update(['accepted_quantity' => (float) $line->accepted_quantity + (float) $payload['quantity']]);

@@ -21,7 +21,7 @@ class MobileWarehouseTaskService
     {
         $warehouse = $this->findWarehouse($organizationId, $warehouseId);
 
-        $tasks = $this->baseTaskQuery($organizationId, $warehouse->id)
+        $query = $this->baseTaskQuery($organizationId, $warehouse->id)
             ->when(isset($filters['status']) && $filters['status'] !== '', fn (Builder $query) => $query->where('status', (string) $filters['status']))
             ->when(isset($filters['task_type']) && $filters['task_type'] !== '', fn (Builder $query) => $query->where('task_type', (string) $filters['task_type']))
             ->when(isset($filters['priority']) && $filters['priority'] !== '', fn (Builder $query) => $query->where('priority', (string) $filters['priority']))
@@ -62,6 +62,31 @@ class MobileWarehouseTaskService
             ->orderByRaw('CASE WHEN due_at IS NULL THEN 1 ELSE 0 END')
             ->orderBy('due_at')
             ->orderByDesc('updated_at')
+            ->orderByDesc('id');
+
+        if (array_key_exists('page', $filters)) {
+            $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 60)));
+            $page = max(1, (int) $filters['page']);
+            $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+
+            return [
+                'items' => collect($paginator->items())
+                    ->map(fn (WarehouseTask $task) => $this->serializeTask($task))
+                    ->values()
+                    ->all(),
+                'meta' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                    'from' => $paginator->firstItem(),
+                    'to' => $paginator->lastItem(),
+                    'has_more' => $paginator->hasMorePages(),
+                ],
+            ];
+        }
+
+        $tasks = $query
             ->limit(max(1, min(100, (int) ($filters['limit'] ?? 50))))
             ->get();
 

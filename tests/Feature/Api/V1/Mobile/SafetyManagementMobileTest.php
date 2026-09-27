@@ -29,6 +29,64 @@ final class SafetyManagementMobileTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_mobile_safety_create_replay_keeps_one_record_per_action(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $incident = [
+            'project_id' => $project->id,
+            'title' => 'Открытый проём',
+            'incident_type' => 'unsafe_condition',
+            'severity' => 'major',
+            'occurred_at' => now()->toIso8601String(),
+        ];
+        $incidentHeaders = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'safety-incident-attempt-0001'];
+        $firstIncident = $this->withHeaders($incidentHeaders)
+            ->postJson('/api/v1/mobile/safety-management/incidents', $incident)
+            ->assertCreated();
+        $this->withHeaders($incidentHeaders)
+            ->postJson('/api/v1/mobile/safety-management/incidents', $incident)
+            ->assertCreated()
+            ->assertJsonPath('data.id', $firstIncident->json('data.id'));
+        $this->assertDatabaseCount('safety_incidents', 1);
+        $this->withHeaders($incidentHeaders)
+            ->postJson('/api/v1/mobile/safety-management/incidents', [...$incident, 'title' => 'Другое событие'])
+            ->assertStatus(409);
+
+        $violation = [
+            'project_id' => $project->id,
+            'title' => 'Нет каски',
+            'severity' => 'high',
+        ];
+        $violationHeaders = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'safety-violation-attempt-0001'];
+        $firstViolation = $this->withHeaders($violationHeaders)
+            ->postJson('/api/v1/mobile/safety-management/violations', $violation)
+            ->assertCreated();
+        $this->withHeaders($violationHeaders)
+            ->postJson('/api/v1/mobile/safety-management/violations', $violation)
+            ->assertCreated()
+            ->assertJsonPath('data.id', $firstViolation->json('data.id'));
+        $this->assertDatabaseCount('safety_violations', 1);
+
+        $finding = [
+            'project_id' => $project->id,
+            'title' => 'Нет ограждения',
+            'severity' => 'high',
+        ];
+        $findingHeaders = $context->mobileAuthHeaders() + ['Idempotency-Key' => 'safety-finding-attempt-0001'];
+        $firstFinding = $this->withHeaders($findingHeaders)
+            ->postJson('/api/v1/mobile/safety-management/inspection-findings', $finding)
+            ->assertCreated();
+        $this->withHeaders($findingHeaders)
+            ->postJson('/api/v1/mobile/safety-management/inspection-findings', $finding)
+            ->assertCreated()
+            ->assertJsonPath('data.id', $firstFinding->json('data.id'));
+        $this->assertDatabaseCount('safety_inspection_findings', 1);
+    }
+
     public function test_mobile_violation_create_and_resolution_store_scoped_photo_evidence(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
@@ -133,7 +191,7 @@ final class SafetyManagementMobileTest extends TestCase
         $otherAssignedPermit = $this->createPermit($context, $project, $otherUser, 'approved');
         $foreignPermit = $this->createPermit($foreignContext, $foreignProject, null, 'approved');
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/work-permits');
 
         $response->assertOk();
@@ -144,21 +202,21 @@ final class SafetyManagementMobileTest extends TestCase
         $this->assertNotContains($otherAssignedPermit->id, $permitIds);
         $this->assertNotContains($foreignPermit->id, $permitIds);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/work-permits/{$ownPermit->id}")
             ->assertOk()
             ->assertJsonPath('data.available_actions.0', 'activate');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/work-permits/{$participantPermit->id}")
             ->assertOk()
             ->assertJsonPath('data.id', $participantPermit->id);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/work-permits/{$otherAssignedPermit->id}")
             ->assertNotFound();
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/work-permits?status=not-a-status')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
@@ -249,29 +307,29 @@ final class SafetyManagementMobileTest extends TestCase
             'signature_status' => 'pending',
         ]);
 
-        $dashboard = $this->withHeaders($context->authHeaders())
+        $dashboard = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/dashboard?project_id={$project->id}");
         $dashboard->assertOk()
             ->assertJsonPath('data.mine.briefings_to_sign', 1);
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/briefings');
         $response->assertOk();
         $briefingIds = collect($response->json('data.data'))->pluck('id')->all();
         $this->assertContains($briefing->id, $briefingIds);
         $this->assertNotContains($foreignBriefing->id, $briefingIds);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/briefings/{$briefing->id}")
             ->assertOk()
             ->assertJsonPath('data.participants.0.signature_status', 'pending');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/briefings/{$briefing->id}/participants/{$otherParticipant->id}/sign")
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('safety_management.errors.briefing_participant_not_found'));
 
-        $signed = $this->withHeaders($context->authHeaders())
+        $signed = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/briefings/{$briefing->id}/participants/{$ownParticipant->id}/sign");
 
         $signed->assertOk()
@@ -282,7 +340,7 @@ final class SafetyManagementMobileTest extends TestCase
         self::assertSame('mobile', $signedParticipant['signature_method']);
         self::assertSame($context->user->id, $signedParticipant['signed_by_user_id']);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/dashboard?project_id={$project->id}")
             ->assertOk()
             ->assertJsonPath('data.mine.briefings_to_sign', 0);
@@ -317,13 +375,13 @@ final class SafetyManagementMobileTest extends TestCase
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/dashboard?project_id={$project->id}")
             ->assertOk()
             ->assertJsonPath('data.mine.employee_id', $employee->id)
             ->assertJsonPath('data.mine.open_permits', 1);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/safety-management/my-admission?project_id={$project->id}&work_category=height_work")
             ->assertOk()
             ->assertJsonPath('data.employee_id', $employee->id)
@@ -341,13 +399,13 @@ final class SafetyManagementMobileTest extends TestCase
 
         $permit = $this->createPermit($context, $project, $context->user, 'draft');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/submit")
             ->assertOk()
             ->assertJsonPath('data.status', 'pending_approval')
             ->assertJsonPath('data.available_actions.0', 'approve');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/approve", [
                 'approval_comment' => 'Риски проверены',
             ])
@@ -355,17 +413,17 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.status', 'approved')
             ->assertJsonPath('data.approval_comment', 'Риски проверены');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/activate")
             ->assertOk()
             ->assertJsonPath('data.status', 'active');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/suspend")
             ->assertStatus(422)
             ->assertJsonPath('errors.reason.0', trans_message('safety_management.validation.reason_required'));
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/suspend", [
                 'reason' => 'Усиление ветра',
             ])
@@ -373,17 +431,17 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.status', 'suspended')
             ->assertJsonPath('data.suspension_reason', 'Усиление ветра');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/resume")
             ->assertOk()
             ->assertJsonPath('data.status', 'active');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/close")
             ->assertStatus(422)
             ->assertJsonPath('errors.close_comment.0', trans_message('safety_management.validation.close_comment_required'));
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$permit->id}/close", [
                 'close_comment' => 'Работы завершены безопасно',
             ])
@@ -393,12 +451,12 @@ final class SafetyManagementMobileTest extends TestCase
 
         $rejectPermit = $this->createPermit($context, $project, $context->user, 'pending_approval');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$rejectPermit->id}/reject")
             ->assertStatus(422)
             ->assertJsonPath('errors.reason.0', trans_message('safety_management.validation.reason_required'));
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/work-permits/{$rejectPermit->id}/reject", [
                 'reason' => 'Не указаны меры контроля',
             ])
@@ -416,7 +474,7 @@ final class SafetyManagementMobileTest extends TestCase
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
-        $incidentResponse = $this->withHeaders($context->authHeaders())
+        $incidentResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/incidents', [
                 'project_id' => $project->id,
                 'title' => 'Guard rail missing',
@@ -434,17 +492,17 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.available_actions.0', 'triage');
         $incidentId = (int) $incidentResponse->json('data.id');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/incidents?status=not-a-status')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/incidents?status=reported')
             ->assertOk()
             ->assertJsonPath('data.data.0.id', $incidentId);
 
-        $violationResponse = $this->withHeaders($context->authHeaders())
+        $violationResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/violations', [
                 'project_id' => $project->id,
                 'title' => 'PPE missing',
@@ -460,17 +518,17 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.available_actions.0', 'resolve');
         $violationId = (int) $violationResponse->json('data.id');
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/violations?status=not-a-status')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/violations?status=open')
             ->assertOk()
             ->assertJsonPath('data.data.0.id', $violationId);
 
-        $resolveResponse = $this->withHeaders($context->authHeaders())
+        $resolveResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/safety-management/violations/{$violationId}/resolve", [
                 'resolution_comment' => 'Helmet issued, worker briefed',
             ]);
@@ -479,7 +537,7 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.status', 'resolved')
             ->assertJsonPath('data.resolved_by_user_id', $context->user->id);
 
-        $foreignProjectResponse = $this->withHeaders($context->authHeaders())
+        $foreignProjectResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/incidents', [
                 'project_id' => $foreignProject->id,
                 'title' => 'Foreign project incident',
@@ -498,7 +556,7 @@ final class SafetyManagementMobileTest extends TestCase
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/incidents', [
                 'project_id' => $project->id,
                 'title' => 'Unsafe work area',
@@ -518,7 +576,7 @@ final class SafetyManagementMobileTest extends TestCase
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/violations', [
                 'project_id' => $project->id,
                 'title' => 'PPE missing',
@@ -567,7 +625,7 @@ final class SafetyManagementMobileTest extends TestCase
             'status' => 'planned',
         ]);
 
-        $inspectionsResponse = $this->withHeaders($context->authHeaders())
+        $inspectionsResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/inspections?status=planned');
 
         $inspectionsResponse->assertOk();
@@ -575,12 +633,12 @@ final class SafetyManagementMobileTest extends TestCase
         $this->assertContains($inspection->id, $inspectionIds);
         $this->assertNotContains($foreignInspection->id, $inspectionIds);
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/inspections?status=not-a-status')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
 
-        $findingResponse = $this->withHeaders($context->authHeaders())
+        $findingResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/inspection-findings', [
                 'project_id' => $project->id,
                 'inspection_id' => $inspection->id,
@@ -607,7 +665,7 @@ final class SafetyManagementMobileTest extends TestCase
             'status' => 'open',
         ]);
 
-        $findingsResponse = $this->withHeaders($context->authHeaders())
+        $findingsResponse = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/safety-management/inspection-findings?status=open');
 
         $findingsResponse->assertOk();
@@ -615,7 +673,7 @@ final class SafetyManagementMobileTest extends TestCase
         $this->assertContains($findingId, $findingIds);
         $this->assertNotContains('HSE-F-MOB-2', collect($findingsResponse->json('data.data'))->pluck('finding_number')->all());
 
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->mobileAuthHeaders())
             ->postJson('/api/v1/mobile/safety-management/inspection-findings', [
                 'project_id' => $foreignProject->id,
                 'title' => 'Foreign project finding',

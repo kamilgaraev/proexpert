@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'labels' => [
+        'work_volume_unnamed' => 'Работа без наименования',
+    ],
     'actions' => [
         'view' => 'Открыть',
         'create' => 'Создать журнал',

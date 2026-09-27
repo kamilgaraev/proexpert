@@ -83,7 +83,7 @@ final class MobileLegalArchiveApiArchitectureTest extends TestCase
         }
         self::assertStringContainsString('\'data\' => $data', $controller);
         self::assertStringContainsString('\'sort_by\' => $syncAfterId === null ? \'updated_at\' : \'id\'', $service);
-        self::assertStringContainsString("if (\$cursorMode && (\$validated['page'] ?? 1) > 1)", $controller);
+        self::assertStringContainsString("if (\$cursorMode && (\$page ?? 1) > 1)", $controller);
         self::assertStringContainsString("->paginate(\$perPage, ['*'], 'page', isset(\$filters['page']) ? (int) \$filters['page'] : null)", $registry);
         self::assertStringContainsString('$query->where(\'id\', \'>\', (int) $filters[\'sync_after_id\'])', $registry);
         self::assertStringContainsString('$query->where(\'id\', \'<=\', (int) $filters[\'sync_max_id\'])', $registry);
