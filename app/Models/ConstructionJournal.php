@@ -117,6 +117,7 @@ class ConstructionJournal extends Model
     public function getNextEntryNumber(): int
     {
         $maxEntryNumber = $this->entries()
+            ->withTrashed()
             ->reorder()
             ->max('entry_number');
 

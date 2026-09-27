@@ -12,6 +12,7 @@ use App\Models\ConstructionJournal;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Project;
+use App\Services\Mobile\MobileConstructionJournalService;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Mockery;
@@ -82,6 +83,33 @@ final class JournalEntryRetryFeatureTest extends TestCase
         $afterLostResponse = $workflow->create($journal->fresh(), $payload, $context->user);
         self::assertSame($entry->id, $afterLostResponse->id);
         self::assertSame(JournalEntryStatusEnum::SUBMITTED, $afterLostResponse->status);
+
+        $mobileDraft = $workflow->create($journal->fresh(), [
+            'idempotency_key' => 'mobile-empty-resource-draft',
+            'submit_after_create' => false,
+            'entry_date' => '2026-09-27',
+            'work_description' => 'Mobile draft',
+            'weather_conditions' => null,
+            'work_volumes' => [],
+            'workers' => [],
+            'equipment' => [],
+            'materials' => [],
+        ], $context->user);
+        self::assertSame(JournalEntryStatusEnum::DRAFT, $mobileDraft->status);
+        self::assertIsArray(app(MobileConstructionJournalService::class)->mapMobileEntry($mobileDraft, $context->user));
+        app(ConstructionJournalService::class)->deleteEntry($mobileDraft);
+
+        $nextDraft = $workflow->create($journal->fresh(), [
+            'idempotency_key' => 'mobile-after-deleted-draft',
+            'submit_after_create' => false,
+            'entry_date' => '2026-09-27',
+            'work_description' => 'Next mobile draft',
+            'work_volumes' => [],
+            'workers' => [],
+            'equipment' => [],
+            'materials' => [],
+        ], $context->user);
+        self::assertSame(3, $nextDraft->entry_number);
 
         $changedPayload = [...$payload, 'work_description' => 'Changed payload', 'submit_after_create' => false];
         $this->expectException(DomainException::class);
