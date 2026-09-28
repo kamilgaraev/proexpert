@@ -4,6 +4,8 @@ namespace App\Http\Resources\Api\V1\Schedule;
 
 use App\Http\Resources\ModelJsonResource;
 use App\Models\ScheduleTask;
+use App\Models\TaskResource;
+use App\Services\Schedule\ScheduleTaskResourceAssignmentService;
 use Illuminate\Http\Request;
 
 class ScheduleTaskGanttResource extends ModelJsonResource
@@ -15,6 +17,13 @@ class ScheduleTaskGanttResource extends ModelJsonResource
     public function toArray(Request $request): array
     {
         $task = $this->typedResource(ScheduleTask::class);
+        $resources = [];
+        if ($task->relationLoaded('resources')) {
+            $assignmentService = app(ScheduleTaskResourceAssignmentService::class);
+            $resources = $task->resources
+                ->map(fn (TaskResource $resource): array => $assignmentService->toResponse($resource))
+                ->values();
+        }
 
         $plannedDuration = $this->planned_start_date && $this->planned_end_date
             ? $this->planned_start_date->diffInDays($this->planned_end_date) + 1
@@ -145,6 +154,7 @@ class ScheduleTaskGanttResource extends ModelJsonResource
                 'name' => $this->measurementUnit?->name,
                 'short_name' => $this->measurementUnit?->short_name,
             ]),
+            'resources' => $this->when($task->relationLoaded('resources'), $resources),
             'priority' => $this->priority->value ?? $this->priority,
 
             // UI метаданные
@@ -212,4 +222,3 @@ class ScheduleTaskGanttResource extends ModelJsonResource
         return '#EF4444'; // Красный
     }
 }
-

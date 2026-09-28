@@ -109,6 +109,8 @@ class ProjectScheduleController extends Controller
                             'workType',
                             'measurementUnit',
                             'predecessorDependencies',
+                            'resources.user',
+                            'resources.material.measurementUnit',
                         ])
                         ->with('intervals')
                         ->withCount('completedWorks'),
