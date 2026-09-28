@@ -1,11 +1,11 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Mobile\WarehouseScanController;
-use App\Http\Controllers\Api\V1\Mobile\WarehouseController;
-use App\Http\Controllers\Api\V1\Mobile\WarehouseTaskController;
-use App\Http\Controllers\Api\V1\Mobile\ProjectMaterialDeliveryController;
-use App\Http\Controllers\Api\V1\Mobile\WarehouseWriteOffController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseCustodyController;
+use App\Http\Controllers\Api\V1\Mobile\ProjectMaterialDeliveryController;
+use App\Http\Controllers\Api\V1\Mobile\WarehouseController;
+use App\Http\Controllers\Api\V1\Mobile\WarehouseScanController;
+use App\Http\Controllers\Api\V1\Mobile\WarehouseTaskController;
+use App\Http\Controllers\Api\V1\Mobile\WarehouseWriteOffController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
@@ -18,15 +18,27 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     Route::get('/warehouse/project-material-deliveries', [ProjectMaterialDeliveryController::class, 'index'])->name('warehouse.project-material-deliveries.index');
     Route::get('/warehouse/project-material-deliveries/project-stock', [ProjectMaterialDeliveryController::class, 'projectStock'])->name('warehouse.project-material-deliveries.project-stock');
     Route::get('/warehouse/project-material-deliveries/{deliveryId}', [ProjectMaterialDeliveryController::class, 'show'])->name('warehouse.project-material-deliveries.show');
-    Route::post('/warehouse/project-material-deliveries/{deliveryId}/receive', [ProjectMaterialDeliveryController::class, 'receive'])->name('warehouse.project-material-deliveries.receive');
-    Route::middleware('authorize:warehouse.manage_stock')->group(function () {
-        Route::post('/warehouse/operations/write-off', WarehouseWriteOffController::class)->name('warehouse.operations.write-off');
-        Route::get('/warehouse/custody/balances', [WarehouseCustodyController::class, 'balances'])->name('warehouse.custody.balances');
-        Route::post('/warehouse/custody/issue', [WarehouseCustodyController::class, 'issue'])->name('warehouse.custody.issue');
-        Route::post('/warehouse/custody/return', [WarehouseCustodyController::class, 'returnToProject'])->name('warehouse.custody.return');
-    });
-    Route::post('/warehouse/operations/receipt', [WarehouseController::class, 'receipt'])->name('warehouse.operations.receipt');
-    Route::post('/warehouse/operations/transfer', [WarehouseController::class, 'transfer'])->name('warehouse.operations.transfer');
+    Route::post('/warehouse/project-material-deliveries/{deliveryId}/receive', [ProjectMaterialDeliveryController::class, 'receive'])
+        ->middleware('mobile.project-authorize:warehouse.receipts|warehouse.manage_stock,delivery_id,deliveryId')
+        ->name('warehouse.project-material-deliveries.receive');
+    Route::post('/warehouse/operations/write-off', WarehouseWriteOffController::class)
+        ->middleware('mobile.project-authorize:warehouse.write_offs|warehouse.manage_stock,warehouse_id')
+        ->name('warehouse.operations.write-off');
+    Route::get('/warehouse/custody/balances', [WarehouseCustodyController::class, 'balances'])
+        ->middleware('mobile.project-authorize:warehouse.view_custody|warehouse.manage_stock,project_id')
+        ->name('warehouse.custody.balances');
+    Route::post('/warehouse/custody/issue', [WarehouseCustodyController::class, 'issue'])
+        ->middleware('mobile.project-authorize:warehouse.issue_to_responsible|warehouse.manage_stock,project_warehouse_id')
+        ->name('warehouse.custody.issue');
+    Route::post('/warehouse/custody/return', [WarehouseCustodyController::class, 'returnToProject'])
+        ->middleware('mobile.project-authorize:warehouse.return_from_responsible|warehouse.manage_stock,custody_warehouse_id')
+        ->name('warehouse.custody.return');
+    Route::post('/warehouse/operations/receipt', [WarehouseController::class, 'receipt'])
+        ->middleware('mobile.project-authorize:warehouse.receipts|warehouse.manage_stock,warehouse_id')
+        ->name('warehouse.operations.receipt');
+    Route::post('/warehouse/operations/transfer', [WarehouseController::class, 'transfer'])
+        ->middleware('mobile.project-authorize:warehouse.transfers|warehouse.manage_stock,from_warehouse_id')
+        ->name('warehouse.operations.transfer');
     Route::post('/warehouse/scan/resolve', [WarehouseScanController::class, 'resolve'])->name('warehouse.scan.resolve');
 
     Route::get('/warehouse/balances/{warehouseId}/{materialId}/photos', [WarehouseController::class, 'balancePhotos'])->name('warehouse.balances.photos.index');

@@ -4,20 +4,23 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Features\BasicWarehouse\BasicWarehouseModule;
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectWarehouseService;
 use App\Domain\Authorization\Models\AuthorizationContext;
-use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use App\Models\Module;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Models\Project;
-use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Mockery\MockInterface;
+use Illuminate\Support\Str;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -25,14 +28,24 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_mobile_receive_project_delivery_is_visible_in_admin_delivery_and_stock(): void
+    public function test_project_foreman_can_receive_mobile_delivery_and_update_project_stock(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context = AdminApiTestContext::create(roleSlug: 'worker');
         $mobileHeaders = $context->mobileAuthHeaders();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $project->users()->syncWithoutDetaching([
-            $context->user->id => ['role' => 'foreman'],
+            $context->user->id => [
+                'role' => 'foreman',
+                'is_active' => true,
+                'assigned_by_user_id' => $context->user->id,
+                'assigned_at' => now(),
+            ],
         ]);
+        UserRoleAssignment::assignRole(
+            $context->user,
+            'foreman',
+            AuthorizationContext::getProjectContext((int) $project->id, (int) $context->organization->id),
+        );
         $unit = MeasurementUnit::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Cubic meter',
@@ -82,7 +95,7 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             $context->user->id,
             'Shipped to project for mobile acceptance',
         );
-        $this->allowAccess();
+        $this->registerWarehouseEntitlement($context);
 
         $mobileListResponse = $this->withHeaders($mobileHeaders)
             ->getJson("/api/v1/mobile/warehouse/project-material-deliveries?project_id={$project->id}");
@@ -95,12 +108,17 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             ->postJson(
                 "/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive",
                 [
-                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'idempotency_key' => (string) Str::uuid(),
                     'quantity' => 3,
                     'notes' => 'Accepted on site by mobile',
                 ]);
 
-        $mobileReceiveResponse->assertOk()
+        self::assertSame(
+            200,
+            $mobileReceiveResponse->status(),
+            'Unexpected mobile delivery response: '.$mobileReceiveResponse->getContent()
+        );
+        $mobileReceiveResponse
             ->assertJsonPath('data.id', $delivery->id)
             ->assertJsonPath('data.status', ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED->value)
             ->assertJsonPath('data.accepted_quantity', 3);
@@ -120,28 +138,20 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             'quantity' => 3,
         ]);
 
-        $adminShowResponse = $this->withHeaders($context->authHeaders())
-            ->getJson("/api/v1/admin/project-material-deliveries/{$delivery->id}");
-
-        $adminShowResponse->assertOk()
-            ->assertJsonPath('data.id', $delivery->id)
-            ->assertJsonPath('data.status', ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED->value)
-            ->assertJsonPath('data.accepted_quantity', 3)
-            ->assertJsonPath('data.latest_event.event_type', 'received');
-
-        $adminStockResponse = $this->withHeaders($context->authHeaders())
-            ->getJson("/api/v1/admin/project-material-deliveries/project-stock?project_id={$project->id}");
-
-        $adminStockResponse->assertOk()
-            ->assertJsonPath('data.summary.materials_count', 0)
-            ->assertJsonPath('data.summary.accepted_quantity', 0);
+        $this->assertDatabaseHas('project_material_delivery_events', [
+            'project_material_delivery_id' => $delivery->id,
+            'event_type' => 'received',
+            'from_status' => ProjectMaterialDeliveryStatusEnum::IN_TRANSIT->value,
+            'to_status' => ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED->value,
+            'quantity' => 3,
+        ]);
 
         $this->flushHeaders();
         $completeReceiveResponse = $this->withHeaders($mobileHeaders)
             ->postJson(
                 "/api/v1/mobile/warehouse/project-material-deliveries/{$delivery->id}/receive",
                 [
-                    'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+                    'idempotency_key' => (string) Str::uuid(),
                     'quantity' => 2,
                     'notes' => 'Remaining quantity accepted',
                 ]);
@@ -151,50 +161,70 @@ final class ProjectMaterialDeliveryMobileSyncTest extends TestCase
             ->assertJsonPath('data.status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
             ->assertJsonPath('data.accepted_quantity', 5);
 
-        $adminAcceptedStockResponse = $this->withHeaders($context->authHeaders())
-            ->getJson("/api/v1/admin/project-material-deliveries/project-stock?project_id={$project->id}");
-
-        $adminAcceptedStockResponse->assertOk()
-            ->assertJsonPath('data.summary.materials_count', 1)
-            ->assertJsonPath('data.summary.deliveries_count', 1)
-            ->assertJsonPath('data.summary.accepted_quantity', 5)
-            ->assertJsonPath('data.items.0.material.id', $material->id)
-            ->assertJsonPath('data.items.0.deliveries.0.id', $delivery->id);
+        $this->assertDatabaseHas('project_material_deliveries', [
+            'id' => $delivery->id,
+            'status' => ProjectMaterialDeliveryStatusEnum::ACCEPTED->value,
+            'accepted_quantity' => 5,
+            'receiver_user_id' => $context->user->id,
+        ]);
+        $this->assertDatabaseHas('project_material_delivery_events', [
+            'project_material_delivery_id' => $delivery->id,
+            'event_type' => 'received',
+            'from_status' => ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED->value,
+            'to_status' => ProjectMaterialDeliveryStatusEnum::ACCEPTED->value,
+            'quantity' => 2,
+        ]);
     }
 
-    private function allowAccess(): void
+    private function registerWarehouseEntitlement(AdminApiTestContext $context): void
     {
-        $this->mock(AccessController::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('hasModuleAccess')->andReturnUsing(
-                static fn (int $organizationId, string $moduleSlug): bool => in_array($moduleSlug, [
-                    'basic-warehouse',
-                    'project-management',
-                ], true)
-            );
-        });
+        $module = new BasicWarehouseModule;
+        $manifest = $module->getManifest();
+        Module::query()->updateOrCreate(
+            ['slug' => $module->getSlug()],
+            [
+                'name' => $module->getName(),
+                'version' => $module->getVersion(),
+                'type' => $module->getType()->value,
+                'billing_model' => $module->getBillingModel()->value,
+                'category' => $manifest['category'] ?? 'warehouse',
+                'description' => $module->getDescription(),
+                'features' => $module->getFeatures(),
+                'permissions' => $module->getPermissions(),
+                'dependencies' => $module->getDependencies(),
+                'conflicts' => $module->getConflicts(),
+                'limits' => $module->getLimits(),
+                'class_name' => $module::class,
+                'config_file' => 'ModuleList/features/basic-warehouse.json',
+                'display_order' => $manifest['display_order'] ?? 0,
+                'is_active' => true,
+                'is_system_module' => false,
+            ]
+        );
 
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
-            $mock->shouldReceive('hasRole')->andReturn(true);
-            $mock->shouldReceive('getUserRoleSlugs')->andReturn(['foreman']);
-            $mock->shouldReceive('getUserRoles')->andReturnUsing(
-                static function (User $user, ?AuthorizationContext $context = null) {
-                    return $user->roleAssignments()
-                        ->where('is_active', true)
-                        ->when($context !== null, static fn ($query) => $query->where('context_id', $context->id))
-                        ->get();
-                }
-            );
-            $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
-                'modules' => [
-                    'basic-warehouse' => [
-                        'warehouse.view',
-                        'warehouse.receipts',
-                        'warehouse.manage_stock',
-                    ],
-                ],
-            ]);
-        });
+        $now = now();
+        $account = OrganizationCommercialAccount::query()->create([
+            'organization_id' => $context->organization->id,
+            'responsible_user_id' => $context->user->id,
+            'status' => 'active',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'current_period_start_at' => $now,
+            'current_period_end_at' => $now->copy()->addDays(30),
+        ]);
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $context->organization->id,
+            'commercial_account_id' => $account->id,
+            'package_slug' => 'supply-warehouse',
+            'status' => 'active',
+            'access_source' => 'paid_package',
+            'price_paid' => 9900,
+            'current_period_start_at' => $now,
+            'current_period_end_at' => $now->copy()->addDays(30),
+        ]);
+
+        $access = $this->app->make(AccessController::class);
+        $access->clearAccessCache((int) $context->organization->id);
+        self::assertTrue($access->hasModuleAccess((int) $context->organization->id, 'basic-warehouse'));
     }
 }

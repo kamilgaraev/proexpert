@@ -19,7 +19,6 @@ Route::prefix('api/v1/mobile/time-tracking')
         Route::post('/entries/{entry}/submit', [TimeTrackingController::class, 'submit'])->name('entries.submit');
         Route::post('/entries/{entry}/correction', [TimeTrackingController::class, 'correction'])->name('entries.correction');
         Route::get('/pending-approvals', [MobileTimeEntryApprovalController::class, 'index'])
-            ->middleware('authorize:time_tracking.view')
             ->name('pending-approvals.index');
         Route::post('/entries/{entry}/approve', [MobileTimeEntryApprovalController::class, 'approve'])
             ->whereNumber('entry')

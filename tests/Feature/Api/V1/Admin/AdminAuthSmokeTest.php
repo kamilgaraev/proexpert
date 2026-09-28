@@ -16,10 +16,11 @@ it('allows an admin user with web admin role to login', function (): void {
         'email' => 'admin-smoke@example.com',
     ]);
 
-    $response = $this->postJson('/api/v1/admin/auth/login', [
-        'email' => $context->user->email,
-        'password' => 'password',
-    ]);
+    $response = $this->withHeader('Origin', (string) config('web_auth.origins.admin.0'))
+        ->postJson('/api/v1/admin/auth/login', [
+            'email' => $context->user->email,
+            'password' => 'password',
+        ]);
 
     $response
         ->assertOk()
@@ -41,10 +42,11 @@ it('denies admin login for a user without admin access', function (): void {
         'current_organization_id' => null,
     ]);
 
-    $response = $this->postJson('/api/v1/admin/auth/login', [
-        'email' => $user->email,
-        'password' => 'password',
-    ]);
+    $response = $this->withHeader('Origin', (string) config('web_auth.origins.admin.0'))
+        ->postJson('/api/v1/admin/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
 
     $response
         ->assertForbidden()

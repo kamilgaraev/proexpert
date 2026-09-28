@@ -52,10 +52,11 @@ final class InactiveUserAuthTest extends TestCase
             'is_active' => false,
         ]);
 
-        $response = $this->postJson('/api/v1/landing/auth/login', [
-            'email' => $user->email,
-            'password' => 'password',
-        ]);
+        $response = $this->withHeader('Origin', (string) config('web_auth.origins.lk.0'))
+            ->postJson('/api/v1/landing/auth/login', [
+                'email' => $user->email,
+                'password' => 'password',
+            ]);
 
         $response
             ->assertForbidden()
@@ -65,7 +66,8 @@ final class InactiveUserAuthTest extends TestCase
         $payload = $response->json();
 
         $this->assertArrayNotHasKey('token', $payload);
-        $this->assertArrayNotHasKey('data', $payload);
+        $this->assertArrayHasKey('data', $payload);
+        $this->assertNull($payload['data']);
     }
 
     public function test_customer_login_rejects_inactive_user(): void

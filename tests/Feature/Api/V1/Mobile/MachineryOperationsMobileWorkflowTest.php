@@ -80,11 +80,16 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
         $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$foreignShift->id}/approve")
             ->assertForbidden();
+        $this->assertDatabaseHas('machinery_shift_reports', [
+            'id' => $foreignShift->id,
+            'organization_id' => $foreignContext->organization->id,
+            'status' => 'submitted',
+        ]);
 
         $this->allowAccess();
         $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$foreignShift->id}/approve")
-            ->assertNotFound();
+            ->assertForbidden();
     }
 
     public function test_mobile_shift_review_rejects_project_outside_user_scope(): void
@@ -111,8 +116,12 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
 
         $this->withHeaders($context->mobileAuthHeaders())
             ->postJson("/api/v1/mobile/machinery-operations/shift-reports/{$shift->id}/approve")
-            ->assertUnprocessable()
-            ->assertJsonPath('message', trans_message('machinery_operations.errors.project_not_found'));
+            ->assertForbidden();
+        $this->assertDatabaseHas('machinery_shift_reports', [
+            'id' => $shift->id,
+            'organization_id' => $context->organization->id,
+            'status' => 'submitted',
+        ]);
     }
 
     public function test_mobile_rejects_same_organization_shift_link_mismatch(): void
@@ -336,7 +345,7 @@ final class MachineryOperationsMobileWorkflowTest extends TestCase
                 'actual_hours' => 1,
                 'fuel_consumed' => 1,
             ]);
-        $foreignShift->assertStatus(422);
+        $foreignShift->assertForbidden();
     }
 
     public function test_mobile_user_can_record_machine_shift_actuals(): void

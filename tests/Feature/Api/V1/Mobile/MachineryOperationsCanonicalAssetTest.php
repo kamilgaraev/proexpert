@@ -10,21 +10,78 @@ use App\BusinessModules\Core\AssetManagement\Enums\AssetTechnicalStatus;
 use App\BusinessModules\Core\AssetManagement\Models\OrganizationAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAsset;
 use App\BusinessModules\Features\MachineryOperations\Models\MachineryAssignment;
-use App\Domain\Authorization\Models\AuthorizationContext;
-use App\Domain\Authorization\Services\AuthorizationService;
-use App\Models\Project;
-use App\Models\User;
-use App\Modules\Core\AccessController;
-use Mockery\MockInterface;
-use Tests\Support\AdminApiTestContext;
+use Tests\Support\MobileProjectRoleTestContext;
 use Tests\TestCase;
 
 final class MachineryOperationsCanonicalAssetTest extends TestCase
 {
+    public function test_canonical_ineligible_state_blocks_shift_even_when_legacy_asset_is_operating(): void
+    {
+        $context = MobileProjectRoleTestContext::create('machine_operator');
+        $project = $context->project;
+        $context->activatePackages(['machinery']);
+        $canonical = OrganizationAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Unavailable canonical roller',
+            'inventory_number' => 'MOB-CAN-UNAVAILABLE',
+            'accounting_mode' => AssetAccountingMode::Serialized,
+            'ownership_type' => 'owned',
+            'lifecycle_status' => AssetLifecycleStatus::Active,
+            'technical_status' => AssetTechnicalStatus::Unavailable,
+            'current_project_id' => $project->id,
+            'metadata' => ['machinery_operation_status' => 'in_operation'],
+        ]);
+        $legacy = MachineryAsset::query()->create([
+            'organization_id' => $context->organization->id,
+            'organization_asset_id' => $canonical->id,
+            'current_project_id' => $project->id,
+            'asset_code' => 'MOB-CAN-UNAVAILABLE',
+            'name' => 'Legacy operating status',
+            'status' => 'in_operation',
+            'ownership_type' => 'owned',
+            'operating_cost_per_hour' => 1000,
+        ]);
+        MachineryAssignment::query()->create([
+            'organization_id' => $context->organization->id,
+            'organization_asset_id' => $canonical->id,
+            'asset_id' => $legacy->id,
+            'project_id' => $project->id,
+            'requested_by_user_id' => $context->user->id,
+            'approved_by_user_id' => $context->user->id,
+            'status' => 'active',
+            'planned_start_at' => now()->subHour(),
+            'actual_start_at' => now()->subHour(),
+        ]);
+
+        $response = $this->withHeaders($context->headers())
+            ->postJson('/api/v1/mobile/machinery-operations/shift-reports', [
+                'asset_id' => $legacy->id,
+                'project_id' => $project->id,
+                'report_date' => now()->toDateString(),
+                'actual_hours' => 4,
+                'fuel_consumed' => 20,
+                'pre_shift_inspection' => [
+                    'result' => 'serviceable',
+                    'evidence' => ['source' => 'automated_regression'],
+                    'defects' => [],
+                ],
+            ]);
+
+        self::assertSame(422, $response->getStatusCode(), $response->getContent());
+        $response->assertJsonPath('message', trans_message('machinery_operations.errors.shift_asset_not_operational'));
+        $this->assertDatabaseMissing('machinery_shift_reports', ['asset_id' => $legacy->id]);
+        $this->assertDatabaseHas('machinery_assets', ['id' => $legacy->id, 'status' => 'in_operation']);
+        $this->assertDatabaseHas('organization_assets', [
+            'id' => $canonical->id,
+            'technical_status' => AssetTechnicalStatus::Unavailable->value,
+        ]);
+    }
+
     public function test_mobile_payload_reads_canonical_fields_and_writes_canonical_shift_link(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'foreman');
-        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context = MobileProjectRoleTestContext::create('machine_operator');
+        $project = $context->project;
+        $context->activatePackages(['machinery']);
         $canonical = OrganizationAsset::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Canonical mobile roller',
@@ -57,9 +114,7 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
             'planned_start_at' => now()->subHour(),
             'actual_start_at' => now()->subHour(),
         ]);
-        $this->allowAccess();
-
-        $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->headers())
             ->getJson("/api/v1/mobile/machinery-operations/assets?project_id={$project->id}")
             ->assertOk()
             ->assertJsonPath('data.data.0.id', $legacy->id)
@@ -67,27 +122,19 @@ final class MachineryOperationsCanonicalAssetTest extends TestCase
             ->assertJsonPath('data.data.0.name', 'Canonical mobile roller')
             ->assertJsonPath('data.data.0.status', 'in_operation');
 
-        $shift = $this->withHeaders($context->authHeaders())->postJson('/api/v1/mobile/machinery-operations/shift-reports', [
+        $shift = $this->withHeaders($context->headers())->postJson('/api/v1/mobile/machinery-operations/shift-reports', [
             'asset_id' => $legacy->id,
             'project_id' => $project->id,
             'report_date' => now()->toDateString(),
             'actual_hours' => 4,
             'fuel_consumed' => 20,
+            'pre_shift_inspection' => [
+                'result' => 'serviceable',
+                'evidence' => ['source' => 'automated_regression'],
+                'defects' => [],
+            ],
         ]);
-        $shift->assertCreated()->assertJsonPath('data.organization_asset_id', $canonical->id);
-    }
-
-    private function allowAccess(): void
-    {
-        $this->mock(AccessController::class, fn (MockInterface $mock) => $mock->shouldReceive('hasModuleAccess')->andReturn(true));
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
-            $mock->shouldReceive('hasRole')->andReturn(true);
-            $mock->shouldReceive('getUserRoleSlugs')->andReturn(['foreman']);
-            $mock->shouldReceive('getUserRoles')->andReturnUsing(
-                static fn (User $user, ?AuthorizationContext $context = null) => $user->roleAssignments()->where('is_active', true)->get(),
-            );
-        });
+        self::assertSame(201, $shift->getStatusCode(), $shift->getContent());
+        $shift->assertJsonPath('data.organization_asset_id', $canonical->id);
     }
 }

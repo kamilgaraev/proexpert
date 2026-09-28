@@ -38,6 +38,10 @@ final class MobileWorkflowTaskResource extends JsonResource
             'schedule_label' => $task->scheduleTask?->schedule?->name,
             'estimate_item_id' => $task->estimate_item_id,
             'estimate_item_label' => $task->estimateItem?->name,
+            'work_name' => $task->scheduleTask?->name
+                ?: $task->estimateItem?->name
+                ?: data_get($task->additional_info, 'work_name')
+                ?: $task->workType?->name,
             'work_origin_type' => $task->work_origin_type,
             'work_origin_label' => $task->work_origin_type
                 ? $this->label("workflow_management.origins.{$task->work_origin_type}")
@@ -55,6 +59,7 @@ final class MobileWorkflowTaskResource extends JsonResource
             'total_amount' => $task->total_amount !== null ? (float) $task->total_amount : null,
             'completion_date' => $task->completion_date?->toDateString(),
             'notes' => $task->notes,
+            'description' => $task->description,
             'status' => $task->status,
             'status_label' => $this->label("workflow_management.statuses.{$task->status}"),
             'comments' => $workflow['comments'],
@@ -85,7 +90,7 @@ final class MobileWorkflowTaskResource extends JsonResource
     private function availableActions(Request $request, CompletedWork $task): array
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return [];
         }
 
@@ -95,7 +100,7 @@ final class MobileWorkflowTaskResource extends JsonResource
             ['organization_id' => (int) $task->organization_id]
         );
 
-        if (!$canEdit) {
+        if (! $canEdit) {
             return [];
         }
 
@@ -105,7 +110,7 @@ final class MobileWorkflowTaskResource extends JsonResource
             default => [],
         };
 
-        if (!in_array($task->status, ['cancelled'], true)) {
+        if (! in_array($task->status, ['cancelled'], true)) {
             $actions[] = 'comment';
         }
 

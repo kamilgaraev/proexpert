@@ -319,8 +319,9 @@ final class MachineryOperationsService
                 ->where('asset_id', $asset->id)
                 ->whereIn('status', MachineryShiftInvariant::OPEN_STATUSES)
                 ->exists();
+            $assetStatus = $this->workflow->status($asset);
             $this->enforceShiftInvariant(static fn () => MachineryShiftInvariant::assertStartAllowed(
-                (string) $asset->status,
+                $assetStatus,
                 $hasOpenShift,
                 $meterStart,
                 $currentMeter,

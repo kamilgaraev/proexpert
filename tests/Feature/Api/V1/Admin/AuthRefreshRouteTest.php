@@ -9,11 +9,9 @@ use Tests\TestCase;
 
 class AuthRefreshRouteTest extends TestCase
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
-    public function test_admin_refresh_route_allows_expired_jwt_to_reach_controller(): void
+    public function test_admin_refresh_route_uses_cookie_pipeline_without_legacy_jwt_guard(): void
     {
         $route = Route::getRoutes()->getByName('admin.auth.refresh');
 
@@ -23,8 +21,12 @@ class AuthRefreshRouteTest extends TestCase
 
         $middleware = $route->gatherMiddleware();
 
-        $this->assertContains('auth.jwt:api_admin', $middleware);
+        $this->assertContains('auth.web-refresh:admin', $middleware);
+        $this->assertContains('origin.web:admin', $middleware);
+        $this->assertContains('csrf.web:admin', $middleware);
+        $this->assertContains('throttle:web-refresh', $middleware);
         $this->assertNotContains('auth:api_admin', $middleware);
+        $this->assertNotContains('auth.jwt:api_admin', $middleware);
     }
 
     public function test_admin_me_and_logout_remain_fully_authenticated(): void

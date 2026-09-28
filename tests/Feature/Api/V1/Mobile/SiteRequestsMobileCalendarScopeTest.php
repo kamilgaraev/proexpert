@@ -45,8 +45,19 @@ final class SiteRequestsMobileCalendarScopeTest extends TestCase
         $response = $this->withHeaders($context->mobileAuthHeaders())
             ->getJson('/api/v1/mobile/site-requests/calendar?start_date='.now()->toDateString().'&end_date='.now()->addDay()->toDateString());
 
-        $response->assertOk();
-        $eventIds = collect($response->json('data'))->pluck('id')->all();
+        $response->assertOk()->assertJsonStructure([
+            'data' => [
+                'data' => [[
+                    'id',
+                    'site_request_id',
+                    'project' => ['id'],
+                ]],
+            ],
+        ]);
+        $events = collect($response->json('data.data'));
+        $this->assertCount(1, $events);
+        $this->assertSame($allowedProject->id, $events->first()['project']['id']);
+        $eventIds = $events->pluck('id')->all();
         $this->assertContains($allowedEvent->id, $eventIds);
         $this->assertNotContains($hiddenEvent->id, $eventIds);
     }

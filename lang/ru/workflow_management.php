@@ -21,7 +21,7 @@ return [
     'statuses' => [
         'draft' => 'Черновик',
         'pending' => 'Ожидает согласования',
-        'in_review' => 'На доработке',
+        'in_review' => 'На проверке',
         'confirmed' => 'Согласовано',
         'cancelled' => 'Отменено',
         'rejected' => 'Отклонено',

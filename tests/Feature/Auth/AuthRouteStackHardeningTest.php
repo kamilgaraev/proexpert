@@ -16,9 +16,7 @@ use Tests\TestCase;
 
 final class AuthRouteStackHardeningTest extends TestCase
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     public function test_public_auth_entrypoints_use_auth_throttle(): void
     {
@@ -66,6 +64,7 @@ final class AuthRouteStackHardeningTest extends TestCase
         foreach ([
             'api/v1/landing/auth/refresh' => 'lk',
             'api/v1/admin/auth/refresh' => 'admin',
+            'api/v1/customer/auth/refresh' => 'customer',
         ] as $uri => $audience) {
             $route = $this->routeByUri($uri);
 
@@ -92,10 +91,6 @@ final class AuthRouteStackHardeningTest extends TestCase
     public function test_legacy_refresh_routes_use_jwt_session_and_dashboard_throttle_without_auth_guard(): void
     {
         foreach ([
-            'api/v1/customer/auth/refresh' => [
-                'jwt' => 'auth.jwt:api_landing',
-                'authGuard' => 'auth:api_landing',
-            ],
             'api/v1/mobile/auth/refresh' => [
                 'jwt' => 'auth.jwt:api_mobile',
                 'authGuard' => 'auth:api_mobile',
@@ -121,14 +116,13 @@ final class AuthRouteStackHardeningTest extends TestCase
         }
     }
 
-    public function test_jwt_middleware_recognizes_all_refresh_endpoints(): void
+    public function test_jwt_middleware_recognizes_legacy_refresh_endpoints(): void
     {
         $middleware = $this->app->make(JwtMiddleware::class);
         $method = new ReflectionMethod(JwtMiddleware::class, 'isRefreshEndpoint');
         $method->setAccessible(true);
 
         foreach ([
-            'api/v1/customer/auth/refresh',
             'api/v1/mobile/auth/refresh',
             'api/v1/landing/landingAdminAuth/refresh',
         ] as $uri) {
@@ -157,7 +151,7 @@ final class AuthRouteStackHardeningTest extends TestCase
 
     public function test_legacy_cookie_is_never_promoted_to_authorization_on_web_interfaces(): void
     {
-        $middleware = new UseJwtCookieForAuthorization(new JwtCookieService());
+        $middleware = new UseJwtCookieForAuthorization(new JwtCookieService);
 
         foreach ([
             'api/v1/landing/dashboard',
@@ -180,7 +174,8 @@ final class AuthRouteStackHardeningTest extends TestCase
         foreach ([
             'api/v1/landing/dashboard',
             'api/v1/landing/organization',
-            'api/v1/landing/billing/plans',
+            'api/v1/landing/billing/limits',
+            'api/v1/landing/packages',
             'api/v1/landing/modules',
         ] as $uri) {
             $route = $this->routeByUri($uri);

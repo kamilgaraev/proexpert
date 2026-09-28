@@ -128,47 +128,47 @@ Route::prefix('api/v1/mobile/machinery-operations')
     ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app', 'machinery-operations.active'])
     ->group(function (): void {
         Route::get('/assets', [MobileMachineryOperationsController::class, 'assets'])
-            ->middleware('authorize:machinery-operations.view')
+            ->middleware('mobile.project-authorize:machinery-operations.view')
             ->name('assets.index');
         Route::post('/asset-requests', [MobileMachineryOperationsController::class, 'storeRequest'])
-            ->middleware('authorize:machinery-operations.requests.create')
+            ->middleware('mobile.project-authorize:machinery-operations.requests.create')
             ->name('asset_requests.store');
         Route::get('/shift-reports', [MobileMachineryOperationsController::class, 'shifts'])
-            ->middleware('authorize:machinery-operations.view')
+            ->middleware('mobile.project-authorize:machinery-operations.view')
             ->name('shift_reports.index');
         Route::post('/shift-reports', [MobileMachineryOperationsController::class, 'storeShift'])
-            ->middleware('authorize:machinery-operations.shifts.create')
+            ->middleware('mobile.project-authorize:machinery-operations.shifts.create')
             ->name('shift_reports.store');
         Route::post('/shift-reports/{id}/submit', [MobileMachineryOperationsController::class, 'submitShift'])
             ->whereNumber('id')
-            ->middleware('authorize:machinery-operations.shifts.create')
+            ->middleware('mobile.project-authorize:machinery-operations.shifts.create,shift_report,id')
             ->name('shift_reports.submit');
         Route::post('/shift-reports/{id}/finish', [MobileMachineryOperationsController::class, 'finishShift'])
             ->whereNumber('id')
-            ->middleware('authorize:machinery-operations.shifts.create')
+            ->middleware('mobile.project-authorize:machinery-operations.shifts.create,shift_report,id')
             ->name('shift_reports.finish');
         Route::post('/shift-reports/{id}/approve', [MobileMachineryOperationsController::class, 'approveShift'])
             ->whereNumber('id')
-            ->middleware('authorize:machinery-operations.shifts.approve')
+            ->middleware('mobile.project-authorize:machinery-operations.shifts.approve,shift_report,id')
             ->name('shift_reports.approve');
         Route::post('/shift-reports/{id}/reject', [MobileMachineryOperationsController::class, 'rejectShift'])
             ->whereNumber('id')
-            ->middleware('authorize:machinery-operations.shifts.approve')
+            ->middleware('mobile.project-authorize:machinery-operations.shifts.approve,shift_report,id')
             ->name('shift_reports.reject');
         Route::post('/downtimes', [MobileMachineryOperationsController::class, 'storeDowntime'])
-            ->middleware('authorize:machinery-operations.downtime.manage')
+            ->middleware('mobile.project-authorize:machinery-operations.downtime.manage')
             ->name('downtimes.store');
         Route::post('/fuel-issues', [MobileMachineryOperationsController::class, 'storeFuelIssue'])
-            ->middleware('authorize:machinery-operations.fuel.manage')
+            ->middleware('mobile.project-authorize:machinery-operations.fuel.manage')
             ->name('fuel_issues.store');
         Route::post('/production-records', [MobileMachineryOperationsController::class, 'storeProductionRecord'])
-            ->middleware('authorize:machinery-operations.shifts.create')
+            ->middleware('mobile.project-authorize:machinery-operations.shifts.create')
             ->name('production_records.store');
         Route::get('/maintenance-orders', [MobileMachineryOperationsController::class, 'maintenanceOrders'])
-            ->middleware('authorize:machinery-operations.view')
+            ->middleware('mobile.project-authorize:machinery-operations.view')
             ->name('maintenance_orders.index');
         Route::post('/maintenance-orders/{id}/complete', [MobileMachineryOperationsController::class, 'completeMaintenanceOrder'])
             ->whereNumber('id')
-            ->middleware('authorize:machinery-operations.downtime.manage')
+            ->middleware('mobile.project-authorize:machinery-operations.downtime.manage,maintenance_order,id')
             ->name('maintenance_orders.complete');
     });
