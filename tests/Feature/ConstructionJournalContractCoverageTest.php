@@ -27,6 +27,7 @@ use App\Models\User;
 use App\Services\CompletedWork\CompletedWorkFactService;
 use App\Services\Logging\LoggingService;
 use App\Services\Workflow\WorkflowGuardService;
+use App\Services\Mobile\MobileConstructionJournalService;
 use DomainException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Notification;
@@ -43,6 +44,18 @@ class ConstructionJournalContractCoverageTest extends TestCase
         parent::setUp();
         $this->enableImmutableAuditWriter();
         $this->allowPermissions();
+    }
+
+    public function test_mobile_entry_form_options_resolve_legacy_null_estimate_quantity_total(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $estimateItem->update(['quantity' => 50, 'quantity_total' => null]);
+
+        $options = app(MobileConstructionJournalService::class)->buildEntryFormOptions($user, $journal);
+
+        self::assertSame(50.0, $options['estimates'][0]['items'][0]['quantity']);
+        self::assertSame(50.0, $options['estimates'][0]['items'][0]['quantity_total']);
     }
 
     public function test_existing_contract_coverage_with_schedule_missing_blocks_acting(): void
@@ -410,7 +423,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
         self::assertSame($work->getAttributes(), $work->fresh()->getAttributes());
     }
 
-    public function test_approved_journal_material_from_estimate_updates_contract_fact(): void
+    public function test_approved_journal_material_from_estimate_creates_linked_fact_without_work_progress(): void
     {
         [$organization, $user, $contract, $project, $estimate] = $this->createJournalFixture();
         $journal = $this->createJournal($organization, $project, $contract, $user);
@@ -464,9 +477,9 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertSame($materialItem->id, $work->estimate_item_id);
         $this->assertSame($contract->id, $work->contract_id);
         $this->assertSame(25.0, (float) $work->completed_quantity);
-        $this->assertSame(25.0, $materialItem->getActualVolume($contract->id));
-        $this->assertSame(25.0, $payload['item']['actual_quantity']);
-        $this->assertSame(25.0, $payload['item']['fact_progress_percent']);
+        $this->assertSame(0.0, $materialItem->getActualVolume($contract->id));
+        $this->assertSame(0.0, $payload['item']['actual_quantity']);
+        $this->assertSame(0.0, $payload['item']['fact_progress_percent']);
     }
 
     public function test_completed_work_keeps_stable_journal_volume_link_when_work_volumes_are_reordered(): void
@@ -786,7 +799,6 @@ class ConstructionJournalContractCoverageTest extends TestCase
             'current_organization_id' => $organization->id,
         ]);
         $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects']);
-        $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true]);
         $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false, 'latitude' => 55.75, 'longitude' => 37.62]);
         $contractor = Contractor::create([
             'organization_id' => $organization->id,

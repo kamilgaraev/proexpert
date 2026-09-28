@@ -280,7 +280,7 @@ class MobileConstructionJournalService
                     'name' => $item->name,
                     'item_type' => $item->item_type?->value,
                     'quantity' => $this->requiredEstimateQuantity($item, 'quantity'),
-                    'quantity_total' => $this->requiredEstimateQuantity($item, 'quantity_total'),
+                    'quantity_total' => $this->resolveEstimateQuantityTotal($item),
                     'work_type_id' => $item->work_type_id,
                     'measurement_unit_id' => $item->measurement_unit_id,
                     'workType' => $item->workType ? [
@@ -486,6 +486,17 @@ class MobileConstructionJournalService
         }
 
         return (float) $value;
+    }
+
+    private function resolveEstimateQuantityTotal(EstimateItem $item): float
+    {
+        $this->requiredEstimateQuantity($item, 'quantity');
+
+        if ($item->quantity_total === null) {
+            return $item->resolvePlannedQuantity();
+        }
+
+        return $this->requiredEstimateQuantity($item, 'quantity_total');
     }
 
     private function requiredPayloadString(array $payload, string $key): string

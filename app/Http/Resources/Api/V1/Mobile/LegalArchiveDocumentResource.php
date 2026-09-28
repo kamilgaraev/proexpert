@@ -5,15 +5,21 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1\Mobile;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Models\User;
 use App\Services\LegalArchive\LegalArchiveDictionary;
+use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 final class LegalArchiveDocumentResource extends JsonResource
 {
     /** @param array<string, mixed> $workflowSummary */
-    public function __construct(LegalArchiveDocument $resource, private readonly array $workflowSummary = [])
-    {
+    public function __construct(
+        LegalArchiveDocument $resource,
+        private readonly array $workflowSummary = [],
+        private readonly ?User $actor = null,
+        private readonly ?LegalDocumentSignatureService $signatures = null,
+    ) {
         parent::__construct($resource);
     }
 
@@ -39,7 +45,14 @@ final class LegalArchiveDocumentResource extends JsonResource
             'signature_summary' => ['status' => ((int) ($this->signatures_count ?? 0)) > 0 ? 'registered' : 'not_signed'],
             'signature_requests' => $this->whenLoaded('signatureRequests', fn (): array => $this->signatureRequests
                 ->where('status', 'pending')
-                ->map(fn ($request): array => ['id' => (int) $request->id, 'method' => (string) $request->method])
+                ->map(fn ($request): array => [
+                    'id' => (int) $request->id,
+                    'method' => (string) $request->method,
+                    'can_upload_original' => $request->method === 'paper'
+                        && $this->actor !== null
+                        && $this->signatures !== null
+                        && $this->signatures->canUploadPaperOriginal($request, $this->actor),
+                ])
                 ->values()->all()),
             'workflow_summary' => $this->workflowSummary,
             'obligations' => $this->whenLoaded('obligations', fn (): array => $this->obligations->map(fn ($obligation): array => ['id' => (int) $obligation->id, 'title' => (string) $obligation->title, 'status' => (string) $obligation->status, 'due_at' => $obligation->due_at?->toISOString()])->all()),
