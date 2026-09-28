@@ -1,6 +1,10 @@
 <?php
 
+$defaultGuard = env('AUTH_GUARD', 'web');
+
 return [
+
+    'default_guard' => $defaultGuard,
 
     /*
     |--------------------------------------------------------------------------
@@ -14,7 +18,7 @@ return [
     */
 
     'defaults' => [
-        'guard' => env('AUTH_GUARD', 'web'),
+        'guard' => $defaultGuard,
         'passwords' => env('AUTH_PASSWORD_BROKER', 'users'),
     ],
 
@@ -40,17 +44,17 @@ return [
             'driver' => 'session',
             'provider' => 'users',
         ],
-        
+
         'api_landing' => [
             'driver' => 'jwt',
             'provider' => 'users',
         ],
-        
+
         'api_admin' => [
             'driver' => 'jwt',
             'provider' => 'users',
         ],
-        
+
         'api_mobile' => [
             'driver' => 'jwt',
             'provider' => 'users',

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorResponseFactory;
 use App\Http\Middleware\JwtMiddleware;
+use App\Http\Middleware\ResetJwtRequestState;
 use App\Http\Middleware\SetOrganizationContext;
 use App\Services\Logging\Context\RequestContext;
 use App\Services\Logging\SafeLogWriter;
@@ -37,6 +38,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             // Новая система авторизации
             'authorize' => \App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware::class,
+            'mobile.project-authorize' => \App\Http\Middleware\MobileProjectAuthorizeMiddleware::class,
             'role' => \App\Domain\Authorization\Http\Middleware\RoleMiddleware::class,
             'interface' => \App\Domain\Authorization\Http\Middleware\InterfaceMiddleware::class,
 
@@ -85,6 +87,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
 
         $middleware->prepend(\App\Http\Middleware\TraceHttpRequest::class);
         $middleware->prepend(\App\Http\Middleware\RecordApiResponseTime::class);
+        $middleware->prepend(ResetJwtRequestState::class);
 
         // 3. Prometheus - метрики в конце цепочки для корректного измерения времени
         $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);

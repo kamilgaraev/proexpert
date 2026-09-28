@@ -12,29 +12,31 @@ final class MobileScheduleRouteAuthorizationTest extends TestCase
 {
     public function refreshDatabase(): void {}
 
-    public function test_mobile_schedule_mutation_routes_require_edit_permission(): void
+    public function test_mobile_schedule_routes_authorize_with_project_scope_and_resource_keys(): void
     {
-        $routes = array_values(array_filter(
-            Route::getRoutes()->getRoutes(),
-            static fn (LaravelRoute $route): bool => in_array($route->uri(), [
-                'api/v1/mobile/schedule/daily-plan-assignments/{assignment}/fact',
-                'api/v1/mobile/schedule/daily-plans/{dailyPlan}/submit',
-                'api/v1/mobile/schedule/{schedule_id}/tasks',
-                'api/v1/mobile/schedule/tasks/{task}',
-                'api/v1/mobile/warehouse/operations/write-off',
-            ], true)
-        ));
+        $expectations = [
+            'GET api/v1/mobile/schedule' => 'mobile.project-authorize:schedule.view,project_id',
+            'GET api/v1/mobile/schedule/{scheduleId}' => 'mobile.project-authorize:schedule.view,project_schedule,scheduleId',
+            'GET api/v1/mobile/schedule/tasks/{task}' => 'mobile.project-authorize:schedule.view,schedule_task,task',
+            'POST api/v1/mobile/schedule/{schedule_id}/tasks' => 'mobile.project-authorize:schedule.edit,project_schedule,schedule_id',
+            'PATCH api/v1/mobile/schedule/tasks/{task}' => 'mobile.project-authorize:schedule.edit,schedule_task,task',
+            'GET api/v1/mobile/schedule/daily-plans' => 'mobile.project-authorize:schedule.view,project_id',
+            'PATCH api/v1/mobile/schedule/daily-plan-assignments/{assignment}/fact' => 'mobile.project-authorize:schedule.daily_plan.manage,daily_plan_assignment,assignment',
+            'POST api/v1/mobile/schedule/daily-plans/{dailyPlan}/submit' => 'mobile.project-authorize:schedule.daily_plan.manage,daily_plan,dailyPlan',
+            'POST api/v1/mobile/schedule/work-constraints/{constraint}/linked-action' => 'mobile.project-authorize:schedule.daily_plan.manage,work_constraint,constraint',
+        ];
 
-        $this->assertCount(6, $routes);
+        $routes = Route::getRoutes()->getRoutes();
 
-        foreach ($routes as $route) {
-            $expectedPermission = match (true) {
-                str_contains($route->uri(), 'daily-plan') => 'authorize:schedule.daily_plan.manage',
-                str_contains($route->uri(), 'warehouse') => 'authorize:warehouse.manage_stock',
-                $route->methods()[0] === 'GET' => 'authorize:schedule.view',
-                default => 'authorize:schedule.edit',
-            };
-            $this->assertContains($expectedPermission, $route->gatherMiddleware(), $route->uri());
+        foreach ($expectations as $routeKey => $expectedMiddleware) {
+            [$method, $uri] = explode(' ', $routeKey, 2);
+            $route = collect($routes)->first(
+                static fn (LaravelRoute $candidate): bool => $candidate->uri() === $uri
+                    && in_array($method, $candidate->methods(), true)
+            );
+
+            $this->assertNotNull($route, $routeKey);
+            $this->assertContains($expectedMiddleware, $route->gatherMiddleware(), $routeKey);
         }
     }
 }

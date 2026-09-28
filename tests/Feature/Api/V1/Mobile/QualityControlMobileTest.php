@@ -143,7 +143,7 @@ final class QualityControlMobileTest extends TestCase
 
         $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/quality-control/defects/{$hiddenDefect->id}")
-            ->assertNotFound()
+            ->assertForbidden()
             ->assertJsonPath('success', false)
             ->assertJsonPath('data', null);
     }
@@ -204,7 +204,9 @@ final class QualityControlMobileTest extends TestCase
 
         $this->withHeaders($headers)
             ->postJson("/api/v1/mobile/quality-control/defects/{$hiddenDefect->id}/resolve", $payload)
-            ->assertStatus(422);
+            ->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data', null);
 
         $this->assertSame(QualityDefectStatusEnum::IN_PROGRESS, $hiddenDefect->fresh()->status);
         $this->assertSame(0, $hiddenDefect->statusHistory()->count());

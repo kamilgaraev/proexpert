@@ -32,7 +32,9 @@ final class QualityDefectController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $perPage = min((int) $request->input('per_page', 20), 100);
             $filters = $request->validated();
-            $projectIds = $this->accessibleProjectIds($request);
+            $projectIds = ($filters['project_id'] ?? null) !== null
+                ? [(int) $filters['project_id']]
+                : $this->accessibleProjectIds($request);
 
             if ($projectIds === []) {
                 return MobileResponse::error(trans_message('quality_control.errors.no_accessible_projects'), 403);

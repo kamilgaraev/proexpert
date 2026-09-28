@@ -1,7 +1,9 @@
 param(
     [string] $TestPath = '',
     [string] $TestSuite = '',
-    [string] $Filter = ''
+    [string] $Filter = '',
+    [ValidateSet('phpunit', 'pest')]
+    [string] $Runner = 'phpunit'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -99,7 +101,7 @@ try {
         throw 'postgres_test_container_start_failed'
     }
 
-    $phpunitArguments = @('vendor/bin/phpunit', '-c', $phpunitConfigurationPath)
+    $phpunitArguments = @("vendor/bin/$Runner", '-c', $phpunitConfigurationPath)
     if (-not [string]::IsNullOrWhiteSpace($TestSuite)) {
         $phpunitArguments += @('--testsuite', $TestSuite)
     } else {

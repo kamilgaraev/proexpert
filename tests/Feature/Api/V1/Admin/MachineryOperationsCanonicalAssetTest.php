@@ -18,7 +18,6 @@ use App\BusinessModules\Features\MachineryOperations\Services\MachineryAssetRead
 use App\BusinessModules\Features\MachineryOperations\Services\MachineryOperationsService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Http\Middleware\WebInterfaceSecurityMiddleware;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
@@ -29,12 +28,6 @@ use Tests\TestCase;
 
 final class MachineryOperationsCanonicalAssetTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        $this->withoutMiddleware(WebInterfaceSecurityMiddleware::class);
-    }
-
     public function test_admin_workflow_writes_authoritative_canonical_state_and_shadow_links(): void
     {
         $context = AdminApiTestContext::create();

@@ -4,21 +4,21 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
-use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
-use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionFinding;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefing;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefingParticipant;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionFinding;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermitParticipant;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\UserProjectAccessMode;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Storage\FileService;
-use App\Enums\UserProjectAccessMode;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Mockery\MockInterface;
@@ -112,7 +112,10 @@ final class SafetyManagementMobileTest extends TestCase
                 'severity' => 'major',
                 'photos' => [UploadedFile::fake()->image('foreign.jpg')],
             ])
-            ->assertStatus(422);
+            ->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data', null);
+        $this->assertDatabaseCount('safety_violations', 0);
         $this->assertDatabaseCount('files', 0);
 
         $created = $this->withHeaders($headers)
@@ -546,7 +549,10 @@ final class SafetyManagementMobileTest extends TestCase
                 'occurred_at' => now()->toIso8601String(),
             ]);
 
-        $foreignProjectResponse->assertStatus(422);
+        $foreignProjectResponse->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data', null);
+        $this->assertDatabaseCount('safety_incidents', 1);
     }
 
     public function test_mobile_incident_requires_explicit_type_and_severity(): void
@@ -679,7 +685,10 @@ final class SafetyManagementMobileTest extends TestCase
                 'title' => 'Foreign project finding',
                 'severity' => 'minor',
             ])
-            ->assertStatus(422);
+            ->assertForbidden()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data', null);
+        $this->assertDatabaseCount('safety_inspection_findings', 2);
     }
 
     private function allowModuleAccess(): void
@@ -725,7 +734,7 @@ final class SafetyManagementMobileTest extends TestCase
             'project_id' => $project->id,
             'created_by_user_id' => $context->user->id,
             'responsible_user_id' => $responsibleUser?->id,
-            'permit_number' => 'HSE-P-' . uniqid(),
+            'permit_number' => 'HSE-P-'.uniqid(),
             'title' => 'Высотные работы',
             'permit_type' => 'height_work',
             'location_name' => 'Секция А',

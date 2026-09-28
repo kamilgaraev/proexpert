@@ -142,10 +142,7 @@ final class MobileScheduleTaskService
     private function accessibleSchedule(User $user, int $scheduleId, string $permission = 'schedule.edit'): ProjectSchedule
     {
         $organizationId = (int) $user->current_organization_id;
-        if ($organizationId <= 0 || ! $this->authorization->can($user, $permission, [
-            'organization_id' => $organizationId,
-            'context_type' => 'organization',
-        ])) {
+        if ($organizationId <= 0) {
             throw new DomainException(trans_message('mobile_schedule.errors.project_not_found'));
         }
 
@@ -163,6 +160,14 @@ final class MobileScheduleTaskService
             (int) $schedule->project_id,
             trans_message('mobile_schedule.errors.project_not_found'),
         );
+
+        if (! $this->authorization->can($user, $permission, [
+            'organization_id' => $organizationId,
+            'project_id' => (int) $schedule->project_id,
+            'strict_project_scope' => true,
+        ])) {
+            throw new DomainException(trans_message('mobile_schedule.errors.project_not_found'));
+        }
 
         return $schedule;
     }

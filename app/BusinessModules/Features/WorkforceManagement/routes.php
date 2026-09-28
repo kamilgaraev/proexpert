@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceEmployeeController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\Mobile\WorkforceMobileAttendanceController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceAttendanceQrController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceCorporateController;
+use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceEmployeeController;
 use App\BusinessModules\Features\WorkforceManagement\Http\Controllers\WorkforceProController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -172,11 +172,11 @@ Route::prefix('api/v1/mobile/workforce/attendance')
     ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])
     ->group(function (): void {
         Route::post('/qr', [WorkforceMobileAttendanceController::class, 'issueQr'])
-            ->middleware('authorize:workforce.attendance.qr.self');
+            ->middleware('mobile.project-authorize:workforce.attendance.qr.self');
         Route::post('/qr/scan', [WorkforceMobileAttendanceController::class, 'scanQr'])
-            ->middleware('authorize:workforce.attendance.scan-confirm');
+            ->middleware('mobile.project-authorize:workforce.attendance.scan-confirm,qr_token');
         Route::post('/self', [WorkforceMobileAttendanceController::class, 'selfAttendance'])
-            ->middleware('authorize:workforce.attendance.self');
+            ->middleware('mobile.project-authorize:workforce.attendance.self');
         Route::get('/history', [WorkforceMobileAttendanceController::class, 'history'])
-            ->middleware('authorize:workforce.attendance.self');
+            ->middleware('mobile.project-authorize:workforce.attendance.self');
     });

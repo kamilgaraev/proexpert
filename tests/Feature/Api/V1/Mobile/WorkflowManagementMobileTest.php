@@ -92,6 +92,7 @@ final class WorkflowManagementMobileTest extends TestCase
         $this->assertMobileStatus($changesResponse, 200);
         $changesResponse
             ->assertJsonPath('data.status', 'in_review')
+            ->assertJsonPath('data.status_label', 'На проверке')
             ->assertJsonPath('data.status_history.0.action', 'request_changes');
 
         $rejectedResponse = $this->withHeaders($context->mobileAuthHeaders())
@@ -208,7 +209,7 @@ final class WorkflowManagementMobileTest extends TestCase
                 'comment' => 'Недостаточно прав',
             ]);
         $this->assertMobileStatus($deniedResponse, 403);
-        $this->assertMobileJsonPath($deniedResponse, 'code', 'organization_membership_inactive');
+        $this->assertMobileJsonPath($deniedResponse, 'error_code', 'PERMISSION_DENIED');
         self::assertSame(
             [],
             data_get($workerTask->refresh()->additional_info, 'mobile_workflow.comments', []),
@@ -232,6 +233,43 @@ final class WorkflowManagementMobileTest extends TestCase
         $response
             ->assertJsonPath('data.items.0.id', $task->id)
             ->assertJsonPath('data.items.0.status', 'pending');
+    }
+
+    public function test_mobile_detail_exposes_manual_work_name_description_and_review_label(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $workType = $this->workType($context);
+        $task = $this->completedWork($context, $project, $workType, [
+            'status' => 'in_review',
+            'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
+            'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+            'quantity' => 0.001,
+            'completed_quantity' => 0.001,
+            'price' => 0,
+            'total_amount' => 0,
+            'description' => 'Тестовая ручная запись для мобильной проверки.',
+            'additional_info' => ['work_name' => 'QA: кладка в зоне Z'],
+        ]);
+        $this->registerWorkflowFoundationModules((int) $context->organization->id);
+        $this->assertWorkflowPermissions($context, ['completed_works.view']);
+
+        $response = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/workflow-management/tasks/'.$task->id);
+
+        $this->assertMobileStatus($response, 200);
+        $response
+            ->assertJsonPath('data.id', $task->id)
+            ->assertJsonPath('data.status', 'in_review')
+            ->assertJsonPath('data.status_label', 'На проверке')
+            ->assertJsonPath('data.work_name', 'QA: кладка в зоне Z')
+            ->assertJsonPath('data.description', 'Тестовая ручная запись для мобильной проверки.')
+            ->assertJsonPath('data.work_origin_label', 'Ручной ввод')
+            ->assertJsonPath('data.planning_status_label', trans_message('workflow_management.planning_statuses.requires_schedule'))
+            ->assertJsonPath('data.quantity', 0.001)
+            ->assertJsonPath('data.completed_quantity', 0.001)
+            ->assertJsonPath('data.price', 0)
+            ->assertJsonPath('data.total_amount', 0);
     }
 
     private function workType(AdminApiTestContext $context): WorkType

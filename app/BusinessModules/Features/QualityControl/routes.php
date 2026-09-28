@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-use App\BusinessModules\Features\QualityControl\Http\Controllers\QualityDefectController;
 use App\BusinessModules\Features\QualityControl\Http\Controllers\Customer\QualityDefectController as CustomerQualityDefectController;
 use App\BusinessModules\Features\QualityControl\Http\Controllers\Mobile\QualityDefectController as MobileQualityDefectController;
+use App\BusinessModules\Features\QualityControl\Http\Controllers\QualityDefectController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -49,31 +49,31 @@ Route::prefix('api/v1/mobile/quality-control')
     ->group(function (): void {
         Route::prefix('defects')->name('defects.')->group(function (): void {
             Route::get('/', [MobileQualityDefectController::class, 'index'])
-                ->middleware('authorize:quality-control.view')
+                ->middleware('mobile.project-authorize:quality-control.view,project_id')
                 ->name('index');
             Route::post('/', [MobileQualityDefectController::class, 'store'])
-                ->middleware('authorize:quality-control.defects.create')
+                ->middleware('mobile.project-authorize:quality-control.defects.create,project_id')
                 ->name('store');
             Route::get('/{id}', [MobileQualityDefectController::class, 'show'])
-                ->middleware('authorize:quality-control.view')
+                ->middleware('mobile.project-authorize:quality-control.view,quality_defect,id')
                 ->name('show');
             Route::get('/{id}/assignees', [MobileQualityDefectController::class, 'assignees'])
-                ->middleware('authorize:quality-control.view')
+                ->middleware('mobile.project-authorize:quality-control.view,quality_defect,id')
                 ->name('assignees');
             Route::post('/{id}/assign', [MobileQualityDefectController::class, 'assign'])
-                ->middleware('authorize:quality-control.defects.assign')
+                ->middleware('mobile.project-authorize:quality-control.defects.assign,quality_defect,id')
                 ->name('assign');
             Route::post('/{id}/start', [MobileQualityDefectController::class, 'start'])
-                ->middleware('authorize:quality-control.defects.resolve')
+                ->middleware('mobile.project-authorize:quality-control.defects.resolve,quality_defect,id')
                 ->name('start');
             Route::post('/{id}/resolve', [MobileQualityDefectController::class, 'resolve'])
-                ->middleware('authorize:quality-control.defects.resolve')
+                ->middleware('mobile.project-authorize:quality-control.defects.resolve,quality_defect,id')
                 ->name('resolve');
             Route::post('/{id}/verify', [MobileQualityDefectController::class, 'verify'])
-                ->middleware('authorize:quality-control.defects.verify')
+                ->middleware('mobile.project-authorize:quality-control.defects.verify,quality_defect,id')
                 ->name('verify');
             Route::post('/{id}/reject', [MobileQualityDefectController::class, 'reject'])
-                ->middleware('authorize:quality-control.defects.reject')
+                ->middleware('mobile.project-authorize:quality-control.defects.reject,quality_defect,id')
                 ->name('reject');
         });
     });

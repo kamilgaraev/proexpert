@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Customer\HandoverAcceptanceController as CustomerHandoverAcceptanceController;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\HandoverAcceptanceController;
-use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\WorkReworkController;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobile\HandoverAcceptanceController as MobileHandoverAcceptanceController;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\WorkReworkController;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Middleware\AuthorizeMobileHandoverProjectList;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -81,38 +82,38 @@ Route::prefix('api/v1/mobile/handover-acceptance')
     ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app', 'handover-acceptance.active'])
     ->group(function (): void {
         Route::get('/scopes', [MobileHandoverAcceptanceController::class, 'index'])
-            ->middleware('authorize:handover-acceptance.view');
+            ->middleware(AuthorizeMobileHandoverProjectList::class);
         Route::get('/scopes/{scope}', [MobileHandoverAcceptanceController::class, 'show'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.view');
+            ->middleware('mobile.project-authorize:handover-acceptance.view,handover_scope,scope');
         Route::post('/checklist-items/{item}/review', [MobileHandoverAcceptanceController::class, 'reviewChecklistItem'])
             ->whereNumber('item')
-            ->middleware('authorize:handover-acceptance.inspect');
+            ->middleware('mobile.project-authorize:handover-acceptance.inspect,handover_checklist_item,item');
         Route::post('/sessions/{session}/findings', [MobileHandoverAcceptanceController::class, 'storeFinding'])
             ->whereNumber('session')
-            ->middleware('authorize:handover-acceptance.punch-list.create');
+            ->middleware('mobile.project-authorize:handover-acceptance.punch-list.create,handover_session,session');
         Route::post('/findings/{finding}/resolve', [MobileHandoverAcceptanceController::class, 'resolveFinding'])
             ->whereNumber('finding')
-            ->middleware('authorize:handover-acceptance.punch-list.resolve');
+            ->middleware('mobile.project-authorize:handover-acceptance.punch-list.resolve,handover_finding,finding');
         Route::post('/scopes/{scope}/ready-for-reinspection', [MobileHandoverAcceptanceController::class, 'readyForReinspection'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.inspect');
+            ->middleware('mobile.project-authorize:handover-acceptance.inspect,handover_scope,scope');
         Route::post('/scopes/{scope}/start', [MobileHandoverAcceptanceController::class, 'start'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.inspect');
+            ->middleware('mobile.project-authorize:handover-acceptance.inspect,handover_scope,scope');
         Route::post('/scopes/{scope}/accept', [MobileHandoverAcceptanceController::class, 'accept'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.approve');
+            ->middleware('mobile.project-authorize:handover-acceptance.approve,handover_scope,scope');
         Route::post('/scopes/{scope}/handover', [MobileHandoverAcceptanceController::class, 'handover'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.customer-sign');
+            ->middleware('mobile.project-authorize:handover-acceptance.customer-sign,handover_scope,scope');
         Route::post('/scopes/{scope}/reject', [MobileHandoverAcceptanceController::class, 'reject'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.reject');
+            ->middleware('mobile.project-authorize:handover-acceptance.reject,handover_scope,scope');
         Route::post('/scopes/{scope}/reopen', [MobileHandoverAcceptanceController::class, 'reopen'])
             ->whereNumber('scope')
-            ->middleware('authorize:handover-acceptance.reject');
+            ->middleware('mobile.project-authorize:handover-acceptance.reject,handover_scope,scope');
         Route::post('/package-documents/{document}/upload', [MobileHandoverAcceptanceController::class, 'uploadPackageDocument'])
             ->whereNumber('document')
-            ->middleware('authorize:handover-acceptance.submit');
+            ->middleware('mobile.project-authorize:handover-acceptance.submit,handover_package_document,document');
     });

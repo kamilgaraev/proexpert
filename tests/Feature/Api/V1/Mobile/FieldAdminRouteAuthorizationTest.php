@@ -39,16 +39,16 @@ final class FieldAdminRouteAuthorizationTest extends TestCase
         foreach ($routes as $route) {
             $expectedPermission = str_contains($route->uri(), '/team/')
                 ? (str_contains($route->uri(), 'available-users') || $route->methods()[0] === 'PUT'
-                    ? 'authorize:projects.participants.assign'
-                    : 'authorize:projects.view')
-                : 'authorize:workforce.view';
+                    ? 'authorize:projects.participants.assign,project,project'
+                    : 'authorize:projects.view,project,project')
+                : 'mobile.project-authorize:workforce.view';
             $this->assertContains($expectedPermission, $route->gatherMiddleware(), $route->uri());
         }
     }
 
     public function test_projects_edit_alone_does_not_allow_mobile_participant_assignment(): void
     {
-        $actor = new User();
+        $actor = new User;
         $actor->id = 55;
 
         $authorization = Mockery::mock(AuthorizationService::class);
@@ -70,7 +70,7 @@ final class FieldAdminRouteAuthorizationTest extends TestCase
 
     public function test_attendance_requires_workforce_view_on_selected_project(): void
     {
-        $actor = new User();
+        $actor = new User;
         $actor->id = 55;
 
         $authorization = Mockery::mock(AuthorizationService::class);

@@ -13,14 +13,14 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
             ->name('field_admin.team.')
             ->group(function (): void {
                 Route::get('/', [FieldAdminController::class, 'projectTeam'])
-                    ->middleware('authorize:projects.view')
+                    ->middleware('authorize:projects.view,project,project')
                     ->name('participants.index');
                 Route::get('/available-users', [FieldAdminController::class, 'availableProjectUsers'])
-                    ->middleware('authorize:projects.participants.assign')
+                    ->middleware('authorize:projects.participants.assign,project,project')
                     ->name('participants.available');
                 Route::put('/{user}', [FieldAdminController::class, 'bindProjectUser'])
                     ->whereNumber('user')
-                    ->middleware('authorize:projects.participants.assign')
+                    ->middleware('authorize:projects.participants.assign,project,project')
                     ->name('participants.bind');
             });
 
@@ -28,23 +28,23 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
             ->name('field_admin.personnel.')
             ->group(function (): void {
                 Route::get('/employees', [FieldAdminController::class, 'employees'])
-                    ->middleware('authorize:workforce.view')
+                    ->middleware('mobile.project-authorize:workforce.view')
                     ->name('employees.index');
                 Route::get('/employees/{employee}', [FieldAdminController::class, 'employee'])
                     ->whereNumber('employee')
-                    ->middleware('authorize:workforce.view')
+                    ->middleware('mobile.project-authorize:workforce.view')
                     ->name('employees.show');
                 Route::get('/absences', [FieldAdminController::class, 'absences'])
-                    ->middleware('authorize:workforce.view')
+                    ->middleware('mobile.project-authorize:workforce.view')
                     ->name('absences.index');
                 Route::get('/orders', [FieldAdminController::class, 'orders'])
-                    ->middleware('authorize:workforce.view')
+                    ->middleware('mobile.project-authorize:workforce.view')
                     ->name('orders.index');
                 Route::get('/attendance', [FieldAdminController::class, 'attendance'])
-                    ->middleware('authorize:workforce.view')
+                    ->middleware('mobile.project-authorize:workforce.view')
                     ->name('attendance.index');
                 Route::get('/calendar', [FieldAdminController::class, 'calendar'])
-                    ->middleware('authorize:workforce.view')
+                    ->middleware('mobile.project-authorize:workforce.view')
                     ->name('calendar');
             });
     });

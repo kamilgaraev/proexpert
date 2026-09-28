@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\HandoverAcceptance\Http\Controllers\Mobile;
 
-use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceChecklistResource;
-use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
-use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
-use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\HandoverPackageResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Middleware\AuthorizeMobileHandoverProjectList;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\AcceptMobileScopeRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\RejectMobileScopeRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\ResolveMobileFindingRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\Mobile\ReviewChecklistItemRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Http\Requests\StoreMobileFindingRequest;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceChecklistResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceFindingResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\AcceptanceScopeResource;
+use App\BusinessModules\Features\HandoverAcceptance\Http\Resources\HandoverPackageResource;
 use App\BusinessModules\Features\HandoverAcceptance\Services\HandoverAcceptanceService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
@@ -78,7 +79,10 @@ final class HandoverAcceptanceController extends Controller
                     ]);
                 }
             }
-            $validated['project_ids'] = $this->accessibleProjectIds($request);
+            $authorizedProjectIds = $request->attributes->get(AuthorizeMobileHandoverProjectList::PROJECT_IDS_ATTRIBUTE);
+            $validated['project_ids'] = is_array($authorizedProjectIds)
+                ? array_values(array_unique(array_map('intval', $authorizedProjectIds)))
+                : [];
 
             $scopes = $this->service->listScopes(
                 (int) $request->attributes->get('current_organization_id'),
