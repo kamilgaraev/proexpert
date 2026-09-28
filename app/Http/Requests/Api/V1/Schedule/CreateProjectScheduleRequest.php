@@ -2,39 +2,38 @@
 
 namespace App\Http\Requests\Api\V1\Schedule;
 
-use Illuminate\Foundation\Http\FormRequest;
-use App\Enums\Schedule\ScheduleStatusEnum;
 use App\Domain\Authorization\Services\AuthorizationService;
+use Illuminate\Foundation\Http\FormRequest;
 
 class CreateProjectScheduleRequest extends FormRequest
 {
     public function authorize(): bool
     {
         $user = $this->user();
-        
-        if (!$user) {
+
+        if (! $user) {
             return false;
         }
-        
+
         $organizationId = $this->getOrganizationId();
-        
-        if (!$organizationId) {
+
+        if (! $organizationId) {
             return false;
         }
-        
+
         $authorizationService = app(AuthorizationService::class);
-        
+
         return $authorizationService->can($user, 'schedule.create', [
             'organization_id' => $organizationId,
-            'context_type' => 'organization'
+            'context_type' => 'organization',
         ]);
     }
-    
+
     protected function getOrganizationId(): ?int
     {
         $user = $this->user();
         $organizationId = $user->current_organization_id ?? $user->organization_id;
-        
+
         return $organizationId ? (int) $organizationId : null;
     }
 
@@ -45,7 +44,7 @@ class CreateProjectScheduleRequest extends FormRequest
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
             'planned_start_date' => 'required|date',
-            'planned_end_date' => 'required|date|after:planned_start_date',
+            'planned_end_date' => 'required|date|after_or_equal:planned_start_date',
             'status' => 'nullable|string|in:draft,active',
             'is_template' => 'nullable|boolean',
             'template_name' => 'nullable|string|max:255|required_if:is_template,true',
@@ -72,7 +71,7 @@ class CreateProjectScheduleRequest extends FormRequest
             'name.max' => 'Название графика не должно превышать 255 символов',
             'planned_start_date.required' => 'Дата начала обязательна',
             'planned_end_date.required' => 'Дата окончания обязательна',
-            'planned_end_date.after' => 'Дата окончания должна быть позже даты начала',
+            'planned_end_date.after_or_equal' => 'Дата окончания должна быть не раньше даты начала',
             'template_name.required_if' => 'Для шаблона необходимо указать название',
             'total_estimated_cost.min' => 'Стоимость не может быть отрицательной',
         ];
@@ -96,4 +95,4 @@ class CreateProjectScheduleRequest extends FormRequest
             ]),
         ]);
     }
-} 
+}

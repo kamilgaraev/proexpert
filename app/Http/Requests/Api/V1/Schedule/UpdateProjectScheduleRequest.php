@@ -16,13 +16,13 @@ class UpdateProjectScheduleRequest extends FormRequest
     {
         $user = $this->user();
 
-        if (!$user) {
+        if (! $user) {
             return false;
         }
 
         $organizationId = $this->getOrganizationId();
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return false;
         }
 
@@ -48,7 +48,7 @@ class UpdateProjectScheduleRequest extends FormRequest
             'name' => 'sometimes|required|string|max:255',
             'description' => 'sometimes|nullable|string|max:5000',
             'planned_start_date' => 'sometimes|required|date',
-            'planned_end_date' => 'sometimes|required|date|after:planned_start_date',
+            'planned_end_date' => 'sometimes|required|date|after_or_equal:planned_start_date',
             'status' => 'sometimes|required|string|in:draft,active,paused,completed,cancelled',
             'is_template' => 'sometimes|boolean',
             'template_name' => 'sometimes|nullable|string|max:255|required_if:is_template,true',
@@ -73,7 +73,7 @@ class UpdateProjectScheduleRequest extends FormRequest
             'name.max' => 'Название графика не должно превышать 255 символов',
             'planned_start_date.required' => 'Дата начала обязательна',
             'planned_end_date.required' => 'Дата окончания обязательна',
-            'planned_end_date.after' => 'Дата окончания должна быть позже даты начала',
+            'planned_end_date.after_or_equal' => 'Дата окончания должна быть не раньше даты начала',
             'status.in' => 'Недопустимый статус графика',
             'template_name.required_if' => 'Для шаблона необходимо указать название',
             'total_estimated_cost.min' => 'Стоимость не может быть отрицательной',
@@ -83,13 +83,13 @@ class UpdateProjectScheduleRequest extends FormRequest
     public function withValidator($validator): void
     {
         $validator->after(function ($validator): void {
-            if (!$this->has('status') || $this->status !== 'completed') {
+            if (! $this->has('status') || $this->status !== 'completed') {
                 return;
             }
 
             $schedule = $this->resolveRouteSchedule();
 
-            if (!$schedule instanceof ProjectSchedule) {
+            if (! $schedule instanceof ProjectSchedule) {
                 return;
             }
 
