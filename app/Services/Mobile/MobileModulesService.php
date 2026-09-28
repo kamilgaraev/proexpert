@@ -320,8 +320,9 @@ class MobileModulesService
             throw new DomainException(trans_message('mobile_modules.errors.no_organization'));
         }
 
+        $authorization = $this->authorizationService->forReadScope();
         $organizationContext = AuthorizationContext::getOrganizationContext($organizationId);
-        $permissions = $this->authorizationService->getUserPermissionsStructured($user, $organizationContext);
+        $permissions = $authorization->getUserPermissionsStructured($user, $organizationContext);
         $modulePermissions = $permissions['modules'] ?? [];
 
         if ($projectId !== null) {
@@ -331,7 +332,7 @@ class MobileModulesService
             }
 
             $projectContext = AuthorizationContext::getProjectContext($projectId, $organizationId);
-            $projectPermissions = $this->authorizationService->getUserPermissionsStructured($user, $projectContext);
+            $projectPermissions = $authorization->getUserPermissionsStructured($user, $projectContext);
             foreach (($projectPermissions['modules'] ?? []) as $module => $grants) {
                 $modulePermissions[$module] = array_values(array_unique(array_merge(
                     $modulePermissions[$module] ?? [],
@@ -340,6 +341,7 @@ class MobileModulesService
             }
         }
         $modules = [];
+        $activeModules = null;
 
         foreach (self::CATALOG as $config) {
             $slug = $config['slug'];
@@ -360,6 +362,7 @@ class MobileModulesService
                         $slug,
                         $organizationId,
                         $projectId,
+                        $authorization,
                     ),
                 ));
                 if ($grantedPermissions === []) {
@@ -367,7 +370,8 @@ class MobileModulesService
                 }
             }
 
-            if (!$this->accessController->hasModuleAccess($organizationId, $accessSlug)) {
+            $activeModules ??= $this->accessController->getActiveModules($organizationId)->pluck('slug')->all();
+            if (! in_array($accessSlug, $activeModules, true)) {
                 continue;
             }
 
@@ -401,11 +405,12 @@ class MobileModulesService
         string $slug,
         int $organizationId,
         int $projectId,
+        AuthorizationService $authorization,
     ): bool {
         $candidates = $permission === '*' ? self::VIEW_PERMISSIONS[$slug] : [$permission];
 
         foreach ($candidates as $candidate) {
-            if ($this->authorizationService->can($user, $candidate, [
+            if ($authorization->can($user, $candidate, [
                 'organization_id' => $organizationId,
                 'project_id' => $projectId,
                 'strict_project_scope' => true,

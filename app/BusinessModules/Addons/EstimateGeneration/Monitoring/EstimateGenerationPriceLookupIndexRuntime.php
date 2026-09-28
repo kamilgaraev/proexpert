@@ -33,6 +33,21 @@ final class EstimateGenerationPriceLookupIndexRuntime
         }
     }
 
+    public function ensureComponentLookup(): void
+    {
+        $this->ensure([
+            'name' => 'eg_prices_version_kind_idx',
+            'create' => 'CREATE INDEX CONCURRENTLY eg_prices_version_kind_idx ON estimate_resource_prices (regional_price_version_id, source_price_kind)',
+            'drop' => 'DROP INDEX CONCURRENTLY IF EXISTS public."eg_prices_version_kind_idx"',
+            'expected' => 'CREATE INDEX eg_prices_version_kind_idx ON public.estimate_resource_prices USING btree (regional_price_version_id, source_price_kind)',
+        ]);
+    }
+
+    public function dropComponentLookup(): void
+    {
+        DB::statement('DROP INDEX CONCURRENTLY IF EXISTS public."eg_prices_version_kind_idx"');
+    }
+
     public function dropAll(): void
     {
         foreach (array_reverse(self::INDEXES) as $index) {

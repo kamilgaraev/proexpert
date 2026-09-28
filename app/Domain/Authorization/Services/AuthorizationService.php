@@ -14,6 +14,9 @@ use Illuminate\Support\Collection;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Http\Request;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
+use Closure;
 
 use function trans_message;
 
@@ -26,6 +29,8 @@ class AuthorizationService
     protected PermissionResolver $permissionResolver;
     protected LoggingService $logging;
 
+    private ?Repository $readCache = null;
+
     public function __construct(
         RoleScanner $roleScanner,
         PermissionResolver $permissionResolver,
@@ -34,6 +39,20 @@ class AuthorizationService
         $this->roleScanner = $roleScanner;
         $this->permissionResolver = $permissionResolver;
         $this->logging = $logging;
+    }
+
+    public function forReadScope(): self
+    {
+        $scope = clone $this;
+        $scope->readCache = new Repository(new ArrayStore);
+        $scope->permissionResolver = $this->permissionResolver->forReadScope($scope->readCache);
+
+        return $scope;
+    }
+
+    private function rememberRead(string $key, Closure $read): mixed
+    {
+        return $this->readCache === null ? $read() : $this->readCache->remember($key, 300, $read);
     }
 
     /**
@@ -403,7 +422,10 @@ class AuthorizationService
             }
         }
         
-        $authContext = $this->resolveAuthContext($context);
+        $authContext = $this->rememberRead(
+            'auth_context_'.md5(serialize($context)),
+            fn () => $this->resolveAuthContext($context),
+        );
         $roles = $this->getUserRoles($user, $authContext);
         if (($context['strict_project_scope'] ?? false) && $authContext?->type === AuthorizationContext::TYPE_PROJECT) {
             $contextIds = $this->getContextHierarchy($authContext)->pluck('id')->all();
@@ -480,7 +502,10 @@ class AuthorizationService
         // Для проектных контекстов также проверяем контекст организации (роли могут быть назначены там)
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_PROJECT && $authContext->parent_context_id) {
             try {
-                $orgContext = AuthorizationContext::find($authContext->parent_context_id);
+                $orgContext = $this->rememberRead(
+                    'parent_context_'.$authContext->parent_context_id,
+                    fn () => AuthorizationContext::find($authContext->parent_context_id),
+                );
                 if ($orgContext && $this->checkPermissionInContext($user, $permission, $orgContext)) {
                     return true;
                 }
@@ -591,7 +616,7 @@ class AuthorizationService
      */
     protected function getContextHierarchy(AuthorizationContext $context): Collection
     {
-        return collect($context->getHierarchy());
+        return $this->rememberRead('context_hierarchy_'.$context->id, fn () => collect($context->getHierarchy()));
     }
 
     /**
@@ -599,7 +624,10 @@ class AuthorizationService
      */
     protected function evaluateConditions(UserRoleAssignment $assignment, array $context): bool
     {
-        $conditions = $assignment->conditions()->active()->get();
+        $conditions = $this->rememberRead(
+            'role_conditions_'.$assignment->id,
+            fn () => $assignment->conditions()->active()->get(),
+        );
         
         foreach ($conditions as $condition) {
             if (!$condition->evaluate($context)) {

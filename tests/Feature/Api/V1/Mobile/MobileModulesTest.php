@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Mobile;
 
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use App\Models\Module;
 use App\Modules\Core\AccessController;
 use App\Services\Mobile\MobileModulesService;
 use DomainException;
@@ -131,6 +132,7 @@ final class MobileModulesTest extends TestCase
         }
 
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissions): void {
+            $mock->shouldReceive('forReadScope')->andReturnSelf();
             $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
                 'system' => [],
                 'modules' => $permissions,
@@ -140,9 +142,10 @@ final class MobileModulesTest extends TestCase
         $accessible = $accessibleSlugs ?? $permissionSlugs;
 
         $this->mock(AccessController::class, function (MockInterface $mock) use ($accessible): void {
-            $mock->shouldReceive('hasModuleAccess')->andReturnUsing(
-                static fn (int $organizationId, string $moduleSlug): bool => in_array($moduleSlug, $accessible, true),
-            );
+            $mock->shouldReceive('getActiveModules')->once()->with(123)->andReturn(collect(array_map(
+                static fn (string $slug): Module => new Module(['slug' => $slug]),
+                $accessible,
+            )));
         });
     }
 
