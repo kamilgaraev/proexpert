@@ -247,6 +247,7 @@ return [
     'types' => [
         'contract' => 'Договор',
         'act' => 'Акт',
+        'performance_act' => 'Акт выполненных работ',
         'commercial_proposal' => 'Коммерческое предложение',
         'claim' => 'Претензия',
         'payment_document' => 'Платежный документ',
