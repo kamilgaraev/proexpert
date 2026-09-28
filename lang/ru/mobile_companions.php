@@ -115,6 +115,7 @@ return [
         'planned' => 'Запланировано',
         'prepared' => 'Подготовлено',
         'pending' => 'Ожидает проверки',
+        'pending_review' => 'Ожидает рассмотрения',
         'submitted' => 'Отправлено',
         'impact_assessment' => 'Оценка влияния',
         'internal_review' => 'Внутреннее согласование',
@@ -129,6 +130,7 @@ return [
         'paused' => 'На паузе',
         'archived' => 'В архиве',
         'rejected' => 'Отклонено',
+        'suspended' => 'Приостановлено',
         'cancelled' => 'Отменено',
         'terminated' => 'Расторгнуто',
         'transmitted' => 'Передано',
@@ -137,6 +139,8 @@ return [
         'unknown' => 'Неизвестно',
         'error' => 'Ошибка',
         'available' => 'Доступна',
+        'partially_available' => 'Частично доступна',
+        'busy' => 'Занята',
     ],
     'empty' => [
         'contract-management' => [
