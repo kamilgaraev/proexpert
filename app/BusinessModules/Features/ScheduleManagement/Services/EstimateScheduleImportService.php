@@ -186,6 +186,38 @@ class EstimateScheduleImportService
                 $currentDate = Carbon::parse($sectionTask->planned_end_date)->addDay();
             }
         }
+
+        $unsectionedWorks = $estimate->items()
+            ->whereNull('estimate_section_id')
+            ->works()
+            ->with(['workType', 'measurementUnit'])
+            ->get();
+
+        if (isset($options['item_ids']) && is_array($options['item_ids'])) {
+            $unsectionedWorks = $unsectionedWorks->filter(
+                fn (EstimateItem $item) => in_array($item->id, $options['item_ids'])
+            );
+        }
+
+        foreach ($unsectionedWorks as $item) {
+            if (!$item->isWork()) {
+                continue;
+            }
+
+            $task = $this->createTaskFromItem(
+                $schedule,
+                $item,
+                null,
+                null,
+                $currentDate,
+                $sortOrder++,
+                $options
+            );
+
+            if ($options['auto_calculate_dates'] ?? true) {
+                $currentDate = Carbon::parse($task->planned_end_date)->addDay();
+            }
+        }
     }
 
     /**
@@ -232,8 +264,8 @@ class EstimateScheduleImportService
      * 
      * @param ProjectSchedule $schedule График
      * @param EstimateItem $item Позиция сметы (только работы!)
-     * @param EstimateSection $section Раздел сметы
-     * @param ScheduleTask $parentTask Родительская задача
+     * @param EstimateSection|null $section Раздел сметы
+     * @param ScheduleTask|null $parentTask Родительская задача
      * @param Carbon $startDate Дата начала
      * @param int $sortOrder Порядок сортировки
      * @param array $options Опции
@@ -243,8 +275,8 @@ class EstimateScheduleImportService
     public function createTaskFromItem(
         ProjectSchedule $schedule,
         EstimateItem $item,
-        EstimateSection $section,
-        ScheduleTask $parentTask,
+        ?EstimateSection $section,
+        ?ScheduleTask $parentTask,
         Carbon $startDate,
         int $sortOrder,
         array $options
@@ -276,14 +308,14 @@ class EstimateScheduleImportService
             'schedule_id' => $schedule->id,
             'organization_id' => $schedule->organization_id,
             'created_by_user_id' => auth()->id() ?? $schedule->created_by_user_id,
-            'parent_task_id' => $parentTask->id,
+            'parent_task_id' => $parentTask?->id,
             'estimate_item_id' => $item->id,
-            'estimate_section_id' => $section->id,
+            'estimate_section_id' => $section?->id,
             'planned_start_date' => $startDate->toDateString(),
             'planned_end_date' => $endDate->toDateString(),
             'planned_duration_days' => $durationDays,
             'sort_order' => $sortOrder,
-            'level' => 1,
+            'level' => $parentTask === null ? 0 : 1,
         ]));
     }
 
@@ -316,15 +348,15 @@ class EstimateScheduleImportService
      * Маппинг данных из позиции сметы в задачу графика
      * 
      * @param EstimateItem $item Позиция сметы
-     * @param EstimateSection $section Раздел сметы
-     * @param ScheduleTask $parentTask Родительская задача
+     * @param EstimateSection|null $section Раздел сметы
+     * @param ScheduleTask|null $parentTask Родительская задача
      * @param array $options Опции
      * @return array Данные для создания задачи
      */
     public function mapEstimateDataToTask(
         EstimateItem $item,
-        EstimateSection $section,
-        ScheduleTask $parentTask,
+        ?EstimateSection $section,
+        ?ScheduleTask $parentTask,
         array $options = []
     ): array {
         return [
