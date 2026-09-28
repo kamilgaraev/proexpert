@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Http\Controllers\Mobile;
 
-use App\BusinessModules\Features\QualityControl\Http\Requests\Mobile\MobileQualityDefectRequest;
 use App\BusinessModules\Features\QualityControl\Http\Requests\Mobile\AssignQualityDefectRequest;
+use App\BusinessModules\Features\QualityControl\Http\Requests\Mobile\MobileQualityDefectRequest;
 use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectResource;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Http\Controllers\Controller;
@@ -111,6 +111,7 @@ final class QualityDefectController extends Controller
                 $id,
                 (int) $request->attributes->get('current_organization_id'),
             );
+
             return MobileResponse::success($this->service->eligibleAssignees($defect));
         } catch (\Throwable $e) {
             return $this->failedAction('show', $id, $e);
@@ -175,14 +176,24 @@ final class QualityDefectController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $validated = $request->validated();
             $defect = $this->findOrFail($request, $id, $organizationId);
+            $userId = (int) $request->user()->id;
+            $resolvedDefect = $this->idempotency->run(
+                $organizationId,
+                $userId,
+                $request->header('Idempotency-Key'),
+                'quality.defect.resolve.'.$id,
+                $validated,
+                fn () => $this->service->resolve($defect, $userId, $validated),
+                fn (int $resourceId) => $this->service->find(
+                    $resourceId,
+                    $organizationId,
+                    $this->accessibleProjectIds($request),
+                ),
+            );
 
-            return MobileResponse::success(new QualityDefectResource($this->service->resolve(
-                $defect,
-                (int) auth()->id(),
-                $validated
-            )));
+            return MobileResponse::success(new QualityDefectResource($resolvedDefect));
         } catch (DomainException $e) {
-            return MobileResponse::error($e->getMessage(), 422);
+            return MobileResponse::error($e->getMessage(), $e->getCode() === 409 ? 409 : 422);
         } catch (\Throwable $e) {
             return $this->failedAction('resolve', $id, $e);
         }
@@ -262,5 +273,4 @@ final class QualityDefectController extends Controller
 
         return MobileResponse::error(trans_message("quality_control.errors.{$action}_failed"), 500);
     }
-
 }

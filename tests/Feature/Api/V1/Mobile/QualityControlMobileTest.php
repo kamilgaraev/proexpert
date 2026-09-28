@@ -92,6 +92,210 @@ final class QualityControlMobileTest extends TestCase
         $this->assertSame(QualityDefectStatusEnum::READY_FOR_REVIEW, $defect->status);
     }
 
+    public function test_mobile_quality_defect_detail_returns_the_created_model_contract_with_project_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->user->assignedProjects()->attach($project->id, [
+            'is_active' => true,
+            'role' => 'member',
+            'assigned_by_user_id' => $context->user->id,
+            'assigned_at' => now(),
+        ]);
+        $hiddenProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $createResponse = $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/quality-control/defects', [
+                'project_id' => $project->id,
+                'title' => 'QA mobile quality detail',
+                'severity' => 'minor',
+                'inspection_required' => false,
+            ]);
+
+        $createResponse->assertCreated();
+        $defectId = (int) $createResponse->json('data.id');
+        $hiddenDefect = $this->createDefect($context, $hiddenProject, 'open', 'minor');
+
+        $detailResponse = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/quality-control/defects/{$defectId}");
+
+        $detailResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.id', $defectId)
+            ->assertJsonPath('data.title', 'QA mobile quality detail')
+            ->assertJsonPath('data.severity', 'minor')
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::OPEN->value)
+            ->assertJsonPath('data.inspection_required', false)
+            ->assertJsonPath('data.project.id', $project->id)
+            ->assertJsonPath('data.project.name', $project->name)
+            ->assertJsonPath('data.contractor', null)
+            ->assertJsonPath('data.assigned_user', null)
+            ->assertJsonPath('data.workflow_summary.status', QualityDefectStatusEnum::OPEN->value)
+            ->assertJsonPath('data.workflow_summary.stage', 'registration')
+            ->assertJsonPath('data.workflow_summary.available_actions', ['assign', 'start', 'resolve', 'cancel'])
+            ->assertJsonPath('data.available_actions', ['assign', 'start', 'resolve', 'cancel'])
+            ->assertJsonPath('data.photos', [])
+            ->assertJsonPath('data.status_history.0.to_status', QualityDefectStatusEnum::OPEN->value);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/quality-control/defects/{$hiddenDefect->id}")
+            ->assertNotFound()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('data', null);
+    }
+
+    public function test_mobile_quality_defect_resolve_replays_once_conflicts_on_payload_change_and_keeps_project_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $context->user->assignedProjects()->attach($project->id, [
+            'is_active' => true,
+            'role' => 'member',
+            'assigned_by_user_id' => $context->user->id,
+            'assigned_at' => now(),
+        ]);
+        $hiddenProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+
+        $defect = $this->createDefect($context, $project, 'in_progress', 'minor', [
+            'inspection_required' => false,
+        ]);
+        $hiddenDefect = $this->createDefect($context, $hiddenProject, 'in_progress', 'minor', [
+            'inspection_required' => false,
+        ]);
+        $headers = [
+            ...$context->mobileAuthHeaders(),
+            'Idempotency-Key' => 'quality-resolve-replay-20260928',
+        ];
+        $payload = ['comment' => 'Результат готов к проверке'];
+
+        $firstResponse = $this->withHeaders($headers)
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", $payload);
+
+        self::assertSame(200, $firstResponse->status(), $firstResponse->getContent());
+        $firstResponse
+            ->assertJsonPath('data.id', $defect->id)
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::READY_FOR_REVIEW->value);
+
+        $historyCount = $defect->statusHistory()->count();
+        $replayResponse = $this->withHeaders($headers)
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", $payload);
+
+        self::assertSame(200, $replayResponse->status(), $replayResponse->getContent());
+        $this->assertSame($firstResponse->getContent(), $replayResponse->getContent());
+        $this->assertSame($historyCount, $defect->statusHistory()->count());
+        $this->assertSame(QualityDefectStatusEnum::READY_FOR_REVIEW, $defect->fresh()->status);
+
+        $this->withHeaders($headers)
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", [
+                'comment' => 'Изменённый результат',
+            ])
+            ->assertStatus(409);
+
+        $this->assertSame($historyCount, $defect->statusHistory()->count());
+        $this->assertSame(QualityDefectStatusEnum::READY_FOR_REVIEW, $defect->fresh()->status);
+
+        $this->withHeaders($headers)
+            ->postJson("/api/v1/mobile/quality-control/defects/{$hiddenDefect->id}/resolve", $payload)
+            ->assertStatus(422);
+
+        $this->assertSame(QualityDefectStatusEnum::IN_PROGRESS, $hiddenDefect->fresh()->status);
+        $this->assertSame(0, $hiddenDefect->statusHistory()->count());
+    }
+
+    public function test_mobile_quality_defect_resolve_replay_fingerprints_uploaded_photo_content(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $defect = $this->createDefect($context, $project, 'in_progress', 'minor', [
+            'inspection_required' => false,
+        ]);
+        $storedPath = "org-{$context->organization->id}/quality-control/defects/{$defect->id}/result.jpg";
+        $previewUrl = 'https://storage.example/signed/quality-result.jpg';
+
+        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath, $previewUrl): void {
+            $mock->shouldReceive('upload')
+                ->once()
+                ->andReturn($storedPath);
+            $mock->shouldReceive('temporaryUrl')
+                ->atLeast()
+                ->once()
+                ->andReturn($previewUrl);
+        });
+
+        $file = UploadedFile::fake()->image('result.jpg', 120, 90);
+        $headers = [
+            ...$context->mobileAuthHeaders(),
+            'Idempotency-Key' => 'quality-resolve-photo-20260928',
+        ];
+        $payload = [
+            'comment' => 'Проверка результата с фотографией',
+            'photos' => [['type' => 'after', 'file' => $file]],
+        ];
+
+        $firstResponse = $this->withHeaders($headers)
+            ->post("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", $payload);
+        $firstResponse->assertOk()
+            ->assertJsonPath('data.status', QualityDefectStatusEnum::READY_FOR_REVIEW->value)
+            ->assertJsonPath('data.photos.0.type', 'after')
+            ->assertJsonPath('data.photos.0.path', $storedPath);
+
+        $historyCount = $defect->statusHistory()->count();
+        $replayResponse = $this->withHeaders($headers)
+            ->post("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", $payload);
+
+        $replayResponse->assertOk();
+        $this->assertSame($firstResponse->getContent(), $replayResponse->getContent());
+        $this->assertSame(1, $defect->photos()->count());
+        $this->assertSame($historyCount, $defect->statusHistory()->count());
+
+        $differentFile = UploadedFile::fake()->image('different-result.jpg', 180, 90);
+        $this->withHeaders($headers)
+            ->post("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", [
+                'comment' => 'Проверка результата с фотографией',
+                'photos' => [['type' => 'after', 'file' => $differentFile]],
+            ])
+            ->assertStatus(409);
+
+        $this->assertSame(1, $defect->photos()->count());
+        $this->assertSame($historyCount, $defect->statusHistory()->count());
+    }
+
+    public function test_mobile_quality_defect_resolve_still_requires_resolve_permission(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $defect = $this->createDefect($context, $project, 'in_progress', 'minor', [
+            'inspection_required' => false,
+        ]);
+        $this->allowAccess(canResolve: false);
+
+        $this->withHeaders([
+            ...$context->mobileAuthHeaders(),
+            'Idempotency-Key' => 'quality-resolve-denied-20260928',
+        ])
+            ->postJson("/api/v1/mobile/quality-control/defects/{$defect->id}/resolve", [
+                'comment' => 'Не должно применяться',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame(QualityDefectStatusEnum::IN_PROGRESS, $defect->fresh()->status);
+        $this->assertSame(0, $defect->statusHistory()->count());
+        $this->assertDatabaseMissing('mobile_mutation_idempotencies', [
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'idempotency_key' => 'quality-resolve-denied-20260928',
+        ]);
+    }
+
     public function test_mobile_quality_defect_create_replays_one_result_for_the_same_key(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
@@ -343,15 +547,17 @@ final class QualityControlMobileTest extends TestCase
         ]);
     }
 
-    private function allowAccess(): void
+    private function allowAccess(bool $canResolve = true): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')->andReturn(true);
         });
 
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($canResolve): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission): bool => $permission !== 'quality-control.defects.resolve' || $canResolve
+            );
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['foreman']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
@@ -385,7 +591,7 @@ final class QualityControlMobileTest extends TestCase
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'created_by' => $context->user->id,
-            'defect_number' => 'QD-' . uniqid(),
+            'defect_number' => 'QD-'.uniqid(),
             'title' => 'Mobile quality defect',
             'severity' => $severity,
             'status' => $status,
