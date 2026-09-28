@@ -759,6 +759,24 @@ class SiteRequestService
             ->all();
     }
 
+    public function mobileAssignableProjectIds(User $actor, int $organizationId): array
+    {
+        if (! $this->actorHasPermission($actor, $organizationId, 'site_requests.assign')) {
+            return [];
+        }
+
+        return $this->mobileProjectAccess->ids($actor, $organizationId);
+    }
+
+    public function canAssignMobileRequest(SiteRequest $request, User $actor): bool
+    {
+        return in_array(
+            (int) $request->project_id,
+            $this->mobileAssignableProjectIds($actor, $request->organization_id),
+            true
+        );
+    }
+
     public function mobileFiles(SiteRequest $request, User $actor): array
     {
         $this->assertMobileRequestAccess($request, $actor, 'site_requests.view');
