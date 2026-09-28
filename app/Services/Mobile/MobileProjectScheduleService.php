@@ -20,11 +20,14 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\Schedule\ScheduleStatusEnum;
 use App\Enums\Schedule\TaskStatusEnum;
+use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\User;
+use App\Services\Workflow\WorkflowGuardService;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Support\Collection;
@@ -39,6 +42,7 @@ class MobileProjectScheduleService
         private readonly SafetyManagementService $safetyManagementService,
         private readonly WorkConstraintEventRecorder $constraintEvents,
         private readonly MobileProjectAccessResolver $projectAccess,
+        private readonly WorkflowGuardService $workflowGuard,
     ) {}
 
     public function list(User $user, ?int $projectId): array
@@ -144,11 +148,13 @@ class MobileProjectScheduleService
 
         $dailyPlans = DailyWorkPlan::query()
             ->where('project_id', $project->id)
-            ->whereIn('status', ['published', 'in_progress', 'submitted'])
+            ->whereIn('status', ['published', 'in_progress', 'returned', 'submitted'])
             ->with([
                 'schedule:id,name',
-                'assignments.scheduleTask:id,name',
-                'assignments.journalEntry:id,status',
+                'assignments.scheduleTask:id,name,measurement_unit_id',
+                'assignments.scheduleTask.measurementUnit:id,short_name,name',
+                'assignments.journalEntry' => fn ($query) => $query->where('status', JournalEntryStatusEnum::DRAFT->value),
+                'assignments.journalEntry.workVolumes:id,journal_entry_id,estimate_item_id,quantity',
                 'assignments.lookaheadPlanTask.constraints',
             ])
             ->orderBy('work_date')
@@ -166,12 +172,15 @@ class MobileProjectScheduleService
         $assignment = $this->findAccessibleAssignment($user, $assignmentId);
         $schedule = ProjectSchedule::query()->findOrFail($assignment->schedule_id);
 
-        return $this->mapDailyAssignment($this->lookaheadPlanningService->recordAssignmentFact(
+        $updatedAssignment = $this->lookaheadPlanningService->recordAssignmentFact(
             $schedule,
             $assignment,
             (int) $user->id,
             $data
-        ));
+        );
+        $updatedAssignment->loadMissing('scheduleTask.measurementUnit:id,short_name,name');
+
+        return $this->mapDailyAssignment($updatedAssignment);
     }
 
     public function submitDailyPlan(User $user, int $dailyPlanId, array $data): array
@@ -179,7 +188,10 @@ class MobileProjectScheduleService
         $dailyPlan = $this->findAccessibleDailyPlan($user, $dailyPlanId);
         $schedule = ProjectSchedule::query()->findOrFail($dailyPlan->schedule_id);
 
-        return $this->mapDailyPlan($this->lookaheadPlanningService->submitDailyPlan($schedule, $dailyPlan, $data));
+        $submitted = $this->lookaheadPlanningService->submitDailyPlan($schedule, $dailyPlan, $data);
+        $submitted->loadMissing('assignments.scheduleTask.measurementUnit:id,short_name,name');
+
+        return $this->mapDailyPlan($submitted);
     }
 
     public function createLinkedActionForConstraint(User $user, int $constraintId, array $data): array
@@ -653,6 +665,8 @@ class MobileProjectScheduleService
 
     private function mapDailyPlan(DailyWorkPlan $dailyPlan): array
     {
+        $submitBlockers = $this->dailyPlanSubmitBlockers($dailyPlan);
+
         return [
             'id' => $dailyPlan->id,
             'project_id' => $dailyPlan->project_id,
@@ -662,7 +676,8 @@ class MobileProjectScheduleService
             'work_date' => $dailyPlan->work_date?->format('Y-m-d'),
             'status' => $dailyPlan->status,
             'status_label' => trans_message("schedule_management.daily_plan_statuses.{$dailyPlan->status}"),
-            'available_actions' => $this->dailyPlanActions((string) $dailyPlan->status),
+            'available_actions' => $this->dailyPlanActions((string) $dailyPlan->status, $submitBlockers !== []),
+            'submit_blockers' => $submitBlockers,
             'assignments' => $dailyPlan->assignments
                 ->map(fn (DailyWorkPlanAssignment $assignment): array => $this->mapDailyAssignment($assignment))
                 ->values()
@@ -688,6 +703,8 @@ class MobileProjectScheduleService
             'failure_reason' => $assignment->failure_reason,
             'fact_comment' => $assignment->fact_comment,
             'linked_blocking_entities' => $assignment->metadata['linked_blocking_entities'] ?? [],
+            'measurement_unit' => $assignment->scheduleTask?->measurementUnit?->short_name
+                ?? $assignment->scheduleTask?->measurementUnit?->name,
             'schedule_task' => $assignment->scheduleTask ? [
                 'id' => $assignment->scheduleTask->id,
                 'name' => $assignment->scheduleTask->name,
@@ -717,13 +734,42 @@ class MobileProjectScheduleService
         ];
     }
 
-    private function dailyPlanActions(string $status): array
+    private function dailyPlanSubmitBlockers(DailyWorkPlan $dailyPlan): array
+    {
+        if (! in_array((string) $dailyPlan->status, ['published', 'in_progress', 'returned'], true)) {
+            return [];
+        }
+
+        $entries = $dailyPlan->assignments
+            ->map(static fn (DailyWorkPlanAssignment $assignment): ?ConstructionJournalEntry => $assignment->journalEntry)
+            ->filter(static fn (?ConstructionJournalEntry $entry): bool => $entry instanceof ConstructionJournalEntry && $entry->status === JournalEntryStatusEnum::DRAFT
+            )
+            ->unique('id');
+
+        $submitBlockers = [];
+        foreach ($entries as $entry) {
+            foreach ($this->workflowGuard->journalEntryBlockers($entry, includeOverridable: false) as $blocker) {
+                if (($blocker['can_override'] ?? true) || ! isset($blocker['code'], $blocker['message'])) {
+                    continue;
+                }
+
+                $code = (string) $blocker['code'];
+                $message = (string) $blocker['message'];
+                $key = $code.'|'.$message;
+                $submitBlockers[$key] = ['code' => $code, 'message' => $message];
+            }
+        }
+
+        return array_values($submitBlockers);
+    }
+
+    private function dailyPlanActions(string $status, bool $submitBlocked = false): array
     {
         return match ($status) {
-            'published', 'in_progress', 'returned' => [
+            'published', 'in_progress', 'returned' => array_values(array_filter([
                 $this->scheduleAction('record_fact', trans_message('schedule_management.daily_plan_actions.record_fact')),
-                $this->scheduleAction('submit', trans_message('schedule_management.daily_plan_actions.submit')),
-            ],
+                $submitBlocked ? null : $this->scheduleAction('submit', trans_message('schedule_management.daily_plan_actions.submit')),
+            ])),
             default => [],
         };
     }
