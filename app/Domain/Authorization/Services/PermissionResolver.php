@@ -8,6 +8,8 @@ use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Cache\Repository;
+use Closure;
 
 /**
  * Сервис для резолвинга прав (системных и модульных)
@@ -22,6 +24,8 @@ class PermissionResolver
 
     protected LoggingService $logging;
 
+    private ?Repository $readCache = null;
+
     public function __construct(
         RoleScanner $roleScanner,
         ModulePermissionChecker $moduleChecker,
@@ -30,6 +34,19 @@ class PermissionResolver
         $this->roleScanner = $roleScanner;
         $this->moduleChecker = $moduleChecker;
         $this->logging = $logging;
+    }
+
+    public function forReadScope(Repository $readCache): self
+    {
+        $scope = clone $this;
+        $scope->readCache = $readCache;
+
+        return $scope;
+    }
+
+    private function rememberRead(string $key, Closure $read): mixed
+    {
+        return $this->readCache === null ? $read() : $this->readCache->remember($key, 300, $read);
     }
 
     /**
@@ -219,9 +236,18 @@ class PermissionResolver
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
             $cacheKey = 'module_active_'.self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
-            $isActive = Cache::remember($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+            $isActive = $this->rememberRead($cacheKey, fn () => Cache::remember($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+                if ($this->readCache !== null) {
+                    $activeModules = $this->rememberRead(
+                        'active_modules_'.$organizationId,
+                        fn () => $this->moduleChecker->getActiveModules($organizationId),
+                    );
+
+                    return in_array($moduleToCheck, $activeModules, true);
+                }
+
                 return $this->moduleChecker->isModuleActive($moduleToCheck, $organizationId);
-            });
+            }));
 
             Log::debug('permission.module.active_check', [
                 'module' => $moduleToCheck,
@@ -295,10 +321,10 @@ class PermissionResolver
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $roleRevision = Cache::get('authorization_roles_revision', 0);
+        $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
         $cacheKey = 'system_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
-        return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
+        return $this->rememberRead($cacheKey, fn () => Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             $perms = [];
             $interfaceAccess = [];
 
@@ -314,7 +340,7 @@ class PermissionResolver
             }
 
             return RolePermissionNormalizer::normalizeSystemPermissions($perms, $interfaceAccess);
-        });
+        }));
     }
 
     /**
@@ -323,10 +349,10 @@ class PermissionResolver
     public function getModulePermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $roleRevision = Cache::get('authorization_roles_revision', 0);
+        $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
         $cacheKey = 'module_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
-        return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
+        return $this->rememberRead($cacheKey, fn () => Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             // 1. Пробуем из файлов
             $perms = $this->roleScanner->getModulePermissions($assignment->role_slug);
 
@@ -340,7 +366,7 @@ class PermissionResolver
             }
 
             return RolePermissionNormalizer::normalizeModulePermissions($perms);
-        });
+        }));
     }
 
     /**
@@ -625,9 +651,9 @@ class PermissionResolver
      */
     protected function getVersionedCacheKey(int $userId, string $roleSlug, string $permission, ?array $context = null): string
     {
-        $userVersion = Cache::get("user_permission_version_{$userId}", 0);
-        $globalVersion = Cache::get('permission_global_version', 0);
-        $roleRevision = Cache::get('authorization_roles_revision', 0);
+        $userVersion = $this->rememberRead("user_permission_version_{$userId}", fn () => Cache::get("user_permission_version_{$userId}", 0));
+        $globalVersion = $this->rememberRead('permission_global_version', fn () => Cache::get('permission_global_version', 0));
+        $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
 
         $baseKey = 'permission_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$userId}_{$roleSlug}_{$permission}_".md5(json_encode($context));
 

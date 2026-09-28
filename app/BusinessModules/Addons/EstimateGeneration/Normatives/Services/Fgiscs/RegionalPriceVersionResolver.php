@@ -47,17 +47,23 @@ class RegionalPriceVersionResolver
             ->get();
 
         $sourceKinds = self::COMPONENT_SOURCE_KINDS[$componentMetadataKey] ?? [];
-        if ($sourceKinds !== [] && $versions->isNotEmpty()) {
-            $counts = EstimateResourcePrice::query()
-                ->whereIn('regional_price_version_id', $versions->pluck('id'))
-                ->whereIn('source_price_kind', $sourceKinds)
-                ->selectRaw('regional_price_version_id, count(*) as aggregate')
-                ->groupBy('regional_price_version_id')
-                ->pluck('aggregate', 'regional_price_version_id');
+        if ($sourceKinds !== []) {
+            foreach ($versions as $version) {
+                if ($version->status === RegionalPriceStatus::FAILED
+                    || in_array($version->status, self::IMMUTABLE_STATUSES, true)) {
+                    continue;
+                }
 
-            $versions->each(static function (EstimateRegionalPriceVersion $version) use ($counts): void {
-                $version->setAttribute('component_rows_count', (int) ($counts[$version->id] ?? 0));
-            });
+                $hasRows = EstimateResourcePrice::query()
+                    ->where('regional_price_version_id', $version->id)
+                    ->whereIn('source_price_kind', $sourceKinds)
+                    ->exists();
+                $version->setAttribute('component_rows_count', (int) $hasRows);
+
+                if (! $hasRows) {
+                    break;
+                }
+            }
         }
 
         return $this->resolveFromVersions($versions, $baseVersionKey, $componentMetadataKey, $force);
