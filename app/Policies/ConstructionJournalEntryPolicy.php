@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Enums\ConstructionJournal\JournalStatusEnum;
+use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
@@ -114,6 +115,10 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
+        if ($entry->status !== JournalEntryStatusEnum::DRAFT || $this->hasApprovalEvents($entry)) {
+            return false;
+        }
+
         if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
             return false;
         }
@@ -125,11 +130,16 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        if (! $entry->canBeEdited()) {
-            return false;
+        return $this->hasModulePermission($user, ['delete', '*'], $project);
+    }
+
+    private function hasApprovalEvents(ConstructionJournalEntry $entry): bool
+    {
+        if ($entry->relationLoaded('approvalEvents')) {
+            return $entry->approvalEvents->isNotEmpty();
         }
 
-        return $this->hasModulePermission($user, ['delete', '*'], $project);
+        return $entry->approvalEvents()->exists();
     }
 
     public function approve(User $user, ConstructionJournalEntry $entry): bool
