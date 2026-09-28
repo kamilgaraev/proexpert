@@ -9,6 +9,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -451,6 +452,8 @@ final class SiteRequestsMobileTest extends TestCase
 
     public function test_mobile_assignee_list_and_assignment_require_an_active_project_member(): void
     {
+        Event::fake();
+
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $candidate = User::factory()->create(['current_organization_id' => $context->organization->id]);
@@ -469,11 +472,106 @@ final class SiteRequestsMobileTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.assigned_user.id', $candidate->id);
 
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => null])
+            ->assertOk()
+            ->assertJsonPath('data.assigned_user', null);
+
+        $siteRequest->refresh();
+        $this->assertNull($siteRequest->assigned_to);
+        $unassignment = SiteRequestHistory::query()
+            ->where('site_request_id', $siteRequest->id)
+            ->where('action', SiteRequestHistory::ACTION_UNASSIGNED)
+            ->firstOrFail();
+        $this->assertSame(['assigned_to' => $candidate->id], $unassignment->old_value);
+        $this->assertSame(['assigned_to' => null], $unassignment->new_value);
+        Event::assertDispatchedTimes(\App\BusinessModules\Features\SiteRequests\Events\SiteRequestAssigned::class, 1);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", [])
+            ->assertStatus(422);
+
         $outsideCandidate = User::factory()->create(['current_organization_id' => $context->organization->id]);
         $context->organization->users()->attach($outsideCandidate->id, ['is_owner' => false, 'is_active' => true]);
         $this->withHeaders($context->mobileAuthHeaders())
             ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => $outsideCandidate->id])
             ->assertStatus(422);
+    }
+
+    public function test_mobile_unassignment_requires_permission(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(false);
+        $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Protected assignment');
+        $siteRequest->update(['assigned_to' => $context->user->id]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => null])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $siteRequest->id,
+            'assigned_to' => $context->user->id,
+        ]);
+    }
+
+    public function test_mobile_status_transition_updates_history_and_blocks_forbidden_and_foreign_requests(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Status transition');
+
+        $detail = $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}")
+            ->assertOk();
+        $availableStatuses = collect($detail->json('data.available_transitions'))->pluck('status');
+        $this->assertContains(SiteRequestStatusEnum::APPROVED->value, $availableStatuses->all());
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/site-requests/{$siteRequest->id}/status", [
+                'status' => SiteRequestStatusEnum::APPROVED->value,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', SiteRequestStatusEnum::APPROVED->value);
+
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $siteRequest->id,
+            'status' => SiteRequestStatusEnum::APPROVED->value,
+        ]);
+        $this->assertDatabaseHas('site_request_history', [
+            'site_request_id' => $siteRequest->id,
+            'action' => SiteRequestHistory::ACTION_STATUS_CHANGED,
+        ]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/site-requests/{$siteRequest->id}/status", [
+                'status' => SiteRequestStatusEnum::PENDING->value,
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $siteRequest->id,
+            'status' => SiteRequestStatusEnum::APPROVED->value,
+        ]);
+
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $foreignRequest = $this->createSiteRequest($foreignContext, $foreignProject, SiteRequestStatusEnum::PENDING, 'Foreign request');
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/site-requests/{$foreignRequest->id}/status", [
+                'status' => SiteRequestStatusEnum::APPROVED->value,
+            ])
+            ->assertNotFound();
+
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $foreignRequest->id,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+        ]);
     }
 
     public function test_mobile_site_request_file_upload_list_and_delete_use_private_storage(): void
@@ -527,13 +625,13 @@ final class SiteRequestsMobileTest extends TestCase
         ]);
     }
 
-    private function allowAccess(): void
+    private function allowAccess(bool $allowAssignment = true): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')->andReturn(true);
         });
 
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($allowAssignment): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
@@ -546,7 +644,7 @@ final class SiteRequestsMobileTest extends TestCase
                         ->get();
                 }
             );
-            $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
+            $permissions = [
                 'system' => [],
                 'modules' => [
                     'site-requests' => [
@@ -559,7 +657,15 @@ final class SiteRequestsMobileTest extends TestCase
                         'site_requests.approve',
                     ],
                 ],
-            ]);
+            ];
+            if (! $allowAssignment) {
+                $permissions['modules']['site-requests'] = array_values(array_diff(
+                    $permissions['modules']['site-requests'],
+                    ['site_requests.assign']
+                ));
+            }
+
+            $mock->shouldReceive('getUserPermissionsStructured')->andReturn($permissions);
         });
     }
 }

@@ -4,11 +4,11 @@ namespace App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile;
 
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileCreateSiteRequestFromTemplateRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestAssignmentRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestCalendarRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestFileUploadRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestIndexRequest;
-use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileSiteRequestCalendarRequest;
-use App\BusinessModules\Features\SiteRequests\Http\Requests\MobileCreateSiteRequestFromTemplateRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
@@ -155,10 +155,14 @@ class SiteRequestController extends Controller
             return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
         }
         try {
-            $updated = $this->service->assign($siteRequest, (int) $user->id, (int) $validated['assigned_user_id']);
+            $assignedUserId = $validated['assigned_user_id'] === null ? null : (int) $validated['assigned_user_id'];
+            $updated = $this->service->assign($siteRequest, (int) $user->id, $assignedUserId);
+
             return MobileResponse::success(
                 $this->makeSiteRequestPayload($updated, $request, $user, $organizationId),
-                trans_message('site_requests::mobile.assign_success')
+                trans_message($assignedUserId === null
+                    ? 'site_requests::mobile.history_unassigned'
+                    : 'site_requests::mobile.assign_success')
             );
         } catch (\DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
@@ -222,6 +226,7 @@ class SiteRequestController extends Controller
         }
         try {
             $this->service->deleteMobileFile($siteRequest, $user, $fileId);
+
             return MobileResponse::success(null, trans_message('site_requests::mobile.file_deleted'));
         } catch (\DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), $this->domainStatus($exception, 403));
@@ -231,6 +236,7 @@ class SiteRequestController extends Controller
     private function domainStatus(\DomainException $exception, int $default): int
     {
         $code = $exception->getCode();
+
         return $code >= 400 && $code <= 599 ? $code : $default;
     }
 

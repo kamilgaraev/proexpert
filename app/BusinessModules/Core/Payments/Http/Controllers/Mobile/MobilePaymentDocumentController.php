@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Payments\Http\Controllers\Mobile;
 
 use App\BusinessModules\Core\Payments\Exceptions\PaymentDocumentDeviationBlockedException;
-use App\BusinessModules\Core\Payments\Http\Requests\MobilePaymentDocumentIndexRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileApprovePaymentDocumentRequest;
-use App\BusinessModules\Core\Payments\Http\Requests\MobileRejectPaymentDocumentRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\MobilePaymentDocumentIndexRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\MobilePaymentDocumentOptionsRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileRegisterPaymentDocumentPaymentRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\MobileRejectPaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileStorePaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileSubmitPaymentDocumentRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\MobileUpdatePaymentDocumentRequest;
@@ -39,6 +40,21 @@ final class MobilePaymentDocumentController extends Controller
             return $this->domainError($exception);
         } catch (Throwable $exception) {
             return $this->failed($request, $exception, 'index');
+        }
+    }
+
+    public function options(MobilePaymentDocumentOptionsRequest $request): JsonResponse
+    {
+        try {
+            return MobileResponse::success($this->payments->options(
+                $this->organizationId($request),
+                $this->actor($request),
+                $request->validated()
+            ));
+        } catch (\DomainException $exception) {
+            return $this->domainError($exception);
+        } catch (Throwable $exception) {
+            return $this->failed($request, $exception, 'options');
         }
     }
 
@@ -76,6 +92,8 @@ final class MobilePaymentDocumentController extends Controller
             ]);
         } catch (ValidationException $exception) {
             return MobileResponse::error(trans_message('payments.validation_error'), 422, $exception->errors());
+        } catch (\InvalidArgumentException) {
+            return MobileResponse::error(trans_message('payments.validation_error'), 422);
         } catch (\DomainException $exception) {
             return $this->domainError($exception);
         } catch (Throwable $exception) {
@@ -94,6 +112,8 @@ final class MobilePaymentDocumentController extends Controller
             ));
         } catch (ModelNotFoundException) {
             return MobileResponse::error(trans_message('payments.not_found'), 404);
+        } catch (\InvalidArgumentException) {
+            return MobileResponse::error(trans_message('payments.validation_error'), 422);
         } catch (\DomainException $exception) {
             return $this->domainError($exception);
         } catch (Throwable $exception) {

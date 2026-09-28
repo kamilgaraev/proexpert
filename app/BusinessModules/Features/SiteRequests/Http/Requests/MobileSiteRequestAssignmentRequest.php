@@ -15,6 +15,6 @@ final class MobileSiteRequestAssignmentRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['assigned_user_id' => ['required', 'integer', 'min:1']];
+        return ['assigned_user_id' => ['present', 'nullable', 'integer', 'min:1']];
     }
 }

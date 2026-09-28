@@ -9,6 +9,7 @@ Route::prefix('api/v1/mobile/payments/documents')
     ->name('mobile.payments.documents.')
     ->middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])
     ->group(function (): void {
+        Route::get('/options', [MobilePaymentDocumentController::class, 'options'])->name('options');
         Route::get('/', [MobilePaymentDocumentController::class, 'index'])->name('index');
         Route::post('/', [MobilePaymentDocumentController::class, 'store'])->name('store');
         Route::get('/{id}', [MobilePaymentDocumentController::class, 'show'])->whereNumber('id')->name('show');

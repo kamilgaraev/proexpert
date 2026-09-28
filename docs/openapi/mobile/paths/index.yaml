@@ -74,6 +74,24 @@
       '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
       '409': { description: Акт уже подтверждён этим пользователем либо ключ использован с другим содержимым }
       '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
+/payments/documents/options:
+  get:
+    tags: [Payments]
+    summary: Варианты сторон для платежного документа
+    operationId: mobile_get_payments_documents_options
+    security:
+      - bearerAuth: []
+    parameters:
+      - { in: query, name: project_id, schema: { type: integer, minimum: 1 } }
+      - { in: query, name: search, schema: { type: string, maxLength: 120 } }
+      - { in: query, name: page, schema: { type: integer, minimum: 1 } }
+      - { in: query, name: per_page, schema: { type: integer, minimum: 1, maximum: 50 } }
+    responses:
+      '200': { description: "Текущая организация и ее контрагенты с пагинацией; банковские реквизиты не возвращаются", content: { application/json: { schema: { $ref: '../openapi.yaml#/components/schemas/MobileEnvelope' } } } }
+      '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
+      '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '404': { description: Проект недоступен в текущей организации }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
 /payments/documents:
   get:
     tags: [Payments]
@@ -2243,6 +2261,148 @@
         $ref: '../openapi.yaml#/components/responses/MobileForbidden'
       '422':
         $ref: '../openapi.yaml#/components/responses/MobileValidationError'
+/machinery-operations/shift-reports/{id}/approve:
+  post:
+    tags:
+      - Machinery Operations
+    summary: Подтвердить отправленный сменный рапорт
+    description: Требует право machinery-operations.shifts.approve. Рапорт и проект проверяются в текущей организации и project scope пользователя; подтвердить можно только рапорт со статусом submitted. Ошибка статуса, project scope или конфликт Idempotency-Key возвращает 422.
+    operationId: mobile_post_machinery_operations_shift_reports_id_approve
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: Idempotency-Key
+        in: header
+        required: false
+        description: Необязательный ключ повтора; при повторе с тем же ключом и содержимым возвращается прежний результат.
+        schema:
+          type: string
+          maxLength: 100
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: Сменный рапорт подтверждён.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: null
+                  data:
+                    id: 81
+                    status: approved
+                    approved_by_user_id: 14
+                    approved_at: '2026-09-28T12:00:00+03:00'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '404':
+        description: Сменный рапорт не найден в текущей организации.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileErrorEnvelope'
+      '422':
+        description: Текущий статус не допускает подтверждение, проект вне области доступа или ключ повтора использован с другими данными.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileErrorEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileValidationErrorEnvelope'
+      '500':
+        description: Не удалось обработать действие из-за внутренней ошибки.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileErrorEnvelope'
+/machinery-operations/shift-reports/{id}/reject:
+  post:
+    tags:
+      - Machinery Operations
+    summary: Вернуть отправленный сменный рапорт с причиной
+    description: Требует право machinery-operations.shifts.approve. Рапорт и проект проверяются в текущей организации и project scope пользователя; вернуть можно только рапорт со статусом submitted.
+    operationId: mobile_post_machinery_operations_shift_reports_id_reject
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: Idempotency-Key
+        in: header
+        required: false
+        description: Необязательный ключ повтора; при повторе с тем же ключом и содержимым возвращается прежний результат.
+        schema:
+          type: string
+          maxLength: 100
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - reason
+            properties:
+              reason:
+                type: string
+                minLength: 1
+                maxLength: 1000
+                description: Причина возврата сменного рапорта.
+    responses:
+      '200':
+        description: Сменный рапорт возвращён.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileEnvelope'
+            examples:
+              success:
+                value:
+                  success: true
+                  message: null
+                  data:
+                    id: 82
+                    status: rejected
+                    rejection_reason: Недостаточно данных
+                    rejected_at: '2026-09-28T12:00:00+03:00'
+      '401':
+        $ref: '../openapi.yaml#/components/responses/MobileUnauthorized'
+      '403':
+        $ref: '../openapi.yaml#/components/responses/MobileForbidden'
+      '404':
+        description: Сменный рапорт не найден в текущей организации.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileErrorEnvelope'
+      '422':
+        description: Причина не прошла валидацию, текущий статус не допускает возврат, проект вне области доступа или ключ повтора использован с другими данными.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '../openapi.yaml#/components/schemas/MobileErrorEnvelope'
+                - $ref: '../openapi.yaml#/components/schemas/MobileValidationErrorEnvelope'
+      '500':
+        description: Не удалось обработать действие из-за внутренней ошибки.
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/MobileErrorEnvelope'
 /modules:
   get:
     tags:
@@ -6708,11 +6868,25 @@
       - bearerAuth: []
     parameters:
       - { in: path, name: id, required: true, schema: { type: string } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [assigned_user_id]
+            properties:
+              assigned_user_id:
+                type: integer
+                nullable: true
+                minimum: 1
+                description: ID активного участника проекта; null снимает исполнителя.
     responses:
       '200':
         description: Ответ мобильного API; состав полей зависит от операции.
       '401': { $ref: '../openapi.yaml#/components/responses/MobileUnauthorized' }
       '403': { $ref: '../openapi.yaml#/components/responses/MobileForbidden' }
+      '422': { $ref: '../openapi.yaml#/components/responses/MobileValidationError' }
 /site-requests/{id}/assignees:
   get:
     tags: [Mobile]

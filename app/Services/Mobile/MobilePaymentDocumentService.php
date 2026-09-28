@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Services\Mobile;
 
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentPresenter;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentQueryService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentWorkflowService;
+use App\Models\Contractor;
+use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
@@ -55,6 +57,65 @@ final class MobilePaymentDocumentService
                     $filters['project_id'] ?? null,
                     $projectIds
                 )],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function options(int $organizationId, User $user, array $filters): array
+    {
+        $projectId = isset($filters['project_id']) ? (int) $filters['project_id'] : null;
+        if ($projectId !== null) {
+            $this->assertProjectAccess($user, $organizationId, $projectId);
+        }
+
+        $canCreate = $this->hasPermissionInScope($user, 'payments.invoice.create', $organizationId, $projectId);
+        $canEdit = $this->hasPermissionInScope($user, 'payments.invoice.edit', $organizationId, $projectId);
+        if (! $canCreate && ! $canEdit) {
+            throw new \DomainException(trans_message('auth.mobile_access_denied'), 403);
+        }
+
+        $organization = Organization::query()
+            ->select(['id', 'name', 'tax_number'])
+            ->find($organizationId);
+        if (! $organization) {
+            throw new \DomainException(trans_message('payments.not_found'), 404);
+        }
+
+        $search = trim((string) ($filters['search'] ?? ''));
+        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        $contractors = Contractor::query()
+            ->where('organization_id', $organizationId)
+            ->when($search !== '', static function ($query) use ($search): void {
+                $query->where(static function ($searchQuery) use ($search): void {
+                    $searchQuery->where('name', 'ILIKE', '%'.$search.'%')
+                        ->orWhere('inn', 'ILIKE', '%'.$search.'%');
+                });
+            })
+            ->orderBy('name')
+            ->orderBy('id')
+            ->paginate($perPage, ['id', 'name', 'inn', 'contractor_type'], 'page', $page);
+
+        return [
+            'current_organization' => [
+                'id' => (int) $organization->id,
+                'name' => $organization->name,
+                'inn' => $organization->tax_number,
+            ],
+            'contractors' => [
+                'items' => $contractors->getCollection()->map(static fn (Contractor $contractor): array => [
+                    'id' => (int) $contractor->id,
+                    'name' => $contractor->name,
+                    'inn' => $contractor->inn,
+                    'contractor_type' => $contractor->contractor_type?->value,
+                ])->values()->all(),
+                'meta' => [
+                    'current_page' => $contractors->currentPage(),
+                    'per_page' => $contractors->perPage(),
+                    'total' => $contractors->total(),
+                    'last_page' => $contractors->lastPage(),
+                ],
             ],
         ];
     }
@@ -293,6 +354,21 @@ final class MobilePaymentDocumentService
             && ! ($projectId !== null && $this->hasPermission($user, $permission, ['organization_id' => $organizationId]))) {
             throw new \DomainException(trans_message('auth.mobile_access_denied'), 403);
         }
+    }
+
+    private function hasPermissionInScope(User $user, string $permission, int $organizationId, ?int $projectId): bool
+    {
+        $context = ['organization_id' => $organizationId];
+        if ($projectId !== null) {
+            $context['project_id'] = $projectId;
+            $context['strict_project_scope'] = true;
+        }
+        if ($this->hasPermission($user, $permission, $context)) {
+            return true;
+        }
+
+        return $projectId !== null
+            && $this->hasPermission($user, $permission, ['organization_id' => $organizationId]);
     }
 
     /** @param array<string, int|bool> $context */

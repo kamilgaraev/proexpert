@@ -15,8 +15,8 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument
 use App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentationService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\BusinessLogicException;
-use App\Models\User;
 use App\Models\Organization;
+use App\Models\User;
 use App\Modules\Core\AccessController;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -177,7 +177,7 @@ final class MobilePtoService
         if (! $document instanceof ExecutiveDocument) {
             throw new BusinessLogicException(trans_message('executive_documentation.errors.document_not_found'), 404);
         }
-        $this->projectAccess->assert($actor, $organizationId, (int) $document->project_id, trans_message('errors.resource_not_found'));
+        $this->assertProjectAccessible($actor, $organizationId, (int) $document->project_id);
         $this->assertPermission($actor, 'executive-documentation.view', $organizationId, (int) $document->project_id);
 
         return $document;
@@ -295,7 +295,16 @@ final class MobilePtoService
 
     private function assertProject(User $actor, int $organizationId, int $projectId): void
     {
-        $this->projectAccess->assert($actor, $organizationId, $projectId, trans_message('errors.resource_not_found'));
+        $this->assertProjectAccessible($actor, $organizationId, $projectId);
+    }
+
+    private function assertProjectAccessible(User $actor, int $organizationId, int $projectId): void
+    {
+        try {
+            $this->projectAccess->assert($actor, $organizationId, $projectId, trans_message('errors.resource_not_found'));
+        } catch (DomainException $exception) {
+            throw new BusinessLogicException($exception->getMessage(), 404, $exception);
+        }
     }
 
     private function assertPermission(User $actor, string $permission, int $organizationId, int $projectId): void
