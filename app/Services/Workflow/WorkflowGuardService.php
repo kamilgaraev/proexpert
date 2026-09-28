@@ -20,15 +20,18 @@ class WorkflowGuardService
         private readonly JournalContractCoverageService $coverageService,
         private readonly LoggingService $loggingService,
         private readonly JournalScheduleTaskResolver $scheduleTaskResolver,
-    ) {
-    }
+    ) {}
 
-    public function journalEntryBlockers(ConstructionJournalEntry $entry): array
+    public function journalEntryBlockers(ConstructionJournalEntry $entry, bool $includeOverridable = true): array
     {
-        $entry->loadMissing([
-            'journal.contract.contractor',
-            'workVolumes.estimateItem.contractLinks.contract.contractor',
-        ]);
+        if ($includeOverridable) {
+            $entry->loadMissing([
+                'journal.contract.contractor',
+                'workVolumes.estimateItem.contractLinks.contract.contractor',
+            ]);
+        } else {
+            $entry->loadMissing('workVolumes');
+        }
 
         $blockers = [];
 
@@ -46,7 +49,7 @@ class WorkflowGuardService
         }
 
         foreach ($entry->workVolumes as $volume) {
-            if (!$volume->estimate_item_id) {
+            if (! $volume->estimate_item_id) {
                 $blockers[] = $this->blocker(
                     'missing_estimate_item',
                     trans_message('workflow.blockers.missing_estimate_item'),
@@ -55,6 +58,11 @@ class WorkflowGuardService
                     ['select_estimate_item'],
                     $volume->id,
                 );
+
+                continue;
+            }
+
+            if (! $includeOverridable) {
                 continue;
             }
 
@@ -74,6 +82,7 @@ class WorkflowGuardService
                     ['select_contract'],
                     $volume->id,
                 );
+
                 continue;
             }
 
@@ -86,6 +95,7 @@ class WorkflowGuardService
                     ['add_contract_coverage'],
                     $volume->id,
                 );
+
                 continue;
             }
 
@@ -99,7 +109,11 @@ class WorkflowGuardService
             );
         }
 
-        if (!$this->scheduleTaskResolver->allVolumesHaveResolvableTask($entry)) {
+        if (! $includeOverridable) {
+            return array_values($blockers);
+        }
+
+        if (! $this->scheduleTaskResolver->allVolumesHaveResolvableTask($entry)) {
             $blockers[] = $this->blocker(
                 'schedule_missing',
                 trans_message('workflow.blockers.schedule_missing'),
@@ -127,14 +141,14 @@ class WorkflowGuardService
 
         $notOverridable = array_values(array_filter(
             $blockers,
-            fn (array $blocker): bool => !($blocker['can_override'] ?? false)
+            fn (array $blocker): bool => ! ($blocker['can_override'] ?? false)
         ));
 
         if ($notOverridable !== []) {
             throw new DomainException($this->formatBlockersMessage($notOverridable));
         }
 
-        if (!$this->overrideEnabled($override)) {
+        if (! $this->overrideEnabled($override)) {
             throw new DomainException($this->formatBlockersMessage($blockers));
         }
 
@@ -145,7 +159,7 @@ class WorkflowGuardService
             throw new DomainException(trans_message('workflow.override_reason_required'));
         }
 
-        if (!$user || !$user->can(self::PERMISSION_OVERRIDE, ['organization_id' => (int) $entry->journal->organization_id])) {
+        if (! $user || ! $user->can(self::PERMISSION_OVERRIDE, ['organization_id' => (int) $entry->journal->organization_id])) {
             throw new DomainException(trans_message('workflow.override_forbidden'));
         }
 
@@ -201,6 +215,6 @@ class WorkflowGuardService
             $blockers
         )));
 
-        return trans_message('workflow.blocked') . ': ' . implode('; ', array_filter($messages));
+        return trans_message('workflow.blocked').': '.implode('; ', array_filter($messages));
     }
 }
