@@ -15,6 +15,7 @@ Rows marked `review` were added from the registered route inventory. Their authe
 | `GET /acts/{act}/files/{file}` | Acts | yes | yes | act_reports.view | yes | yes | binary file | n/a for read route | test/features/acts | MobileActFieldConfirmationTest.php |
 | `POST /acts/{act}/field-confirmations` | Acts | yes | yes | act_reports.field_confirm | yes | yes | yes | yes | test/features/acts | MobileActFieldConfirmationTest.php |
 | `GET /payments/documents` | Payments | yes | yes | payments.invoice.view | yes | yes | yes | n/a for read route | test/features/payments | MobilePaymentDocumentsTest.php |
+| `GET /payments/documents/options` | Payments | yes | yes | payments.invoice.create or payments.invoice.edit | yes | yes | yes | yes | prohelpers_mobile/test/features/payments/data/payments_repository_test.dart | MobilePaymentDocumentsTest.php |
 | `POST /payments/documents` | Payments | yes | yes | payments.invoice.create | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
 | `GET /payments/documents/{id}` | Payments | yes | yes | payments.invoice.view | yes | yes | yes | n/a for read route | test/features/payments | MobilePaymentDocumentsTest.php |
 | `PUT /payments/documents/{id}` | Payments | yes | yes | payments.invoice.edit | yes | yes | yes | yes | test/features/payments | MobilePaymentDocumentsTest.php |
@@ -78,6 +79,8 @@ Rows marked `review` were added from the registered route inventory. Their authe
 | `GET /machinery-operations/shift-reports` | Machinery Operations | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/machinery_operations | MachineryOperationsMobileWorkflowTest.php |
 | `POST /machinery-operations/shift-reports` | Machinery Operations | yes | yes | yes | yes | yes | yes | yes | test/features/machinery_operations | MachineryOperationsMobileWorkflowTest.php |
 | `POST /machinery-operations/shift-reports/{id}/submit` | Machinery Operations | yes | yes | yes | yes | yes | yes | yes | test/features/machinery_operations | MachineryOperationsMobileWorkflowTest.php |
+| `POST /machinery-operations/shift-reports/{id}/approve` | Machinery Operations | yes | yes | `machinery-operations.shifts.approve` | yes | yes | yes | yes | prohelpers_mobile/test/features/machinery_operations/data/machinery_operations_repository_review_test.dart | MachineryOperationsMobileWorkflowTest.php |
+| `POST /machinery-operations/shift-reports/{id}/reject` | Machinery Operations | yes | yes | `machinery-operations.shifts.approve` | yes | yes | yes | yes | prohelpers_mobile/test/features/machinery_operations/data/machinery_operations_repository_review_test.dart | MachineryOperationsMobileWorkflowTest.php |
 | `GET /modules` | Modules | yes | yes | yes | yes | yes | yes | n/a for read route | test/core/providers/module_provider_test.dart | MobileModulesTest.php |
 | `GET /notifications` | Notifications | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/notifications | MobileApiContractDocumentationTest.php |
 | `DELETE /notifications/{id}` | Notifications | yes | yes | yes | yes | yes | yes | n/a for read route | test/features/notifications | MobileApiContractDocumentationTest.php |

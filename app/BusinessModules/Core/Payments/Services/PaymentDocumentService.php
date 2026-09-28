@@ -704,7 +704,7 @@ class PaymentDocumentService
             && ($expectedValueDate === null || $this->normalizedPaymentDate($existing->value_date) === $expectedValueDate);
 
         if (! $matches) {
-            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'));
+            throw new \DomainException(trans_message('payments.validation.idempotency_conflict'), 409);
         }
     }
 

@@ -8,18 +8,19 @@ use App\BusinessModules\ContractorMarketplace\Http\Requests\Landing\StoreMarketp
 use App\BusinessModules\ContractorMarketplace\Http\Resources\MarketplaceContractorListItemResource;
 use App\BusinessModules\ContractorMarketplace\Http\Resources\MarketplaceContractorProfileResource;
 use App\BusinessModules\ContractorMarketplace\Http\Resources\MarketplaceHiringOfferResource;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Mobile\MobileBrigadeCatalogIndexRequest;
 use App\Http\Requests\Api\V1\Mobile\MobileBrigadeInvitationStoreRequest;
 use App\Http\Requests\Api\V1\Mobile\MobileBrigadeListRequest;
 use App\Http\Requests\Api\V1\Mobile\MobileBrigadeRequestStoreRequest;
 use App\Http\Requests\Api\V1\Mobile\MobileContractorSearchRequest;
-use App\Http\Responses\MobileResponse;
 use App\Http\Resources\Brigades\BrigadeInvitationResource;
 use App\Http\Resources\Brigades\BrigadeProfileResource;
-use App\Http\Resources\Brigades\BrigadeRequestResource;
 use App\Http\Resources\Brigades\BrigadeProjectAssignmentResource;
+use App\Http\Resources\Brigades\BrigadeRequestResource;
 use App\Http\Resources\Brigades\BrigadeResponseResource;
+use App\Http\Responses\MobileResponse;
 use App\Models\User;
 use App\Services\Mobile\MobileTeamExpansionService;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,20 @@ use Illuminate\Http\Request;
 final class MobileTeamExpansionController extends Controller
 {
     public function __construct(private readonly MobileTeamExpansionService $service) {}
+
+    public function callAction($method, $parameters)
+    {
+        try {
+            return parent::callAction($method, $parameters);
+        } catch (BusinessLogicException $exception) {
+            $code = $exception->getCode();
+
+            return MobileResponse::error(
+                $exception->getMessage(),
+                in_array($code, [403, 404, 409, 422], true) ? $code : 403,
+            );
+        }
+    }
 
     public function contractorIndex(MobileContractorSearchRequest $request): JsonResponse
     {

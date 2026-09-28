@@ -18,7 +18,6 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
-use App\Services\Mobile\MobileLegalArchiveService;
 use App\Services\Storage\FileService;
 use BackedEnum;
 use Carbon\CarbonInterface;
@@ -26,6 +25,7 @@ use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 final class MobileCompanionModulesService
 {
@@ -292,7 +292,7 @@ final class MobileCompanionModulesService
             'brigades' => BrigadeProfile::query()
                 ->with([
                     'members',
-                    'assignments' => fn (Builder $assignmentQuery) => $assignmentQuery->whereIn('project_id', $projectIds),
+                    'assignments' => fn (HasMany $assignmentQuery) => $assignmentQuery->whereIn('project_id', $projectIds),
                     'assignments.project',
                     'specializations',
                 ])

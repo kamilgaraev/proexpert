@@ -22,12 +22,12 @@ use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\EstimateItem;
+use App\Models\File;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\User;
-use App\Models\File;
-use App\Services\Storage\FileService;
 use App\Services\Mobile\MobileProjectAccessResolver;
+use App\Services\Storage\FileService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
@@ -213,6 +213,7 @@ class SiteRequestService
                 if (! hash_equals((string) $existing->idempotency_hash, $idempotencyFingerprint)) {
                     throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
                 }
+
                 return $existing->fresh(['project', 'user', 'estimateItem.measurementUnit']);
             }
         }
@@ -264,6 +265,7 @@ class SiteRequestService
             if (! hash_equals((string) $existing->idempotency_hash, (string) $idempotencyFingerprint)) {
                 throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
             }
+
             return $existing->fresh(['project', 'user', 'estimateItem.measurementUnit']);
         }
 
@@ -296,6 +298,7 @@ class SiteRequestService
             throw new DomainException(trans_message('site_requests::mobile.create_access_denied'));
         }
         $this->assertMobileProjectIdAccess((int) ($data['project_id'] ?? 0), $organizationId, $actor);
+
         return $this->create($organizationId, $userId, $data, null, $idempotencyKey);
     }
 
@@ -333,6 +336,7 @@ class SiteRequestService
                 if (! hash_equals((string) $existing->idempotency_hash, (string) $fingerprint)) {
                     throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
                 }
+
                 return $existing->fresh(['requests.estimateItem.measurementUnit']);
             }
         }
@@ -354,6 +358,7 @@ class SiteRequestService
             if (! hash_equals((string) $existing->idempotency_hash, (string) $fingerprint)) {
                 throw new DomainException(trans_message('site_requests::mobile.idempotency_conflict'));
             }
+
             return $existing->fresh(['requests.estimateItem.measurementUnit']);
         }
     }
@@ -675,22 +680,24 @@ class SiteRequestService
     /**
      * Назначить исполнителя
      */
-    public function assign(SiteRequest $request, int $userId, int $assigneeId): SiteRequest
+    public function assign(SiteRequest $request, int $userId, ?int $assigneeId): SiteRequest
     {
         $actor = User::query()->find($userId);
         if (! $actor || ! $this->actorHasPermission($actor, $request->organization_id, 'site_requests.assign')) {
             throw new DomainException(trans_message('site_requests::mobile.assign_access_denied'));
         }
         $this->assertMobileProjectAccess($request, $actor);
-        $assigneeIsActiveParticipant = $request->project->users()
-            ->whereKey($assigneeId)
-            ->wherePivot('is_active', true)
-            ->whereHas('organizations', static fn ($query) => $query
-                ->where('organizations.id', $request->organization_id)
-                ->where('organization_user.is_active', true))
-            ->exists();
-        if (! $assigneeIsActiveParticipant) {
-            throw new DomainException(trans_message('site_requests::mobile.assignee_not_project_member'), 422);
+        if ($assigneeId !== null) {
+            $assigneeIsActiveParticipant = $request->project->users()
+                ->whereKey($assigneeId)
+                ->wherePivot('is_active', true)
+                ->whereHas('organizations', static fn ($query) => $query
+                    ->where('organizations.id', $request->organization_id)
+                    ->where('organization_user.is_active', true))
+                ->exists();
+            if (! $assigneeIsActiveParticipant) {
+                throw new DomainException(trans_message('site_requests::mobile.assignee_not_project_member'), 422);
+            }
         }
 
         $oldAssignee = $request->assigned_to;
@@ -698,21 +705,37 @@ class SiteRequestService
         DB::transaction(function () use ($request, $userId, $oldAssignee, $assigneeId) {
             $request->update(['assigned_to' => $assigneeId]);
 
-            // Записываем в историю
-            SiteRequestHistory::logAssigned($request, $userId, $oldAssignee, $assigneeId);
+            if ($assigneeId === null) {
+                SiteRequestHistory::create([
+                    'site_request_id' => $request->id,
+                    'user_id' => $userId,
+                    'action' => SiteRequestHistory::ACTION_UNASSIGNED,
+                    'old_value' => ['assigned_to' => $oldAssignee],
+                    'new_value' => ['assigned_to' => null],
+                ]);
+            } else {
+                SiteRequestHistory::logAssigned($request, $userId, $oldAssignee, $assigneeId);
+            }
         });
 
         // Инвалидируем кеш
         $this->invalidateCache($request->organization_id);
 
-        // Отправляем событие
-        event(new SiteRequestAssigned($request, $assigneeId, $userId));
+        if ($assigneeId !== null) {
+            event(new SiteRequestAssigned($request, $assigneeId, $userId));
 
-        \Log::info('site_request.assigned', [
-            'request_id' => $request->id,
-            'user_id' => $userId,
-            'assignee_id' => $assigneeId,
-        ]);
+            \Log::info('site_request.assigned', [
+                'request_id' => $request->id,
+                'user_id' => $userId,
+                'assignee_id' => $assigneeId,
+            ]);
+        } else {
+            \Log::info('site_request.unassigned', [
+                'request_id' => $request->id,
+                'user_id' => $userId,
+                'old_assignee_id' => $oldAssignee,
+            ]);
+        }
 
         return $request->fresh(['assignedUser']);
     }
@@ -723,6 +746,7 @@ class SiteRequestService
             throw new DomainException(trans_message('site_requests::mobile.assign_access_denied'));
         }
         $this->assertMobileProjectAccess($request, $actor);
+
         return $request->project->users()
             ->wherePivot('is_active', true)
             ->whereHas('organizations', static fn ($query) => $query
@@ -739,6 +763,7 @@ class SiteRequestService
     {
         $this->assertMobileRequestAccess($request, $actor, 'site_requests.view');
         $canDelete = $this->actorHasPermission($actor, $request->organization_id, 'site_requests.files.delete');
+
         return $request->files->map(fn (File $file): array => [
             'id' => $file->id,
             'name' => $file->name,
@@ -768,6 +793,7 @@ class SiteRequestService
             'disk' => 's3',
             'type' => 'attachment',
         ]);
+
         return [
             'id' => $file->id,
             'name' => $file->name,
@@ -826,6 +852,7 @@ class SiteRequestService
                 return true;
             }
         }
+
         return false;
     }
 
@@ -836,6 +863,7 @@ class SiteRequestService
                 return true;
             }
         }
+
         return false;
     }
 
@@ -850,6 +878,7 @@ class SiteRequestService
             if (! array_is_list($value)) {
                 ksort($value);
             }
+
             return $value;
         };
 
