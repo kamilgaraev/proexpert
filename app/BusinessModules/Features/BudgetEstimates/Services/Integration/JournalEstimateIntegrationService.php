@@ -61,7 +61,7 @@ class JournalEstimateIntegrationService
         $comparison = [];
 
         foreach ($items as $item) {
-            $plannedVolume = (float) $item->quantity_total;
+            $plannedVolume = $item->resolvePlannedQuantity();
             $actualVolume = $this->resolveActualVolume(
                 (int) $item->id,
                 $completedWorkItemIds,
@@ -70,7 +70,7 @@ class JournalEstimateIntegrationService
             );
             $completionPercent = $this->calculateCompletionPercent(
                 $actualVolume,
-                $item->resolvePlannedQuantity()
+                $plannedVolume
             );
 
             $comparison[] = [
