@@ -174,6 +174,48 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame(['signature_requested', 'signature_registered'], $this->audit->events);
     }
 
+    public function test_mobile_paper_original_capability_matches_the_upload_preflight(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $actor->name = 'Иван Петров';
+        $this->database->getConnection()->table('users')->insert([
+            'id' => 7,
+            'name' => 'Иван Петров',
+            'is_active' => true,
+            'deleted_at' => null,
+        ]);
+        $this->database->getConnection()->table('organization_user')->insert([
+            'organization_id' => 10,
+            'user_id' => 7,
+            'is_active' => true,
+        ]);
+        $signers = new SignerIdentitySet([
+            new SignerIdentity('user', 'Иван Петров', userId: 7, organizationId: 10),
+        ]);
+        $request = $this->service->createRequest($document, $version, $actor, 'paper', $signers, 'mobile-capability-request');
+        $document->setRelation('signatureRequests', collect([$request]));
+
+        $payload = (new \App\Http\Resources\Api\V1\Mobile\LegalArchiveDocumentResource(
+            $document,
+            [],
+            $actor,
+            $this->service,
+        ))->resolve(\Illuminate\Http\Request::create('/'));
+
+        self::assertTrue($payload['signature_requests'][0]['can_upload_original']);
+
+        $otherActor = clone $actor;
+        $otherActor->forceFill(['id' => 8]);
+        $deniedPayload = (new \App\Http\Resources\Api\V1\Mobile\LegalArchiveDocumentResource(
+            $document,
+            [],
+            $otherActor,
+            $this->service,
+        ))->resolve(\Illuminate\Http\Request::create('/'));
+
+        self::assertFalse($deniedPayload['signature_requests'][0]['can_upload_original']);
+    }
+
     public function test_paper_original_replays_two_step_registration_after_response_loss(): void
     {
         [$document, $version, $actor] = $this->fixture();

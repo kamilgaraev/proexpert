@@ -9,6 +9,7 @@ use App\Http\Resources\Api\V1\Mobile\LegalArchiveDocumentResource;
 use App\Http\Responses\MobileResponse;
 use App\Services\Mobile\MobileLegalArchiveService;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
+use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -24,7 +25,10 @@ use function trans_message;
 
 final class LegalArchiveController extends Controller
 {
-    public function __construct(private readonly MobileLegalArchiveService $archive) {}
+    public function __construct(
+        private readonly MobileLegalArchiveService $archive,
+        private readonly LegalDocumentSignatureService $signatures,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -61,7 +65,12 @@ final class LegalArchiveController extends Controller
                 $syncMaxId,
             );
             $summaries = $this->archive->summaries($actor, $documents->getCollection());
-            $data = $documents->getCollection()->map(fn ($document): array => (new LegalArchiveDocumentResource($document, $summaries[(int) $document->id] ?? []))->resolve())->all();
+            $data = $documents->getCollection()->map(fn ($document): array => (new LegalArchiveDocumentResource(
+                $document,
+                $summaries[(int) $document->id] ?? [],
+                $actor,
+                $this->signatures,
+            ))->resolve())->all();
 
             $hasMore = $documents->currentPage() < $documents->lastPage();
             $meta = $cursorMode ? [
@@ -91,7 +100,7 @@ final class LegalArchiveController extends Controller
             }
             $found = $this->archive->document($actor, (int) $actor->current_organization_id, $document);
 
-            return MobileResponse::success(new LegalArchiveDocumentResource($found, $this->archive->summary($actor, $found)));
+            return MobileResponse::success(new LegalArchiveDocumentResource($found, $this->archive->summary($actor, $found), $actor, $this->signatures));
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'show', $document);
         }
@@ -117,7 +126,7 @@ final class LegalArchiveController extends Controller
             ]);
             $found = $this->archive->decide($actor, (int) $actor->current_organization_id, $document, $action, (int) $validated['target_step_id'], (string) $validated['idempotency_key'], (int) $validated['instance_lock_version'], (int) $validated['step_lock_version'], $validated['comment'] ?? null, $validated['reason'] ?? null);
 
-            return MobileResponse::success(new LegalArchiveDocumentResource($found, $this->archive->summary($actor, $found)));
+            return MobileResponse::success(new LegalArchiveDocumentResource($found, $this->archive->summary($actor, $found), $actor, $this->signatures));
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'action', $document);
         }
