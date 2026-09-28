@@ -58,6 +58,7 @@ class SiteRequestController extends Controller
             $perPage = (int) ($filters['per_page'] ?? 15);
             unset($filters['scope'], $filters['per_page']);
             $requests = $this->service->paginateMobile($user, $organizationId, $perPage, $filters, $scope);
+            $assignableProjectIds = $this->service->mobileAssignableProjectIds($user, $organizationId);
 
             return MobileResponse::paginated(
                 $requests->getCollection()
@@ -65,7 +66,8 @@ class SiteRequestController extends Controller
                         $siteRequest,
                         $request,
                         $user,
-                        $organizationId
+                        $organizationId,
+                        in_array((int) $siteRequest->project_id, $assignableProjectIds, true)
                     ))
                     ->values()
                     ->all(),
@@ -713,6 +715,7 @@ class SiteRequestController extends Controller
                 ->with(['user', 'assignedUser']),
         ]);
         $payload = $this->makeMobileResourcePayload($siteRequest, $request);
+        $payload['can_be_assigned'] = $this->service->canAssignMobileRequest($siteRequest, $user);
         $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);
         $payload['history'] = $this->makeHistoryPayload($siteRequest);
         $payload['group_context'] = $this->makeGroupPayload($siteRequest);
@@ -724,7 +727,8 @@ class SiteRequestController extends Controller
         SiteRequest $siteRequest,
         Request $request,
         User $user,
-        int $organizationId
+        int $organizationId,
+        bool $canBeAssigned
     ): array {
         $siteRequest->loadMissing([
             'project',
@@ -734,6 +738,7 @@ class SiteRequestController extends Controller
         ]);
 
         $payload = $this->makeMobileResourcePayload($siteRequest, $request);
+        $payload['can_be_assigned'] = $canBeAssigned;
         $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);
 
         return $payload;

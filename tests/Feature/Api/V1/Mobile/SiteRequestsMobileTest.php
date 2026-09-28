@@ -463,6 +463,16 @@ final class SiteRequestsMobileTest extends TestCase
         $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Assign me');
 
         $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests')
+            ->assertOk()
+            ->assertJsonPath('data.0.can_be_assigned', true);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}")
+            ->assertOk()
+            ->assertJsonPath('data.can_be_assigned', true);
+
+        $this->withHeaders($context->mobileAuthHeaders())
             ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignees")
             ->assertOk()
             ->assertJsonFragment(['id' => $candidate->id, 'name' => $candidate->name]);
@@ -505,6 +515,42 @@ final class SiteRequestsMobileTest extends TestCase
         $this->allowAccess(false);
         $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Protected assignment');
         $siteRequest->update(['assigned_to' => $context->user->id]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}")
+            ->assertOk()
+            ->assertJsonPath('data.can_be_assigned', false);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/site-requests')
+            ->assertOk()
+            ->assertJsonPath('data.0.can_be_assigned', false);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => null])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('site_requests', [
+            'id' => $siteRequest->id,
+            'assigned_to' => $context->user->id,
+        ]);
+    }
+
+    public function test_mobile_assignment_capability_is_false_without_project_access(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess();
+        $siteRequest = $this->createSiteRequest($context, $project, SiteRequestStatusEnum::PENDING, 'Project-scoped assignment');
+        $siteRequest->update(['assigned_to' => $context->user->id]);
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/site-requests/{$siteRequest->id}")
+            ->assertOk()
+            ->assertJsonPath('data.can_be_assigned', false);
 
         $this->withHeaders($context->mobileAuthHeaders())
             ->putJson("/api/v1/mobile/site-requests/{$siteRequest->id}/assignee", ['assigned_user_id' => null])
