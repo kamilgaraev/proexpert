@@ -522,6 +522,104 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
         $dailyResponse->assertCreated();
         $dailyPlanId = (int) $dailyResponse->json('data.id');
 
+        $secondPlanResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/lookahead-plans", [
+                'start_date' => '2026-06-08',
+                'end_date' => '2026-06-21',
+                'title' => 'Second two week lookahead',
+            ]);
+        $secondPlanResponse->assertCreated();
+        $secondPlanId = (int) $secondPlanResponse->json('data.id');
+
+        $secondPlanTaskResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/lookahead-plans/{$secondPlanId}/tasks", [
+                'schedule_task_id' => $task->id,
+                'planned_start_date' => '2026-06-08',
+                'planned_end_date' => '2026-06-10',
+                'planned_quantity' => 10,
+                'planned_work_hours' => 24,
+            ]);
+        $secondPlanTaskResponse->assertCreated();
+        $secondPlanTaskId = (int) $secondPlanTaskResponse->json('data.id');
+
+        $duplicateDailyResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans", [
+                'lookahead_plan_id' => $secondPlanId,
+                'work_date' => '2026-06-08',
+                'assignments' => [
+                    [
+                        'lookahead_plan_task_id' => $secondPlanTaskId,
+                        'planned_quantity' => 0.001,
+                        'planned_work_hours' => 0.01,
+                    ],
+                ],
+            ]);
+
+        $duplicateDailyResponse->assertUnprocessable();
+        $duplicateDailyResponse->assertJsonPath('message', trans_message('schedule_management.daily_plan_date_already_exists'));
+        $this->assertDatabaseCount('daily_work_plans', 1);
+        $this->assertDatabaseHas('daily_work_plans', [
+            'id' => $dailyPlanId,
+            'lookahead_plan_id' => $planId,
+            'work_date' => '2026-06-08',
+            'status' => 'draft',
+        ]);
+        $this->assertDatabaseCount('daily_work_plan_assignments', 1);
+        $this->assertDatabaseHas('daily_work_plan_assignments', [
+            'daily_work_plan_id' => $dailyPlanId,
+            'lookahead_plan_task_id' => $planTaskId,
+            'planned_quantity' => 10,
+            'planned_work_hours' => 8,
+        ]);
+
+        $raceInserted = false;
+        $creatingDailyPlanEvent = 'eloquent.creating: '.\App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan::class;
+        \Illuminate\Support\Facades\Event::listen($creatingDailyPlanEvent, function ($daily) use (&$raceInserted): void {
+            if ($raceInserted) {
+                return;
+            }
+
+            $raceInserted = true;
+            $attributes = $daily->getAttributes();
+            DB::table('daily_work_plans')->insert([
+                'organization_id' => $attributes['organization_id'],
+                'project_id' => $attributes['project_id'],
+                'schedule_id' => $attributes['schedule_id'],
+                'lookahead_plan_id' => $attributes['lookahead_plan_id'],
+                'created_by_user_id' => $attributes['created_by_user_id'],
+                'work_date' => $attributes['work_date'],
+                'status' => 'draft',
+                'revision_number' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        try {
+            $racedDailyResponse = $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans", [
+                    'lookahead_plan_id' => $secondPlanId,
+                    'work_date' => '2026-06-09',
+                    'assignments' => [
+                        [
+                            'lookahead_plan_task_id' => $secondPlanTaskId,
+                            'planned_quantity' => 0.001,
+                            'planned_work_hours' => 0.01,
+                        ],
+                    ],
+                ]);
+        } finally {
+            \Illuminate\Support\Facades\Event::forget($creatingDailyPlanEvent);
+        }
+
+        $this->assertTrue($raceInserted);
+        $racedDailyResponse->assertUnprocessable();
+        $racedDailyResponse->assertJsonPath('message', trans_message('schedule_management.daily_plan_date_already_exists'));
+        $this->assertDatabaseMissing('daily_work_plans', [
+            'schedule_id' => $schedule->id,
+            'work_date' => '2026-06-09',
+        ]);
+
         $publishBlockedResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/publish");
 
@@ -532,6 +630,8 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
             ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/daily-plans/{$dailyPlanId}/publish", [
                 'override_constraint_ids' => [$constraintId],
                 'override_reason' => 'Material delivery confirmed by supplier call',
+                'override_until' => now()->addDay()->toDateString(),
+                'override_evidence_ref' => 'supplier-confirmation',
             ]);
 
         $publishOverrideResponse->assertOk();

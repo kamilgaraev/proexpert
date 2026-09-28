@@ -20,6 +20,7 @@ use App\Models\ScheduleTask;
 use App\Models\User;
 use Carbon\Carbon;
 use DomainException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -129,16 +130,30 @@ final class LookaheadPlanningService
         $plan = $this->findLookaheadPlan($schedule, (int) $data['lookahead_plan_id']);
 
         return DB::transaction(function () use ($schedule, $userId, $data, $plan): DailyWorkPlan {
-            $daily = DailyWorkPlan::query()->create([
-                'organization_id' => $schedule->organization_id,
-                'project_id' => $schedule->project_id,
-                'schedule_id' => $schedule->id,
-                'lookahead_plan_id' => $plan->id,
-                'created_by_user_id' => $userId,
-                'work_date' => $data['work_date'],
-                'status' => 'draft',
-                'summary_comment' => $data['summary_comment'] ?? null,
-            ]);
+            $dateAlreadyPlanned = DailyWorkPlan::withTrashed()
+                ->where('organization_id', $schedule->organization_id)
+                ->where('schedule_id', $schedule->id)
+                ->where('work_date', $data['work_date'])
+                ->exists();
+
+            if ($dateAlreadyPlanned) {
+                throw new DomainException(trans_message('schedule_management.daily_plan_date_already_exists'));
+            }
+
+            try {
+                $daily = DailyWorkPlan::query()->create([
+                    'organization_id' => $schedule->organization_id,
+                    'project_id' => $schedule->project_id,
+                    'schedule_id' => $schedule->id,
+                    'lookahead_plan_id' => $plan->id,
+                    'created_by_user_id' => $userId,
+                    'work_date' => $data['work_date'],
+                    'status' => 'draft',
+                    'summary_comment' => $data['summary_comment'] ?? null,
+                ]);
+            } catch (UniqueConstraintViolationException) {
+                throw new DomainException(trans_message('schedule_management.daily_plan_date_already_exists'));
+            }
 
             foreach ($data['assignments'] as $assignment) {
                 $planTask = $this->findLookaheadTask($schedule, (int) $assignment['lookahead_plan_task_id']);

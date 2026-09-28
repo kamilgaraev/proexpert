@@ -90,6 +90,7 @@ return [
     'lookahead_task_created' => 'Задача добавлена в краткосрочный план.',
     'constraint_created' => 'Ограничение добавлено.',
     'daily_plan_created' => 'Дневной план работ создан.',
+    'daily_plan_date_already_exists' => 'На эту дату в графике уже создан дневной план.',
     'daily_plan_fact_recorded' => 'Факт дневного плана зафиксирован.',
     'daily_plan_submitted' => 'Дневной план передан на приемку.',
     'daily_plan_accepted' => 'Дневной план принят.',
