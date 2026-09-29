@@ -92,7 +92,8 @@ final readonly class ManagementPnlReadinessProbe implements ReportDefinitionRead
             );
             $sealed = true;
             foreach ($components as $component) {
-                if ($component->coverageNumerator !== $component->coverageDenominator) {
+                if ($component->coverageNumerator !== $component->coverageDenominator
+                    || in_array('approved_time_entry_rate_missing', $component->warnings, true)) {
                     $sealed = false;
                     break;
                 }

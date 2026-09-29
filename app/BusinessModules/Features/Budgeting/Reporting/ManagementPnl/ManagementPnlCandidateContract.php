@@ -20,7 +20,7 @@ final readonly class ManagementPnlCandidateContract
 
     public const FORMULA_HASH = '859919649bf9f9cc06f64e762f7eb0507e077f89b8092a2c2811b6d9f7a8b8fe';
 
-    public const SOURCE_HASH = 'a1951e63dcd64d3d257d1fb9cdcbe896ee22b917e8f47335c1281731528d396f';
+    public const SOURCE_HASH = '80fb5a8914c7549e735cb614c60c3f2bcab747f7ea5bd69225bffbbf0809826e';
 
     public function definition(): ReportDefinition
     {

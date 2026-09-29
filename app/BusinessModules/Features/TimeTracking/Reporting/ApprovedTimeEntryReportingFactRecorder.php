@@ -20,13 +20,15 @@ final readonly class ApprovedTimeEntryReportingFactRecorder
 
         $customFields = is_array($entry->custom_fields) ? $entry->custom_fields : [];
         $currency = mb_strtoupper((string) ($customFields['rate_currency'] ?? ''));
-        if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
-            throw new DomainException('approved_time_entry_reporting_currency_invalid');
-        }
-
         $rateMinor = $entry->hourly_rate === null
             ? null
             : ExactDecimal::minor((string) $entry->hourly_rate);
+        if ($currency === '' && $rateMinor === null) {
+            $currency = null;
+        } elseif (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
+            throw new DomainException('approved_time_entry_reporting_currency_invalid');
+        }
+
         $costMinor = $rateMinor === null
             ? null
             : ExactDecimal::multiplyMinor($rateMinor, (string) $entry->hours_worked);
@@ -38,7 +40,7 @@ final readonly class ApprovedTimeEntryReportingFactRecorder
             'work_type_id' => $entry->work_type_id === null ? null : (int) $entry->work_type_id,
             'work_date' => $entry->work_date->format('Y-m-d'),
             'currency' => $currency,
-            'currency_source' => 'time_entry_rate',
+            'currency_source' => $currency === null ? 'unspecified' : 'time_entry_rate',
             'hours' => (string) $entry->hours_worked,
             'hourly_rate_minor' => $rateMinor,
             'cost_minor' => $costMinor,
