@@ -86,6 +86,8 @@ class IndexRagSourceJobTest extends TestCase
         $job = new IndexRagSourceJob(10, 20, 'estimate', null, 'estimate', 30);
         $indexer = new RecordingRagIndexer();
 
+        $this->assertSame('ai-rag-live', $job->queue);
+
         $job->handle($indexer);
 
         $this->assertSame([], $indexer->calls);

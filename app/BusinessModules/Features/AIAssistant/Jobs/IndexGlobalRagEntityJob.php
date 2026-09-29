@@ -25,7 +25,7 @@ final class IndexGlobalRagEntityJob implements ShouldQueue
         $this->eventId = $eventId;
         $this->eventRevision = $eventRevision;
         $this->onConnection((string) config('ai-assistant.rag.queue_connection', 'redis_ai_rag'));
-        $this->onQueue((string) config('ai-assistant.rag.queue', 'ai-rag'));
+        $this->onQueue((string) config('ai-assistant.rag.live_queue', 'ai-rag-live'));
     }
 
     public function handle(RagIndexingCoordinator $coordinator, ?GlobalRagQueue $queue = null): void

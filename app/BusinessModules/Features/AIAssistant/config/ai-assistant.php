@@ -120,9 +120,10 @@ return [
         'embedding_input_price_per_million' => $configEnv('AI_RAG_EMBEDDING_INPUT_PRICE_PER_MILLION', 45.0),
         'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
+        'live_queue' => $configEnv('AI_RAG_LIVE_QUEUE', 'ai-rag-live'),
         'job_tries' => $configEnv('AI_RAG_JOB_TRIES', 3),
         'job_timeout' => max(7200, (int) $configEnv('AI_RAG_JOB_TIMEOUT', 7200)),
-        'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
+        'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 2),
         'scheduled_project_scoped_source_types' => array_values(array_filter(array_map(
             static fn (string $sourceType): string => trim($sourceType),
             explode(',', (string) $configEnv('AI_RAG_SCHEDULED_PROJECT_SCOPED_SOURCE_TYPES', 'estimate'))

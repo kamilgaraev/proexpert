@@ -116,14 +116,15 @@ final class GlobalRagQueue
     public function recoverPending(): int
     {
         $cutoff = now();
-        $events = RagGlobalIndexEvent::query()->where(function (Builder $query) use ($cutoff): void {
-            $this->recoveryScope($query, $cutoff);
-        })->lazyById(100);
+        $recoverQueued = RagQueueBacklog::isEmpty();
+        $events = RagGlobalIndexEvent::query()->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
+            $this->recoveryScope($query, $cutoff, $recoverQueued);
+        })->orderBy('id')->limit(25)->get();
         $recovered = 0;
         foreach ($events as $event) {
             $updated = RagGlobalIndexEvent::query()->whereKey($event->id)->where('revision', $event->revision)
-                ->where('status', $event->status)->where(function (Builder $query) use ($cutoff): void {
-                    $this->recoveryScope($query, $cutoff);
+                ->where('status', $event->status)->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
+                    $this->recoveryScope($query, $cutoff, $recoverQueued);
                 })->update(['status' => RagGlobalIndexEvent::STATUS_QUEUED, 'queued_at' => now(),
                     'lease_expires_at' => null, 'lease_token' => null, 'last_error' => null, 'updated_at' => now()]);
             if ($updated === 1) {
@@ -151,10 +152,11 @@ final class GlobalRagQueue
             ->where('status', RagGlobalIndexEvent::STATUS_RUNNING)->where('lease_expires_at', '>', now());
     }
 
-    private function recoveryScope(Builder $query, Carbon $cutoff): void
+    private function recoveryScope(Builder $query, Carbon $cutoff, bool $recoverQueued): void
     {
         $retryMinutes = max(1, min(4, (int) config('ai-assistant.rag.queued_retry_minutes', 2)));
         $query->where(static fn (Builder $queued): Builder => $queued->where('status', RagGlobalIndexEvent::STATUS_QUEUED)
+            ->when(! $recoverQueued, static fn (Builder $query): Builder => $query->whereRaw('1 = 0'))
             ->where('queued_at', '<=', $cutoff->copy()->subMinutes($retryMinutes)))
             ->orWhere(static fn (Builder $running): Builder => $running->where('status', RagGlobalIndexEvent::STATUS_RUNNING)
                 ->where('lease_expires_at', '<=', $cutoff));

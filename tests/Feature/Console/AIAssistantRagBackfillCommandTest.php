@@ -130,14 +130,14 @@ class AIAssistantRagBackfillCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
-    public function test_all_backfill_queues_one_job_per_active_organization_and_source_type(): void
+    public function test_all_backfill_without_limit_queues_only_bounded_batch(): void
     {
         Queue::fake();
         $first = Organization::withoutEvents(fn () => Organization::factory()->create());
         $second = Organization::withoutEvents(fn () => Organization::factory()->create());
         Organization::withoutEvents(fn () => Organization::factory()->inactive()->create());
         $sourceTypes = $this->enabledSourceTypes();
-        $expectedJobs = count($sourceTypes) * Organization::query()->where('is_active', true)->count();
+        $expectedJobs = 2;
 
         $this->artisan('ai-assistant:rag-backfill', [
             '--all' => true,
@@ -159,13 +159,68 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         $this->assertDatabaseCount('ai_rag_index_runs', $expectedJobs);
     }
 
+    public function test_all_backfill_limit_caps_total_jobs_across_source_types(): void
+    {
+        Queue::fake();
+        Organization::withoutEvents(fn () => Organization::factory()->count(3)->create());
+
+        $this->artisan('ai-assistant:rag-backfill', [
+            '--all' => true,
+            '--limit' => 2,
+        ])
+            ->expectsOutput('Queued RAG indexing jobs: 2')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(IndexRagSourceJob::class, 2);
+        $this->assertDatabaseCount('ai_rag_index_runs', 2);
+
+        $this->travel(3)->minutes();
+        $this->assertSame(0, app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)->recoverExpiredRuns());
+        Queue::assertPushed(IndexRagSourceJob::class, 2);
+    }
+
+    public function test_old_queued_run_is_recovered_once_when_rag_queues_are_empty(): void
+    {
+        Queue::fake();
+        $organization = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'source_type' => 'project',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subMinutes(3),
+        ]);
+
+        $coordinator = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class);
+        $this->assertSame(1, $coordinator->recoverExpiredRuns());
+        Queue::assertPushed(IndexRagSourceJob::class, 1);
+        $this->assertSame(0, $coordinator->recoverExpiredRuns());
+        $this->assertSame(RagIndexRun::STATUS_QUEUED, $run->fresh()->status);
+    }
+
+    public function test_forced_explicit_limit_allows_controlled_larger_batch(): void
+    {
+        Queue::fake();
+        Organization::withoutEvents(fn () => Organization::factory()->count(3)->create());
+
+        $this->artisan('ai-assistant:rag-backfill', [
+            '--all' => true,
+            '--limit' => 3,
+            '--force' => true,
+        ])
+            ->expectsOutput('Queued RAG indexing jobs: 3')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(IndexRagSourceJob::class, 3);
+    }
+
     public function test_all_backfill_includes_organizations_without_projects_even_with_legacy_split_config(): void
     {
         Queue::fake();
         config(['ai-assistant.rag.scheduled_project_scoped_source_types' => ['estimate']]);
         $organization = Organization::withoutEvents(fn () => Organization::factory()->create());
-        $expectedJobs = count($this->enabledSourceTypes());
-        $this->artisan('ai-assistant:rag-backfill', ['--all' => true])
+        $expectedJobs = 1;
+        $this->artisan('ai-assistant:rag-backfill', ['--all' => true, '--source_type' => 'estimate'])
             ->expectsOutput("Queued RAG indexing jobs: {$expectedJobs}")->assertExitCode(0);
         Queue::assertPushed(IndexRagSourceJob::class, $expectedJobs);
         Queue::assertPushed(IndexRagSourceJob::class, static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id && $job->projectId === null && $job->sourceType === 'estimate');
@@ -233,7 +288,7 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         Organization::withoutEvents(fn () => Organization::factory()->create());
         $inactive = Organization::withoutEvents(fn () => Organization::factory()->inactive()->create());
         $sourceTypes = $this->enabledSourceTypes();
-        $expectedJobs = count($sourceTypes) * Organization::query()->count();
+        $expectedJobs = 2;
 
         $this->artisan('ai-assistant:rag-backfill', [
             '--all' => true,
@@ -242,18 +297,14 @@ class AIAssistantRagBackfillCommandTest extends TestCase
             ->expectsOutput("Queued RAG indexing jobs: {$expectedJobs}")
             ->assertExitCode(0);
 
-        Queue::assertPushed(
-            IndexRagSourceJob::class,
-            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $inactive->id
-                && in_array($job->sourceType, $sourceTypes, true)
-        );
+        Queue::assertPushed(IndexRagSourceJob::class, $expectedJobs);
     }
 
     public function test_all_backfill_limit_caps_queued_organizations(): void
     {
         Queue::fake();
         Organization::withoutEvents(fn () => Organization::factory()->count(3)->create());
-        $expectedJobs = count($this->enabledSourceTypes()) * 2;
+        $expectedJobs = 2;
 
         $this->artisan('ai-assistant:rag-backfill', [
             '--all' => true,
@@ -275,7 +326,7 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         $active = Organization::withoutEvents(fn () => Organization::factory()->create());
         $inactive = Organization::withoutEvents(fn () => Organization::factory()->inactive()->create());
         $sourceTypes = $this->enabledSourceTypes();
-        $expectedJobs = count($sourceTypes) * 2;
+        $expectedJobs = 2;
 
         foreach ($sourceTypes as $sourceType) {
             $this->createIndexRun($stale, RagIndexRun::STATUS_SUCCEEDED, now()->subHours(30), $sourceType);
@@ -313,7 +364,6 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         );
         $this->assertDatabaseHas('ai_rag_index_runs', [
             'organization_id' => $unindexed->id,
-            'source_type' => $sourceTypes[0],
             'status' => RagIndexRun::STATUS_QUEUED,
             'mode' => RagIndexRun::MODE_SCHEDULED,
         ]);
@@ -325,7 +375,7 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         $recentlyAttempted = Organization::withoutEvents(fn () => Organization::factory()->create());
         $neverAttempted = Organization::withoutEvents(fn () => Organization::factory()->create());
         $sourceTypes = $this->enabledSourceTypes();
-        $expectedJobs = count($sourceTypes);
+        $expectedJobs = 1;
 
         $this->createIndexRun($recentlyAttempted, RagIndexRun::STATUS_FAILED, now()->subHour());
 
@@ -385,7 +435,7 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         Queue::fake();
         $organization = Organization::withoutEvents(fn () => Organization::factory()->create());
         $sourceTypes = $this->enabledSourceTypes();
-        $expectedJobs = count($sourceTypes);
+        $expectedJobs = 2;
 
         foreach ($sourceTypes as $sourceType) {
             $this->createIndexRun($organization, RagIndexRun::STATUS_SUCCEEDED, now()->subHours(13), $sourceType);

@@ -20,7 +20,7 @@ final class RefreshRagCoverageJob implements ShouldQueue
     public function __construct(public int $organizationId, public ?int $projectId, public ?string $sourceType, public string $cacheKey)
     {
         $this->onConnection((string) config('ai-assistant.rag.queue_connection', 'redis_ai_rag'));
-        $this->onQueue((string) config('ai-assistant.rag.queue', 'ai-rag'));
+        $this->onQueue((string) config('ai-assistant.rag.live_queue', 'ai-rag-live'));
     }
 
     public function handle(RagCoverageService $coverage): void

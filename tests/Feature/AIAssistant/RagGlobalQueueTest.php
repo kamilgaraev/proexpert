@@ -16,6 +16,7 @@ use App\Models\Organization;
 use Closure;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Psr\Log\LoggerInterface;
 use Tests\TestCase;
 
@@ -30,6 +31,7 @@ final class RagGlobalQueueTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        Queue::fake();
         $bus = $this->createMock(Dispatcher::class);
         $bus->method('dispatch')->willReturnCallback(function (IndexGlobalRagEntityJob $job): string {
             $this->jobs[] = $job;
@@ -71,6 +73,29 @@ final class RagGlobalQueueTest extends TestCase
         $this->assertSame(0, $this->global->recoverPending());
     }
 
+    public function test_queued_event_waiting_in_redis_is_not_dispatched_again_after_two_minutes(): void
+    {
+        $event = $this->global->record('knowledge', 'knowledge_article', self::ENTITY_ID);
+        $this->assertSame('ai-rag-live', $this->jobs[0]->queue);
+        Queue::pushOn('ai-rag-live', new IndexGlobalRagEntityJob('knowledge', 'knowledge_article', self::ENTITY_ID));
+
+        $this->travel(3)->minutes();
+
+        $this->assertSame(0, $this->global->recoverPending());
+        $this->assertCount(1, $this->jobs);
+        $this->assertSame(RagGlobalIndexEvent::STATUS_QUEUED, $event->fresh()->status);
+    }
+
+    public function test_old_queued_event_is_recovered_when_rag_queues_are_empty(): void
+    {
+        $event = $this->global->record('knowledge', 'knowledge_article', self::ENTITY_ID);
+        $this->travel(3)->minutes();
+
+        $this->assertSame(1, $this->global->recoverPending());
+        $this->assertCount(2, $this->jobs);
+        $this->assertSame($event->id, $this->jobs[1]->eventId);
+    }
+
     public function test_continuation_failure_resumes_server_cursor_and_skips_unindexed_inactive_organizations(): void
     {
         Organization::factory()->count(51)->create(['is_active' => true]);
@@ -89,6 +114,7 @@ final class RagGlobalQueueTest extends TestCase
         $this->assertSame(\RuntimeException::class, $event->last_error);
         $this->assertCount(50, $coordinator->organizationIds);
         $this->failDispatch = false;
+        Queue::fake();
         $this->travel(2)->minutes();
         $this->assertSame(1, $this->global->recoverPending());
         $resume = $this->jobs[array_key_last($this->jobs)];

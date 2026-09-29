@@ -195,17 +195,20 @@ class RagIndexingCoordinator
     public function recoverExpiredRuns(): int
     {
         $cutoff = now();
+        $recoverQueued = RagQueueBacklog::isEmpty();
         $runs = RagIndexRun::query()
             ->whereIn('status', [RagIndexRun::STATUS_QUEUED, RagIndexRun::STATUS_RUNNING])
-            ->where(function (Builder $query) use ($cutoff): void {
-                $this->applyRecoveryEligibility($query, $cutoff);
+            ->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
+                $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued);
             })
-            ->lazyById(100);
+            ->orderBy('id')
+            ->limit(25)
+            ->get();
         $recovered = 0;
 
         foreach ($runs as $run) {
             $updated = RagIndexRun::query()->whereKey($run->id)->where('updated_at', $run->updated_at)->where('status', $run->status)
-                ->where(function (Builder $query) use ($cutoff): void { $this->applyRecoveryEligibility($query, $cutoff); })->update([
+                ->where(function (Builder $query) use ($cutoff, $recoverQueued): void { $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued); })->update([
                 'status' => RagIndexRun::STATUS_QUEUED,
                 'queued_at' => now(),
                 'started_at' => null,
@@ -536,12 +539,14 @@ class RagIndexingCoordinator
         return max(1, (int) config('ai-assistant.rag.lease_minutes', 15));
     }
 
-    private function applyRecoveryEligibility(Builder $query, Carbon $cutoff): void
+    private function applyRecoveryEligibility(Builder $query, Carbon $cutoff, bool $recoverQueued): void
     {
         $retryMinutes = max(1, min(4, (int) config('ai-assistant.rag.queued_retry_minutes', 2)));
-        $query->where(function (Builder $queued) use ($cutoff, $retryMinutes): void {
+        $query->where(function (Builder $queued) use ($cutoff, $retryMinutes, $recoverQueued): void {
             $retryCutoff = $cutoff->copy()->subMinutes($retryMinutes);
-            $queued->where('status', RagIndexRun::STATUS_QUEUED)->where(function (Builder $activity) use ($retryCutoff): void {
+            $queued->where('status', RagIndexRun::STATUS_QUEUED)
+                ->when(! $recoverQueued, static fn (Builder $query): Builder => $query->whereRaw('1 = 0'))
+                ->where(function (Builder $activity) use ($retryCutoff): void {
                 $activity->where('queued_at', '<=', $retryCutoff)->orWhere(function (Builder $legacy) use ($retryCutoff): void {
                     $legacy->whereNull('queued_at');
                     $this->applyLegacyActivityCutoff($legacy, $retryCutoff);

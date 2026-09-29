@@ -35,7 +35,7 @@ class IndexRagSourceJob implements ShouldQueue
         public string|int|null $entityId = null
     ) {
         $this->onConnection($this->connectionName());
-        $this->onQueue($this->queueName());
+        $this->onQueue($entityType !== null ? $this->liveQueueName() : $this->queueName());
         $this->tries = $this->configInt('ai-assistant.rag.job_tries', 3);
         $this->timeout = max(
             self::MIN_TIMEOUT_SECONDS,
@@ -157,6 +157,17 @@ class IndexRagSourceJob implements ShouldQueue
         }
 
         return is_string($queue) && trim($queue) !== '' ? $queue : 'ai-rag';
+    }
+
+    private function liveQueueName(): string
+    {
+        try {
+            $queue = config('ai-assistant.rag.live_queue', 'ai-rag-live');
+        } catch (Throwable) {
+            return 'ai-rag-live';
+        }
+
+        return is_string($queue) && trim($queue) !== '' ? $queue : 'ai-rag-live';
     }
 
     private function configInt(string $key, int $default): int

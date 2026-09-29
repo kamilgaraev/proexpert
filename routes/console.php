@@ -231,7 +231,7 @@ Schedule::command('contracts:sync-event-sourcing')
     })
     ->appendOutputTo(storage_path('logs/schedule-contracts-sync.log'));
 
-$ragScheduledLimit = max(1, (int) config('ai-assistant.rag.scheduled_limit', 50));
+$ragScheduledLimit = min(2, max(1, (int) config('ai-assistant.rag.scheduled_limit', 2)));
 $ragBackfillCommand = implode(' ', [
     'ai-assistant:rag-backfill',
     '--all',
