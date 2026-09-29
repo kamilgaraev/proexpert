@@ -41,6 +41,7 @@ trait UsesAssistantReportUnitAccess
         app()->instance('db.schema', $schema);
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('canCurrent')->willReturnCallback(fn (User $user, string $permission): bool => in_array($permission, $this->reportUnitPermissions[$user] ?? [], true));
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
         $modules->method('getEffectiveModules')->willReturn(collect(array_map(static fn (string $slug): Module => new Module(['slug' => $slug]),
             ['ai-assistant', 'project-management', 'contract-management', 'payments', 'basic-warehouse', 'schedule-management', 'reports', 'catalog-management', 'budget-estimates'])));

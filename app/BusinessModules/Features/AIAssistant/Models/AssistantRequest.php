@@ -21,6 +21,8 @@ final class AssistantRequest extends Model
         'max_calls' => 'integer',
         'approved_max_minor' => 'integer',
         'response' => 'array',
+        'payload' => 'array',
+        'started_at' => 'datetime',
         'cancel_requested_at' => 'datetime',
         'heartbeat_at' => 'datetime',
         'lease_expires_at' => 'datetime',

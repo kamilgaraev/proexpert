@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantMemoryService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
@@ -30,6 +31,7 @@ use App\Support\AI\TokenCounter;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use ReflectionProperty;
 use Tests\TestCase;
@@ -49,6 +51,7 @@ final class AssistantApiContractTest extends TestCase
         $this->actor = $this->member('Автор');
         $authorization = $this->mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (): bool => $this->permissionGranted);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => $this->moduleEnabled ? collect([new Module(['slug' => 'ai-assistant'])]) : collect());
         $this->app->instance(AssistantDataAccessPolicy::class, new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules));
@@ -102,12 +105,29 @@ final class AssistantApiContractTest extends TestCase
         }
     }
 
+    public function test_tool_registry_rebinds_scoped_policy_between_worker_jobs(): void
+    {
+        $firstPolicy = app(AssistantDataAccessPolicy::class);
+        $firstRegistry = app(AIToolRegistry::class);
+        $firstTool = $firstRegistry->getTool('assistant_domain_discover_capabilities');
+        $this->assertSame($firstPolicy, (new ReflectionProperty($firstTool, 'access'))->getValue($firstTool));
+
+        app()->forgetScopedInstances();
+
+        $secondPolicy = app(AssistantDataAccessPolicy::class);
+        $secondRegistry = app(AIToolRegistry::class);
+        $secondTool = $secondRegistry->getTool('assistant_domain_discover_capabilities');
+        $this->assertNotSame($firstRegistry, $secondRegistry);
+        $this->assertNotSame($firstPolicy, $secondPolicy);
+        $this->assertSame($secondPolicy, (new ReflectionProperty($secondTool, 'access'))->getValue($secondTool));
+    }
+
     public function test_all_prefixes_preserve_full_4000_character_quote_and_chat_payload(): void
     {
         $message = str_repeat('я', 3994).' бетон';
         $this->assertSame(4000, mb_strlen($message));
         $service = $this->mock(AIAssistantService::class);
-        $service->shouldReceive('ask')->times(3)->withArgs(fn (string $query, int $organizationId, User $actor, ?int $conversationId, array $payload): bool => $query === $message && $payload['message'] === $message && ! isset($payload['organization_id']) && $organizationId === $this->organization->id && $actor->id === $this->actor->id && $conversationId === null)->andReturn(['message' => ['content' => 'Точный ответ'], 'validation_status' => 'verified']);
+        $service->shouldReceive('ask')->times(3)->withArgs(fn (string $query, int $organizationId, User $actor, ?int $conversationId, array $payload, ?string $surface): bool => $query === $message && $payload['message'] === $message && ! isset($payload['organization_id']) && $organizationId === $this->organization->id && $actor->id === $this->actor->id && $conversationId === null && $surface === (request()->is('api/v1/admin/*') ? 'admin' : (request()->is('api/v1/mobile/*') ? 'mobile' : 'lk')))->andReturn(['message' => ['content' => 'Точный ответ'], 'validation_status' => 'verified']);
         foreach (self::PREFIXES as $prefix) {
             $payload = $this->payload($message) + ['organization_id' => 999999];
             $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk()->assertJsonPath('success', true)->assertJsonStructure(['success', 'message', 'data' => ['quote_id', 'profile']]);
@@ -115,6 +135,26 @@ final class AssistantApiContractTest extends TestCase
             $this->postJson($prefix.'/credits/quote', $this->payload($message.'я'))->assertUnprocessable()->assertJsonValidationErrors('message');
             $this->postJson($prefix.'/chat', $this->payload($message.'я') + ['quote_id' => (string) Str::uuid()])->assertUnprocessable()->assertJsonValidationErrors('message');
         }
+    }
+
+    public function test_async_chat_uses_all_three_response_wrappers_without_running_provider_in_http(): void
+    {
+        Queue::fake([ExecuteAssistantChatJob::class]);
+        $service = $this->mock(AIAssistantService::class);
+        $service->shouldNotReceive('ask');
+        $service->shouldNotReceive('executeStartedRequest');
+        foreach (self::PREFIXES as $prefix) {
+            $payload = $this->payload();
+            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk();
+            $body = $payload + ['quote_id' => $quote->json('data.quote_id'), 'async' => true];
+            $created = $this->postJson($prefix.'/chat', $body)->assertStatus(202)->assertJsonPath('success', true)
+                ->assertJsonPath('data.request_id', $payload['request_id'])->assertJsonPath('data.status', 'running')
+                ->assertJsonPath('data.stage', 'queued');
+            $this->assertNull($created->json('data.conversation_id'));
+            $this->postJson($prefix.'/chat', $body)->assertStatus(202)->assertJsonPath('data.request_id', $payload['request_id']);
+            $this->getJson($prefix.'/requests/'.$payload['request_id'])->assertOk()->assertJsonPath('data.status', 'running');
+        }
+        Queue::assertPushed(ExecuteAssistantChatJob::class, 3);
     }
 
     public function test_guarded_current_organization_module_and_permission_for_quote_and_chat(): void

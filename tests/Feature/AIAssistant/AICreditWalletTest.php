@@ -106,7 +106,7 @@ final class AICreditWalletTest extends TestCase
         $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request + ['goal' => 'Подмена']);
     }
 
-    public function test_standalone_greeting_has_a_narrow_approved_ceiling(): void
+    public function test_standalone_greeting_requires_no_credits_or_provider_calls(): void
     {
         $request = [
             'request_id' => (string) Str::uuid(),
@@ -123,14 +123,21 @@ final class AICreditWalletTest extends TestCase
             ],
         ];
         $quote = $this->credits->quote($this->organization, $this->user, $request);
-        $this->assertSame(50, $quote['min_units_minor']);
-        $this->assertSame(100, $quote['max_units_minor']);
+        $this->assertSame(0, $quote['min_units_minor']);
+        $this->assertSame(0, $quote['max_units_minor']);
         $this->assertSame('normal', $quote['profile']);
 
-        $this->credits->grant($this->organization, 1000, 'purchase', null, 'greeting-pack');
         $reservation = $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request);
-        $this->assertSame(['max_calls' => 1, 'input_tokens' => 8192, 'output_tokens' => 1024], $this->credits->limits($reservation));
-        $this->assertSame(100, $reservation->reserved_minor);
+        $this->assertSame(['max_calls' => 0, 'input_tokens' => 0, 'output_tokens' => 0], $this->credits->limits($reservation));
+        $this->assertSame(0, $reservation->reserved_minor);
+        $this->assertSame(0, $this->credits->finalize($reservation));
+        $this->assertSame(0, $reservation->fresh()->consumed_minor);
+        foreach (['short', 'detailed'] as $profile) {
+            $variant = array_replace($request, ['request_id' => (string) Str::uuid(), 'profile' => $profile]);
+            $variantQuote = $this->credits->quote($this->organization, $this->user, $variant);
+            $this->assertSame(0, $variantQuote['max_units_minor']);
+            $this->assertSame(0, $this->credits->begin($this->organization, $this->user, $variantQuote['quote_id'], $variant['request_id'], null, $variant)->reserved_minor);
+        }
 
         foreach ([
             ['message' => 'Привет, покажи проекты'],
@@ -147,7 +154,7 @@ final class AICreditWalletTest extends TestCase
             'request_id' => (string) Str::uuid(),
             'context' => array_replace($request['context'], ['entity_refs' => []]),
         ]);
-        $this->assertSame(100, $this->credits->quote($this->organization, $this->user, $withoutProject)['max_units_minor']);
+        $this->assertSame(0, $this->credits->quote($this->organization, $this->user, $withoutProject)['max_units_minor']);
     }
 
     public function test_included_expires_during_reservation_and_purchased_credits_never_expire(): void

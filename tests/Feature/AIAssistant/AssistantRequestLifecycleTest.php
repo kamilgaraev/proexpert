@@ -10,6 +10,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestInProgress;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
+use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Models\Message;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
@@ -19,6 +20,8 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
+use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Credits\AICreditLedgerEntry;
 use App\Models\Credits\AICreditProviderUsage;
@@ -92,10 +95,12 @@ final class AssistantRequestLifecycleTest extends TestCase
         });
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
         (require database_path('migrations/2026_09_29_000009_create_ai_assistant_requests_table.php'))->up();
+        (require database_path('migrations/2026_09_29_000010_add_async_payload_to_ai_assistant_requests.php'))->up();
         $this->organization = Organization::withoutEvents(fn () => Organization::query()->create(['name' => 'Запросы помощника']));
         $this->actor = $this->member('Автор');
         $authorization = $this->mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturn(true);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = $this->mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant'])]));
         $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
@@ -235,6 +240,186 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(0, AICreditReservation::query()->count());
         $this->assertSame(0, AICreditProviderUsage::query()->count());
         $this->assertSame(10000, $this->credits->balance($this->organization)['available_minor']);
+    }
+
+    public function test_queued_request_replays_without_second_reservation_and_claims_once(): void
+    {
+        $payload = $this->quote();
+        $started = $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload + ['async' => true], 'lk');
+        $repeated = $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload + ['async' => true], 'lk');
+        $this->assertTrue($started['created']);
+        $this->assertFalse($repeated['created']);
+        $this->assertSame($started['request']->id, $repeated['request']->id);
+        $this->assertSame(1, AICreditReservation::query()->count());
+        $this->assertSame($payload['message'], $started['request']->payload['message']);
+        $this->assertArrayNotHasKey('async', $started['request']->payload);
+        $this->assertSame('lk', $started['request']->surface);
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->status($payload['request_id'], $this->actor, $this->organization->id, 'admin'));
+        $this->assertNotNull($this->lifecycle->claimQueued($started['request']->id));
+        $this->assertNull($this->lifecycle->claimQueued($started['request']->id));
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->startQueued($this->organization, $this->actor, null, array_replace($payload, ['message' => 'Подмена']), 'lk'));
+    }
+
+    public function test_actual_implicit_project_greeting_uses_no_business_plan_rag_or_provider_and_charges_zero(): void
+    {
+        $payload = $this->quote([
+            'message' => 'Привет',
+            'profile' => 'normal',
+            'context' => [
+                'source_module' => 'ai-assistant',
+                'entity_refs' => [['type' => 'project', 'id' => 56, 'label' => 'Текущий проект']],
+                'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+            ],
+        ]);
+        $this->assertSame(0, AICreditQuote::query()->where('public_id', $payload['quote_id'])->sole()->max_units_minor);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->never())->method('chat');
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->expects($this->never())->method('plan');
+        $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
+        $usage->expects($this->never())->method('canMakeRequest');
+        $usage->expects($this->once())->method('trackRequest')->with($this->organization->id, $this->actor, 0, 0.0);
+        $usage->method('getUsageStats')->willReturn([]);
+        $service = $this->providerService($provider, null, $orchestrator, $usage);
+        $service->failOnRagBuild = true;
+        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+
+        $this->assertSame('completed', $response['status']);
+        $this->assertSame('greeting', $response['message']['metadata']['response_kind']);
+        $this->assertSame('verified', $response['message']['metadata']['validation_status']);
+        $this->assertSame([], $response['message']['metadata']['source_refs']);
+        $this->assertSame(0, $response['credit_usage']['charged_minor']);
+        $this->assertSame(0, $response['credit_usage']['projected_charge_minor']);
+        $this->assertSame(0, $response['credit_usage']['reserved_minor']);
+        $this->assertSame(0, AICreditProviderUsage::query()->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_queued_greeting_finishes_without_provider_and_replays_zero_charge(): void
+    {
+        $payload = $this->quote([
+            'message' => 'Привет',
+            'profile' => 'normal',
+            'context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'project', 'id' => 56]], 'ui_state' => ['assistant_path' => '/ai-assistant/chat']],
+        ]);
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload, 'lk')['request'];
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->never())->method('chat');
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->expects($this->never())->method('plan');
+        $service = $this->providerService($provider, null, $orchestrator);
+        $service->failOnRagBuild = true;
+        (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, $service, app(AssistantDataAccessPolicy::class));
+
+        $this->assertSame('completed', $request->fresh()->status);
+        $this->assertSame('greeting', $request->fresh()->response['message']['metadata']['response_kind']);
+        $this->assertSame(0, $request->fresh()->response['credit_usage']['charged_minor']);
+        $this->assertSame(0, $request->fresh()->calls_used);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        $this->assertSameJsonObject($request->fresh()->response, $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload, 'lk')['response']);
+    }
+
+    public function test_cancel_queued_request_refunds_before_worker_claim(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'admin')['request'];
+        $cancelled = $this->lifecycle->cancel($request->request_id, $this->actor, $this->organization->id);
+        $this->assertSame('cancelled', $cancelled['status']);
+        $this->assertNull($this->lifecycle->claimQueued($request->id));
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_expired_queued_lease_recovers_reservation_and_prevents_late_execution(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        try {
+            $this->travel(9)->minutes();
+            $this->assertSame(1, $this->lifecycle->expireAbandoned());
+            $this->assertSame('cancelled', $request->fresh()->status);
+            $this->assertSame('request_expired', $request->fresh()->error_code);
+            $this->assertNull($this->lifecycle->claimQueued($request->id));
+            $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_duplicate_worker_job_executes_only_once(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldReceive('executeStartedRequest')->once()->andReturn([]);
+        $job = new ExecuteAssistantChatJob($request->id);
+        $policy = app(AssistantDataAccessPolicy::class);
+        $job->handle($this->lifecycle, $assistant, $policy);
+        $job->handle($this->lifecycle, $assistant, $policy);
+        $this->assertNotNull($request->fresh()->started_at);
+    }
+
+    public function test_sequential_jobs_use_their_own_trusted_surface_in_scoped_consumers(): void
+    {
+        $lk = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $admin = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'admin')['request'];
+        $seenPolicies = [];
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldReceive('executeStartedRequest')->twice()->andReturnUsing(function (AssistantRequest $request) use (&$seenPolicies): array {
+            $policy = app(AssistantDataAccessPolicy::class);
+            $surface = (new \ReflectionProperty(AssistantDataAccessPolicy::class, 'trustedSurface'))->getValue($policy);
+            $this->assertSame(KnowledgeSurface::from($request->surface), $surface);
+            $retriever = app(RagRetriever::class);
+            $this->assertSame($policy, (new \ReflectionProperty($retriever, 'accessPolicy'))->getValue($retriever));
+            $seenPolicies[] = $policy;
+            return [];
+        });
+        (new ExecuteAssistantChatJob($lk->id))->handle($this->lifecycle, $assistant, app(AssistantDataAccessPolicy::class));
+        app()->forgetScopedInstances();
+        (new ExecuteAssistantChatJob($admin->id))->handle($this->lifecycle, $assistant, app(AssistantDataAccessPolicy::class));
+        $this->assertNotSame($seenPolicies[0], $seenPolicies[1]);
+    }
+
+    public function test_revoked_access_prevents_queued_claim_and_refunds(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'mobile')['request'];
+        $this->assistantEnabled = false;
+        $this->assertNull($this->lifecycle->claimQueued($request->id));
+        $this->assertSame('failed', $request->fresh()->status);
+        $this->assertSame('access_revoked', $request->fresh()->error_code);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_completed_status_checks_source_access_and_payload_expires_after_90_days(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $response = $this->lifecycle->complete($request, $this->actor, ['message' => ['content' => 'Ответ', 'metadata' => ['source_refs' => []]]]);
+        $this->assertSameJsonObject($response, $this->lifecycle->status($request->request_id, $this->actor, $this->organization->id, 'lk')['response']);
+        $tampered = $response;
+        $tampered['message']['metadata']['source_refs'] = [['entity_type' => 'unknown_entity', 'entity_id' => 123]];
+        $request->forceFill(['response' => $tampered, 'created_at' => now()->subDays(91)])->save();
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->status($request->request_id, $this->actor, $this->organization->id, 'lk'));
+        $this->assertSame(1, $this->lifecycle->purgeExpiredPayloads());
+        $this->assertNull($request->fresh()->payload);
+        $this->assertNotNull($request->fresh()->response);
+    }
+
+    public function test_legacy_request_without_surface_never_exposes_saved_response_by_get(): void
+    {
+        $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
+        $this->lifecycle->complete($request, $this->actor, ['message' => ['content' => 'Старый ответ', 'metadata' => ['source_refs' => []]]]);
+        foreach (['lk', 'admin', 'mobile'] as $surface) {
+            $status = $this->lifecycle->status($request->request_id, $this->actor, $this->organization->id, $surface);
+            $this->assertSame('completed', $status['status']);
+            $this->assertArrayNotHasKey('response', $status);
+        }
+    }
+
+    public function test_surface_scoped_sync_request_keeps_running_conflict_and_completed_replay(): void
+    {
+        $payload = $this->quote();
+        $request = $this->lifecycle->start($this->organization, $this->actor, null, $payload, 'admin')['request'];
+        $this->assertNull($request->payload);
+        $this->assertOperationThrows(AssistantRequestInProgress::class, fn () => $this->lifecycle->start($this->organization, $this->actor, null, $payload, 'admin'));
+        $response = $this->lifecycle->complete($request, $this->actor, ['message' => ['content' => 'Ответ', 'metadata' => ['source_refs' => []]]]);
+        $this->assertSameJsonObject($response, $this->lifecycle->start($this->organization, $this->actor, null, $payload, 'admin')['response']);
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->start($this->organization, $this->actor, null, $payload, 'lk'));
     }
 
     public function test_cancellation_prevents_next_root_provider_call_and_releases_reservation(): void
@@ -502,6 +687,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $payload = $this->quote(['message' => $query]);
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('canCurrent')->willReturnCallback(static fn (User $user, string $permission): bool => $permission === 'ai_assistant.chat');
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
         $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'contract-management'])]));
         $policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class), $modules);
@@ -633,12 +819,15 @@ final class AssistantRequestLifecycleTest extends TestCase
         return ['ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_orders', 'users', 'organizations'];
     }
 
-    private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null): LifecycleProviderAIAssistantService
+    private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService
     {
         $registry ??= new AIToolRegistry;
         $permissions = app(AIPermissionChecker::class);
-        $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
-        $usage->method('canMakeRequest')->willReturn(true);
+        $usage = $usageOverride ?? $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
+        if ($usageOverride === null) {
+            $usage->method('canMakeRequest')->willReturn(true);
+            $usage->method('getUsageStats')->willReturn([]);
+        }
         if ($orchestrator === null) {
             $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
             $orchestrator->method('plan')->willReturn(['request' => ['context' => []], 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []]);
@@ -669,6 +858,15 @@ final class AssistantRequestLifecycleTest extends TestCase
 final class LifecycleProviderAIAssistantService extends AIAssistantService
 {
     public bool $probeProviderDuringAsk = false;
+    public bool $failOnRagBuild = false;
+
+    protected function buildRagContext(string $query, int $organizationId, User $user, array $taskPlan, array $requestPayload): array
+    {
+        if ($this->failOnRagBuild) {
+            throw new \RuntimeException('greeting_must_not_build_rag_context');
+        }
+        return parent::buildRagContext($query, $organizationId, $user, $taskPlan, $requestPayload);
+    }
 
     protected function handleAgentFlow(string $query, int $organizationId, User $user, Conversation $conversation, array $taskPlan): ?array
     {

@@ -168,7 +168,8 @@ class AIAssistantService
         int $organizationId,
         User $user,
         ?int $conversationId = null,
-        array $requestPayload = []
+        array $requestPayload = [],
+        ?string $surface = null
     ): array {
         $this->activeActor = $user;
         $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
@@ -187,7 +188,7 @@ class AIAssistantService
         }
 
         $payload = array_merge($requestPayload, ['message' => $query, 'conversation_id' => $conversationId]);
-        $started = $this->requestLifecycle->start($this->resolveOrganization($organizationId), $user, $conversationId, $payload);
+        $started = $this->requestLifecycle->start($this->resolveOrganization($organizationId), $user, $conversationId, $payload, $surface);
         if (is_array($started['response'])) {
             $this->activeActor = null;
             return $started['response'];
@@ -199,6 +200,43 @@ class AIAssistantService
             return $this->requestLifecycle->complete($this->activeRequest, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
         } catch (Throwable $exception) {
             $this->requestLifecycle->fail($this->activeRequest, $exception instanceof AssistantBudgetExceeded ? 'approved_budget_exceeded' : 'request_failed');
+            throw $exception;
+        } finally {
+            $this->activeRequest = null;
+            $this->activeActor = null;
+            $this->activeToolResults = [];
+            $this->pendingSummary = null;
+        }
+    }
+
+    public function executeStartedRequest(AssistantRequest $request, User $user): array
+    {
+        if ($this->requestLifecycle === null || $request->started_at === null || !is_array($request->payload)
+            || (int) $request->user_id !== (int) $user->id) {
+            throw new \InvalidArgumentException('Invalid queued assistant request');
+        }
+        $payload = $request->payload;
+        $query = $payload['message'] ?? null;
+        if (!is_string($query) || trim($query) === '') {
+            throw new \InvalidArgumentException('Invalid queued assistant payload');
+        }
+        $conversationId = isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null;
+        $this->activeActor = $user;
+        $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
+        $this->activeToolResults = [];
+        $this->pendingSummary = null;
+        $this->requestOutcome = null;
+        $this->estimateResolutionAttempted = false;
+        $this->resolvedEstimateId = null;
+        $this->activeRequest = $request;
+        try {
+            $this->requestLifecycle->stage($request, $user, 'reading');
+            $result = $this->performAsk($query, (int) $request->organization_id, $user, $conversationId, $payload);
+            return $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
+        } catch (Throwable $exception) {
+            $errorCode = $exception instanceof AssistantBudgetExceeded ? 'approved_budget_exceeded'
+                : ($exception instanceof AuthorizationException ? 'access_revoked' : 'request_failed');
+            $this->requestLifecycle->fail($request, $errorCode);
             throw $exception;
         } finally {
             $this->activeRequest = null;
@@ -220,7 +258,8 @@ class AIAssistantService
             'query_length' => strlen($query),
         ]);
 
-        if (! $this->usageTracker->canMakeRequest($organizationId)) {
+        $standaloneGreeting = $this->isStandaloneGreeting($query, $requestPayload);
+        if (!$standaloneGreeting && ! $this->usageTracker->canMakeRequest($organizationId)) {
             throw new RuntimeException($this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'));
         }
 
@@ -229,6 +268,9 @@ class AIAssistantService
             $this->requestLifecycle?->bindConversation($this->activeRequest, $conversation, $user);
         }
         $this->stage('reading');
+        if ($standaloneGreeting) {
+            return $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload);
+        }
         $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
         $requestPayload = $this->filterRequestEntityContext($requestPayload, $user, $organizationId);
         $accessContext = $this->accessContextResolver->resolve($user, $organizationId);
@@ -1975,6 +2017,42 @@ class AIAssistantService
         $uiState = $context['ui_state'] ?? [];
 
         return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path']) === [];
+    }
+
+    private function answerStandaloneGreeting(string $query, int $organizationId, User $user, Conversation $conversation, array $requestPayload): array
+    {
+        $this->conversationManager->addMessage($conversation, 'user', $query, 0, 'system', [
+            'actor_user_id' => (int) $user->id,
+            'request_id' => $requestPayload['request_id'] ?? null,
+            'response_kind' => 'greeting',
+        ]);
+        $this->stage('verifying');
+        $content = trans_message('ai_assistant.greeting_response');
+        $metadata = $this->decorateMetadata([
+            'response_kind' => 'greeting',
+            'task_type' => 'greeting',
+            'validation_status' => 'verified',
+            'source_refs' => [],
+            'missing_data' => [],
+            'access_limits' => [],
+            'needs_clarification' => false,
+        ], $user);
+        $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, 'system', $metadata);
+        $this->usageTracker->trackRequest($organizationId, $user, 0, 0.0);
+
+        return [
+            'conversation_id' => $conversation->id,
+            'message' => [
+                'id' => $message->id,
+                'role' => 'assistant',
+                'content' => $content,
+                'tokens_used' => 0,
+                'metadata' => $metadata,
+                'created_at' => $message->created_at?->toISOString(),
+            ],
+            'tokens_used' => 0,
+            'usage' => $this->usageTracker->getUsageStats($organizationId),
+        ];
     }
 
     private function hasOnlyImplicitProjectReference(mixed $references): bool

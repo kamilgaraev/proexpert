@@ -28,6 +28,7 @@ final class AssistantTenderNativeCoverageTest extends TestCase
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturn(true);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(array_map(static fn (string $slug): object => (object) ['slug' => $slug], ['project-management', 'tenders', 'ai-assistant'])));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);

@@ -21,6 +21,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionProposalService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\QueuedAssistantChatService;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Http\Responses\AdminResponse;
@@ -42,10 +43,10 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 final class AIAssistantController extends AbstractAssistantApiController
 {
     public function __construct(
-        private readonly AIAssistantService $assistant,
         private readonly AssistantActionService $actions,
         private readonly AssistantActionProposalService $proposals,
         private readonly AssistantRequestLifecycle $requests,
+        private readonly QueuedAssistantChatService $queuedChats,
         private readonly ConversationManager $conversations,
         private readonly UsageTracker $usage,
         private readonly AIPermissionChecker $permissions,
@@ -55,12 +56,35 @@ final class AIAssistantController extends AbstractAssistantApiController
     {
         return $this->respond($request, function () use ($request): JsonResponse {
             $payload = $request->validated();
-            $result = $this->assistant->ask(
+            $asynchronous = (bool) ($payload['async'] ?? false);
+            unset($payload['async']);
+            if ($asynchronous) {
+                $surface = $this->surface($request);
+                $started = $this->queuedChats->submit(
+                    $this->organizationId($request),
+                    $this->actor($request),
+                    isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
+                    $payload,
+                    $surface,
+                );
+                if (is_array($started['response'])) {
+                    return $this->success($request, $started['response']);
+                }
+                $assistantRequest = $started['request'];
+                return $this->success($request, [
+                    'request_id' => $assistantRequest->request_id,
+                    'conversation_id' => $assistantRequest->conversation_id,
+                    'status' => 'running',
+                    'stage' => $assistantRequest->stage,
+                ], 202);
+            }
+            $result = app(AIAssistantService::class)->ask(
                 $payload['message'],
                 $this->organizationId($request),
                 $this->actor($request),
                 isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
                 $payload,
+                $this->surface($request),
             );
             return $this->success($request, $result);
         });
@@ -137,12 +161,12 @@ final class AIAssistantController extends AbstractAssistantApiController
 
     public function requestStatus(Request $request, string $requestId): JsonResponse
     {
-        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->status($requestId, $this->actor($request), $this->organizationId($request))));
+        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->status($requestId, $this->actor($request), $this->organizationId($request), $this->surface($request))));
     }
 
     public function cancelRequest(Request $request, string $requestId): JsonResponse
     {
-        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->cancel($requestId, $this->actor($request), $this->organizationId($request))));
+        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->cancel($requestId, $this->actor($request), $this->organizationId($request), $this->surface($request))));
     }
 
     public function usage(Request $request): JsonResponse
@@ -162,6 +186,11 @@ final class AIAssistantController extends AbstractAssistantApiController
         }
         $conversation->load('participants');
         return $conversation;
+    }
+
+    private function surface(Request $request): string
+    {
+        return $request->is('api/v1/admin/*') ? 'admin' : ($request->is('api/v1/mobile/*') ? 'mobile' : 'lk');
     }
 
     private function assertAssistant(Request $request): void

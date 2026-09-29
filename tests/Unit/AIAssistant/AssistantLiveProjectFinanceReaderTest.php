@@ -86,6 +86,7 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
         app()->instance('db.schema', $schema);
         $nativeChecks = 0;
         $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $authorization->method('canCurrent')->willReturnCallback(static function (User $user, string $permission) use ($revokeAfterRead, &$nativeChecks): bool {
             return ! ($revokeAfterRead && $nativeChecks >= 2 && $permission === 'finance.view');
         });

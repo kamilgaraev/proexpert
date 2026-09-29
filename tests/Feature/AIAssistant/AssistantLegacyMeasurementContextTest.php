@@ -29,6 +29,7 @@ final class AssistantLegacyMeasurementContextTest extends TestCase
         $actor->organizations()->attach($organization->id, ['is_active' => true]);
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('canCurrent')->willReturnCallback(static fn (User $user, string $permission): bool => $permission === 'ai_assistant.chat');
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
         $modules->method('getEffectiveModules')->willReturn(collect([(object) ['slug' => 'ai-assistant'], (object) ['slug' => 'catalog-management']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);

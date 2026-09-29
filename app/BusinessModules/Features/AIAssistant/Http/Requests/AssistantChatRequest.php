@@ -25,6 +25,7 @@ final class AssistantChatRequest extends FormRequest
             'goal' => ['nullable', 'string', 'max:120'],
             'desired_mode' => ['nullable', 'string', 'max:120'],
             'allow_actions' => ['sometimes', 'boolean'],
+            'async' => ['sometimes', 'boolean'],
             'context' => ['sometimes', 'array:source_module,source_route,entity_refs,period,filters,ui_state'],
             'context.source_module' => ['nullable', 'string', 'max:120'],
             'context.source_route' => ['nullable', 'string', 'max:255'],

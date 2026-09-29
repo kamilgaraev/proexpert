@@ -34,14 +34,15 @@ final class AICreditService
         if (! is_array($limits)) {
             throw new DomainException('Unknown AI credit profile.');
         }
+        $greeting = $profile !== 'ocr' && $this->isStandaloneGreeting($request);
         if ($profile === 'ocr') {
             $pageCount = $request['page_count'] ?? null;
             if (! is_int($pageCount) || $pageCount < 1 || $pageCount > 10_000) { throw new DomainException('Invalid OCR page count.'); }
             $limits['max_calls'] = $pageCount;
-        } elseif ($profile === 'normal' && $this->isStandaloneGreeting($request)) {
-            $limits['input_tokens'] = min((int) $limits['input_tokens'], 8192);
-            $limits['output_tokens'] = min((int) $limits['output_tokens'], 1024);
-            $limits['max_calls'] = 1;
+        } elseif ($greeting) {
+            $limits['input_tokens'] = 0;
+            $limits['output_tokens'] = 0;
+            $limits['max_calls'] = 0;
         }
         $requestHash = $this->canonicalAssistantRequest($request);
         $existing = AICreditQuote::query()
@@ -50,6 +51,7 @@ final class AICreditService
             ->where('request_key', $requestKey)
             ->where('request_hash', $requestHash)
             ->where('expires_at', '>', now())
+            ->when($greeting, static fn ($query) => $query->where('max_units_minor', 0))
             ->latest('id')
             ->first();
         if ($existing !== null) {
@@ -67,8 +69,8 @@ final class AICreditService
             'limits' => $limits,
             'pricing' => $pricing,
             'price_version' => (int) config('ai-assistant-credits.price_version', 1),
-            'min_units_minor' => $pricing['minimum_minor'],
-            'max_units_minor' => $this->maximumProfileUnitsMinor($limits, $pricing),
+            'min_units_minor' => $greeting ? 0 : $pricing['minimum_minor'],
+            'max_units_minor' => $greeting ? 0 : $this->maximumProfileUnitsMinor($limits, $pricing),
             'expires_at' => now()->addSeconds((int) config('ai-assistant-credits.quote_ttl_seconds', 300)),
         ]);
 
@@ -102,7 +104,9 @@ final class AICreditService
                 throw new DomainException('AI credit quote is invalid or expired.');
             }
             $this->expireLots($wallet);
-            $required = (bool) config('ai-assistant-credits.enforce', false) ? (int) $quote->max_units_minor : 0;
+            $required = (bool) config('ai-assistant-credits.enforce', false)
+                && !($quote->profile !== 'ocr' && $this->isStandaloneGreeting($request))
+                ? (int) $quote->max_units_minor : 0;
             if ($wallet->availableMinor() < $required) {
                 throw new DomainException('Insufficient AI credits.');
             }

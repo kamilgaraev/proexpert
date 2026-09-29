@@ -31,6 +31,7 @@ final class AssistantDomainToolsTest extends TestCase
         Queue::fake();
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions && ($this->financialPermissions || ! in_array($permission, ['budget-estimates.finance.view','finance.view'], true)));
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService(), $entitlements);

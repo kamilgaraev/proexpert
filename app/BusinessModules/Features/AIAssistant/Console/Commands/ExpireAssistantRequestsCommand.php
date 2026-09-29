@@ -16,6 +16,7 @@ final class ExpireAssistantRequestsCommand extends Command
     public function handle(AssistantRequestLifecycle $requests): int
     {
         $this->line((string) $requests->expireAbandoned());
+        $requests->purgeExpiredPayloads();
         return self::SUCCESS;
     }
 }

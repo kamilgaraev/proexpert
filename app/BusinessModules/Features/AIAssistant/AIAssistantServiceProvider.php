@@ -129,7 +129,7 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantCapabilityCatalog::class);
         $this->app->singleton(AssistantPeriodResolver::class);
         $this->app->singleton(AssistantAgentPlanner::class);
-        $this->app->singleton(AssistantAgentExecutor::class);
+        $this->app->scoped(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
         $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {
             $provider = strtolower((string) config('ai-assistant.rag.embedding_provider', 'timeweb'));
@@ -179,10 +179,10 @@ class AIAssistantServiceProvider extends ServiceProvider
             ]);
         });
         $this->app->singleton(RagIndexer::class);
-        $this->app->singleton(RagRetriever::class);
+        $this->app->scoped(RagRetriever::class);
         $this->app->singleton(RagPromptContextBuilder::class);
-        $this->app->singleton(AssistantReportSourceRetrieverInterface::class, AssistantRagReportSourceRetriever::class);
-        $this->app->singleton(AssistantReportComposerInterface::class, AssistantReportComposer::class);
+        $this->app->scoped(AssistantReportSourceRetrieverInterface::class, AssistantRagReportSourceRetriever::class);
+        $this->app->scoped(AssistantReportComposerInterface::class, AssistantReportComposer::class);
         $this->app->singleton(AssistantReportPdfWriterInterface::class, DompdfAssistantReportPdfWriter::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
@@ -196,7 +196,7 @@ class AIAssistantServiceProvider extends ServiceProvider
         });
 
         // Регистрация реестра инструментов
-        $this->app->singleton(AIToolRegistry::class, function ($app) {
+        $this->app->scoped(AIToolRegistry::class, function ($app) {
             $registry = new AIToolRegistry;
 
             // Регистрируем инструменты

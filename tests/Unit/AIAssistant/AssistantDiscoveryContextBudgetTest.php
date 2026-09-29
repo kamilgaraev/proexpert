@@ -131,6 +131,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         app()->instance('db.schema', $schema);
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('canCurrent')->willReturnCallback(static fn (User $actor, string $permission): bool => $permission !== 'finance.view' && ($permission !== 'projects.view' || $allowed));
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
         $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'project-management'])]));
         $projects = $this->createMock(UserProjectAccessService::class);

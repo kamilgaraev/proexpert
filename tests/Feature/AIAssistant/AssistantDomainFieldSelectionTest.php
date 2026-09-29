@@ -68,6 +68,7 @@ final class AssistantDomainFieldSelectionTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(static fn (User $user, string $permission): bool => ! in_array($permission,
             ['budget-estimates.finance.view', 'finance.view', 'finance.view_project_budget'], true));
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $entitlements);

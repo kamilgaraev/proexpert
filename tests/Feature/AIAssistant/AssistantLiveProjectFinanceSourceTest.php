@@ -37,6 +37,7 @@ final class AssistantLiveProjectFinanceSourceTest extends TestCase
             'hourly_rate_snapshot' => '10.01', 'approved_at' => '2026-09-10 12:00:00']);
         $machineryAllowed = true;
         $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
         $authorization->method('canCurrent')->willReturnCallback(static function (User $user, string $permission) use (&$machineryAllowed): bool {
             return $permission !== 'machinery-operations.view' || $machineryAllowed;
         });

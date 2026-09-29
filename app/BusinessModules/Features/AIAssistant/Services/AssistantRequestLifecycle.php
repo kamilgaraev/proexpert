@@ -31,7 +31,12 @@ final class AssistantRequestLifecycle
         private readonly AssistantDataAccessPolicy $dataAccess,
     ) {}
 
-    public function start(Organization $organization, User $actor, ?int $conversationId, array $payload): array
+    public function startQueued(Organization $organization, User $actor, ?int $conversationId, array $payload, string $surface): array
+    {
+        return $this->start($organization, $actor, $conversationId, $payload, $surface, true);
+    }
+
+    public function start(Organization $organization, User $actor, ?int $conversationId, array $payload, ?string $surface = null, bool $queued = false): array
     {
         if (!$this->permissions->canUseAssistant($actor, (int) $organization->id)) {
             throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
@@ -44,16 +49,18 @@ final class AssistantRequestLifecycle
         if (!Str::isUuid($requestId)) {
             throw new RuntimeException(trans_message('ai_assistant.request_id_invalid'));
         }
+        unset($payload['async']);
         $payload['request_id'] = $requestId;
         $payload['conversation_id'] = $conversationId;
         $payload['profile'] ??= 'normal';
         $requestHash = $this->credits->canonicalAssistantRequest($payload);
 
-        return DB::transaction(function () use ($organization, $actor, $conversationId, $payload, $requestId, $requestHash): array {
+        return DB::transaction(function () use ($organization, $actor, $conversationId, $payload, $requestId, $requestHash, $surface, $queued): array {
             Organization::query()->whereKey($organization->id)->lockForUpdate()->firstOrFail();
             $existing = AssistantRequest::query()->where('organization_id', $organization->id)->where('request_id', $requestId)->lockForUpdate()->first();
             if ($existing !== null) {
-                if ($existing->user_id !== (int) $actor->id || !hash_equals($existing->request_hash, $requestHash)) {
+                if ($existing->user_id !== (int) $actor->id || !hash_equals($existing->request_hash, $requestHash)
+                    || ($surface !== null && $existing->surface !== $surface)) {
                     throw new AuthorizationException(trans_message('ai_assistant.request_mismatch'));
                 }
                 if ($existing->conversation_id !== null && $this->conversations->findAccessibleConversation($existing->conversation_id, $actor, (int) $organization->id, true) === null) {
@@ -61,9 +68,12 @@ final class AssistantRequestLifecycle
                 }
                 if ($existing->status === 'completed' && is_array($existing->response)) {
                     $this->assertResponseAccess($existing->response, $actor, (int) $organization->id);
-                    return ['request' => $existing, 'response' => $existing->response];
+                    return ['request' => $existing, 'response' => $existing->response, 'created' => false];
                 }
                 if ($existing->status === 'running' && $existing->cancel_requested_at === null && $existing->lease_expires_at->isFuture()) {
+                    if ($queued && $surface !== null && $existing->surface === $surface && is_array($existing->payload)) {
+                        return ['request' => $existing, 'response' => null, 'created' => false];
+                    }
                     throw new AssistantRequestInProgress();
                 }
                 if ($existing->status === 'running') {
@@ -93,6 +103,8 @@ final class AssistantRequestLifecycle
                 'conversation_id' => $conversationId,
                 'reservation_id' => $reservation->id,
                 'request_hash' => $requestHash,
+                'payload' => $queued ? $payload : null,
+                'surface' => $surface,
                 'profile' => (string) $payload['profile'],
                 'status' => 'running',
                 'stage' => 'queued',
@@ -103,7 +115,7 @@ final class AssistantRequestLifecycle
                 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES),
             ]);
 
-            return ['request' => $request, 'response' => null];
+            return ['request' => $request, 'response' => null, 'created' => true];
         }, 3);
     }
 
@@ -115,6 +127,33 @@ final class AssistantRequestLifecycle
         }
         $request->forceFill(['conversation_id' => $conversation->id])->save();
         AICreditReservation::query()->whereKey($request->reservation_id)->update(['conversation_id' => (string) $conversation->id]);
+    }
+
+    public function claimQueued(int $id): ?AssistantRequest
+    {
+        return DB::transaction(function () use ($id): ?AssistantRequest {
+            $request = AssistantRequest::query()->whereKey($id)->lockForUpdate()->first();
+            if ($request === null || $request->status !== 'running' || $request->stage !== 'queued' || $request->started_at !== null) {
+                return null;
+            }
+            if ($request->cancel_requested_at !== null || $request->lease_expires_at->isPast()) {
+                $this->terminate($request, 'cancelled', 'request_expired');
+                return null;
+            }
+            $actor = User::query()->find($request->user_id);
+            if ($actor === null || !is_array($request->payload) || !in_array($request->surface, ['admin', 'lk', 'mobile'], true)) {
+                $this->terminate($request, 'failed', 'request_invalid');
+                return null;
+            }
+            try {
+                $this->assertActor($request, $actor);
+            } catch (AuthorizationException) {
+                $this->terminate($request, 'failed', 'access_revoked');
+                return null;
+            }
+            $request->forceFill(['started_at' => now(), 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
+            return $request;
+        }, 3);
     }
 
     public function stage(AssistantRequest $request, User $actor, string $stage): void
@@ -218,19 +257,28 @@ final class AssistantRequestLifecycle
         }, 3);
     }
 
-    public function status(string $requestId, User $actor, int $organizationId): array
+    public function status(string $requestId, User $actor, int $organizationId, ?string $surface = null): array
     {
         if (!AssistantRequest::query()->where('request_id', $requestId)->where('organization_id', $organizationId)->where('user_id', $actor->id)->exists()) {
             $quote = $this->ownedQuote($requestId, $actor, $organizationId);
             return ['request_id' => $requestId, 'conversation_id' => null, 'status' => 'queued', 'stage' => 'queued', 'calls_used' => 0, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0)];
         }
         $request = $this->ownedRequest($requestId, $actor, $organizationId);
-        return ['request_id' => $request->request_id, 'conversation_id' => $request->conversation_id, 'status' => $request->cancel_requested_at !== null && $request->status === 'running' ? 'cancel_requested' : $request->status, 'stage' => $request->stage, 'calls_used' => $request->calls_used, 'max_calls' => $request->max_calls];
+        $this->assertSurface($request, $surface);
+        $status = ['request_id' => $request->request_id, 'conversation_id' => $request->conversation_id, 'status' => $request->cancel_requested_at !== null && $request->status === 'running' ? 'cancel_requested' : $request->status, 'stage' => $request->stage, 'calls_used' => $request->calls_used, 'max_calls' => $request->max_calls];
+        if ($request->status === 'completed' && $surface !== null && $request->surface === $surface && is_array($request->response)) {
+            $this->assertResponseAccess($request->response, $actor, $organizationId);
+            $status['response'] = $request->response;
+        }
+        if (in_array($request->status, ['failed', 'cancelled'], true)) {
+            $status['error_code'] = $request->error_code;
+        }
+        return $status;
     }
 
-    public function cancel(string $requestId, User $actor, int $organizationId): array
+    public function cancel(string $requestId, User $actor, int $organizationId, ?string $surface = null): array
     {
-        DB::transaction(function () use ($requestId, $actor, $organizationId): void {
+        DB::transaction(function () use ($requestId, $actor, $organizationId, $surface): void {
             Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail();
             $request = AssistantRequest::query()->where('request_id', $requestId)->where('organization_id', $organizationId)->where('user_id', $actor->id)->lockForUpdate()->first();
             if ($request === null) {
@@ -245,11 +293,17 @@ final class AssistantRequestLifecycle
                 return;
             }
             $this->assertActor($request, $actor);
+            $this->assertSurface($request, $surface);
             if ($request->status === 'running' && $request->cancel_requested_at === null) {
-                $request->forceFill(['cancel_requested_at' => now()])->save();
+                if ($request->stage === 'queued' && $request->started_at === null) {
+                    $request->forceFill(['cancel_requested_at' => now()])->save();
+                    $this->terminate($request, 'cancelled', 'request_cancelled');
+                } else {
+                    $request->forceFill(['cancel_requested_at' => now()])->save();
+                }
             }
         }, 3);
-        return $this->status($requestId, $actor, $organizationId);
+        return $this->status($requestId, $actor, $organizationId, $surface);
     }
 
     public function expireAbandoned(int $batch = 100): int
@@ -267,6 +321,13 @@ final class AssistantRequestLifecycle
         return $count;
     }
 
+    public function purgeExpiredPayloads(int $batch = 100): int
+    {
+        return AssistantRequest::query()->whereNotNull('payload')->where('status', '!=', 'running')
+            ->where('created_at', '<=', now()->subDays(90))->orderBy('id')->limit($batch)
+            ->get()->each(fn (AssistantRequest $request) => $request->forceFill(['payload' => null])->save())->count();
+    }
+
     private function assertActive(AssistantRequest $request, User $actor): void
     {
         $request->refresh();
@@ -278,8 +339,16 @@ final class AssistantRequestLifecycle
 
     private function assertActor(AssistantRequest $request, User $actor): void
     {
-        if ($request->user_id !== (int) $actor->id || !$this->permissions->canUseAssistant($actor, $request->organization_id)
+        if ($request->user_id !== (int) $actor->id || !$actor->is_active || (int) $actor->current_organization_id !== $request->organization_id
+            || !$actor->belongsToOrganization($request->organization_id) || !$this->permissions->canUseAssistant($actor, $request->organization_id)
             || ($request->conversation_id !== null && $this->conversations->findAccessibleConversation($request->conversation_id, $actor, $request->organization_id, true) === null)) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+    }
+
+    private function assertSurface(AssistantRequest $request, ?string $surface): void
+    {
+        if ($surface !== null && $request->surface !== null && $request->surface !== $surface) {
             throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
         }
     }

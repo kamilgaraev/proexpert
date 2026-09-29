@@ -26,6 +26,7 @@ return [
         'redis:ai-rag' => 600,
         'redis_ai_rag:ai-rag' => 600,
         'redis_ai_rag:ai-rag-live' => 60,
+        'redis_ai_rag:ai-chat' => 120,
         'redis_reports:reports' => 120,
         'redis:'.env('EPM_DATA_MART_QUEUE', 'epm-data-mart') => 600,
     ],
@@ -208,6 +209,15 @@ return [
                 'memory' => 512,
                 'nice' => 5,
             ],
+            'supervisor-ai-chat' => [
+                'connection' => 'redis_ai_rag',
+                'queue' => ['ai-chat'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 1,
+                'timeout' => 420,
+                'memory' => 512,
+            ],
             'supervisor-epm-data-mart' => [
                 'connection' => 'redis',
                 'queue' => [env('EPM_DATA_MART_QUEUE', 'epm-data-mart')],
@@ -234,6 +244,15 @@ return [
         ],
 
         'local' => [
+            'supervisor-ai-chat' => [
+                'connection' => 'redis_ai_rag',
+                'queue' => ['ai-chat'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 1,
+                'timeout' => 420,
+                'memory' => 512,
+            ],
             'supervisor-estimate-revisions' => [
                 'connection' => 'redis_estimate_revisions',
                 'queue' => ['estimate-revisions'],

@@ -43,6 +43,7 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions
             && ($this->financialPermissions || ! in_array($permission, ['finance.view', 'finance.view_project_budget'], true)));
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['project-management', 'contract-management', 'schedule-management', 'procurement', 'site-requests', 'users'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
