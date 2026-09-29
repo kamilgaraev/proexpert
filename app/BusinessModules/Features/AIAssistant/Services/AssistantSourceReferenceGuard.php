@@ -18,6 +18,12 @@ class AssistantSourceReferenceGuard
 
     public function canRead(User $actor, int $organizationId, array $references): bool
     {
+        return $this->policy->withCurrentChecks($actor, $organizationId,
+            fn (): bool => $this->canReadCurrent($actor, $organizationId, $references), true);
+    }
+
+    private function canReadCurrent(User $actor, int $organizationId, array $references): bool
+    {
         foreach ($references as $reference) {
             if (! is_array($reference) || (isset($reference['organization_id']) && (int) $reference['organization_id'] !== $organizationId)) {
                 return false;
@@ -32,7 +38,13 @@ class AssistantSourceReferenceGuard
 
     public function fresh(User $actor, int $organizationId, array $references): bool
     {
-        if (! $this->canRead($actor, $organizationId, $references)) {
+        return $this->policy->withCurrentChecks($actor, $organizationId,
+            fn (): bool => $this->freshCurrent($actor, $organizationId, $references), true);
+    }
+
+    private function freshCurrent(User $actor, int $organizationId, array $references): bool
+    {
+        if (! $this->canReadCurrent($actor, $organizationId, $references)) {
             return false;
         }
         foreach ($references as $reference) {

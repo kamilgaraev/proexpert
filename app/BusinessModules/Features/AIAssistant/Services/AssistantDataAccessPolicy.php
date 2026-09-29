@@ -85,6 +85,47 @@ final class AssistantDataAccessPolicy
     }
     private ?AssistantAclQueryCompiler $aclCompiler = null;
     private ?AuthorizationService $compiledAuthorization = null;
+    private ?AuthorizationService $batchAuthorization = null;
+    private ?array $batchIdentity = null;
+    private array $batchDecisions = [];
+
+    public function withCurrentChecks(User $actor, int $organizationId, callable $operation, bool $fresh = false): mixed
+    {
+        $identity = [(int) $actor->id, $organizationId];
+        if (! $fresh && $this->batchIdentity === $identity) {
+            return $operation($this->batchAuthorization);
+        }
+        if ($this->aclCompiler !== null) { throw new \LogicException('assistant_authorization_batch_during_query_compilation'); }
+        $authorization = $this->authorization->forCurrentChecks(true);
+        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions];
+        $this->batchIdentity = $identity;
+        $this->batchAuthorization = $authorization;
+        $this->batchDecisions = [];
+        try {
+            return $operation($this->batchAuthorization);
+        } finally {
+            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions] = $previous;
+            if ($this->batchIdentity !== null) {
+                $this->batchAuthorization = $this->authorization->forCurrentChecks(true);
+                $this->batchDecisions = [];
+            }
+        }
+    }
+
+    public function canCurrentPermission(User $actor, int $organizationId, string $permission): bool
+    {
+        return $this->belongsToOrganization($actor, $organizationId)
+            && $this->currentAuthorization()->canCurrent($actor, $permission, ['organization_id' => $organizationId]);
+    }
+
+    private function rememberCurrent(User $actor, int $organizationId, string $key, callable $resolve): mixed
+    {
+        if ($this->batchIdentity === [(int) $actor->id, $organizationId]) {
+            if (! array_key_exists($key, $this->batchDecisions)) { $this->batchDecisions[$key] = $resolve(); }
+            return $this->batchDecisions[$key];
+        }
+        return $this->aclCompiler === null ? $resolve() : $this->aclCompiler->remember($key, $resolve);
+    }
 
     public function __construct(
         private readonly AuthorizationService $authorization,
@@ -233,12 +274,9 @@ final class AssistantDataAccessPolicy
 
     public function belongsToOrganization(User $user, int $organizationId): bool
     {
-        if ($this->aclCompiler !== null) {
-            return $this->aclCompiler->accepts((int) $user->id, $organizationId)
-                && $this->aclCompiler->remember('membership', fn (): bool => $this->checkOrganizationMembership($user, $organizationId));
-        }
-
-        return $this->checkOrganizationMembership($user, $organizationId);
+        if ((int) $user->current_organization_id !== $organizationId || ! $user->is_active
+            || ($this->aclCompiler !== null && ! $this->aclCompiler->accepts((int) $user->id, $organizationId))) { return false; }
+        return $this->rememberCurrent($user, $organizationId, 'membership', fn (): bool => $this->checkOrganizationMembership($user, $organizationId));
     }
 
     private function checkOrganizationMembership(User $user, int $organizationId): bool
@@ -250,26 +288,22 @@ final class AssistantDataAccessPolicy
 
     public function canReadDomain(User $user, int $organizationId, string $domain): bool
     {
-        if ($this->aclCompiler !== null) {
-            return $this->aclCompiler->accepts((int) $user->id, $organizationId)
-                && $this->aclCompiler->remember('domain:'.$domain, fn (): bool => $this->checkDomainAccess($user, $organizationId, $domain));
-        }
-
-        return $this->checkDomainAccess($user, $organizationId, $domain);
+        if (! $this->belongsToOrganization($user, $organizationId)) { return false; }
+        return $this->rememberCurrent($user, $organizationId, 'domain:'.$domain, fn (): bool => $this->checkDomainAccess($user, $organizationId, $domain));
     }
 
     private function checkDomainAccess(User $user, int $organizationId, string $domain): bool
     {
         if ($domain === 'knowledge') {
-            return $this->belongsToOrganization($user, $organizationId);
+            return true;
         }
         $definition = (AssistantExtendedDomainRegistry::values('domainGates') + self::DOMAINS)[$domain] ?? null;
-        if ($definition === null || ! $this->belongsToOrganization($user, $organizationId)) {
+        if ($definition === null) {
             return false;
         }
         $moduleAlternatives = AssistantExtendedDomainRegistry::values('domainModuleAlternatives')[$domain] ?? [$definition[0]];
         $loadModules = fn (): array => ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))->getEffectiveModules($organizationId)->pluck('slug')->all();
-        $modules = $this->aclCompiler === null ? $loadModules() : $this->aclCompiler->remember('modules', $loadModules);
+        $modules = $this->rememberCurrent($user, $organizationId, 'modules', $loadModules);
         if (! in_array('', $moduleAlternatives, true) && array_intersect($modules, $moduleAlternatives) === []) { return false; }
         if ($definition[1] === [] && (AssistantExtendedDomainRegistry::values('domainEntityPermissionGates')[$domain] ?? false) === true) { return true; }
         foreach ($definition[1] as $permission) {
@@ -281,6 +315,13 @@ final class AssistantDataAccessPolicy
     }
 
     public function allowedSourceTypes(User $user, int $organizationId): array
+    {
+        if ($this->aclCompiler !== null) { return $this->currentAllowedSourceTypes($user, $organizationId); }
+        return $this->withCurrentChecks($user, $organizationId,
+            fn (): array => $this->currentAllowedSourceTypes($user, $organizationId), true);
+    }
+
+    private function currentAllowedSourceTypes(User $user, int $organizationId): array
     {
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return [];
@@ -535,7 +576,7 @@ final class AssistantDataAccessPolicy
     {
         $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId);
         $this->aclCompiler = $compiler;
-        $this->compiledAuthorization = $this->authorization->forCurrentChecks(true);
+        $this->compiledAuthorization = $this->batchAuthorization ?? $this->authorization->forCurrentChecks(true);
         try {
             $query = $callback();
             return $query === null ? null : $compiler->finish($query);
@@ -547,13 +588,13 @@ final class AssistantDataAccessPolicy
 
     private function currentAuthorization(): AuthorizationService
     {
-        return $this->compiledAuthorization ?? $this->authorization;
+        return $this->compiledAuthorization ?? $this->batchAuthorization ?? $this->authorization;
     }
 
     private function accessibleProjects(User $user, int $organizationId): Builder
     {
         $load = fn (): Builder => $this->projectAccess->queryAccessibleProjects($user, $organizationId);
-        $query = $this->aclCompiler === null ? $load() : $this->aclCompiler->remember('projects', $load);
+        $query = $this->rememberCurrent($user, $organizationId, 'projects', $load);
 
         return clone $query;
     }
@@ -850,12 +891,8 @@ final class AssistantDataAccessPolicy
 
     private function canReadIndexedType(User $user, int $organizationId, string $type): bool
     {
-        if ($this->aclCompiler !== null) {
-            return $this->aclCompiler->accepts((int) $user->id, $organizationId)
-                && $this->aclCompiler->remember('indexed:'.$type, fn (): bool => $this->checkIndexedType($user, $organizationId, $type));
-        }
-
-        return $this->checkIndexedType($user, $organizationId, $type);
+        if ($this->aclCompiler !== null && ! $this->aclCompiler->accepts((int) $user->id, $organizationId)) { return false; }
+        return $this->rememberCurrent($user, $organizationId, 'indexed:'.$type, fn (): bool => $this->checkIndexedType($user, $organizationId, $type));
     }
 
     private function checkIndexedType(User $user, int $organizationId, string $type): bool

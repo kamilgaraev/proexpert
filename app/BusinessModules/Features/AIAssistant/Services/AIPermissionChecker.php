@@ -10,6 +10,8 @@ use App\Models\User;
 
 class AIPermissionChecker
 {
+    private ?AuthorizationService $batchAuthorization = null;
+
     public function __construct(private readonly ?AuthorizationService $authorization = null) {}
     private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
     private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
@@ -64,7 +66,9 @@ class AIPermissionChecker
             return false;
         }
 
-        return app(AssistantDataAccessPolicy::class)->canReadDomain($user, $organizationId, 'assistant');
+        $policy = app(AssistantDataAccessPolicy::class);
+        return $policy->withCurrentChecks($user, $organizationId,
+            fn (): bool => $policy->canReadDomain($user, $organizationId, 'assistant'), true);
     }
 
     public function canAccessConversation(User $user, Conversation $conversation, int $organizationId): bool
@@ -104,11 +108,23 @@ class AIPermissionChecker
 
     public function canExecuteTool(User $user, string $toolName, array $params = []): bool
     {
-        $toolName = $this->normalizeToolName($toolName);
-
         $organizationId = (int) $user->current_organization_id;
+        return app(AssistantDataAccessPolicy::class)->withCurrentChecks($user, $organizationId, function () use ($user, $toolName, $params, $organizationId): bool {
+            $previous = $this->batchAuthorization;
+            $this->batchAuthorization = ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true);
+            try {
+                return $this->checkTool($user, $toolName, $params, $organizationId);
+            } finally {
+                $this->batchAuthorization = $previous === null ? null
+                    : ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true);
+            }
+        }, true);
+    }
 
-        if (! $this->canUseAssistant($user, $organizationId)) {
+    private function checkTool(User $user, string $toolName, array $params, int $organizationId): bool
+    {
+        $toolName = $this->normalizeToolName($toolName);
+        if (! app(AssistantDataAccessPolicy::class)->canReadDomain($user, $organizationId, 'assistant')) {
             return false;
         }
 
@@ -231,7 +247,7 @@ class AIPermissionChecker
 
     private function canCurrent(User $user, string $permission, int $organizationId): bool
     {
-        return ($this->authorization ?? app(AuthorizationService::class))
+        return ($this->batchAuthorization ?? $this->authorization ?? app(AuthorizationService::class))
             ->canCurrent($user, $permission, ['organization_id' => $organizationId]);
     }
 }

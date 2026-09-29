@@ -24,6 +24,12 @@ final class AssistantDomainReadService
 
     public function execute(string $operation, array $arguments, User $actor, int $organizationId): array
     {
+        return $this->access->withCurrentChecks($actor, $organizationId,
+            fn (): array => $this->executeCurrent($operation, $arguments, $actor, $organizationId), true);
+    }
+
+    private function executeCurrent(string $operation, array $arguments, User $actor, int $organizationId): array
+    {
         $definition = $this->catalog->definition((string) ($arguments['domain'] ?? ''));
         if ($definition === null || ! $this->catalog->supports($definition->domain, $operation)) {
             throw ValidationException::withMessages(['domain' => ['unsupported_domain']]);
@@ -42,12 +48,12 @@ final class AssistantDomainReadService
             throw new AccessDeniedHttpException();
         }
         foreach ($definition->permissions as $permission) {
-            if (! $this->authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) {
+            if (! $this->access->canCurrentPermission($actor, $organizationId, $permission)) {
                 throw new AccessDeniedHttpException();
             }
         }
         foreach ((array) ($definition->entityPermissions[$entityType] ?? []) as $permission) {
-            if (! $this->authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) { throw new AccessDeniedHttpException(); }
+            if (! $this->access->canCurrentPermission($actor, $organizationId, $permission)) { throw new AccessDeniedHttpException(); }
         }
         $fields = $arguments['fields'] ?? $definition->fields;
         if (! is_array($fields) || array_filter($fields, static fn ($field): bool => ! is_string($field)) !== [] || array_diff($fields, $definition->fields) !== []) {
@@ -55,7 +61,7 @@ final class AssistantDomainReadService
         }
         $fields = array_values(array_filter($fields, function (string $field) use ($definition, $actor, $organizationId): bool {
             foreach ((array) ($definition->fieldPermissions[$field] ?? []) as $permission) {
-                if (! $this->authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) { return false; }
+                if (! $this->access->canCurrentPermission($actor, $organizationId, $permission)) { return false; }
             }
             return true;
         }));
@@ -203,7 +209,7 @@ final class AssistantDomainReadService
             $template = '/executive-documentation';
         }
         if ($definition->domain === 'advance_accounting' && (! $this->access->canReadDomain($actor, $organizationId, 'finance')
-            || ! $this->authorization->canCurrent($actor, 'payments.invoice.view', ['organization_id' => $organizationId]))) {
+            || ! $this->access->canCurrentPermission($actor, $organizationId, 'payments.invoice.view'))) {
             $url = '';
         }
         if (str_contains($template, '{project_id}') && $model->getAttribute('project_id') === null) { $url = ''; }

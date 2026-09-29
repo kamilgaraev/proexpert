@@ -43,13 +43,20 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        if ($user === null || ! $this->access->canReadDomain($user, (int) $organization->id, 'assistant')) {
+        if ($user === null) { throw new AccessDeniedHttpException; }
+        return $this->access->withCurrentChecks($user, (int) $organization->id,
+            fn (): array => $this->executeCurrent($arguments, $user, $organization), true);
+    }
+
+    private function executeCurrent(array $arguments, User $user, Organization $organization): array
+    {
+        if (! $this->access->canReadDomain($user, (int) $organization->id, 'assistant')) {
             throw new AccessDeniedHttpException;
         }
         return $this->describe(
             $arguments,
             fn (string $domain): bool => $this->access->canReadDomain($user, (int) $organization->id, $domain),
-            fn (string $permission): bool => $this->authorization->canCurrent($user, $permission, ['organization_id' => (int) $organization->id]),
+            fn (string $permission): bool => $this->access->canCurrentPermission($user, (int) $organization->id, $permission),
             fn (string $type): bool => $this->access->entityQuery($user, (int) $organization->id, $type) !== null,
         );
     }
