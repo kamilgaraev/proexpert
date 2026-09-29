@@ -79,6 +79,7 @@ function application(array $data, Request $request, array &$bootstrapProfile = [
     $providerTimings = [];
     $activeProvider = null;
     $profilingBootstrap = true;
+    registerReverbStages($app, $stageContext);
     foreach ([\Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
         \Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
         \Illuminate\Foundation\Bootstrap\HandleExceptions::class,
@@ -137,14 +138,21 @@ function application(array $data, Request $request, array &$bootstrapProfile = [
         ]);
     }
     configureStorage($app, $data);
-    if ($stageContext !== null) {
-        $app['config']->set('broadcasting.connections.reverb.client_options', reverbClientOptions(
-            $app['config']->get('broadcasting.connections.reverb.client_options', []), $stageContext,
-        ));
-    }
     $bootstrapProfile['test_storage_setup_ms'] = round((hrtime(true) - $storageStarted) / 1000000, 2);
 
     return $app;
+}
+
+function registerReverbStages(Application $app, ?array &$context): void
+{
+    if ($context !== null) {
+        $app->afterBootstrapping(\Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
+            static function (Application $application) use (&$context): void {
+                $application['config']->set('broadcasting.connections.reverb.client_options', reverbClientOptions(
+                    $application['config']->get('broadcasting.connections.reverb.client_options', []), $context,
+                ));
+            });
+    }
 }
 
 function appendPrivateRecord(array $data, string $name, array $record): void

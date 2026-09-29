@@ -123,6 +123,58 @@ test('broadcast markers delegate original handlers options responses and failure
   } finally { cleanup(); }
 });
 
+test('configuration hook instruments a driver cached during real BootProviders and preserves channel auth', { timeout: 10_000 }, () => {
+  const { directory, cleanup } = recordingDirectory();
+  try {
+    const result = runPhp(`${stageData(directory)}
+      $context = \\Tests\\Runtime\\BimDeviceAcceptance\\beginStages($data, 'POST', '/api/v1/admin/design-management/model-sessions/1/events');
+      mkdir($data['runtime_directory'].'/config');
+      file_put_contents($data['runtime_directory'].'/config/app.php', '<?php return ["env" => "testing"];');
+      $GLOBALS['handler_calls'] = 0;
+      $GLOBALS['channel_calls'] = 0;
+      $GLOBALS['test_handler'] = \\GuzzleHttp\\HandlerStack::create(static function ($request, $options) {
+        if ($options['timeout'] !== 30 || $options['connect_timeout'] !== 10) { throw new RuntimeException('default options changed'); }
+        $GLOBALS['handler_calls']++;
+        return new \\GuzzleHttp\\Promise\\FulfilledPromise(new \\GuzzleHttp\\Psr7\\Response(200, ['Content-Type' => 'application/json'], '{}'));
+      });
+      file_put_contents($data['runtime_directory'].'/config/broadcasting.php', <<<'CONFIG'
+<?php return ['default' => 'reverb', 'connections' => ['reverb' => ['driver' => 'reverb', 'key' => 'unit-key',
+'secret' => 'secret-canary', 'app_id' => 'unit-app', 'options' => ['host' => '127.0.0.1', 'port' => 1, 'scheme' => 'http', 'useTLS' => false],
+'client_options' => ['handler' => $GLOBALS['test_handler']]]]];
+CONFIG);
+      $app = new \\Illuminate\\Foundation\\Application($data['runtime_directory']);
+      $app->useConfigPath($data['runtime_directory'].'/config');
+      $app->instance('broadcast.manager', new \\Illuminate\\Broadcasting\\BroadcastManager($app));
+      $app->register(new class($app) extends \\Illuminate\\Support\\ServiceProvider {
+        public function boot(): void {
+          $driver = $this->app['broadcast.manager']->connection('reverb');
+          $driver->channel('design-model-session.{sessionId}', static function ($user, $sessionId) {
+            $GLOBALS['channel_calls']++;
+            return (int) $sessionId === 1 ? ['id' => (int) $user->getAuthIdentifier(), 'name' => 'Bootstrap user'] : false;
+          });
+          $this->app->instance('early_driver', $driver);
+        }
+      });
+      \\Tests\\Runtime\\BimDeviceAcceptance\\registerReverbStages($app, $context);
+      $app->bootstrapWith([\\Illuminate\\Foundation\\Bootstrap\\LoadConfiguration::class, \\Illuminate\\Foundation\\Bootstrap\\BootProviders::class]);
+      $driver = $app['early_driver'];
+      if ($app['broadcast.manager']->connection('reverb') !== $driver) { exit(90); }
+      $request = \\Illuminate\\Http\\Request::create('/broadcasting/auth', 'POST', ['socket_id' => '100.1', 'channel_name' => 'presence-design-model-session.1']);
+      $request->setUserResolver(static fn () => new \\Illuminate\\Auth\\GenericUser(['id' => 7]));
+      $auth = $driver->auth($request);
+      if (!is_string($auth['auth'] ?? null) || (json_decode($auth['channel_data'], true)['user_info']['name'] ?? null) !== 'Bootstrap user'
+        || $GLOBALS['channel_calls'] !== 1) { exit(89); }
+      $driver->broadcast(['presence-design-model-session.1'], 'diagnostic', ['payload' => 'secret-canary']);
+      if ($GLOBALS['handler_calls'] !== 1) { exit(88); }`);
+    assert.equal(result.status, 0, 'real bootstrap/cached driver/channel authentication failed');
+    const text = readFileSync(join(directory, 'stages.jsonl'), 'utf8');
+    assert.equal(text.includes('secret-canary'), false);
+    const rows = text.trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(rows.map((row) => row.stage), ['application_start', 'broadcast_start', 'broadcast_end', 'shutdown']);
+    assert.equal(rows[2].status_code, 200);
+  } finally { cleanup(); }
+});
+
 test('stage recorder rejects foreign runtime and never exceeds its private file budget', { timeout: 10_000 }, () => {
   const { directory, cleanup } = recordingDirectory();
   try {
