@@ -69,6 +69,18 @@ final class AssistantFinancialAnswerSafetyTest extends TestCase
         self::assertStringContainsString('Ссылка', $html);
     }
 
+    public function test_unknown_estimate_status_uses_readable_fallback(): void
+    {
+        $evidence = $this->evidence(1);
+        $evidence['estimate']['status'] = 'unmapped_status';
+        $evidence['estimate']['estimate_date'] = null;
+
+        $answer = $this->answers()->format('', $evidence);
+
+        self::assertStringContainsString('Дата сметы: не указано. Статус: не указано.', $answer);
+        self::assertStringNotContainsString('budget_estimates.mobile.statuses.', $answer);
+    }
+
     public function test_status_dates_navigation_and_concepts_do_not_use_the_financial_fast_path(): void
     {
         foreach (['Какой статус сметы?', 'Когда создана смета?', 'Дата сметы', 'Открой смету', 'Дай ссылку на смету',

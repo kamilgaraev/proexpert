@@ -95,10 +95,19 @@ final class AssistantFinancialAnswerService
     public function format(string $query, array $evidence): string
     {
         $estimate = $evidence['estimate'];
-        $lines = [trans_message('ai_assistant_financial.estimate', ['number' => $this->markdownText($estimate['number']), 'name' => $this->markdownText($estimate['name'])]),
-            trans_message('ai_assistant_financial.totals', ['amount' => $evidence['totals']['total_amount'] ?? trans_message('ai_assistant_financial.unknown'),
+        $lines = [trans_message('ai_assistant_financial.estimate', ['number' => $this->markdownText($estimate['number']), 'name' => $this->markdownText($estimate['name'])])];
+        if (array_key_exists('status', $estimate) || array_key_exists('estimate_date', $estimate)) {
+            $statusKey = 'budget_estimates.mobile.statuses.'.($estimate['status'] ?? '');
+            $lines[] = trans_message('ai_assistant_financial.identity', [
+                'date' => $estimate['estimate_date'] ?? trans_message('ai_assistant_financial.unknown'),
+                'status' => \Illuminate\Support\Facades\Lang::has($statusKey)
+                    ? $this->markdownText(trans_message($statusKey))
+                    : trans_message('ai_assistant_financial.unknown'),
+            ]);
+        }
+        $lines[] = trans_message('ai_assistant_financial.totals', ['amount' => $evidence['totals']['total_amount'] ?? trans_message('ai_assistant_financial.unknown'),
                 'direct' => $evidence['totals']['direct_costs'] ?? trans_message('ai_assistant_financial.unknown'), 'overhead' => $evidence['totals']['overhead_amount'] ?? trans_message('ai_assistant_financial.unknown'),
-                'profit' => $evidence['totals']['profit_amount'] ?? trans_message('ai_assistant_financial.unknown')])];
+                'profit' => $evidence['totals']['profit_amount'] ?? trans_message('ai_assistant_financial.unknown')]);
         if (($evidence['totals_validation_status'] ?? $evidence['validation_status'] ?? 'unverified') !== 'verified') {
             $lines[] = trans_message('ai_assistant_financial.totals_mismatch');
         }

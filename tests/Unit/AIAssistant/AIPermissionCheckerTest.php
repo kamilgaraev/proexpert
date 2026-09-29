@@ -65,6 +65,28 @@ class AIPermissionCheckerTest extends TestCase
         $this->assertTrue($checker->canExecuteTool($userWithContractAccess, 'get_contract_snapshot'));
     }
 
+    public function test_registered_estimate_read_tools_require_current_domain_and_financial_access(): void
+    {
+        $checker = new AIPermissionChecker;
+        $user = $this->makeUserDouble(15, true, false, false, 1, ['budget-estimates.view', 'budget-estimates.finance.view']);
+
+        $this->assertTrue($checker->canExecuteTool($user, 'resolve_estimate', ['query' => 'LIVE']));
+        foreach (['get_estimate_positions', 'get_estimate_financial_snapshot'] as $tool) {
+            $this->assertTrue($checker->canExecuteTool($user, $tool, ['estimate_id' => 1]));
+            $this->assertFalse($checker->canExecuteTool($user, $tool));
+            $this->assertFalse($checker->canExecuteTool($user, $tool, ['estimate_id' => 0]));
+        }
+
+        $this->grantReportUnitPermissions($user, ['ai_assistant.chat', 'budget-estimates.view']);
+        $this->assertTrue($checker->canExecuteTool($user, 'resolve_estimate', ['query' => 'LIVE']));
+        $this->assertFalse($checker->canExecuteTool($user, 'get_estimate_financial_snapshot', ['estimate_id' => 1]));
+
+        $this->grantReportUnitPermissions($user, ['ai_assistant.chat', 'budget-estimates.finance.view']);
+        $this->assertFalse($checker->canExecuteTool($user, 'resolve_estimate', ['query' => 'LIVE']));
+        $this->assertFalse($checker->canExecuteTool($user, 'get_estimate_positions', ['estimate_id' => 1]));
+        $this->assertFalse($checker->canExecuteTool($user, 'unknown_estimate_tool', ['estimate_id' => 1]));
+    }
+
     public function test_admin_can_execute_privileged_tool(): void
     {
         $checker = new AIPermissionChecker;

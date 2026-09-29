@@ -11,6 +11,9 @@ use App\Models\User;
 class AIPermissionChecker
 {
     public function __construct(private readonly ?AuthorizationService $authorization = null) {}
+    private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
+    private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
+    private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot'];
     private const TOOL_PERMISSION_MAP = [
         'generate_profitability_report' => ['reports.view', 'admin.reports.view'],
         'generate_work_completion_report' => ['reports.view', 'admin.reports.view'],
@@ -110,28 +113,28 @@ class AIPermissionChecker
         }
 
         $policy = app(AssistantDataAccessPolicy::class);
-        if (in_array($toolName, ['assistant_domain_discover_capabilities', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'], true)) {
+        if (in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true)) {
             return $policy->canReadDomain($user, $organizationId, 'assistant');
         }
-        if (in_array($toolName, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'], true)) {
+        if (in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)) {
             $domain = match ((string) ($params['domain'] ?? '')) { 'works' => 'projects', 'acts' => 'contracts', default => (string) ($params['domain'] ?? '') };
             return $policy->canReadDomain($user, $organizationId, $domain);
         }
-        $domains = match ($toolName) {
-            'search_projects', 'send_project_notification' => ['projects'],
-            'get_project_snapshot' => ['projects', 'contracts', 'finance'],
-            'search_warehouse' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
-            'search_materials' => ['materials'], 'search_users' => ['people'], 'search_contractors' => ['contractors'],
-            'get_contract_snapshot', 'generate_contractor_settlements_report', 'generate_contract_payments_report' => ['contracts', 'finance'],
-            'get_procurement_snapshot' => ['procurement', 'finance'],
-            'get_schedule_snapshot', 'create_schedule_task', 'update_schedule_task_status' => ['schedule'],
-            'generate_profitability_report' => ['projects', 'contracts', 'finance', 'warehouse'], 'generate_work_completion_report' => ['projects', 'contracts', 'finance'],
-            'generate_project_timelines_report' => ['projects', 'contracts', 'schedule', 'finance'], 'generate_material_movements_report' => ['warehouse', 'finance'], 'generate_time_tracking_report' => ['time_tracking', 'finance'],
-            'generate_operational_pdf_report', 'generate_rag_pdf_report' => ['reports'],
-            'approve_payment_request' => ['finance'],
-            'create_measurement_unit', 'mass_create_measurement_units', 'update_measurement_unit', 'delete_measurement_unit' => ['measurement_units'],
-            default => [],
-        };
+        if (in_array($toolName, self::ESTIMATE_TOOLS, true)) {
+            if (! $policy->canReadDomain($user, $organizationId, 'estimates')) {
+                return false;
+            }
+
+            if ($toolName === 'resolve_estimate') {
+                return true;
+            }
+
+            $estimateId = $params['estimate_id'] ?? null;
+
+            return filter_var($estimateId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) !== false
+                && $policy->canReadEntityContent($user, $organizationId, 'estimate', (int) $estimateId);
+        }
+        $domains = $this->domainsForTool($toolName);
         if ($domains === []) {
             return false;
         }
@@ -165,6 +168,35 @@ class AIPermissionChecker
             default => null,
         };
         return $mutationPermission === null || $this->canCurrent($user, $mutationPermission, $organizationId);
+    }
+
+    public function hasExplicitToolPolicy(string $toolName): bool
+    {
+        $toolName = $this->normalizeToolName($toolName);
+
+        return in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true)
+            || in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)
+            || in_array($toolName, self::ESTIMATE_TOOLS, true)
+            || $this->domainsForTool($toolName) !== [];
+    }
+
+    private function domainsForTool(string $toolName): array
+    {
+        return match ($toolName) {
+            'search_projects', 'send_project_notification' => ['projects'],
+            'get_project_snapshot' => ['projects', 'contracts', 'finance'],
+            'search_warehouse' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
+            'search_materials' => ['materials'], 'search_users' => ['people'], 'search_contractors' => ['contractors'],
+            'get_contract_snapshot', 'generate_contractor_settlements_report', 'generate_contract_payments_report' => ['contracts', 'finance'],
+            'get_procurement_snapshot' => ['procurement', 'finance'],
+            'get_schedule_snapshot', 'create_schedule_task', 'update_schedule_task_status' => ['schedule'],
+            'generate_profitability_report' => ['projects', 'contracts', 'finance', 'warehouse'], 'generate_work_completion_report' => ['projects', 'contracts', 'finance'],
+            'generate_project_timelines_report' => ['projects', 'contracts', 'schedule', 'finance'], 'generate_material_movements_report' => ['warehouse', 'finance'], 'generate_time_tracking_report' => ['time_tracking', 'finance'],
+            'generate_operational_pdf_report', 'generate_rag_pdf_report' => ['reports'],
+            'approve_payment_request' => ['finance'],
+            'create_measurement_unit', 'mass_create_measurement_units', 'update_measurement_unit', 'delete_measurement_unit' => ['measurement_units'],
+            default => [],
+        };
     }
 
     public function isMutationTool(string $toolName): bool

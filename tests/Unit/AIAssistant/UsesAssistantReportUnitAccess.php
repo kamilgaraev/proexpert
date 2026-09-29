@@ -43,7 +43,7 @@ trait UsesAssistantReportUnitAccess
         $authorization->method('canCurrent')->willReturnCallback(fn (User $user, string $permission): bool => in_array($permission, $this->reportUnitPermissions[$user] ?? [], true));
         $modules = $this->createMock(OrganizationEntitlementService::class);
         $modules->method('getEffectiveModules')->willReturn(collect(array_map(static fn (string $slug): Module => new Module(['slug' => $slug]),
-            ['ai-assistant', 'project-management', 'contract-management', 'payments', 'basic-warehouse', 'schedule-management', 'reports', 'catalog-management'])));
+            ['ai-assistant', 'project-management', 'contract-management', 'payments', 'basic-warehouse', 'schedule-management', 'reports', 'catalog-management', 'budget-estimates'])));
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturnCallback(static fn () => Project::query());
         app()->instance(AuthorizationService::class, $authorization);

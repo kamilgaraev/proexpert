@@ -71,6 +71,8 @@ final class AssistantEstimateEvidenceService
                 $storedTotals[$field] = $estimate->$field === null ? null : FinanceDecimal::value((string) $estimate->$field);
             }
             $header = ['id' => $estimateId, 'number' => (string) $estimate->number, 'name' => (string) $estimate->name,
+                'status' => (string) $estimate->status,
+                'estimate_date' => $estimate->estimate_date?->toDateString(),
                 'project_id' => $estimate->project_id === null ? null : (int) $estimate->project_id, 'version' => $estimate->version,
                 'vat_rate' => $estimate->vat_rate === null ? null : (string) $estimate->vat_rate];
             $aggregation = ['method' => 'sum_top_level_accounted_positions', 'money_scale' => 2, 'quantity_scale' => 8, 'direct_cost_scale' => 4];
@@ -78,6 +80,9 @@ final class AssistantEstimateEvidenceService
             $source = ['source_type' => 'estimate', 'entity_type' => 'estimate', 'entity_id' => $estimateId, 'organization_id' => $organizationId,
                 'project_id' => $header['project_id'],
                 'version' => $version, 'fetched_at' => $fetchedAt, 'position_count' => count($positions), 'aggregation' => $aggregation,
+                'content_scope' => 'structured', 'checked_fields' => ['number', 'name', 'status', 'estimate_date', 'total_amount'],
+                'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'], 'required_domains' => ['estimates'],
+                'source_version' => (string) $estimate->getRawOriginal('updated_at'),
                 'navigation' => ['url' => '/estimates/'.$estimateId]];
             $complete = $positions !== [] && $missingFields === [] && $storedTotals['total_amount'] !== null
                 && FinanceDecimal::compare($storedTotals['total_amount'], $totals['total_amount']) === 0;

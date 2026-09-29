@@ -94,6 +94,7 @@ final class AssistantFinancialEvidenceTest extends TestCase
     public function test_snapshot_is_fresh_exact_and_does_not_double_count_children_or_excluded_parents(): void
     {
         $estimate = $this->estimate('LIVE', 'Текущая');
+        $estimate->update(['status' => 'draft']);
         $parent = $this->item($estimate, '1', 'Работа', '2.12345678', '100.01', ['direct_costs' => '75.12']);
         $this->item($estimate, '1.1', 'Ресурс', '1', '30', ['parent_work_id' => $parent->id]);
         $excluded = $this->item($estimate, '2', 'Не учитываемая', '1', '300', ['is_not_accounted' => true]);
@@ -101,6 +102,12 @@ final class AssistantFinancialEvidenceTest extends TestCase
         $estimate->update(['total_amount' => '100.01']);
         $service = app(AssistantEstimateEvidenceService::class);
         $first = $service->snapshot($estimate->id, $this->organization->id, $this->actor);
+        self::assertSame('LIVE', $first['estimate']['number']);
+        self::assertSame('Текущая', $first['estimate']['name']);
+        self::assertSame('draft', $first['estimate']['status']);
+        self::assertSame('2026-09-29', $first['estimate']['estimate_date']);
+        self::assertSame(['number', 'name', 'status', 'estimate_date', 'total_amount'], $first['source_refs'][0]['checked_fields']);
+        self::assertStringContainsString('Дата сметы: 2026-09-29. Статус: Черновик.', app(AssistantFinancialAnswerService::class)->format('', $first));
         self::assertSame('100.01', $first['totals']['total_amount']);
         self::assertSame('75.1200', $first['totals']['direct_costs']);
         self::assertSame('verified', $first['validation_status']);
@@ -109,7 +116,10 @@ final class AssistantFinancialEvidenceTest extends TestCase
         self::assertFalse($rows[$child->id]['included_in_total']);
         self::assertSame('2.12345678', $rows[$parent->id]['quantity']);
         $parent->update(['total_amount' => '101.02']);
+        $estimate->update(['status' => 'approved', 'estimate_date' => '2026-09-30']);
         $second = $service->snapshot($estimate->id, $this->organization->id, $this->actor);
+        self::assertSame('approved', $second['estimate']['status']);
+        self::assertSame('2026-09-30', $second['estimate']['estimate_date']);
         self::assertSame('101.02', $second['totals']['total_amount']);
         self::assertSame('partial', $second['validation_status']);
         self::assertNotSame($first['version'], $second['version']);
