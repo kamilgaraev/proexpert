@@ -157,7 +157,6 @@ class ContextBuilder
             'team_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetTeamInfoAction::class,
             'organization_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetOrganizationInfoAction::class,
             'help' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetHelpAction::class,
-            'greeting' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectStatusAction::class, // Используем статус проектов
         ];
 
         return $actionMap[$intent] ?? null;

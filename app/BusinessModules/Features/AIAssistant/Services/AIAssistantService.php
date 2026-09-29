@@ -1924,6 +1924,10 @@ class AIAssistantService
         array $taskPlan,
         array $requestPayload
     ): array {
+        if ($this->isStandaloneGreeting($query, $requestPayload)) {
+            return $this->ragPromptContextBuilder->build($query, []);
+        }
+
         try {
             $ragSearchQuery = $this->resolveRagSearchQuery($query, $requestPayload);
             $results = $this->ragRetriever instanceof RagRetriever
@@ -1950,6 +1954,26 @@ class AIAssistantService
 
             return $this->ragPromptContextBuilder->build($query, []);
         }
+    }
+
+    private function isStandaloneGreeting(string $query, array $requestPayload): bool
+    {
+        if (preg_match('/^\s*(?:привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро))\s*[!.?]?\s*$/iu', $query) !== 1
+            || ! empty($requestPayload['conversation_id']) || ! empty($requestPayload['goal'])
+            || ! empty($requestPayload['desired_mode']) || ! empty($requestPayload['allow_actions'])) {
+            return false;
+        }
+
+        $context = $requestPayload['context'] ?? [];
+        if (! is_array($context) || ! empty($context['entity_refs']) || ! empty($context['period'])
+            || ! empty($context['filters']) || ! empty($context['source_route'])
+            || ! in_array($context['source_module'] ?? null, [null, 'ai-assistant'], true)) {
+            return false;
+        }
+
+        $uiState = $context['ui_state'] ?? [];
+
+        return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path']) === [];
     }
 
     protected function resolveRagSearchQuery(string $query, array $requestPayload): string

@@ -739,6 +739,27 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame([], $context['metadata']['sources']);
     }
 
+    public function test_standalone_greeting_skips_rag_search_but_contextual_greeting_does_not(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $user = new User;
+        $user->id = 7;
+        $user->current_organization_id = 15;
+
+        $context = $service->exposeBuildRagContext('Привет', 15, $user, [], [
+            'conversation_id' => null,
+            'context' => ['source_module' => 'ai-assistant', 'ui_state' => ['assistant_path' => 'chat']],
+        ]);
+        $this->assertFalse($service->ragQueryResolved);
+        $this->assertFalse($context['metadata']['used']);
+
+        $service->exposeBuildRagContext('Привет', 15, $user, [], [
+            'conversation_id' => 24,
+            'context' => ['source_module' => 'ai-assistant', 'ui_state' => []],
+        ]);
+        $this->assertTrue($service->ragQueryResolved);
+    }
+
     private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false): TestableAIAssistantService
     {
         $llmProvider = $this->createMock(LLMProviderInterface::class);
@@ -813,6 +834,15 @@ class AIAssistantServiceBudgetTest extends TestCase
 
 class TestableAIAssistantService extends AIAssistantService
 {
+    public bool $ragQueryResolved = false;
+
+    protected function resolveRagSearchQuery(string $query, array $requestPayload): string
+    {
+        $this->ragQueryResolved = true;
+
+        return parent::resolveRagSearchQuery($query, $requestPayload);
+    }
+
     public function exposePrepareProviderPayload(array $messages, array $options): array
     {
         return $this->prepareProviderPayload($messages, $options, 15, new User);

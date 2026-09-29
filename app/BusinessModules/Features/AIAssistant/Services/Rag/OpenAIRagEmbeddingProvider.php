@@ -23,6 +23,8 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
     private ?object $client;
 
+    private ?object $queryClient;
+
     private ?string $apiKey;
 
     private string $model;
@@ -63,13 +65,18 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $this->baseUri = $baseUri ?? $this->configString('ai-assistant.rag.embedding_base_uri');
         $this->providerName = $providerName ?? 'openai';
         $this->client = $client ?? $this->makeClient($this->apiKey, $this->baseUri);
+        $this->queryClient = $client ?? $this->makeClient(
+            $this->apiKey,
+            $this->baseUri,
+            max(1, min(10, $this->configInt('ai-assistant.rag.query_embedding_timeout', 6)))
+        );
     }
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
         $this->lastUsage = self::usageEvidence(null, $text);
         $this->usageAttempts = [];
-        $client = $this->client;
+        $client = $purpose === self::PURPOSE_QUERY ? $this->queryClient : $this->client;
 
         if (! is_object($client) || ! method_exists($client, 'embeddings')) {
             throw new RuntimeException($this->assistantMessage(
@@ -105,7 +112,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         ];
 
         try {
-            $response = $this->createEmbeddingWithRetry($embeddings, $parameters, $text);
+            $response = $this->createEmbeddingWithRetry($embeddings, $parameters, $text, $purpose === self::PURPOSE_QUERY ? 1 : self::RETRY_ATTEMPTS);
         } catch (Throwable $exception) {
             throw new RagEmbeddingUnavailableException($this->assistantMessage(
                 'ai_assistant.rag_embedding_unavailable',
@@ -131,12 +138,12 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<string, mixed>  $parameters
      */
-    private function createEmbeddingWithRetry(object $embeddings, array $parameters, string $text): object
+    private function createEmbeddingWithRetry(object $embeddings, array $parameters, string $text, int $maxAttempts): object
     {
         $lastException = null;
         $callKey = 'embedding:'.bin2hex(random_bytes(16));
 
-        for ($attempt = 1; $attempt <= self::RETRY_ATTEMPTS; $attempt++) {
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             try {
                 $response = $embeddings->create($parameters);
                 $this->lastUsage = $this->usageFromResponse($response, $text);
@@ -149,13 +156,13 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
                 $this->usageAttempts[] = $this->lastUsage + ['usage_key' => $callKey.':attempt:'.$attempt, 'attempt' => $attempt, 'is_successful' => false,
                     'http_status' => $this->exceptionStatus($exception)];
 
-                if ($attempt >= self::RETRY_ATTEMPTS || ! $this->shouldRetry($exception)) {
+                if ($attempt >= $maxAttempts || ! $this->shouldRetry($exception)) {
                     throw $exception;
                 }
 
                 Log::warning('ai_assistant.rag.openai_embedding_retry', [
                     'attempt' => $attempt,
-                    'max_attempts' => self::RETRY_ATTEMPTS,
+                    'max_attempts' => $maxAttempts,
                     'provider' => $this->providerName,
                     'model' => $this->model,
                     'exception' => $exception::class,
@@ -260,7 +267,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         return self::usageEvidence(null, $text);
     }
 
-    private function makeClient(?string $apiKey, ?string $baseUri): ?object
+    private function makeClient(?string $apiKey, ?string $baseUri, int $timeout = 45): ?object
     {
         if ($apiKey === null || trim($apiKey) === '') {
             return null;
@@ -269,8 +276,8 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $factory = OpenAI::factory()
             ->withApiKey($apiKey)
             ->withHttpClient(new GuzzleClient([
-                'timeout' => 45,
-                'connect_timeout' => 5,
+                'timeout' => $timeout,
+                'connect_timeout' => min(5, $timeout),
             ]));
 
         if ($baseUri !== null && trim($baseUri) !== '') {
