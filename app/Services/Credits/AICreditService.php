@@ -38,6 +38,10 @@ final class AICreditService
             $pageCount = $request['page_count'] ?? null;
             if (! is_int($pageCount) || $pageCount < 1 || $pageCount > 10_000) { throw new DomainException('Invalid OCR page count.'); }
             $limits['max_calls'] = $pageCount;
+        } elseif ($profile === 'normal' && $this->isStandaloneGreeting($request)) {
+            $limits['input_tokens'] = min((int) $limits['input_tokens'], 8192);
+            $limits['output_tokens'] = min((int) $limits['output_tokens'], 1024);
+            $limits['max_calls'] = 1;
         }
         $requestHash = $this->canonicalAssistantRequest($request);
         $existing = AICreditQuote::query()
@@ -379,6 +383,24 @@ final class AICreditService
         $numerator = $this->safeMultiply($inputCost + $outputCost, $calls);
         $microRub = intdiv($numerator, 1_000_000) + ($numerator % 1_000_000 === 0 ? 0 : 1);
         return $this->chargeMinor($microRub, $pricing);
+    }
+
+    private function isStandaloneGreeting(array $request): bool
+    {
+        if (preg_match('/^\s*(?:привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро))\s*[!.?]?\s*$/iu', (string) ($request['message'] ?? '')) !== 1
+            || ! empty($request['conversation_id']) || ! empty($request['goal']) || ! empty($request['desired_mode'])
+            || ! empty($request['allow_actions'])) {
+            return false;
+        }
+
+        $context = $request['context'] ?? [];
+        if (! is_array($context) || ! empty($context['entity_refs']) || ! empty($context['period']) || ! empty($context['filters'])
+            || ! empty($context['source_route']) || ! in_array($context['source_module'] ?? null, [null, 'ai-assistant'], true)) {
+            return false;
+        }
+
+        $uiState = $context['ui_state'] ?? [];
+        return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path']) === [];
     }
 
     private function successfulChargeMinor(AICreditReservation $reservation): int

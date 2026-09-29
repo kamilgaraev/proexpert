@@ -106,6 +106,44 @@ final class AICreditWalletTest extends TestCase
         $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request + ['goal' => 'Подмена']);
     }
 
+    public function test_standalone_greeting_has_a_narrow_approved_ceiling(): void
+    {
+        $request = [
+            'request_id' => (string) Str::uuid(),
+            'message' => 'Привет',
+            'profile' => 'normal',
+            'allow_actions' => false,
+            'conversation_id' => null,
+            'context' => [
+                'source_module' => 'ai-assistant',
+                'source_route' => null,
+                'entity_refs' => [],
+                'period' => null,
+                'filters' => [],
+                'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+            ],
+        ];
+        $quote = $this->credits->quote($this->organization, $this->user, $request);
+        $this->assertSame(50, $quote['min_units_minor']);
+        $this->assertSame(100, $quote['max_units_minor']);
+        $this->assertSame('normal', $quote['profile']);
+
+        $this->credits->grant($this->organization, 1000, 'purchase', null, 'greeting-pack');
+        $reservation = $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request);
+        $this->assertSame(['max_calls' => 1, 'input_tokens' => 8192, 'output_tokens' => 1024], $this->credits->limits($reservation));
+        $this->assertSame(100, $reservation->reserved_minor);
+
+        foreach ([
+            ['message' => 'Привет, покажи проекты'],
+            ['conversation_id' => 123],
+            ['allow_actions' => true],
+            ['context' => array_replace($request['context'], ['entity_refs' => [['type' => 'project', 'id' => 1]]])],
+        ] as $change) {
+            $other = array_replace($request, $change, ['request_id' => (string) Str::uuid()]);
+            $this->assertSame(800, $this->credits->quote($this->organization, $this->user, $other)['max_units_minor']);
+        }
+    }
+
     public function test_included_expires_during_reservation_and_purchased_credits_never_expire(): void
     {
         $this->credits->grant($this->organization, 500, 'subscription', now()->addMinute(), 'period');
