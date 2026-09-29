@@ -48,6 +48,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
         $allowedOrder = true;
         $allowedFinance = false;
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('canCurrent')->andReturnUsing(static function (\App\Models\User $actor, string $permission) use (&$allowedOrder, &$allowedFinance): bool {
             return $permission === 'contracts.view' || ($permission === 'procurement.purchase_orders.view' && $allowedOrder)
                 || ($permission === 'finance.view' && $allowedFinance);
@@ -81,6 +82,7 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $moduleActive = true;
         $calls = 0;
         $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('canCurrent')->andReturnUsing(static function (\App\Models\User $actor, string $candidate) use ($permission, &$allowed, &$calls): bool {
             if ($candidate !== $permission) { return false; }
             $calls++;
@@ -116,6 +118,44 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $sources = $this->policy->applyToSources(RagSource::query(), $this->actor, 1)->toSql();
         self::assertStringContainsString('"ai_rag_sources"."metadata"', $sources);
         self::assertStringContainsString('assistant_public_schema_revision', $sources);
+    }
+
+    public function test_payment_estimate_split_projection_skips_missing_price_columns_and_keeps_parent_acl(): void
+    {
+        $type = 'core_payment_document_estimate_split';
+        $declared = \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantCoreBusinessMetadata::safeSelectColumns()[$type];
+        self::assertContains('quantity', $declared);
+
+        $schema = Facade::getFacadeApplication()->make('db.schema');
+        Schema::swap(new class($schema) {
+            public function __construct(private readonly object $schema) {}
+
+            public function getColumnListing(string $table): array
+            {
+                if ($table === 'payment_document_estimate_splits') {
+                    return ['id', 'payment_document_id', 'estimate_item_id', 'amount', 'percentage', 'created_at', 'updated_at'];
+                }
+
+                return $this->schema->getColumnListing($table);
+            }
+
+            public function __call(string $method, array $arguments): mixed
+            {
+                return $this->schema->{$method}(...$arguments);
+            }
+        });
+
+        $query = $this->policy->entityQuery($this->actor, 1, $type);
+        self::assertNotNull($query);
+        $sql = $query->toSql();
+        foreach (['quantity', 'unit_price_plan', 'unit_price_actual', 'price_deviation'] as $column) {
+            self::assertStringNotContainsString('"payment_document_estimate_splits"."'.$column.'"', $sql);
+        }
+        self::assertStringContainsString('"payment_document_estimate_splits"."amount"', $sql);
+        self::assertStringContainsString('"payment_document_estimate_splits"."payment_document_id"', $sql);
+        self::assertStringContainsString('"payment_document_estimate_splits"."estimate_item_id"', $sql);
+        self::assertStringContainsString('payment_documents', $sql);
+        self::assertStringContainsString('estimate_items', $sql);
     }
 
     public function test_expected_projection_scope_cannot_bypass_real_source_schema_guard(): void

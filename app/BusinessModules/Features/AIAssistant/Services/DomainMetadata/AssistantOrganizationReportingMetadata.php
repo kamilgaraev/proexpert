@@ -240,9 +240,10 @@ final class AssistantOrganizationReportingMetadata
         try {
             $registry = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class);
             $modules = app(\App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer::class);
+            $moduleDecision = $modules->decision($organizationId);
             foreach ($registry->publishedCodes() as $code) {
                 $definition = $registry->published($code)->definition;
-                if (! $modules->allows($organizationId,$definition)) { continue; }
+                if (! $moduleDecision->allows($organizationId,$definition)) { continue; }
                 $permissions = $definition->permissionPolicy->viewPermissions;
                 if ($permissions === [] || array_filter($permissions,static fn (string $permission): bool => ! $authorization->canCurrent($actor,$permission,['organization_id' => $organizationId])) !== []) { continue; }
                 $allowed[] = $code;

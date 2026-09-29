@@ -103,19 +103,17 @@ final class AssistantDocumentCoverageService
             $latestNative = (clone $nativeDocuments)->select([])->selectRaw('MAX(ai_assistant_documents.id)')
                 ->groupBy('parent_entity_type')->groupByRaw("ai_assistant_documents.metadata->>'native_source_id'");
             $nativeDocuments->whereIn('ai_assistant_documents.id', $latestNative);
-            $mapped = (clone $nativeDocuments)->count();
-            $nativeMappedCount += $mapped;
-            $nativeUnitCounts = DB::table('ai_assistant_document_units')->whereIn('document_id', (clone $nativeDocuments)->select('ai_assistant_documents.id'))
-                ->selectRaw("COUNT(*) AS processed_units, COALESCE(SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END), 0) AS ocr_completed_pages")->first();
-            $coverage['processed_units'] += (int) ($nativeUnitCounts->processed_units ?? 0);
-            $coverage['ocr_completed_pages'] += (int) ($nativeUnitCounts->ocr_completed_pages ?? 0);
-            $nativePages = (clone $nativeDocuments)->select([])->selectRaw("COALESCE(SUM(CASE WHEN (metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (metadata->>'page_count')::bigint ELSE 0 END), 0) AS total_pages")->first();
-            $coverage['total_pages'] += (int) ($nativePages?->total_pages ?? 0);
-            $missing = max(0, $expectedCount - $mapped);
-            $unmappedNativeCount += $missing;
-            $coverage['total'] += $expectedCount;
-            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
-            $counts = (clone $nativeDocuments)->select([])->selectRaw("CASE
+            $nativeUnits = DB::table('ai_assistant_document_units')
+                ->whereIn('document_id', (clone $nativeDocuments)->select('ai_assistant_documents.id'))
+                ->select('document_id')
+                ->selectRaw("COUNT(*) AS processed_units, SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END) AS ocr_completed_pages")
+                ->groupBy('document_id');
+            $counts = (clone $nativeDocuments)->select('ai_assistant_documents.id', 'ai_assistant_documents.metadata')
+                ->addSelect('ai_assistant_documents.coverage_status', 'ai_assistant_documents.last_error', 'ai_assistant_documents.status', 'ai_assistant_documents.extracted_text')
+                ->toBase();
+            $nativeRows = DB::query()->fromSub($counts, 'document')
+                ->leftJoinSub($nativeUnits, 'units', 'units.document_id', '=', 'document.id')
+                ->selectRaw("CASE
                 WHEN coverage_status = 'empty' OR last_error = 'ocr_empty' THEN 'empty'
                 WHEN status IN ('failed', 'damaged') OR coverage_status = 'failed' THEN 'failed'
                 WHEN status = 'unsupported' THEN 'unsupported'
@@ -123,11 +121,30 @@ final class AssistantDocumentCoverageService
                 WHEN status = 'ready' THEN 'ready'
                 WHEN status = 'ocr_approved' THEN 'ocr_processing'
                 WHEN status = 'ocr_quote_required' THEN 'ocr_required'
-                ELSE 'pending' END AS native_coverage_state")->toBase();
-            foreach (DB::query()->fromSub($counts, 'native_documents')->select('native_coverage_state')->selectRaw('COUNT(*) AS file_count')->groupBy('native_coverage_state')->get() as $stateCount) {
+                ELSE 'pending' END AS native_coverage_state")
+                ->selectRaw("COALESCE(units.processed_units, 0) AS processed_units, COALESCE(units.ocr_completed_pages, 0) AS ocr_completed_pages,
+                    CASE WHEN (document.metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (document.metadata->>'page_count')::bigint ELSE 0 END AS total_pages");
+            $nativeAggregate = DB::query()->fromSub($nativeRows, 'native_documents')
+                ->select('native_coverage_state')->selectRaw('COUNT(*) AS file_count')
+                ->selectRaw('COALESCE(SUM(processed_units), 0) AS processed_units')
+                ->selectRaw('COALESCE(SUM(ocr_completed_pages), 0) AS ocr_completed_pages')
+                ->selectRaw('COALESCE(SUM(total_pages), 0) AS total_pages')
+                ->groupBy('native_coverage_state')->get();
+            $mapped = 0;
+            foreach ($nativeAggregate as $stateCount) {
                 $state = $stateCount->native_coverage_state;
-                $coverage[$state] = ($coverage[$state] ?? 0) + (int) $stateCount->file_count;
+                $count = (int) $stateCount->file_count;
+                $mapped += $count;
+                $coverage[$state] = ($coverage[$state] ?? 0) + $count;
+                $coverage['processed_units'] += (int) $stateCount->processed_units;
+                $coverage['ocr_completed_pages'] += (int) $stateCount->ocr_completed_pages;
+                $coverage['total_pages'] += (int) $stateCount->total_pages;
             }
+            $nativeMappedCount += $mapped;
+            $missing = max(0, $expectedCount - $mapped);
+            $unmappedNativeCount += $missing;
+            $coverage['total'] += $expectedCount;
+            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
             $nativeCoverage[$type] = ['expected_file_count' => $expectedCount, 'indexed_file_count' => $mapped,
                 'unmapped_file_count' => $missing, 'status' => $missing > 0 ? 'needs_access_review' : 'mapped',
                 'manual_ingestion_available' => $missing > 0];
@@ -154,13 +171,17 @@ final class AssistantDocumentCoverageService
         }
         $settings = AssistantDocumentSettings::query()->where('organization_id', $organizationId)->first();
         $scanFiles = (clone $files)->where('files.disk', 's3');
-        $expected = (clone $scanFiles)->count('files.id');
         $cursor = (int) ($settings?->last_file_id ?? 0);
-        $scannedFiles = (clone $scanFiles)->where('files.id', '<=', $cursor);
-        $scanned = (clone $scannedFiles)->count('files.id');
-        $lastVisible = (int) ((clone $scannedFiles)->max('files.id') ?? 0);
+        $scan = $scanFiles->select([])->selectRaw('COUNT(*) AS expected')
+            ->selectRaw('COUNT(*) FILTER (WHERE files.id <= ?) AS scanned', [$cursor])
+            ->selectRaw('MAX(files.id) FILTER (WHERE files.id <= ?) AS last_visible', [$cursor])
+            ->selectRaw('MAX(files.updated_at) FILTER (WHERE files.id <= ?) AS completed_at', [$cursor])
+            ->first();
+        $expected = (int) $scan->expected;
+        $scanned = (int) $scan->scanned;
+        $lastVisible = (int) ($scan->last_visible ?? 0);
         $completed = $scanned === $expected;
-        $completedAt = $completed ? (clone $scannedFiles)->max('files.updated_at') : null;
+        $completedAt = $completed ? $scan->completed_at : null;
         if (is_string($completedAt) && $completedAt !== '') $completedAt = \Carbon\CarbonImmutable::parse($completedAt)->toAtomString();
 
         return ['document_coverage' => $coverage, 'native_attachment_coverage' => $nativeCoverage, 'can_manage_document_settings' => $canManage,

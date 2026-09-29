@@ -20,6 +20,7 @@ use App\Jobs\RegisterAssistantEntityFile;
 use App\Jobs\ScanAssistantDocuments;
 use App\Models\Credits\AICreditReservation;
 use App\Models\File;
+use App\Models\Estimate;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -73,6 +74,7 @@ final class AssistantDocumentIngestionTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('can')->andReturnUsing(fn (): bool => $this->allowed);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->allowed && ! in_array($permission, $this->deniedPermissions, true));
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $projects = Mockery::mock(UserProjectAccessService::class);
         $projects->shouldReceive('queryAccessibleProjects')->andReturnUsing(fn () => Project::query()->where('organization_id', $this->organization->id)->whereNotIn('id', $this->deniedProjects));
         $projects->shouldReceive('canAccessProject')->andReturn(true);
@@ -405,6 +407,66 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertSame(1, $coverage['document_coverage']['total']);
         self::assertSame(1, $coverage['document_coverage']['unsupported']);
         self::assertSame(0, $coverage['archive_scan']['expected_file_count']);
+    }
+
+    public function test_attachment_scope_compiles_only_present_parent_types_and_discovers_new_types_next_time(): void
+    {
+        $attach = static fn (File $file, string $type, int $projectId): AIAssistantDocument => AIAssistantDocument::query()->create([
+            'organization_id' => $file->organization_id, 'project_id' => $projectId, 'file_id' => $file->id,
+            'parent_entity_type' => $type, 'parent_entity_id' => (string) $file->fileable_id,
+            'storage_path' => $file->path, 'filename' => $file->name, 'mime_type' => $file->mime_type,
+            'checksum' => hash('sha256', $file->path), 'size_bytes' => $file->size, 'status' => 'ready',
+        ]);
+        $visibleFile = $this->file('visible-scope.txt', 'visible');
+        $visibleDocument = $attach($visibleFile, 'project', (int) $this->project->id);
+
+        $initialFiles = $this->policy->accessibleFiles($this->owner, (int) $this->organization->id);
+        $initialDocuments = $this->policy->accessibleDocuments($this->owner, (int) $this->organization->id);
+        self::assertStringNotContainsString('from "estimates"', $initialFiles->toSql());
+        self::assertStringNotContainsString('from "estimates"', $initialDocuments->toSql());
+        self::assertLessThan(200_000, strlen($initialFiles->toSql()));
+        self::assertSame([$visibleFile->id], $initialFiles->pluck('files.id')->all());
+        self::assertSame([$visibleDocument->id], $initialDocuments->pluck('ai_assistant_documents.id')->all());
+
+        $estimate = Estimate::withoutEvents(fn () => Estimate::query()->create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->project->id,
+            'number' => 'assistant-scope-'.$this->organization->id, 'name' => 'Смета', 'estimate_date' => today(),
+        ]));
+        $estimateFile = File::withoutEvents(fn () => File::query()->create([
+            'organization_id' => $this->organization->id, 'user_id' => $this->owner->id,
+            'fileable_type' => $estimate->getMorphClass(), 'fileable_id' => $estimate->id,
+            'name' => 'estimate-scope.pdf', 'original_name' => 'estimate-scope.pdf',
+            'path' => 'org-'.$this->organization->id.'/assistant-test/estimate-scope.pdf',
+            'mime_type' => 'application/pdf', 'size' => 1, 'disk' => 's3',
+        ]));
+        $estimateDocument = $attach($estimateFile, 'estimate', (int) $this->project->id);
+
+        $privateProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id]));
+        $privateFile = $this->file('private-scope.txt', 'private', $privateProject);
+        $attach($privateFile, 'project', (int) $privateProject->id);
+        $this->deniedProjects = [(int) $privateProject->id];
+
+        $unknownFile = $this->file('unknown-scope.txt', 'unknown');
+        File::withoutEvents(fn () => $unknownFile->update(['fileable_type' => 'Unknown\\PrivateParent']));
+        $attach($unknownFile, 'unknown', (int) $this->project->id);
+
+        $foreignOrganization = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $foreignProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $foreignOrganization->id]));
+        $foreignFile = File::withoutEvents(fn () => File::query()->create([
+            'organization_id' => $foreignOrganization->id, 'user_id' => $this->owner->id,
+            'fileable_type' => $foreignProject->getMorphClass(), 'fileable_id' => $foreignProject->id,
+            'name' => 'foreign-scope.txt', 'original_name' => 'foreign-scope.txt',
+            'path' => 'org-'.$foreignOrganization->id.'/assistant-test/foreign-scope.txt',
+            'mime_type' => 'text/plain', 'size' => 1, 'disk' => 's3',
+        ]));
+        $attach($foreignFile, 'project', (int) $foreignProject->id);
+
+        $currentFiles = $this->policy->accessibleFiles($this->owner, (int) $this->organization->id);
+        $currentDocuments = $this->policy->accessibleDocuments($this->owner, (int) $this->organization->id);
+        self::assertStringContainsString('from "estimates"', $currentFiles->toSql());
+        self::assertStringContainsString('from "estimates"', $currentDocuments->toSql());
+        self::assertSame([$visibleFile->id, $estimateFile->id], $currentFiles->orderBy('files.id')->pluck('files.id')->all());
+        self::assertSame([$visibleDocument->id, $estimateDocument->id], $currentDocuments->orderBy('ai_assistant_documents.id')->pluck('ai_assistant_documents.id')->all());
     }
 
     public function test_coverage_filters_private_files_before_count_and_does_not_disclose_global_cursor(): void

@@ -119,7 +119,7 @@ class PermissionResolver
             $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
 
             if ($hasSystemPerm) {
-                Cache::put($cacheKey, true, 300);
+                if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
 
                 if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.system', [
@@ -136,7 +136,7 @@ class PermissionResolver
             $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
 
             if ($hasModulePerm) {
-                Cache::put($cacheKey, true, 300);
+                if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
 
                 if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.module', [
@@ -151,7 +151,7 @@ class PermissionResolver
                 return true;
             }
 
-            Cache::put($cacheKey, false, 300);
+            if (! $this->currentChecks) { Cache::put($cacheKey, false, 300); }
 
             if (! str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('permission.denied.complete', [
@@ -252,7 +252,10 @@ class PermissionResolver
             $cacheKey = 'module_active_'.self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
             $isActive = $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
-                    return app(\App\Services\Entitlements\OrganizationEntitlementService::class)->getEffectiveModules($organizationId)->contains('slug', $moduleToCheck);
+                    $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
+                        fn (): array => app(\App\Services\Entitlements\OrganizationEntitlementService::class)->getEffectiveModules($organizationId)->pluck('slug')->all());
+
+                    return in_array($moduleToCheck, $activeModules, true);
                 }
                 if ($this->readCache !== null) {
                     $activeModules = $this->rememberRead(

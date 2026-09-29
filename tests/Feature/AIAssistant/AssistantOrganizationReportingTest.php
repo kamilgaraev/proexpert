@@ -10,10 +10,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormCollection;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportSavedViewRecord;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportModuleEntitlement;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportModuleEntitlement;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
 use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSitePage;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantOrganizationReportingMetadata;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Module;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\OrganizationReportingRagSource;
 use App\Models\OrganizationGroup;
 use App\Models\Project;
@@ -134,6 +140,44 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertFalse($policy->canReadEntity($fixture->owner,$fixture->organization->id,'report_saved_view_card',$own->id));
     }
 
+    public function test_report_card_scope_reads_each_source_module_once_and_rechecks_next_operation(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $organizationId = (int) $fixture->organization->id;
+        $registry = app(ReportDefinitionRegistry::class);
+        $modules = array_values(array_unique(array_map(
+            static fn (string $code): string => $registry->published($code)->definition->sourceModule,
+            $registry->publishedCodes(),
+        )));
+        self::assertGreaterThan(1, count($modules));
+
+        $entitlements = new RecordingAssistantReportModuleEntitlement(app(LaravelReportModuleEntitlement::class));
+        $this->app->instance(ReportModuleEntitlement::class, $entitlements);
+        $policy = app(AssistantDataAccessPolicy::class);
+        $first = ReportSavedViewRecord::query();
+        AssistantOrganizationReportingMetadata::applyActorScope(
+            'report_saved_view_card', $first, $fixture->owner, $organizationId,
+            app(AuthorizationService::class)->forCurrentChecks(true), $policy,
+        );
+
+        self::assertSame(array_fill_keys($modules, 1), $entitlements->calls);
+        $allowedCodes = $first->getBindings();
+        self::assertNotEmpty($allowedCodes);
+        $allowedCode = $allowedCodes[0];
+        $revokedModule = $registry->published($allowedCode)->definition->sourceModule;
+        self::assertSame(1, Module::query()->where('slug', $revokedModule)->update(['is_active' => false]));
+
+        $entitlements->calls = [];
+        $second = ReportSavedViewRecord::query();
+        AssistantOrganizationReportingMetadata::applyActorScope(
+            'report_saved_view_card', $second, $fixture->owner, $organizationId,
+            app(AuthorizationService::class)->forCurrentChecks(true), $policy,
+        );
+
+        self::assertSame(array_fill_keys($modules, 1), $entitlements->calls);
+        self::assertNotContains($allowedCode, $second->getBindings());
+    }
+
     public function test_mdm_polymorphic_project_ancestor_is_current_and_filtered_before_limit(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(),'slug'));
@@ -156,5 +200,19 @@ final class AssistantOrganizationReportingTest extends TestCase
     {
         return EstimateGenerationSession::withoutEvents(fn () => EstimateGenerationSession::query()->create(['organization_id' => $organizationId,
             'project_id' => $projectId,'user_id' => $userId,'input_payload' => ['note' => 'private-provider-secret']]));
+    }
+}
+
+final class RecordingAssistantReportModuleEntitlement implements ReportModuleEntitlement
+{
+    public array $calls = [];
+
+    public function __construct(private readonly ReportModuleEntitlement $delegate) {}
+
+    public function organizationHasModule(int $organizationId, string $moduleSlug): bool
+    {
+        $this->calls[$moduleSlug] = ($this->calls[$moduleSlug] ?? 0) + 1;
+
+        return $this->delegate->organizationHasModule($organizationId, $moduleSlug);
     }
 }

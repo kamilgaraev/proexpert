@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\Project;
@@ -73,7 +74,17 @@ final class AssistantDataAccessPolicy
     ];
     private array $columns = [];
     private array $entityQueryPath = [];
+    private ?KnowledgeSurface $trustedSurface = null;
+
+    public function setTrustedSurface(?KnowledgeSurface $surface): void
+    {
+        if ($surface === KnowledgeSurface::SUPERADMIN) {
+            throw new \InvalidArgumentException('Unsupported assistant surface');
+        }
+        $this->trustedSurface = $surface;
+    }
     private ?AssistantAclQueryCompiler $aclCompiler = null;
+    private ?AuthorizationService $compiledAuthorization = null;
 
     public function __construct(
         private readonly AuthorizationService $authorization,
@@ -199,7 +210,7 @@ final class AssistantDataAccessPolicy
             $domains = $reference['required_domains'] ?? null;
             if (! is_array($fields) || $fields === [] || ! is_array($permissions) || ! is_array($domains) || $domains === []) { return false; }
             foreach ($permissions as $permission) {
-                if (! is_string($permission) || ! $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return false; }
+                if (! is_string($permission) || ! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return false; }
             }
             foreach ($domains as $domain) {
                 if (! is_string($domain) || ! $this->canReadDomain($user, $organizationId, $domain)) { return false; }
@@ -262,7 +273,7 @@ final class AssistantDataAccessPolicy
         if (! in_array('', $moduleAlternatives, true) && array_intersect($modules, $moduleAlternatives) === []) { return false; }
         if ($definition[1] === [] && (AssistantExtendedDomainRegistry::values('domainEntityPermissionGates')[$domain] ?? false) === true) { return true; }
         foreach ($definition[1] as $permission) {
-            if ($this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])) {
+            if ($this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) {
                 return true;
             }
         }
@@ -359,7 +370,7 @@ final class AssistantDataAccessPolicy
         $definition = $this->entities()[$type] ?? null;
         if ($definition === null) { return null; }
         foreach (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeFileRegistry::permissions($type) as $permission) {
-            if (! $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return null; }
+            if (! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return null; }
         }
         $legalNative = in_array($type, \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileMetadata::types(), true);
         return $legalNative || $this->canReadIndexedType($user, $organizationId, $definition[0])
@@ -374,8 +385,10 @@ final class AssistantDataAccessPolicy
         $query = File::query()->where('files.organization_id', $organizationId);
         if ($supportedStorageOnly) { $query->where('files.disk', 's3'); }
         if (! $this->belongsToOrganization($user, $organizationId)) { return $query->whereRaw('1 = 0'); }
+        $fileTypes = (clone $query)->select('files.fileable_type')->distinct()->pluck('files.fileable_type')->all();
+        $fileClasses = array_map(static fn ($type): string => \Illuminate\Database\Eloquent\Relations\Relation::getMorphedModel((string) $type) ?? (string) $type, $fileTypes);
         app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class)->applyFileScope($query, $user, $organizationId, $this);
-        return $query->where(function (Builder $files) use ($user, $organizationId): void {
+        return $query->where(function (Builder $files) use ($user, $organizationId, $fileClasses): void {
             $files->whereRaw('1 = 0');
             $operations = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class);
             foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeType) {
@@ -384,6 +397,7 @@ final class AssistantDataAccessPolicy
                 $files->orWhereIn('files.id', $nativeFiles);
             }
             foreach ($this->entities() as $type => $definition) {
+                if (! in_array($definition[1], $fileClasses, true)) { continue; }
                 $entities = $this->entityContentQuery($user, $organizationId, $type);
                 if ($entities === null) { continue; }
                 $parent = $entities->getModel();
@@ -416,10 +430,12 @@ final class AssistantDataAccessPolicy
             return $this->compileAcl($user, $organizationId, fn (): Builder => $this->accessibleDocuments($user, $organizationId)) ?? AIAssistantDocument::query()->whereRaw('1 = 0');
         }
         $query = AIAssistantDocument::query()->where('organization_id', $organizationId);
+        if (! $this->belongsToOrganization($user, $organizationId)) { return $query->whereRaw('1 = 0'); }
         if (! Schema::hasColumn('ai_assistant_documents', 'file_id')) {
             return $query->whereRaw('1 = 0');
         }
-        return $query->where(function (Builder $parents) use ($user, $organizationId): void {
+        $documentTypes = (clone $query)->select('parent_entity_type')->distinct()->pluck('parent_entity_type')->all();
+        return $query->where(function (Builder $parents) use ($user, $organizationId, $documentTypes): void {
             $parents->whereRaw('1 = 0');
             $parents->orWhere(function (Builder $native) use ($user, $organizationId): void {
                 $operations = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class);
@@ -427,6 +443,7 @@ final class AssistantDataAccessPolicy
                 $operations->applyDocumentScope($native, $user, $organizationId, $this);
             });
             foreach ($this->entities() as $type => $definition) {
+                if (! in_array($type, $documentTypes, true)) { continue; }
                 $entities = $this->entityContentQuery($user, $organizationId, $type);
                 if ($entities === null) {
                     continue;
@@ -510,12 +527,27 @@ final class AssistantDataAccessPolicy
     {
         $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId);
         $this->aclCompiler = $compiler;
+        $this->compiledAuthorization = $this->authorization->forCurrentChecks(true);
         try {
             $query = $callback();
             return $query === null ? null : $compiler->finish($query);
         } finally {
             $this->aclCompiler = null;
+            $this->compiledAuthorization = null;
         }
+    }
+
+    private function currentAuthorization(): AuthorizationService
+    {
+        return $this->compiledAuthorization ?? $this->authorization;
+    }
+
+    private function accessibleProjects(User $user, int $organizationId): Builder
+    {
+        $load = fn (): Builder => $this->projectAccess->queryAccessibleProjects($user, $organizationId);
+        $query = $this->aclCompiler === null ? $load() : $this->aclCompiler->remember('projects', $load);
+
+        return clone $query;
     }
 
     private function schemaColumns(string $table): array
@@ -546,35 +578,35 @@ final class AssistantDataAccessPolicy
             'supplier_proposal_decision' => 'procurement.proposal_decisions.view', 'procurement_approval' => 'procurement.approvals.view',
             'procurement_audit_event' => 'procurement.audit.view', default => null,
         };
-        if ($type === 'payment_document' && ! $this->authorization->canCurrent($user, 'payments.invoice.view', ['organization_id' => $organizationId])
-            && ! $this->authorization->canCurrent($user, 'payments.invoice.view_all', ['organization_id' => $organizationId])) { return null; }
-        if ($entityPermission !== null && ! $this->authorization->canCurrent($user, $entityPermission, ['organization_id' => $organizationId])) {
+        if ($type === 'payment_document' && ! $this->currentAuthorization()->canCurrent($user, 'payments.invoice.view', ['organization_id' => $organizationId])
+            && ! $this->currentAuthorization()->canCurrent($user, 'payments.invoice.view_all', ['organization_id' => $organizationId])) { return null; }
+        if ($entityPermission !== null && ! $this->currentAuthorization()->canCurrent($user, $entityPermission, ['organization_id' => $organizationId])) {
             return null;
         }
         foreach (AssistantExtendedDomainRegistry::values('entityPermissions')[$type] ?? [] as $permission) {
-            if (! $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return null; }
+            if (! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return null; }
         }
         $model = new $definition[1];
         $table = $model->getTable();
         $columns = $this->schemaColumns($table);
         if ($columns === []) { return null; }
         if ($type === 'project') {
-            return $this->projectAccess->queryAccessibleProjects($user, $organizationId);
+            return $this->accessibleProjects($user, $organizationId);
         }
         $aggregate = AssistantExtendedDomainRegistry::values('organizationAggregates')[$type] ?? false;
         $restrictedAggregate = $aggregate && Project::query()->where('organization_id', $organizationId)->whereNotIn('id',
-            $this->projectAccess->queryAccessibleProjects($user, $organizationId)->select('projects.id'))->exists();
+            $this->accessibleProjects($user, $organizationId)->select('projects.id'))->exists();
         if ($restrictedAggregate && $aggregate === true) { return null; }
         if ($type === 'user') {
             return User::query()->where('users.is_active', true)->whereHas('organizations', static fn (Builder $organizations): Builder => $organizations->where('organizations.id', $organizationId)->where('organization_user.is_active', true));
         }
         if ($type === 'knowledge_article') {
-            $request = \Illuminate\Http\Request::create(request()->path(), 'GET');
+            $request = \Illuminate\Http\Request::create('/', 'GET');
             $request->setUserResolver(static fn (): User => $user);
-            $surface = request()->is('api/v1/mobile/*') ? \App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::MOBILE
-                : (request()->is('api/v1/admin/*') ? \App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::ADMIN : \App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::LK);
+            $surface = $this->trustedSurface ?? (request()->is('api/v1/mobile/*') ? KnowledgeSurface::MOBILE
+                : (request()->is('api/v1/admin/*') ? KnowledgeSurface::ADMIN : KnowledgeSurface::LK));
             $context = app(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessContextFactory::class)->fromRequest($request, $surface);
-            $permissionKeys = array_values(array_filter($context->permissionKeys, fn (string $permission): bool => $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])));
+            $permissionKeys = array_values(array_filter($context->permissionKeys, fn (string $permission): bool => $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])));
             $moduleSlugs = ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))->getEffectiveModules($organizationId)->pluck('slug')->all();
             $audiences = ['all'];
             if ($surface === \App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::ADMIN) { $audiences[] = 'admin'; }
@@ -597,6 +629,8 @@ final class AssistantDataAccessPolicy
         if ($restrictedAggregate && is_string($aggregate)) { $query->whereNotNull($table.'.'.$aggregate); }
         $safeColumns = AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? null;
         if (is_array($safeColumns)) {
+            $safeColumns = array_values(array_intersect($safeColumns, $columns));
+            if ($safeColumns === []) { return null; }
             $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $safeColumns));
         }
         foreach (AssistantExtendedDomainRegistry::values('rowPredicates')[$type] ?? [] as $column => $value) {
@@ -612,7 +646,7 @@ final class AssistantDataAccessPolicy
             if (! is_string($actorColumn) || ! in_array($actorColumn, $columns, true)) { return null; }
             $query->where($table.'.'.$actorColumn, $user->id);
         }
-        if (! AssistantExtendedDomainRegistry::applyActorScopes($type, $query, $user, $organizationId, $this->authorization, $this)) { return null; }
+        if (! AssistantExtendedDomainRegistry::applyActorScopes($type, $query, $user, $organizationId, $this->currentAuthorization(), $this)) { return null; }
         if ($type === 'site_request') {
             (new \App\BusinessModules\Features\SiteRequests\Models\SiteRequest)->scopeVisibleToActor($query, (int) $user->id);
         }
@@ -638,7 +672,7 @@ final class AssistantDataAccessPolicy
         $publicCatalog = AssistantExtendedDomainRegistry::values('publicCatalogEntities')[$type] ?? null;
         $globalCatalog = AssistantExtendedDomainRegistry::values('globalCatalogEntities')[$type] ?? false;
         $customOrganizationScope = (AssistantExtendedDomainRegistry::values('customOrganizationScopes')[$type] ?? false) === true;
-        if ($customOrganizationScope && ! AssistantExtendedDomainRegistry::applyCustomOrganizationScope($type, $query, $user, $organizationId, $this->authorization, $this)) { return null; }
+        if ($customOrganizationScope && ! AssistantExtendedDomainRegistry::applyCustomOrganizationScope($type, $query, $user, $organizationId, $this->currentAuthorization(), $this)) { return null; }
         $extendedParents = (AssistantExtendedDomainRegistry::values('parentColumns') + self::SECURITY_PARENT_COLUMNS)[$type] ?? [];
         $hasRequiredParent = array_filter($extendedParents, static fn (array $parent): bool => ! $parent['nullable']) !== [];
         if (! in_array($organizationColumn, $columns, true) && ! $hasRequiredParent && ! $globalCatalog && ! $customOrganizationScope) { return null; }
@@ -656,8 +690,8 @@ final class AssistantDataAccessPolicy
             $this->applyReferenceScope($query, $table.'.source_refs', $table.'.required_domains', $user, $organizationId);
         }
         if ($type === 'design_artifact') {
-            $documents = $this->authorization->canCurrent($user, 'design-management.documents.view', ['organization_id' => $organizationId]);
-            $models = $this->authorization->canCurrent($user, 'design-management.models.view', ['organization_id' => $organizationId]);
+            $documents = $this->currentAuthorization()->canCurrent($user, 'design-management.documents.view', ['organization_id' => $organizationId]);
+            $models = $this->currentAuthorization()->canCurrent($user, 'design-management.models.view', ['organization_id' => $organizationId]);
             $query->where(function (Builder $artifacts) use ($documents, $models, $table): void {
                 $artifacts->whereRaw('1 = 0');
                 if ($models) { $artifacts->orWhere($table.'.artifact_type', 'model'); }
@@ -687,17 +721,17 @@ final class AssistantDataAccessPolicy
             $query->whereNull($table.'.deleted_at');
         }
         if ($type === 'contract') {
-            $query->whereDoesntHave('projects', fn (Builder $projects): Builder => $projects->whereNotIn('projects.id', $this->projectAccess->queryAccessibleProjects($user, $organizationId)->select('projects.id')));
+            $query->whereDoesntHave('projects', fn (Builder $projects): Builder => $projects->whereNotIn('projects.id', $this->accessibleProjects($user, $organizationId)->select('projects.id')));
         }
         if (in_array('project_id', $columns, true)) {
             $query->where(function (Builder $projects) use ($user, $organizationId, $table): void {
-                $projects->whereNull($table.'.project_id')->orWhereIn($table.'.project_id', $this->projectAccess->queryAccessibleProjects($user, $organizationId)->select('projects.id'));
+                $projects->whereNull($table.'.project_id')->orWhereIn($table.'.project_id', $this->accessibleProjects($user, $organizationId)->select('projects.id'));
             });
         }
         foreach (['current_project_id', 'target_project_id', 'source_project_id'] as $projectColumn) {
             if (in_array($projectColumn, $columns, true)) {
                 $query->where(function (Builder $projects) use ($user, $organizationId, $table, $projectColumn): void {
-                    $projects->whereNull($table.'.'.$projectColumn)->orWhereIn($table.'.'.$projectColumn, $this->projectAccess->queryAccessibleProjects($user, $organizationId)->select('projects.id'));
+                    $projects->whereNull($table.'.'.$projectColumn)->orWhereIn($table.'.'.$projectColumn, $this->accessibleProjects($user, $organizationId)->select('projects.id'));
                 });
             }
         }
@@ -713,7 +747,7 @@ final class AssistantDataAccessPolicy
                         $requests->whereNull('purchase_requests.site_request_id')
                             ->orWhereHas('siteRequest', function (Builder $sites) use ($user, $organizationId): void {
                                 $sites->where('site_requests.organization_id', $organizationId)
-                                    ->whereIn('site_requests.project_id', $this->projectAccess->queryAccessibleProjects($user, $organizationId)->select('projects.id'));
+                                    ->whereIn('site_requests.project_id', $this->accessibleProjects($user, $organizationId)->select('projects.id'));
                             });
                     })
                 : $this->entityQuery($user, $organizationId, $parentType);
@@ -819,16 +853,16 @@ final class AssistantDataAccessPolicy
     private function checkIndexedType(User $user, int $organizationId, string $type): bool
     {
         foreach (AssistantExtendedDomainRegistry::values('sourcePermissions')[$type] ?? [] as $permission) {
-            if (! $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return false; }
+            if (! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) { return false; }
         }
-        if ($type === 'payment' && ! $this->authorization->canCurrent($user, 'payments.invoice.view', ['organization_id' => $organizationId])
-            && ! $this->authorization->canCurrent($user, 'payments.invoice.view_all', ['organization_id' => $organizationId])) { return false; }
+        if ($type === 'payment' && ! $this->currentAuthorization()->canCurrent($user, 'payments.invoice.view', ['organization_id' => $organizationId])
+            && ! $this->currentAuthorization()->canCurrent($user, 'payments.invoice.view_all', ['organization_id' => $organizationId])) { return false; }
         $permission = match ($type) {
             'estimate', 'estimate_generation_learning', 'estimate_reference' => 'budget-estimates.finance.view',
             'performance_act' => 'contracts.performance_acts.view', 'work_completion' => 'contracts.completed_works.view',
             default => null,
         };
-        if ($permission !== null && ! $this->authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])) {
+        if ($permission !== null && ! $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])) {
             return false;
         }
         return ! in_array($type, ['project', 'contract', 'project_pulse', 'performance_act', 'work_completion', 'warehouse', 'procurement', 'change_management', 'machinery', 'production_labor'], true) || $this->canReadDomain($user, $organizationId, 'finance');

@@ -42,23 +42,28 @@ class AuthorizationService
         $this->logging = $logging;
     }
 
-    public function forCurrentChecks(): self
+    public function forCurrentChecks(bool $memoizeReads = false): self
     {
         $scope = clone $this;
         $scope->currentChecks = true;
-        $scope->readCache = null;
+        $scope->readCache = $memoizeReads ? new Repository(new ArrayStore) : null;
         $scope->permissionResolver = $this->permissionResolver->forCurrentChecks();
+        if ($scope->readCache !== null) {
+            $scope->permissionResolver = $scope->permissionResolver->forReadScope($scope->readCache);
+        }
         return $scope;
     }
 
     public function canCurrent(User $user, string $permission, ?array $context = null): bool
     {
-        return $this->forCurrentChecks()->checkPermission($user, $permission, $context);
+        $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks();
+        return $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
+            fn (): bool => $scope->checkPermission($user, $permission, $context));
     }
 
     private function rememberArray(string $key, int $ttl, Closure $read): mixed
     {
-        return $this->currentChecks ? $read() : Cache::driver('array')->remember($key, $ttl, $read);
+        return $this->currentChecks ? $this->rememberRead($key, $read) : Cache::driver('array')->remember($key, $ttl, $read);
     }
 
     public function forReadScope(): self
