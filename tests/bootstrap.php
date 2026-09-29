@@ -6,6 +6,15 @@ use Tests\Support\IsolatedPostgresTestDatabase;
 
 require dirname(__DIR__).'/vendor/autoload.php';
 
+$profilePort = IsolatedPostgresTestDatabase::profilePort();
+if ((string) ($_ENV['DB_HOST'] ?? getenv('DB_HOST')) !== '127.0.0.1'
+    || (string) ($_ENV['DB_PORT'] ?? getenv('DB_PORT')) !== '55433') {
+    throw new RuntimeException('postgres_test_bootstrap_profile_unsafe');
+}
+putenv('DB_PORT='.$profilePort);
+$_ENV['DB_PORT'] = (string) $profilePort;
+$_SERVER['DB_PORT'] = (string) $profilePort;
+
 $rootDatabase = (string) ($_ENV['DB_DATABASE'] ?? getenv('DB_DATABASE'));
 $configuration = IsolatedPostgresTestDatabase::databaseConfiguration();
 $database = (string) $configuration['database'];

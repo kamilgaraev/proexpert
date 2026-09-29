@@ -20,21 +20,34 @@ class RagSource extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'identity_project_id',
+        'identity_part_key',
         'source_type',
         'entity_type',
         'entity_id',
         'title',
         'checksum',
+        'source_version',
         'metadata',
         'indexed_at',
+        'last_reconciled_at',
     ];
 
     protected $casts = [
         'organization_id' => 'integer',
         'project_id' => 'integer',
+        'identity_project_id' => 'integer',
         'metadata' => 'array',
         'indexed_at' => 'datetime',
+        'last_reconciled_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(static function (self $source): void {
+            $source->identity_project_id = (int) ($source->project_id ?? 0);
+        });
+    }
 
     public function setTitleAttribute(string $value): void
     {

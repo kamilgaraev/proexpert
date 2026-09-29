@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
+use App\Support\AI\LunaModelPolicy;
+use App\Support\AI\TokenBudgetService;
+
 final class TimewebChatCompletionPayloadFactory
 {
     /**
@@ -13,28 +16,13 @@ final class TimewebChatCompletionPayloadFactory
      */
     public function make(string $model, array $messages, array $options): array
     {
-        $payload = [
-            'model' => $model,
-            'messages' => $messages,
-        ];
-        $maxTokens = max(1, (int) ($options['max_tokens'] ?? 240));
-
-        if ($this->isGptFive($model)) {
-            return [
-                ...$payload,
-                'max_completion_tokens' => $maxTokens,
-            ];
-        }
-
+        $model = LunaModelPolicy::assert($model, 'timeweb');
+        $prepared = (new TokenBudgetService())->prepare($messages, (array) ($options['tools'] ?? []), (string) ($options['profile'] ?? 'detailed'));
         return [
-            ...$payload,
-            'max_tokens' => $maxTokens,
-            'temperature' => (float) ($options['temperature'] ?? 0),
+            'model' => $model,
+            'messages' => $prepared['messages'],
+            'max_completion_tokens' => min($prepared['max_completion_tokens'], max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? 240))),
+            'reasoning_effort' => 'none',
         ];
-    }
-
-    private function isGptFive(string $model): bool
-    {
-        return preg_match('/\Aopenai\/gpt-5(?:[.-][a-z0-9._-]+)?\z/i', trim($model)) === 1;
     }
 }

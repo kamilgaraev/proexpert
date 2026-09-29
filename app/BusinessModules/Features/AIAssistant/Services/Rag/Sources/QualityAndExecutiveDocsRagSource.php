@@ -26,15 +26,15 @@ final class QualityAndExecutiveDocsRagSource implements RagSourceCollectorInterf
 
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
-        foreach ($this->qualityDefects($organizationId, $projectId)->cursor() as $defect) {
+        foreach ($this->qualityDefects($organizationId, $projectId)->reorder()->lazyById(100) as $defect) {
             yield $this->qualityDefectChunk($defect);
         }
 
-        foreach ($this->documentSets($organizationId, $projectId)->cursor() as $set) {
+        foreach ($this->documentSets($organizationId, $projectId)->reorder()->lazyById(100) as $set) {
             yield $this->documentSetChunk($set);
         }
 
-        foreach ($this->documents($organizationId, $projectId)->cursor() as $document) {
+        foreach ($this->documents($organizationId, $projectId)->reorder()->lazyById(100) as $document) {
             yield $this->documentChunk($document);
         }
     }

@@ -68,7 +68,7 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
 
             public function getModel(): string
             {
-                return 'model-a';
+                return 'openai/gpt-6-luna';
             }
         };
         $usage = new class implements AiUsageStore
@@ -77,7 +77,7 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
         };
         $client = new AttemptAwareWorkCompositionLlmClient(
             $provider,
-            new AttemptAwareNormativeLlmClient($wire, $usage, ['model-a'], []),
+            new AttemptAwareNormativeLlmClient($wire, $usage, ['openai/gpt-6-luna'], []),
         );
 
         $client->chat([], $this->context(), 'sha256:candidates');
@@ -89,7 +89,7 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
     }
 
     #[Test]
-    public function client_uses_configured_model_fallbacks_instead_of_effective_model_retries(): void
+    public function client_rejects_legacy_configured_fallbacks_without_provider_call(): void
     {
         $wire = new class implements RerankWireClient
         {
@@ -129,12 +129,13 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
             ),
         );
 
-        $response = $client->chat([], $this->context(), 'sha256:candidates');
-
-        self::assertSame(['provider/fallback-a', 'provider/fallback-b'], $wire->models);
-        self::assertInstanceOf(EffectiveEstimateGenerationSettings::class, $response['effective_settings']);
+        $this->expectException(\DomainException::class);
+        try {
+            $client->chat([], $this->context(), 'candidate-hash');
+        } finally {
+            self::assertSame([], $wire->models);
+        }
     }
-
     private function context(): PipelineContext
     {
         return new PipelineContext(

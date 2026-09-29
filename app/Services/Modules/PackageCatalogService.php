@@ -178,6 +178,10 @@ class PackageCatalogService
         $package['business_outcomes'] = $this->uniqueStrings($package['business_outcomes'] ?? []);
         $package['data_sources'] = $this->normalizeList($package['data_sources'] ?? []);
         $package['capabilities'] = $this->normalizeList($package['capabilities'] ?? []);
+        if (isset($package['limits']['ai_requests_month'])) {
+            $package['legacy_limits']['ai_requests_month'] = $package['limits']['ai_requests_month'];
+            unset($package['limits']['ai_requests_month']);
+        }
         $package['limits'] = $this->normalizeLimits($package['limits'] ?? [], (string) $package['slug']);
 
         $tiers = [];

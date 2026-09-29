@@ -9,131 +9,127 @@ use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\Assistant
 
 final class AssistantToolEligibilityPolicy
 {
-    public function canExposeTool(string $toolName, AssistantRequestUnderstanding $understanding): AssistantToolEligibility
+    private const READ_TOOLS = [
+        'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities',
+        'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
+        'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions',
+        'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
+        'search_projects', 'search_warehouse', 'search_materials', 'search_users', 'search_contractors',
+    ];
+
+    private const REPORT_TOOLS = [
+        'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report',
+        'generate_contractor_settlements_report', 'generate_warehouse_stock_report', 'generate_time_tracking_report',
+        'generate_contract_payments_report', 'generate_project_timelines_report',
+        'generate_operational_pdf_report', 'generate_rag_pdf_report',
+    ];
+
+    private const MUTATION_TOOLS = [
+        'approve_payment_request', 'create_schedule_task', 'update_schedule_task_status', 'send_project_notification',
+        'create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units',
+    ];
+
+    public function canExposeTool(string $toolName, AssistantRequestUnderstanding $understanding, bool $allowActions = false): AssistantToolEligibility
     {
-        return $this->toolEligibility($toolName, $understanding, false);
+        return $this->toolEligibility($toolName, $understanding, false, $allowActions);
     }
 
-    public function canExecuteTool(string $toolName, AssistantRequestUnderstanding $understanding): AssistantToolEligibility
+    public function canExecuteTool(string $toolName, AssistantRequestUnderstanding $understanding, bool $allowActions = false): AssistantToolEligibility
     {
-        return $this->toolEligibility($toolName, $understanding, true);
+        return $this->toolEligibility($toolName, $understanding, true, $allowActions);
     }
 
-    public function canExposeAction(array $action, AssistantRequestUnderstanding $understanding): AssistantToolEligibility
+    public function canExposeAction(array $action, AssistantRequestUnderstanding $understanding, bool $allowActions = false): AssistantToolEligibility
     {
         $actionType = (string) ($action['type'] ?? '');
 
         if ($actionType === 'navigate') {
-            if ($understanding->blocksNavigation()) {
-                return AssistantToolEligibility::block(
-                    'navigation',
-                    'Навигация отключена текущей политикой запроса.'
-                );
-            }
-
-            return AssistantToolEligibility::allow('navigation');
+            return $understanding->blocksNavigation()
+                ? AssistantToolEligibility::block('navigation', trans_message('ai_assistant.eligibility_navigation_disabled'))
+                : AssistantToolEligibility::allow('navigation');
         }
 
-        if ($actionType === 'act' || (bool) ($action['requires_confirmation'] ?? false)) {
-            if ($understanding->actionPolicy === 'requires_confirmation' && ! $understanding->hasConstraint('no_actions')) {
-                return AssistantToolEligibility::allow('mutation', true);
-            }
-
-            if ($understanding->blocksActions()) {
-                return AssistantToolEligibility::block(
-                    'mutation',
-                    'Действия отключены текущей политикой запроса.'
-                );
-            }
+        if ($actionType === 'act') {
+            return $this->allowsMutation($understanding, $allowActions)
+                ? AssistantToolEligibility::allow('mutation', true)
+                : AssistantToolEligibility::block('mutation', trans_message('ai_assistant.eligibility_mutation_disabled'));
         }
 
-        return AssistantToolEligibility::allow($actionType === '' ? 'unknown' : $actionType);
+        return AssistantToolEligibility::block('unknown', trans_message('ai_assistant.eligibility_unknown_tool'));
     }
 
     private function toolEligibility(
         string $toolName,
         AssistantRequestUnderstanding $understanding,
-        bool $execute
+        bool $execute,
+        bool $allowActions
     ): AssistantToolEligibility {
         $category = $this->toolCategory($toolName);
 
+        if ($category === 'unknown') {
+            return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_unknown_tool'));
+        }
+
         if ($category === 'report' && $understanding->blocksFileGeneration()) {
-            return AssistantToolEligibility::block(
-                $category,
-                'Инструмент недоступен: формат ответа запрещает формирование файлов или отчетов.'
-            );
+            return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_format_disabled'));
         }
 
         if ($category === 'report' && $understanding->primaryIntent !== 'generate_report') {
-            return AssistantToolEligibility::block(
-                $category,
-                'Инструмент отчета доступен только при явном запросе на файл или отчет.'
-            );
-        }
-
-        if ($category === 'file' && $understanding->blocksFileGeneration()) {
-            return AssistantToolEligibility::block(
-                $category,
-                'Инструмент недоступен: формат ответа запрещает формирование файлов.'
-            );
+            return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_explicit_only'));
         }
 
         if ($category === 'mutation') {
-            if ($understanding->actionPolicy === 'requires_confirmation' && ! $understanding->hasConstraint('no_actions')) {
-                return $execute
-                    ? AssistantToolEligibility::block(
-                        $category,
-                        'Изменяющее действие требует отдельного подтверждения пользователя.',
-                        true
-                    )
-                    : AssistantToolEligibility::allow($category, true);
+            if (! $this->allowsMutation($understanding, $allowActions) || ! $this->matchesMutationIntent($toolName, $understanding)) {
+                return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_mutation_disabled'));
             }
 
-            if ($understanding->blocksActions()) {
-                return AssistantToolEligibility::block(
-                    $category,
-                    'Инструмент недоступен: пользователь запретил действия или изменения.'
-                );
-            }
+            return $execute
+                ? AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_confirmation_required'), true)
+                : AssistantToolEligibility::allow($category, true);
         }
 
         return AssistantToolEligibility::allow($category);
     }
 
+    private function allowsMutation(AssistantRequestUnderstanding $understanding, bool $allowActions): bool
+    {
+        return $allowActions
+            && ! $understanding->blocksActions()
+            && $understanding->actionPolicy === 'requires_confirmation'
+            && in_array($understanding->primaryIntent, ['create', 'update', 'delete', 'approve', 'send'], true);
+    }
+
+    private function matchesMutationIntent(string $toolName, AssistantRequestUnderstanding $understanding): bool
+    {
+        $intent = match ($toolName) {
+            'create_measurement_unit', 'mass_create_measurement_units', 'create_schedule_task' => 'create',
+            'update_measurement_unit', 'update_schedule_task_status' => 'update',
+            'delete_measurement_unit' => 'delete',
+            'approve_payment_request' => 'approve',
+            'send_project_notification' => 'send',
+            default => null,
+        };
+
+        if ($understanding->primaryIntent !== $intent) {
+            return false;
+        }
+
+        return ! str_contains($toolName, 'measurement_unit')
+            || in_array('measurement_unit', $understanding->requestedEntities, true);
+    }
+
     private function toolCategory(string $toolName): string
     {
-        if ($this->isReportTool($toolName)) {
+        if (in_array($toolName, self::READ_TOOLS, true)) {
+            return 'read';
+        }
+        if (in_array($toolName, self::REPORT_TOOLS, true)) {
             return 'report';
         }
-
-        if (str_contains($toolName, 'pdf') || str_contains($toolName, 'file')) {
-            return 'file';
-        }
-
-        if ($this->isMutationTool($toolName)) {
+        if (in_array($toolName, self::MUTATION_TOOLS, true)) {
             return 'mutation';
         }
 
-        if (str_starts_with($toolName, 'get_') || str_starts_with($toolName, 'search_')) {
-            return 'read';
-        }
-
         return 'unknown';
-    }
-
-    private function isReportTool(string $toolName): bool
-    {
-        return str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report');
-    }
-
-    private function isMutationTool(string $toolName): bool
-    {
-        foreach (['create_', 'update_', 'delete_', 'approve_', 'send_'] as $prefix) {
-            if (str_starts_with($toolName, $prefix)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

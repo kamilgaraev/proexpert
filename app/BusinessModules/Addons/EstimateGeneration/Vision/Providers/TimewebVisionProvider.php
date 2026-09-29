@@ -97,8 +97,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $this->documentLimits?->assertWithinTotalPages($input->operationContext, $effective);
             }
             $modelVersion = VisionModelPolicy::isLuna($model)
-                ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-5.6-luna-2026-08-13'))
-                : 'timeweb-legacy-vision-2026-07-14';
+                ? trim((string) config('estimate-generation.vision.model_version', 'timeweb-gpt-6-luna'))
+                : throw new VisionProviderException('vision_model_replan_required');
             $maxElements = ($observerProfile !== null || $arbitration || $geometryExpert)
                 ? min(self::effectiveMaxElements(), 64)
                 : self::effectiveMaxElements();
@@ -806,18 +806,11 @@ final readonly class TimewebVisionProvider implements VisionProvider
                         : self::observerSystemPrompt($observerProfile, $maxElements, $maxFacts)))],
                 ['role' => 'user', 'content' => $content],
             ],
-            'max_tokens' => $this->maxOutputTokens($input),
+            'max_completion_tokens' => $this->maxOutputTokens($input),
             'response_format' => $this->responseFormat($input, $model),
         ];
-        if (VisionModelPolicy::isLuna($model)) {
-            $effort = trim((string) config('estimate-generation.vision.reasoning_effort', 'medium'));
-            if (! in_array($effort, ['low', 'medium', 'high'], true)) {
-                throw new VisionProviderException('vision_reasoning_effort_invalid');
-            }
-            $payload['reasoning_effort'] = $effort;
-        } else {
-            $payload['temperature'] = 0;
-        }
+        VisionModelPolicy::assertSupported($model);
+        $payload['reasoning_effort'] = 'none';
 
         return $payload;
     }
@@ -1203,7 +1196,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
 
     private function maxOutputTokens(VisionDocumentInput $input): int
     {
-        return max(256, min(16_384, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
+        return max(256, min(4_096, (int) config('estimate-generation.vision.primary_max_output_tokens', 8_192)));
     }
 
     /** @param array<string, mixed> $payload */
@@ -1216,8 +1209,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
         if ($maxInputTokens < 1 || $maxInputTokens > 1_000_000) {
             return new AiCost(null, null, 'unavailable');
         }
-        $maxOutputTokens = isset($payload['max_tokens']) && is_int($payload['max_tokens'])
-            ? $payload['max_tokens']
+        $maxOutputTokens = isset($payload['max_completion_tokens']) && is_int($payload['max_completion_tokens'])
+            ? $payload['max_completion_tokens']
             : $this->maxOutputTokens($input);
         $reasoningTokens = $priceSnapshot->reasoningMode === 'included_in_output' ? $maxOutputTokens : 0;
 

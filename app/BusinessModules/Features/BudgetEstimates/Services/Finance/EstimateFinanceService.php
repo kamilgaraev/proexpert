@@ -420,6 +420,9 @@ final class EstimateFinanceService
                 if (DB::table('estimate_finance_own_cost_allocations')->whereIn('allocation_id', $ids)->exists()) {
                     $this->invalid('own_cost_linked');
                 }
+                app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                    EstimateFinanceAllocation::class, EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('id', $ids),
+                    (int) $estimate->organization_id, (int) $estimate->project_id);
                 EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('id', $ids)->delete();
             }
             $writes = ['created' => [], 'updated' => []];
@@ -590,12 +593,16 @@ final class EstimateFinanceService
     private function writeAllocations(array $rows, bool $insert): void
     {
         if ($rows !== []) {
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                EstimateFinanceAllocation::class, EstimateFinanceAllocation::query()->whereIn('key', array_column($rows, 'key')));
             if ($insert) {
                 EstimateFinanceAllocation::query()->insert($rows);
             } else {
                 EstimateFinanceAllocation::query()->upsert($rows, ['key'],
                     array_values(array_diff(array_keys($rows[0]), ['key', 'created_at'])));
             }
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                EstimateFinanceAllocation::class, EstimateFinanceAllocation::query()->whereIn('key', array_column($rows, 'key')));
         }
     }
 
@@ -638,13 +645,25 @@ final class EstimateFinanceService
             }
         }
         foreach (array_chunk($writes, 500) as $chunk) {
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                ContractEstimateItem::class, ContractEstimateItem::query()->where('estimate_id', $estimate->id)
+                    ->whereIn('estimate_item_id', array_column($chunk, 'estimate_item_id')),
+                (int) $estimate->organization_id, (int) $estimate->project_id);
             ContractEstimateItem::query()->upsert($chunk, ['contract_id', 'estimate_item_id'],
                 ['estimate_id', 'finance_managed', 'quantity', 'amount', 'amount_without_vat', 'updated_at']);
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                ContractEstimateItem::class, ContractEstimateItem::query()->where('estimate_id', $estimate->id)
+                    ->whereIn('estimate_item_id', array_column($chunk, 'estimate_item_id')),
+                (int) $estimate->organization_id, (int) $estimate->project_id);
         }
         EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)->whereIn('estimate_item_id', $itemIds)
             ->whereNull('resource_id')->whereNotNull('contract_id')->update([
                 'contract_estimate_item_id' => DB::raw('(SELECT id FROM contract_estimate_items WHERE contract_estimate_items.contract_id = estimate_finance_allocations.contract_id AND contract_estimate_items.estimate_item_id = estimate_finance_allocations.estimate_item_id AND contract_estimate_items.estimate_id = estimate_finance_allocations.estimate_id)'),
             ]);
+        app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+            EstimateFinanceAllocation::class, EstimateFinanceAllocation::query()->where('estimate_id', $estimate->id)
+                ->whereIn('estimate_item_id', $itemIds)->whereNull('resource_id')->whereNotNull('contract_id'),
+            (int) $estimate->organization_id, (int) $estimate->project_id);
     }
 
     private function validateResourceChanges(array $data, array $targets, array $after, array $before): void

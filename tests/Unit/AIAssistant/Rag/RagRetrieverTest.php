@@ -5,16 +5,26 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\Enums\UserProjectAccessMode;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\Estimate;
+use App\Models\EstimatePositionCatalog;
+use App\Models\EstimateSection;
+use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use RuntimeException;
+use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
@@ -303,6 +313,38 @@ class RagRetrieverTest extends TestCase
         string $sourceType = 'project',
         string $entityType = 'project'
     ): void {
+        $actorId = Organization::query()->findOrFail($organizationId)->users()->wherePivot('is_active', true)->value('users.id');
+        $entity = match ($entityType) {
+            'project' => Project::query()->findOrFail($projectId),
+            'estimate' => $this->createEstimate($organizationId, $projectId, $title),
+            'estimate_section' => EstimateSection::withoutEvents(fn () => EstimateSection::query()->create([
+                'estimate_id' => $this->createEstimate($organizationId, $projectId, $title)->id,
+                'section_number' => '1', 'name' => $title,
+            ])),
+            'estimate_catalog_item' => EstimatePositionCatalog::withoutEvents(fn () => EstimatePositionCatalog::query()->create([
+                'organization_id' => $organizationId, 'name' => $title, 'code' => 'RAG-'.hash('crc32b', $title),
+                'item_type' => 'work', 'unit_price' => 1250, 'created_by_user_id' => $actorId,
+                'measurement_unit_id' => MeasurementUnit::query()->where('organization_id', $organizationId)
+                    ->where('short_name', 'м')->firstOrFail()->id,
+            ])),
+            'contract' => Contract::withoutEvents(fn () => Contract::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $projectId,
+                'contractor_id' => Contractor::withoutEvents(fn () => Contractor::query()->create([
+                    'organization_id' => $organizationId, 'name' => 'Подрядчик',
+                ]))->id,
+                'number' => 'RAG-'.hash('crc32b', $title), 'date' => today(), 'total_amount' => 10500000, 'status' => 'active',
+            ])),
+            'site_request' => SiteRequest::withoutEvents(fn () => SiteRequest::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'user_id' => $actorId,
+                'title' => $title, 'status' => 'approved', 'request_type' => 'material_request',
+            ])),
+            'payment_document' => PaymentDocument::withoutEvents(fn () => PaymentDocument::query()->create([
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'document_type' => 'invoice',
+                'document_number' => 'RAG-'.hash('crc32b', $title), 'document_date' => today(),
+                'amount' => 150000, 'currency' => 'RUB',
+            ])),
+            default => throw new RuntimeException('Unsupported retriever fixture entity: '.$entityType),
+        };
         $indexer = new RagIndexer(
             new RetrieverEmbeddingProvider($embedding),
             new RagSourceRegistry([])
@@ -313,12 +355,20 @@ class RagRetrieverTest extends TestCase
             projectId: $projectId,
             sourceType: $sourceType,
             entityType: $entityType,
-            entityId: ($projectId ?? 'org').'-'.$title,
+            entityId: $entity->getKey(),
             title: $title,
             content: $content,
-            metadata: ['title' => $title],
-            updatedAt: now()
+            metadata: ['title' => $title, 'unit_id' => hash('sha256', $title)],
+            updatedAt: $entity->updated_at
         ));
+    }
+
+    private function createEstimate(int $organizationId, ?int $projectId, string $title): Estimate
+    {
+        return Estimate::withoutEvents(fn () => Estimate::query()->create([
+            'organization_id' => $organizationId, 'project_id' => $projectId, 'name' => $title,
+            'number' => 'RAG-'.hash('crc32b', $title), 'estimate_date' => today(),
+        ]));
     }
 
     /**
@@ -336,17 +386,15 @@ class RagRetrieverTest extends TestCase
      */
     private function createOrganizationUserWithProjects(string $mode): array
     {
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create([
-            'current_organization_id' => $organization->id,
-            'is_active' => true,
-        ]);
-
-        $user->organizations()->attach($organization->id, [
-            'is_owner' => false,
-            'is_active' => true,
-            'project_access_mode' => $mode,
-        ]);
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $organization = $fixture->organization;
+        $user = $fixture->owner;
+        $organization->users()->updateExistingPivot($user->id, ['project_access_mode' => $mode]);
+        $policy = app(AssistantDataAccessPolicy::class);
+        $allowedSourceTypes = $policy->allowedSourceTypes($user, $organization->id);
+        foreach (['project', 'contract', 'estimate', 'estimate_reference', 'site_request', 'payment'] as $sourceType) {
+            self::assertContains($sourceType, $allowedSourceTypes);
+        }
 
         $projectA = Project::factory()->create([
             'organization_id' => $organization->id,

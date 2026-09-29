@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Features\Budgeting\Contracts\ProjectMarginSourceSnapshotReport;
+use App\BusinessModules\Features\Budgeting\Contracts\ExactProjectFinanceSourceRead;
 use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDrillDownKey;
@@ -31,10 +32,11 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 use function trans_message;
 
-final class ProjectMarginReportService implements ProjectMarginSourceSnapshotReport
+final class ProjectMarginReportService implements ProjectMarginSourceSnapshotReport, ExactProjectFinanceSourceRead
 {
     private const QUALITY_PARTIAL = 'partial';
 
@@ -52,6 +54,49 @@ final class ProjectMarginReportService implements ProjectMarginSourceSnapshotRep
     public function reportForProjectScope(array $input, array $projectIds, ?User $user = null): array
     {
         return $this->reportWithProjectScope($input, $this->normalizeProjectScopeIds($projectIds), $user);
+    }
+
+    public function exactFinancialSourceRows(array $input, array $projectIds, User $actor): array
+    {
+        $organizationId = (int) ($input['organization_id'] ?? 0);
+        $projectId = $input['project_id'] ?? null;
+        $projectIds = $this->normalizeProjectScopeIds($projectIds);
+        if (! $actor->is_active || (int) $actor->current_organization_id !== $organizationId || ! is_int($projectId)
+            || ! in_array($projectId, $projectIds, true)
+            || ! $this->authorization->canCurrent($actor, 'budgeting.project_margin.view', ['organization_id' => $organizationId])
+            || ! Project::query()->accessibleByOrganization($organizationId)->whereKey($projectId)->where('status', 'active')->where('is_archived', false)->exists()) {
+            throw new AccessDeniedHttpException;
+        }
+        $context = $this->resolveContext($input, $projectIds);
+        $filters = $context['filters'];
+        $sourceRows = $this->sourceRowsQuery($filters)->select(['source_type', 'source_id', 'source_line_id', 'component', 'direction', 'currency',
+            'amount_without_vat', 'management_amount', 'project_id', 'recognition_date', 'source_status', 'problem_flags'])
+            ->orderBy('source_type')->orderBy('source_id')->orderBy('source_line_id')->limit(501)->get();
+        if ($sourceRows->count() > 500) {
+            return ['status' => 'insufficient_data', 'reason' => 'source_limit_exceeded', 'source_covered' => false];
+        }
+        $permissions = [
+            'budget_amount' => ['budgeting.budgets.view'], 'contract_performance_act' => ['act_reports.view', 'contracts.view'],
+            'completed_work' => ['completed_works.view'], 'payment_document' => ['payments.invoice.view', 'payments.invoice.view_all'],
+            'warehouse_movement' => ['warehouse.view'], 'time_entry' => ['time_tracking.view'],
+            'machinery_shift' => ['machinery-operations.view'], 'machinery_maintenance' => ['machinery-operations.view'],
+        ];
+        foreach ($sourceRows->pluck('source_type')->unique() as $type) {
+            $allowed = false;
+            foreach ($permissions[$type] ?? [] as $permission) {
+                $allowed = $this->authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId]) || $allowed;
+            }
+            if (! $allowed) { throw new AccessDeniedHttpException; }
+        }
+        [$coverage, $warnings] = $this->sourcesCoverage($filters);
+        $aggregates = $this->aggregateRows($filters);
+        $version = $context['version'];
+        return ['status' => 'success', 'filters' => [...$filters->toArray(), 'period_start' => $filters->periodStart, 'period_end' => $filters->periodEnd], 'project_ids' => $projectIds,
+            'sources' => $sourceRows->map(static fn (object $row): array => (array) $row)->all(),
+            'aggregates' => $aggregates->map(static fn (object $row): array => (array) $row)->all(),
+            'coverage' => $coverage, 'warnings' => $warnings, 'fetched_at' => now()->toIso8601String(),
+            'budget_version' => $version instanceof BudgetVersion ? ['id' => (int) $version->id, 'uuid' => (string) $version->uuid,
+                'status' => (string) $version->status, 'updated_at' => $version->updated_at?->toIso8601String()] : null];
     }
 
     private function reportWithProjectScope(array $input, ?array $projectIds, ?User $user = null): array

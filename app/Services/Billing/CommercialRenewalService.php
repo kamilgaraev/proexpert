@@ -15,6 +15,7 @@ use App\Models\CommercialRenewalCycle;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Modules\Core\AccessController;
+use App\Services\Credits\AssistantRevenueAllocation;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Query\JoinClause;
@@ -230,7 +231,7 @@ final class CommercialRenewalService
                     : $account->offer_type->value === 'full_suite';
                 $quote = $this->calculator->preview($slugs, $currentSlugs, $fullSuite, $now, $account->current_period_start_at, $account->current_period_end_at);
                 $key = sprintf('renewal:%d:%s', $account->id, $periodStart->toIso8601String());
-                $order = CommercialOrder::query()->create([
+                $order = new CommercialOrder([
                     'public_id' => (string) Str::uuid(), 'organization_id' => $account->organization_id,
                     'commercial_account_id' => $account->id, 'user_id' => $account->responsible_user_id,
                     'kind' => 'renewal', 'status' => 'pending_payment', 'offer_type' => $quote['offer_type'],
@@ -240,6 +241,8 @@ final class CommercialRenewalService
                     'period_start_at' => $periodStart, 'period_end_at' => $periodEnd, 'auto_renew_consent' => true,
                     'client_idempotency_key' => $key, 'server_idempotency_key' => $key,
                 ]);
+                $order->forceFill(['assistant_revenue_allocation' => app(AssistantRevenueAllocation::class)->snapshot($quote, $now, $account->current_period_start_at, $account->current_period_end_at, $quote['monthly_total_minor'], true, $periodStart, $periodEnd)]);
+                $order->save();
                 $cycle = CommercialRenewalCycle::query()->create([
                     'organization_id' => $account->organization_id, 'commercial_account_id' => $account->id,
                     'commercial_order_id' => $order->id, 'status' => 'due', 'due_at' => $dueDay->utc(),

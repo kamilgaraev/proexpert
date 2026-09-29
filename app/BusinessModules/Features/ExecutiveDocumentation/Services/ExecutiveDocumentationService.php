@@ -14,6 +14,7 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentTransmittal;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentVersion;
 use App\BusinessModules\Features\ExecutiveDocumentation\Support\ExecutiveDocumentProfileRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Organization;
 use App\Models\Project;
@@ -786,9 +787,13 @@ final class ExecutiveDocumentationService
             ]);
 
             $manifestVersionIds = collect($documentsManifest)->pluck('version_id')->all();
+            app(CoreRagMutationBridge::class)->changedRows(ExecutiveDocument::class,
+                $set->documents()->whereIn('id',collect($documentsManifest)->pluck('document_id')->all())->getQuery(),(int)$set->organization_id,(int)$set->project_id);
             $set->documents()->whereIn('id', collect($documentsManifest)->pluck('document_id')->all())
                 ->update(['status' => ExecutiveDocumentStatusEnum::TRANSMITTED]);
             $set->documents->each(static function (ExecutiveDocument $document) use ($manifestVersionIds): void {
+                app(CoreRagMutationBridge::class)->changedRows(ExecutiveDocumentVersion::class,
+                    $document->versions()->whereIn('id',$manifestVersionIds)->where('status','approved')->getQuery(),(int)$document->organization_id,(int)$document->project_id);
                 $document->versions()->whereIn('id', $manifestVersionIds)->where('status', 'approved')->update([
                     'status' => 'transmitted',
                     'transmitted_at' => now(),
@@ -969,6 +974,7 @@ final class ExecutiveDocumentationService
             return;
         }
 
+        app(CoreRagMutationBridge::class)->changedRows(ExecutiveDocumentRelation::class,$document->relations()->getQuery(),(int)$document->organization_id,(int)$document->project_id);
         $document->relations()->delete();
 
         foreach ($relations as $relation) {

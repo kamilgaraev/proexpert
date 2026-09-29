@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\DesignRagMutationBridge;
+
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignIfcUploadSession;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
@@ -17,6 +19,7 @@ use DomainException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
@@ -148,13 +151,13 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
             ]);
             $sessionStored = Cache::put($this->cacheKey($uploadId), $session, $expiresAt);
         } catch (Throwable $exception) {
-            DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
+            $this->deleteUploadSession($uploadId);
             $this->abortUntrackedUpload($storageUpload);
 
             throw $this->storageFailure($exception);
         }
         if (! $sessionStored) {
-            DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
+            $this->deleteUploadSession($uploadId);
             $this->abortUntrackedUpload($storageUpload);
 
             throw $this->storageFailure(new \RuntimeException('multipart_session_store_failed'));
@@ -295,7 +298,7 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                 ->exists();
             if ($registrationAttempted && ! $registered) {
                 $this->deleteUnregisteredObject($stored->key);
-                DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
+                $this->deleteUploadSession($uploadId);
                 Cache::forget($this->cacheKey($uploadId));
             }
 
@@ -366,6 +369,14 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                 ]);
             }
         }
+    }
+
+    private function deleteUploadSession(string $uploadId): void
+    {
+        DB::transaction(function () use ($uploadId): void {
+            app(DesignRagMutationBridge::class)->changedRows(DesignIfcUploadSession::class, DesignIfcUploadSession::query()->whereKey($uploadId));
+            DesignIfcUploadSession::query()->whereKey($uploadId)->delete();
+        });
     }
 
     private function session(int $organizationId, int $userId, string $uploadId): array

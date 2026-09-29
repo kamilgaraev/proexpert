@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
@@ -32,7 +34,14 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityC
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
+use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantMemoryService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
@@ -73,6 +82,12 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSou
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WarehouseRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WorkCompletionRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CommercialProcessRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CrmRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\KnowledgeHubRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PeopleRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\TimeTrackingRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantRagReportSourceRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposer;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
@@ -80,6 +95,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportPdf
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSourceRetrieverInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantReportPdfWriter;
 use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
+use App\Support\AI\LunaModelPolicy;
+use App\Support\AI\TokenBudgetService;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 
@@ -90,6 +107,23 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(
             __DIR__.'/config/ai-assistant.php', 'ai-assistant'
         );
+
+        $this->app->scoped(AIAssistantService::class);
+        $this->app->scoped(AssistantRequestLifecycle::class);
+        $this->app->scoped(AssistantDataAccessPolicy::class);
+        $this->app->scoped(AssistantMemoryService::class);
+        $this->app->scoped(AssistantFinancialAnswerService::class);
+        $this->app->scoped(AssistantFinancialClaimVerifier::class);
+        $this->app->scoped(AssistantStructuredFactVerifier::class);
+        $this->app->bind(\App\BusinessModules\Features\Budgeting\Contracts\ExactProjectFinanceSourceRead::class,
+            \App\BusinessModules\Features\Budgeting\Services\ProjectMarginReportService::class);
+        $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyLiveEvidenceAdapter::class);
+        $this->app->singleton(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class);
+        $this->app->singleton(AssistantDomainCatalog::class, fn () => new AssistantDomainCatalog(AssistantDomainCatalog::defaults()));
+        $this->app->scoped(TokenBudgetService::class, fn ($app) => new TokenBudgetService(
+            calibrationCache: $app['cache']->store(),
+            calibrationModel: LunaModelPolicy::forProvider((string) config('ai-assistant.llm.provider', 'timeweb')),
+        ));
 
         // Динамический выбор LLM провайдера на основе конфигурации
         $this->app->singleton(AssistantCapabilityCatalog::class);
@@ -134,6 +168,14 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProductionLaborRagSource::class),
                 $app->make(ChangeManagementRagSource::class),
                 $app->make(HandoverAcceptanceRagSource::class),
+                $app->make(PeopleRagSource::class),
+                $app->make(TimeTrackingRagSource::class),
+                $app->make(CrmRagSource::class),
+                $app->make(CommercialProcessRagSource::class),
+                $app->make(KnowledgeHubRagSource::class),
+                $app->make(FileRagSource::class),
+                $app->make(\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\DesignManagementRagSource::class),
+                ...array_map(static fn (string $class) => $app->make($class), \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('sourceClasses')),
             ]);
         });
         $this->app->singleton(RagIndexer::class);
@@ -148,7 +190,6 @@ class AIAssistantServiceProvider extends ServiceProvider
 
             return match ($provider) {
                 'openai' => $app->make(OpenAIProvider::class),
-                'deepseek' => $app->make(DeepSeekProvider::class),
                 'timeweb' => $app->make(TimewebProvider::class),
                 default => throw new InvalidArgumentException('ai_llm_provider_invalid'),
             };
@@ -185,6 +226,24 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(UpdateScheduleTaskStatusTool::class));
             $registry->registerTool($app->make(SendProjectNotificationTool::class));
 
+            foreach ([
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\ReadAssistantDomainTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\NavigationAssistantDomainTool::class,
+                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
+                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool::class,
+                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateFinancialSnapshotTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\CreateMeasurementUnitTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\UpdateMeasurementUnitTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\DeleteMeasurementUnitTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\MassCreateMeasurementUnitsTool::class,
+            ] as $toolClass) {
+                $registry->registerTool($app->make($toolClass));
+            }
+
             return $registry;
         });
 
@@ -207,13 +266,30 @@ class AIAssistantServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $indexingState = $this->app->make(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class);
+        $this->app['events']->listen(\Illuminate\Database\Events\MigrationsStarted::class, static fn () => $indexingState->beginMigration());
+        $this->app['events']->listen(\Illuminate\Database\Events\MigrationsEnded::class, static fn () => $indexingState->endMigration());
+
         $this->loadMigrationsFrom(__DIR__.'/migrations');
 
         $this->loadRoutesFrom(__DIR__.'/routes.php');
 
+        foreach (\App\BusinessModules\Features\AIAssistant\Observers\AssistantRagEntityObserver::models() as $modelClass) {
+            $modelClass::observe(\App\BusinessModules\Features\AIAssistant\Observers\AssistantRagEntityObserver::class);
+        }
+        foreach ([\App\Models\Estimate::class, \App\Models\EstimateSection::class, \App\Models\EstimateItem::class, \App\Models\EstimateItemResource::class] as $modelClass) {
+            $modelClass::observe(\App\BusinessModules\Features\AIAssistant\Observers\EstimateRagIndexObserver::class);
+        }
+        \App\Models\File::observe(\App\Observers\AssistantEntityFileObserver::class);
+        \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::observe(\App\Observers\AssistantDocumentIndexObserver::class);
+
         if ($this->app->runningInConsole()) {
             $this->commands([
                 BackfillRagIndexCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\RecoverRagIndexRunsCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\PurgeAssistantRetentionCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\ExpireAssistantRequestsCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\ScanAssistantDocumentsCommand::class,
             ]);
 
             $this->publishes([

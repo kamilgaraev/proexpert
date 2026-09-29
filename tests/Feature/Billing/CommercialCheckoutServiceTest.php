@@ -28,6 +28,8 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
+use Illuminate\Support\Facades\DB;
 
 class CommercialCheckoutServiceTest extends TestCase
 {
@@ -36,12 +38,21 @@ class CommercialCheckoutServiceTest extends TestCase
     private User $user;
 
     private CheckoutGatewayFake $gateway;
+    private ?string $creditApprovalPath = null;
+    private ?string $connectionName = null;
+    private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$this->connectionName);
+        config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
+        DB::purge($this->connectionName);
+        DB::connection($this->connectionName);
 
         config()->set('services.yookassa.mode', 'mock');
 
@@ -61,8 +72,47 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
     }
 
+    public function test_credit_checkout_uses_server_pack_price_and_retries_without_granting_units(): void
+    {
+        config(['ai-assistant-credits.enforce' => true]);
+        $this->creditApprovalPath = tempnam(sys_get_temp_dir(), 'most-checkout-credit-readiness-');
+        config(['ai-assistant-credits.readiness_approval_path' => $this->creditApprovalPath]);
+        \Tests\Support\AssistantCreditReadinessFixture::write($this->creditApprovalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
+        $this->user->forceFill(['current_organization_id' => $this->organization->id])->save();
+        \Illuminate\Support\Facades\DB::table('organization_user')->insert([
+            'organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'is_active' => true,
+        ]);
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->with($this->user, 'billing.manage', ['organization_id' => $this->organization->id])->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $authorization);
+        $service = app(CommercialCheckoutService::class);
+        $first = $service->checkoutCredits($this->organization, $this->user, 'ai-credits-5000', '33333333-3333-4333-8333-333333333333');
+        $again = $service->checkoutCredits($this->organization, $this->user, 'ai-credits-5000', '33333333-3333-4333-8333-333333333333');
+
+        $this->assertSame($first, $again);
+        $this->assertSame('pending_payment', $first['status']);
+        $this->assertSame(450000, $first['amount_minor']);
+        $this->assertSame('ai_credits', CommercialOrder::query()->sole()->kind);
+        $this->assertSame(500000, CommercialOrder::query()->sole()->selected_resource_addons[0]['units_minor']);
+        $this->assertCount(1, $this->gateway->payments);
+        $this->assertDatabaseCount('ai_credit_lots', 0);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->creditApprovalPath !== null && is_file($this->creditApprovalPath)) { unlink($this->creditApprovalPath); }
+        if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
+            DB::purge($this->connectionName);
+            config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
+            DB::connection($this->connectionName);
+        }
+        parent::tearDown();
+    }
+
     public function test_creates_pending_order_from_server_price_without_granting_access(): void
     {
+        config(['ai-assistant-credits.enforce' => false]);
         $result = $this->checkout(['machinery']);
 
         $this->assertSame('pending_payment', $result['status']);
@@ -80,6 +130,44 @@ class CommercialCheckoutServiceTest extends TestCase
             trans_message('billing.checkout.payment_description'),
             $this->gateway->payments[0]->description,
         );
+    }
+
+    public function test_checkout_preserves_server_assistant_allocation_on_idempotent_retry(): void
+    {
+        $at = CarbonImmutable::parse('2026-09-29 03:00:00', 'UTC');
+        CarbonImmutable::setTestNow($at);
+        try {
+            $input = [
+                'target_package_slugs' => ['working-entry'],
+                'client_idempotency_key' => '99999999-9999-4999-8999-999999999999',
+                'assistant_revenue_allocation' => ['amount_minor' => 99_999_999],
+            ];
+            $first = $this->checkoutPayload($input);
+            $order = CommercialOrder::query()->sole();
+            $allocation = $order->assistant_revenue_allocation;
+
+            $this->assertSame('allocated', $allocation['status']);
+            $this->assertSame('declared_internal_allocation', $allocation['basis']);
+            $this->assertSame(399_000, $allocation['amount_minor']);
+            $this->assertSame(399_000, \App\Services\Credits\AssistantRevenueAllocation::verify($allocation, $first['amount_minor'], $order->amount_minor));
+            $this->assertArrayNotHasKey('assistant_revenue_allocation', $first);
+
+            CarbonImmutable::setTestNow($at->addDay());
+            $again = $this->checkoutPayload($input);
+
+            $this->assertSame(true, $first['_created']);
+            $this->assertSame(false, $again['_created']);
+            $firstPayload = $first;
+            $againPayload = $again;
+            unset($firstPayload['_created'], $againPayload['_created']);
+            $this->assertSame($firstPayload, $againPayload);
+            $this->assertSame($allocation, $order->fresh()->assistant_revenue_allocation);
+            $this->assertDatabaseCount('commercial_orders', 1);
+            $this->assertDatabaseCount('commercial_payments', 1);
+            $this->assertCount(1, $this->gateway->payments);
+        } finally {
+            CarbonImmutable::setTestNow();
+        }
     }
 
     public function test_pays_fully_from_balance_without_creating_yookassa_payment(): void
@@ -521,12 +609,21 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user',
             'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_resource_allocations', 'organization_package_subscriptions',
-            'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'users', 'organizations',
+            'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'modules', 'users', 'organizations',
         ] as $table) {
             Schema::dropIfExists($table);
         }
 
+        Schema::create('modules', function (Blueprint $table): void {
+            $table->id();
+            $table->string('slug')->unique();
+            $table->boolean('is_active')->default(true);
+            $table->boolean('can_deactivate')->default(true);
+            $table->boolean('is_system_module')->default(false);
+            $table->integer('display_order')->default(0);
+        });
         Schema::create('organizations', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
@@ -542,6 +639,7 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->string('password');
             $table->boolean('is_active')->default(true);
             $table->rememberToken();
+            $table->unsignedBigInteger('current_organization_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
@@ -600,7 +698,19 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->foreignId('source_order_id')->nullable();
             $table->timestamps();
         });
+        Schema::create('organization_user', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('user_id');
+            $table->boolean('is_owner')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->string('project_access_mode')->default(\App\Enums\UserProjectAccessMode::ALL_PROJECTS->value);
+            $table->json('settings')->nullable();
+            $table->timestamps();
+            $table->unique(['user_id', 'organization_id']);
+        });
         $this->createCommercialCheckoutTables();
+        (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
     }
 
     private function createCommercialCheckoutTables(): void
@@ -608,9 +718,11 @@ class CommercialCheckoutServiceTest extends TestCase
         Schema::create('commercial_orders', function (Blueprint $table): void {
             $table->id();
             $table->uuid('public_id')->unique();
+            $table->jsonb('assistant_revenue_allocation')->nullable();
             $table->foreignId('organization_id');
             $table->foreignId('commercial_account_id')->nullable();
             $table->foreignId('user_id');
+            $table->string('kind')->default('purchase');
             $table->string('status');
             $table->string('offer_type');
             $table->unsignedInteger('quote_version');

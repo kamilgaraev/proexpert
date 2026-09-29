@@ -19,6 +19,7 @@ class MessageResource extends JsonResource
             'content' => $this->content,
             'tokens_used' => $this->tokens_used,
             'metadata' => $this->metadata,
+            'source_refs' => $this->metadata['source_refs'] ?? [],
             'created_at' => $this->created_at?->toISOString(),
         ];
     }

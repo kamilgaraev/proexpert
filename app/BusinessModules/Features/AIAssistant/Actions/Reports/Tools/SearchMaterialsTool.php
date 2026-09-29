@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
@@ -40,10 +42,14 @@ class SearchMaterialsTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
         $query = $arguments['query'] ?? '';
-        $limit = $arguments['limit'] ?? 10;
+        $limit = max(1, min(30, (int) ($arguments['limit'] ?? 10)));
 
-        $materials = Material::where('organization_id', $organization->id)
+        $materials = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->entityQuery($user, (int) $organization->id, 'material')
             ->where('name', 'ilike', "%{$query}%")
             ->with('measurementUnit')
             ->limit($limit)

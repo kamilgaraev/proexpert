@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\AssistantDomainTool;
 
 class AIToolRegistry
 {
@@ -71,11 +72,35 @@ class AIToolRegistry
                 'function' => [
                     'name' => $tool->getName(),
                     'description' => $tool->getDescription(),
-                    'parameters' => $tool->getParametersSchema(),
+                    'parameters' => $this->serializedSchema($tool),
+                    'strict' => str_starts_with($tool->getName(), 'assistant_domain_'),
                 ],
             ];
         }
 
         return $definitions;
+    }
+
+    private function serializedSchema(AIToolInterface $tool): array
+    {
+        $schema = $tool->getParametersSchema();
+        if (! $tool instanceof AssistantDomainTool) {
+            return $schema;
+        }
+        unset($schema['properties']['domain']['enum']);
+        $schema['properties']['domain']['maxLength'] = 128;
+        $schema['properties']['domain']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
+        $schema['properties']['domain']['description'] = 'Зарегистрированный domain из проверенной подсказки или assistant_domain_discover_capabilities. Сервер проверяет домен и права.';
+        unset($schema['properties']['entity_type']['enum']);
+        $schema['properties']['entity_type']['maxLength'] = 128;
+        $schema['properties']['entity_type']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
+        $schema['properties']['entity_type']['description'] = 'Только зарегистрированный тип указанного domain. Используй проверенную подсказку каталога или assistant_domain_discover_capabilities; не придумывай типы.';
+        if (isset($schema['properties']['fields']['items'])) {
+            unset($schema['properties']['fields']['items']['enum']);
+            $schema['properties']['fields']['items']['maxLength'] = 128;
+            $schema['properties']['fields']['items']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
+            $schema['properties']['fields']['description'] = 'Только разрешённые поля из проверенного каталога; null выбирает доступные поля по умолчанию. Сервер проверяет каждый тип и поле.';
+        }
+        return $schema;
     }
 }

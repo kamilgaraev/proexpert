@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
+use App\Support\AI\LunaModelPolicy;
+use App\Support\AI\TokenCounter;
+use App\Support\AI\TokenBudgetService;
 use App\Services\Logging\LoggingService;
 use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\ClientInterface;
 use OpenAI;
 
-class OpenAIProvider implements LLMProviderInterface
+final class OpenAIProvider implements LLMProviderInterface
 {
     protected LoggingService $logging;
     protected string $apiKey;
@@ -18,12 +22,12 @@ class OpenAIProvider implements LLMProviderInterface
     protected float $temperature;
     protected float $timeout;
 
-    public function __construct(LoggingService $logging)
+    public function __construct(LoggingService $logging, private readonly ?ClientInterface $httpClient = null)
     {
         $this->logging = $logging;
         $this->apiKey = (string) config('ai-assistant.llm.openai.api_key', config('ai-assistant.openai_api_key', ''));
         $this->baseUri = config('ai-assistant.llm.openai.base_uri');
-        $this->model = (string) config('ai-assistant.llm.openai.model', config('ai-assistant.openai_model', 'gpt-4o-mini'));
+        $this->model = (string) config('ai-assistant.llm.openai.model', config('ai-assistant.openai_model', 'gpt-6-luna'));
         $this->maxTokens = (int) config('ai-assistant.llm.openai.max_tokens', config('ai-assistant.max_tokens', 2000));
         $this->temperature = (float) config('ai-assistant.llm.openai.temperature', 0.7);
         $this->timeout = (float) config('ai-assistant.llm.openai.timeout', 45);
@@ -35,22 +39,28 @@ class OpenAIProvider implements LLMProviderInterface
             throw new \RuntimeException('OpenAI API key not configured');
         }
 
-        $model = $options['model'] ?? $this->model;
-        $maxTokens = $options['max_tokens'] ?? $this->maxTokens;
+        $budgetService = new TokenBudgetService(calibrationModel: LunaModelPolicy::OPENAI);
+        $prepared = $budgetService->prepare($messages, (array) ($options['tools'] ?? []), (string) ($options['budget_profile'] ?? $options['profile'] ?? 'normal'), array_key_exists('budget_limits', $options) ? (array) $options['budget_limits'] : null);
+        $messages = $prepared['messages'];
+        $model = LunaModelPolicy::assert((string) ($options['model'] ?? $this->model));
+        $maxTokens = min(
+            max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? $this->maxTokens)),
+            $prepared['max_completion_tokens'],
+        );
         $temperature = $options['temperature'] ?? $this->temperature;
         $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
-        
+
         $requestPayload = [
             'model' => $model,
             'messages' => $messages,
             'max_tokens' => $maxTokens,
             'temperature' => $temperature,
         ];
-        
+
         if (!empty($options['tools'])) {
             $requestPayload['tools'] = $options['tools'];
             // Optionally force tool choice if needed
-            // $requestPayload['tool_choice'] = 'auto'; 
+            // $requestPayload['tool_choice'] = 'auto';
         }
 
         foreach (['tool_choice', 'response_format'] as $optionKey) {
@@ -58,6 +68,10 @@ class OpenAIProvider implements LLMProviderInterface
                 $requestPayload[$optionKey] = $options[$optionKey];
             }
         }
+
+        $requestPayload['max_completion_tokens'] = $maxTokens;
+        $requestPayload['reasoning_effort'] = 'none';
+        unset($requestPayload['max_tokens']);
 
         try {
             $this->logging->technical('ai.openai.request', [
@@ -70,9 +84,10 @@ class OpenAIProvider implements LLMProviderInterface
             $startTime = microtime(true);
 
             $response = $this->makeClient($timeout)->chat()->create($requestPayload);
+            LunaModelPolicy::assert((string) $response->model);
 
             $duration = microtime(true) - $startTime;
-            
+
             $message = $response->choices[0]->message;
 
             $result = [
@@ -85,7 +100,7 @@ class OpenAIProvider implements LLMProviderInterface
                 'provider' => 'openai',
                 'finish_reason' => $response->choices[0]->finishReason,
             ];
-            
+
             // Если модель решила вызвать инструмент
             if (!empty($message->toolCalls)) {
                 $result['tool_calls'] = array_map(function ($toolCall) {
@@ -106,6 +121,9 @@ class OpenAIProvider implements LLMProviderInterface
                 'duration_ms' => round($duration * 1000, 2),
             ]);
 
+            $result['token_calibration'] = $budgetService->calibration($prepared, (int) ($result['input_tokens'] ?? 0));
+            $this->logging->technical('ai.token_calibration', $result['token_calibration']);
+
             return $result;
 
         } catch (\Exception $e) {
@@ -121,7 +139,7 @@ class OpenAIProvider implements LLMProviderInterface
 
     public function countTokens(string $text): int
     {
-        return (int) (strlen($text) / 4);
+        return (new TokenCounter())->text($text);
     }
 
     public function isAvailable(): bool
@@ -138,7 +156,7 @@ class OpenAIProvider implements LLMProviderInterface
     {
         $factory = OpenAI::factory()
             ->withApiKey($this->apiKey)
-            ->withHttpClient(new GuzzleClient([
+            ->withHttpClient($this->httpClient ?? new GuzzleClient([
                 'timeout' => $timeout,
                 'connect_timeout' => max(1.0, min(5.0, $timeout)),
             ]));
@@ -161,4 +179,3 @@ class OpenAIProvider implements LLMProviderInterface
         return $normalized > 0 ? $normalized : $default;
     }
 }
-

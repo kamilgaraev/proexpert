@@ -85,6 +85,15 @@ class ModuleScanner
             $pricingConfig['marketplace_visible'] = (bool) $config['marketplace_visible'];
         }
 
+        if ($config['slug'] === 'ai-assistant') {
+            $stored = Module::query()->where('slug', 'ai-assistant')->first();
+            $pricingConfig['legacy_ai_request_allowance'] = (int) ($stored?->limits['max_ai_requests_per_month']
+                ?? $stored?->pricing_config['legacy_ai_request_allowance']
+                ?? $config['legacy_limits']['max_ai_requests_per_month']
+                ?? 5000);
+            $pricingConfig['assistant_billing'] = $config['assistant_billing'] ?? [];
+        }
+
         // Автоматически создаем/обновляем запись в БД
         Module::updateOrCreate(
             ['slug' => $config['slug']],

@@ -1,52 +1,51 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Projects;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyFinancialRead;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Support\Facades\DB;
 
 class GetProjectBudgetAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?User $actor = null): array
     {
+        if ($actor === null || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'finance')) {
+            return [];
+        }
         $projectId = $params['project_id'] ?? null;
+        $finance = app(AssistantLegacyFinancialRead::class);
 
         $query = DB::table('projects')
             ->where('projects.organization_id', $organizationId)
             ->where('projects.is_archived', false)
-            ->whereNull('projects.deleted_at');
+            ->whereNull('projects.deleted_at')
+            ->whereIn('projects.id', app(UserProjectAccessService::class)
+                ->queryAccessibleProjects($actor, $organizationId)->select('projects.id'));
 
         if ($projectId) {
             $query->where('projects.id', $projectId);
         }
 
-        $budgetData = $query
-            ->leftJoin('completed_works', function($join) {
-                $join->on('projects.id', '=', 'completed_works.project_id')
-                     ->where('completed_works.status', '=', 'confirmed')
-                     ->whereNull('completed_works.deleted_at');
-            })
-            ->select(
-                'projects.id',
-                'projects.name',
-                'projects.budget_amount',
-                'projects.status',
-                DB::raw('COALESCE(SUM(completed_works.total_amount), 0) as spent')
-            )
-            ->groupBy('projects.id', 'projects.name', 'projects.budget_amount', 'projects.status')
-            ->get();
+        $budgetData = $query->get();
 
-        $totalBudget = 0;
-        $totalSpent = 0;
+        $totalBudget = [];
+        $totalSpent = [];
         $projects = [];
 
         foreach ($budgetData as $project) {
-            $budget = (float)($project->budget_amount ?? 0);
-            $spent = (float)$project->spent;
-            $remaining = $budget - $spent;
-            $percentageUsed = $budget > 0 ? round(($spent / $budget) * 100, 2) : 0;
+            $budget = $finance->projectBudget($actor, $organizationId, $project->budget_amount);
+            $source = $finance->projectSpent($actor, $organizationId, (int) $project->id);
+            $spent = $source['spent'];
+            $remaining = AssistantLegacyFinancialRead::subtract($budget, $spent);
+            $percentageUsed = AssistantLegacyFinancialRead::percentage($spent, $budget);
 
-            $totalBudget += $budget;
-            $totalSpent += $spent;
+            $totalBudget[] = $budget;
+            $totalSpent[] = $spent;
 
             $projects[] = [
                 'id' => $project->id,
@@ -59,17 +58,18 @@ class GetProjectBudgetAction
             ];
         }
 
-        $totalRemaining = $totalBudget - $totalSpent;
-        $totalPercentageUsed = $totalBudget > 0 ? round(($totalSpent / $totalBudget) * 100, 2) : 0;
+        $totalBudget = $projects === [] || in_array(null, $totalBudget, true) ? null : AssistantLegacyFinancialRead::sum($totalBudget);
+        $totalSpent = $projects === [] || in_array(null, $totalSpent, true) ? null : AssistantLegacyFinancialRead::sum($totalSpent);
+        $totalRemaining = AssistantLegacyFinancialRead::subtract($totalBudget, $totalSpent);
+        $totalPercentageUsed = AssistantLegacyFinancialRead::percentage($totalSpent, $totalBudget);
 
         return [
-            'total_budget' => round($totalBudget, 2),
-            'total_spent' => round($totalSpent, 2),
-            'total_remaining' => round($totalRemaining, 2),
+            'total_budget' => $totalBudget,
+            'total_spent' => $totalSpent,
+            'total_remaining' => $totalRemaining,
             'total_percentage_used' => $totalPercentageUsed,
             'projects' => $projects,
             'projects_count' => count($projects),
         ];
     }
 }
-

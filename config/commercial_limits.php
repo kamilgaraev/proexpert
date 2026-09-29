@@ -25,7 +25,6 @@ return [
         'storage_gb' => ['name_key' => 'billing.quota.limit_names.storage_gb', 'unit' => 'gb', 'enforcement' => 'hard'],
         'contractors' => ['name_key' => 'billing.quota.limit_names.contractors', 'unit' => 'contractor', 'enforcement' => 'soft'],
         'holding_organizations' => ['name_key' => 'billing.quota.limit_names.holding_organizations', 'unit' => 'organization', 'enforcement' => 'soft'],
-        'ai_requests_month' => ['name_key' => 'billing.quota.limit_names.ai_requests_month', 'unit' => 'request', 'enforcement' => 'hard'],
         'ai_estimates_month' => ['name_key' => 'billing.quota.limit_names.ai_estimates_month', 'unit' => 'estimate', 'enforcement' => 'hard'],
         'document_pages_month' => ['name_key' => 'billing.quota.limit_names.document_pages_month', 'unit' => 'page', 'enforcement' => 'hard'],
         'exports_month' => ['name_key' => 'billing.quota.limit_names.exports_month', 'unit' => 'export', 'enforcement' => 'soft'],

@@ -30,6 +30,7 @@ class AuthorizationService
     protected LoggingService $logging;
 
     private ?Repository $readCache = null;
+    private bool $currentChecks = false;
 
     public function __construct(
         RoleScanner $roleScanner,
@@ -39,6 +40,25 @@ class AuthorizationService
         $this->roleScanner = $roleScanner;
         $this->permissionResolver = $permissionResolver;
         $this->logging = $logging;
+    }
+
+    public function forCurrentChecks(): self
+    {
+        $scope = clone $this;
+        $scope->currentChecks = true;
+        $scope->readCache = null;
+        $scope->permissionResolver = $this->permissionResolver->forCurrentChecks();
+        return $scope;
+    }
+
+    public function canCurrent(User $user, string $permission, ?array $context = null): bool
+    {
+        return $this->forCurrentChecks()->checkPermission($user, $permission, $context);
+    }
+
+    private function rememberArray(string $key, int $ttl, Closure $read): mixed
+    {
+        return $this->currentChecks ? $read() : Cache::driver('array')->remember($key, $ttl, $read);
     }
 
     public function forReadScope(): self
@@ -79,7 +99,7 @@ class AuthorizationService
         try {
             $cacheKey = "user_permission_{$user->id}_{$permission}_" . md5(serialize($context));
             
-            $result = Cache::driver('array')->remember($cacheKey, 300, function () use ($user, $permission, $context) {
+            $result = $this->rememberArray($cacheKey, 300, function () use ($user, $permission, $context) {
                 return $this->checkPermission($user, $permission, $context);
             });
 
@@ -140,7 +160,7 @@ class AuthorizationService
     {
         $cacheKey = "user_roles_{$user->id}_" . ($context ? $context->id : 'global');
         
-        return Cache::driver('array')->remember($cacheKey, 300, function () use ($user, $context) {
+        return $this->rememberArray($cacheKey, 300, function () use ($user, $context) {
             $query = $user->roleAssignments()
                 ->active()
                 ->with(['context.parentContext', 'customRole']);
@@ -426,6 +446,7 @@ class AuthorizationService
             'auth_context_'.md5(serialize($context)),
             fn () => $this->resolveAuthContext($context),
         );
+        if ($this->currentChecks && $context !== null && $authContext === null) { return false; }
         $roles = $this->getUserRoles($user, $authContext);
         if (($context['strict_project_scope'] ?? false) && $authContext?->type === AuthorizationContext::TYPE_PROJECT) {
             $contextIds = $this->getContextHierarchy($authContext)->pluck('id')->all();
@@ -481,7 +502,7 @@ class AuthorizationService
         // Проверка родительских организаций для организационных контекстов
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_ORGANIZATION) {
             $cacheKey = "org_parent_{$authContext->resource_id}";
-            $orgData = Cache::driver('array')->remember($cacheKey, 300, function () use ($authContext) {
+            $orgData = $this->rememberArray($cacheKey, 300, function () use ($authContext) {
                 return \App\Models\Organization::where('id', $authContext->resource_id)
                     ->select('id', 'parent_organization_id')
                     ->first();
@@ -489,8 +510,10 @@ class AuthorizationService
 
             if ($orgData && $orgData->parent_organization_id) {
                 $parentContextCacheKey = "org_context_{$orgData->parent_organization_id}";
-                $parentContext = Cache::driver('array')->remember($parentContextCacheKey, 300, function () use ($orgData) {
-                    return AuthorizationContext::getOrganizationContext($orgData->parent_organization_id);
+                $parentContext = $this->rememberArray($parentContextCacheKey, 300, function () use ($orgData) {
+                    return $this->currentChecks
+                        ? AuthorizationContext::query()->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $orgData->parent_organization_id)->first()
+                        : AuthorizationContext::getOrganizationContext($orgData->parent_organization_id);
                 });
 
                 if ($parentContext && $this->checkPermissionInContext($user, $permission, $parentContext)) {
@@ -597,6 +620,10 @@ class AuthorizationService
             }
 
             if ($organizationId) {
+                if ($this->currentChecks) {
+                    return AuthorizationContext::query()->where('type', AuthorizationContext::TYPE_PROJECT)->where('resource_id', $context['project_id'])
+                        ->whereHas('parentContext', static fn ($parent) => $parent->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $organizationId))->first();
+                }
                 return AuthorizationContext::getProjectContext(
                     $context['project_id'], 
                     $organizationId
@@ -605,7 +632,9 @@ class AuthorizationService
         }
 
         if (isset($context['organization_id'])) {
-            return AuthorizationContext::getOrganizationContext($context['organization_id']);
+            return $this->currentChecks
+                ? AuthorizationContext::query()->where('type', AuthorizationContext::TYPE_ORGANIZATION)->where('resource_id', $context['organization_id'])->first()
+                : AuthorizationContext::getOrganizationContext($context['organization_id']);
         }
 
         return AuthorizationContext::getSystemContext();

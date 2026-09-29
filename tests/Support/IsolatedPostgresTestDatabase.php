@@ -30,6 +30,27 @@ final class IsolatedPostgresTestDatabase
 
     private static bool $cleanupRegistered = false;
 
+    public static function profilePort(?string $profile = null): int
+    {
+        $profile ??= (string) ($_ENV['MOST_POSTGRES_TEST_PROFILE'] ?? $_SERVER['MOST_POSTGRES_TEST_PROFILE'] ?? getenv('MOST_POSTGRES_TEST_PROFILE') ?: '');
+        return match ($profile) {
+            '' => 55433,
+            'ai-assistant' => 55443,
+            default => throw new RuntimeException('postgres_test_profile_unsafe'),
+        };
+    }
+
+    public static function assertSafeConfiguration(array $configuration, ?string $profile = null): void
+    {
+        if (($configuration['driver'] ?? null) !== 'pgsql'
+            || ($configuration['host'] ?? null) !== '127.0.0.1'
+            || (string) ($configuration['port'] ?? '') !== (string) self::profilePort($profile)
+            || preg_match('/^[a-zA-Z0-9_]+_testing$/D', (string) ($configuration['database'] ?? '')) !== 1
+            || !empty($configuration['url'])) {
+            throw new RuntimeException('postgres_test_database_configuration_unsafe');
+        }
+    }
+
     /** @return array<string, mixed> */
     public static function configuration(): array
     {
@@ -85,7 +106,7 @@ final class IsolatedPostgresTestDatabase
             throw new RuntimeException('postgres_test_database_configuration_unsafe');
         }
 
-        return [
+        $configuration = [
             'driver' => 'pgsql',
             'host' => (string) ($_ENV['DB_HOST'] ?? getenv('DB_HOST') ?: '127.0.0.1'),
             'port' => (string) ($_ENV['DB_PORT'] ?? getenv('DB_PORT') ?: '5432'),
@@ -96,6 +117,9 @@ final class IsolatedPostgresTestDatabase
             'prefix' => '',
             'prefix_indexes' => true,
         ];
+        self::assertSafeConfiguration($configuration);
+
+        return $configuration;
     }
 
     private static function bootstrapConnection(): \Illuminate\Database\Connection

@@ -32,7 +32,7 @@ final readonly class DompdfAssistantReportPdfWriter implements AssistantReportPd
         $content = $pdf->output();
         $filename = $this->filename($filenamePrefix);
 
-        return $this->reportStorage->storePdf($content, $filename, $organization, $user);
+        return $this->reportStorage->storePdf($content, $filename, $organization, $user, $data['report']['source_refs'] ?? $data['report']['sources'] ?? [], ['reports']);
     }
 
     private function filename(string $filenamePrefix): string

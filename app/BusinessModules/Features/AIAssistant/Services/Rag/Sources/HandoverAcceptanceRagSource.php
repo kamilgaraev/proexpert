@@ -376,7 +376,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function scopes(int $organizationId, ?int $projectId): iterable
@@ -387,7 +387,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function sessions(int $organizationId, ?int $projectId): iterable
@@ -398,7 +398,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function checklists(int $organizationId, ?int $projectId): iterable
@@ -409,7 +409,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function checklistItems(int $organizationId, ?int $projectId): iterable
@@ -421,7 +421,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
                     ->when($projectId !== null, static fn ($checklistQuery) => $checklistQuery->where('project_id', $projectId));
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function findings(int $organizationId, ?int $projectId): iterable
@@ -431,7 +431,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function signoffs(int $organizationId, ?int $projectId): iterable
@@ -441,7 +441,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function packages(int $organizationId, ?int $projectId): iterable
@@ -452,7 +452,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function documents(int $organizationId, ?int $projectId): iterable
@@ -464,7 +464,7 @@ final class HandoverAcceptanceRagSource implements RagSourceCollectorInterface
                     ->when($projectId !== null, static fn ($packageQuery) => $packageQuery->where('project_id', $projectId));
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleLocation(int $organizationId, string|int $entityId): array

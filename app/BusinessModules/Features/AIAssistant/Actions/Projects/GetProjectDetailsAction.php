@@ -1,18 +1,32 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Projects;
 
-use Illuminate\Support\Facades\DB;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyFinancialRead;
+use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class GetProjectDetailsAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?User $actor = null): array
     {
         $projectId = $params['project_id'] ?? null;
-        
-        if (!$projectId) {
+        $finance = app(AssistantLegacyFinancialRead::class);
+
+        if (! $projectId) {
             return ['error' => 'Project ID not specified'];
+        }
+
+        if ($actor === null
+            || ! app(AssistantDataAccessPolicy::class)->canReadEntity($actor, $organizationId, 'project', (int) $projectId)
+            || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'finance')
+            || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'people')
+            || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'contracts')) {
+            return [];
         }
 
         $project = DB::table('projects')
@@ -26,19 +40,11 @@ class GetProjectDetailsAction
             )
             ->first();
 
-        if (!$project) {
+        if (! $project) {
             return ['error' => 'Project not found'];
         }
 
-        $budget = DB::table('completed_works')
-            ->where('project_id', $projectId)
-            ->where('status', 'confirmed')
-            ->whereNull('deleted_at')
-            ->select(
-                DB::raw('COALESCE(SUM(total_amount), 0) as spent'),
-                DB::raw('COUNT(*) as works_count')
-            )
-            ->first();
+        $budget = $finance->projectSpent($actor, $organizationId, (int) $projectId);
 
         // Переключено на warehouse_balances - показываем материалы со всех складов организации
         $materialStats = DB::table('warehouse_balances')
@@ -66,6 +72,8 @@ class GetProjectDetailsAction
         $contracts = DB::table('contracts')
             ->join('contractors', 'contracts.contractor_id', '=', 'contractors.id')
             ->where('contracts.project_id', $projectId)
+            ->where('contracts.organization_id', $organizationId)
+            ->whereIn('contracts.id', app(AssistantDataAccessPolicy::class)->entityQuery($actor, $organizationId, 'contract')->select('contracts.id'))
             ->whereNull('contracts.deleted_at')
             ->select(
                 'contracts.id',
@@ -79,15 +87,15 @@ class GetProjectDetailsAction
             )
             ->get();
 
-        $spent = (float)$budget->spent;
-        $budgetAmount = (float)($project->budget_amount ?? 0);
-        $remaining = $budgetAmount - $spent;
-        $percentageUsed = $budgetAmount > 0 ? round(($spent / $budgetAmount) * 100, 2) : 0;
+        $spent = $budget['spent'];
+        $budgetAmount = $finance->projectBudget($actor, $organizationId, $project->budget_amount);
+        $remaining = AssistantLegacyFinancialRead::subtract($budgetAmount, $spent);
+        $percentageUsed = AssistantLegacyFinancialRead::percentage($spent, $budgetAmount);
 
         $today = Carbon::today();
         $daysRemaining = null;
         $isOverdue = false;
-        
+
         if ($project->end_date) {
             $endDate = Carbon::parse($project->end_date);
             $daysRemaining = $today->diffInDays($endDate, false);
@@ -111,24 +119,24 @@ class GetProjectDetailsAction
                 'end_date' => $project->end_date,
                 'days_remaining' => $daysRemaining,
                 'is_overdue' => $isOverdue,
-                'site_area_m2' => (float)($project->site_area_m2 ?? 0),
+                'site_area_m2' => (float) ($project->site_area_m2 ?? 0),
                 'cost_category' => $project->cost_category_name,
-                'is_archived' => (bool)$project->is_archived,
-                'is_head' => (bool)$project->is_head,
+                'is_archived' => (bool) $project->is_archived,
+                'is_head' => (bool) $project->is_head,
             ],
             'budget' => [
                 'total_budget' => $budgetAmount,
                 'spent' => $spent,
                 'remaining' => $remaining,
                 'percentage_used' => $percentageUsed,
-                'works_count' => (int)$budget->works_count,
+                'works_count' => $budget['works_count'],
             ],
             'materials' => [
-                'total_quantity' => (float)($materialStats->total_materials ?? 0),
-                'reserved_quantity' => (float)($materialStats->reserved_materials ?? 0),
-                'types_count' => (int)($materialStats->materials_types ?? 0),
+                'total_quantity' => (float) ($materialStats->total_materials ?? 0),
+                'reserved_quantity' => (float) ($materialStats->reserved_materials ?? 0),
+                'types_count' => (int) ($materialStats->materials_types ?? 0),
             ],
-            'team_members' => $teamMembers->map(function($member) {
+            'team_members' => $teamMembers->map(function ($member) {
                 return [
                     'id' => $member->id,
                     'name' => $member->name,
@@ -136,12 +144,12 @@ class GetProjectDetailsAction
                     'role' => $member->role,
                 ];
             })->toArray(),
-            'contracts' => $contracts->map(function($contract) {
+            'contracts' => $contracts->map(function ($contract) use ($finance, $actor, $organizationId) {
                 return [
                     'id' => $contract->id,
                     'number' => $contract->number,
                     'status' => $contract->status,
-                    'total_amount' => (float)$contract->total_amount,
+                    'total_amount' => $finance->allowed($actor, $organizationId, 'finance.view') ? AssistantLegacyFinancialRead::money($contract->total_amount) : null,
                     'date' => $contract->date,
                     'start_date' => $contract->start_date,
                     'end_date' => $contract->end_date,
@@ -151,4 +159,3 @@ class GetProjectDetailsAction
         ];
     }
 }
-

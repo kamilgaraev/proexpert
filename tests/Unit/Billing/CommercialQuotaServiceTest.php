@@ -113,7 +113,7 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame(18, $this->limit($summary, 'users')['limit']);
         $this->assertSame(12, $this->limit($summary, 'projects')['limit']);
         $this->assertSame(22, $this->limit($summary, 'storage_gb')['limit']);
-        $this->assertSame(550, $this->limit($summary, 'ai_requests_month')['limit']);
+        $this->assertNotContains('ai_requests_month', array_column($summary['limits'], 'key'));
         $this->assertSame(10, $this->limit($summary, 'users')['sources']['packages']);
         $this->assertSame(5, $this->limit($summary, 'users')['sources']['paid_addons']);
         $this->assertSame(10, $this->limit($summary, 'projects')['sources']['packages']);
@@ -132,7 +132,7 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame(13, $this->limit($summary, 'users')['limit']);
         $this->assertSame(12, $this->limit($summary, 'projects')['limit']);
         $this->assertSame(22, $this->limit($summary, 'storage_gb')['limit']);
-        $this->assertSame(550, $this->limit($summary, 'ai_requests_month')['limit']);
+        $this->assertNotContains('ai_requests_month', array_column($summary['limits'], 'key'));
         $this->assertSame(500, $this->limit($summary, 'document_pages_month')['limit']);
     }
 
@@ -162,6 +162,7 @@ class CommercialQuotaServiceTest extends TestCase
         }
 
         $expectedResourceSlugs = collect(config('commercial_limits.resources'))
+            ->reject(static fn (array $resource): bool => ($resource['limit_key'] ?? null) === 'ai_requests_month')
             ->filter(static fn (array $resource): bool => ($resource['requires_module'] ?? null) === null
                 || in_array($resource['requires_module'] ?? null, ['ai-assistant', 'ai-estimates'], true))
             ->sortBy('sort_order')
@@ -195,9 +196,7 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame('working-entry', $documentPages['requires_package']);
         $this->assertTrue($documentPages['available']);
 
-        $aiRequests = $this->resourceAddon($summary, 'extra_ai_requests');
-        $this->assertSame('ai-assistant', $aiRequests['requires_module']);
-        $this->assertTrue($aiRequests['available']);
+        $this->assertNotContains('extra_ai_requests', array_column($summary['resource_addons'], 'slug'));
     }
 
     public function test_module_bound_resource_addons_are_available_only_with_active_modules(): void
@@ -209,7 +208,7 @@ class CommercialQuotaServiceTest extends TestCase
         $withPackageModuleSlugs = array_column($withPackageModules['resource_addons'], 'slug');
 
         $this->assertNotContains('extra_holding_organizations', $withPackageModuleSlugs);
-        $this->assertContains('extra_ai_requests', $withPackageModuleSlugs);
+        $this->assertNotContains('extra_ai_requests', $withPackageModuleSlugs);
         $this->assertContains('extra_ai_estimates', $withPackageModuleSlugs);
 
         $this->activateModule('multi-organization');
@@ -223,10 +222,7 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertTrue($holdingOrganizations['available']);
         $this->assertSame(100000, $holdingOrganizations['pricing']['price_minor']);
 
-        $aiRequests = $this->resourceAddon($withModules, 'extra_ai_requests');
-        $this->assertSame('ai-assistant', $aiRequests['requires_module']);
-        $this->assertNull($aiRequests['requires_package']);
-        $this->assertTrue($aiRequests['available']);
+        $this->assertNotContains('extra_ai_requests', array_column($withModules['resource_addons'], 'slug'));
 
         $aiEstimates = $this->resourceAddon($withModules, 'extra_ai_estimates');
         $this->assertSame('ai-estimates', $aiEstimates['requires_module']);
@@ -318,30 +314,32 @@ class CommercialQuotaServiceTest extends TestCase
     {
         $quote = $this->quota()->calculateResourceAddonQuote($this->organization, [
             ['slug' => 'extra_holding_organizations', 'quantity' => 1],
-            ['slug' => 'extra_ai_requests', 'quantity' => 100],
         ]);
 
         $this->assertTrue($quote['requires_manager']);
         $this->assertSame('module_required', $quote['items'][0]['status']);
         $this->assertSame('multi-organization', $quote['items'][0]['requires_module']);
-        $this->assertSame('module_required', $quote['items'][1]['status']);
-        $this->assertSame('ai-assistant', $quote['items'][1]['requires_module']);
         $this->assertSame(0, $quote['amount_minor']);
     }
 
     public function test_quote_accepts_module_bound_resources_from_selected_packages(): void
     {
         $quote = $this->quota()->calculateResourceAddonQuote($this->organization, [
-            ['slug' => 'extra_ai_requests', 'quantity' => 100],
             ['slug' => 'extra_ai_estimates', 'quantity' => 10],
         ], ['projects-processes', 'estimates-norms']);
 
         $this->assertFalse($quote['requires_manager']);
         $this->assertSame('ok', $quote['items'][0]['status']);
-        $this->assertSame('ai-assistant', $quote['items'][0]['requires_module']);
-        $this->assertSame('ok', $quote['items'][1]['status']);
-        $this->assertSame('ai-estimates', $quote['items'][1]['requires_module']);
-        $this->assertSame(550000, $quote['amount_minor']);
+        $this->assertSame('ai-estimates', $quote['items'][0]['requires_module']);
+        $this->assertSame(500000, $quote['amount_minor']);
+    }
+
+    public function test_legacy_helper_request_allowance_does_not_enforce_a_second_quota_or_allow_new_purchases(): void
+    {
+        $this->quota()->assertCanUse($this->organization, 'ai_requests_month', 100000);
+        $this->assertNotContains('ai_requests_month', array_column($this->quota()->getQuotaSummary($this->organization)['limits'], 'key'));
+        $this->expectException(\InvalidArgumentException::class);
+        $this->quota()->calculateResourceAddonQuote($this->organization, [['slug' => 'extra_ai_requests', 'quantity' => 100]]);
     }
 
     public function test_paid_composition_keeps_labels_for_module_bound_resource_addons(): void

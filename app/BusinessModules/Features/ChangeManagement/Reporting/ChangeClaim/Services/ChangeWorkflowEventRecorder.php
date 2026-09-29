@@ -155,6 +155,7 @@ final readonly class ChangeWorkflowEventRecorder
             throw new DomainException('change_claim_link_replay_conflict');
         }
 
+        app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->queue(ChangeClaimLink::class,(int)$change->organization_id,(int)$change->project_id,$link->id);
         return $link;
     }
 

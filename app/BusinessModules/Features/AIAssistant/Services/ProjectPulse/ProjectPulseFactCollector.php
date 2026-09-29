@@ -62,6 +62,14 @@ class ProjectPulseFactCollector
 
     public function finance(ProjectPulseContext $context): array
     {
+        $actor = \App\Models\User::find($context->userId);
+        if ($actor === null || ! app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->canReadDomain($actor, $context->organizationId, 'finance')) {
+            return ['status' => 'unavailable'];
+        }
+        $policy = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class);
+        if ($policy->entityTypeForTable('payments') === null || $policy->entityQuery($actor, $context->organizationId, 'completed_work') === null) {
+            return ['status' => 'unavailable', 'missing_data' => ['authorized_payment_events']];
+        }
         $performedAmount = 0.0;
         $paidAmount = 0.0;
 
@@ -93,14 +101,23 @@ class ProjectPulseFactCollector
 
     private function projectsQuery(ProjectPulseContext $context)
     {
-        return Project::query()
-            ->where('organization_id', $context->organizationId)
-            ->when($context->projectId !== null, fn ($query) => $query->whereKey($context->projectId));
+        $actor = \App\Models\User::find($context->userId);
+        if ($actor === null) {
+            return Project::query()->whereRaw('1 = 0');
+        }
+        $query = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->entityQuery($actor, $context->organizationId, 'project') ?? Project::query()->whereRaw('1 = 0');
+        return $query->when($context->projectId !== null, fn ($query) => $query->whereKey($context->projectId));
     }
 
     private function scopedTable(ProjectPulseContext $context, string $table)
     {
-        return DB::table($table)
+        $actor = \App\Models\User::find($context->userId);
+        $query = DB::table($table);
+        if ($actor === null) {
+            return $query->whereRaw('1 = 0');
+        }
+        app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->scopeTable($query, $actor, $context->organizationId, $table, true);
+        return $query
             ->where($table . '.organization_id', $context->organizationId)
             ->when($context->projectId !== null && Schema::hasColumn($table, 'project_id'), function ($query) use ($context, $table): void {
                 $query->where($table . '.project_id', $context->projectId);

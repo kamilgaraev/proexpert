@@ -1,0 +1,182 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\AIAssistant\Services\Documents;
+
+use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Models\User;
+use Illuminate\Database\Query\JoinClause;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+
+final class AssistantDocumentCoverageService
+{
+    public function __construct(private readonly AssistantDataAccessPolicy $policy, private readonly AssistantDocumentService $documents) {}
+
+    public function coverage(int $organizationId, User $actor): array
+    {
+        if (! $this->policy->belongsToOrganization($actor, $organizationId)) throw new AccessDeniedHttpException;
+        $canManage = $this->canManageSettings($organizationId, $actor);
+        $files = $this->policy->accessibleFiles($actor, $organizationId, false);
+        $operations = app(AssistantOperationsNativeFileAdapter::class);
+        foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeFileType) {
+            $files->whereNotIn('files.id', $operations->sourceQueryForActor($actor, $organizationId, $nativeFileType)
+                ->select($nativeFileType === 'safety_medical_exam' ? 'native_file.id' : 'native_source.id'));
+        }
+        $documents = $this->policy->accessibleDocuments($actor, $organizationId);
+        $types = [];
+        foreach ((clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type') as $fileType) {
+            $entityType = $this->policy->entityTypeForModel((string) $fileType);
+            if ($entityType !== null) $types[(string) $fileType] = $entityType;
+        }
+        $latest = (clone $documents)->select([])->selectRaw('MAX(ai_assistant_documents.id)')->groupBy('file_id');
+        $indexed = (clone $documents)->whereIn('ai_assistant_documents.id', $latest)->select('ai_assistant_documents.*');
+        $units = DB::table('ai_assistant_document_units')->select('document_id')->selectRaw("COUNT(*) AS processed_units, SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END) AS ocr_completed_pages")->groupBy('document_id');
+        $base = (clone $files)->leftJoinSub($indexed, 'document', function (JoinClause $join) use ($types): void {
+            $join->on('document.file_id', '=', 'files.id')->on('document.storage_path', '=', 'files.path')
+                ->whereRaw('document.parent_entity_id = CAST(files.fileable_id AS TEXT)');
+            $join->where(function (JoinClause $parents) use ($types): void {
+                $parents->whereRaw('1 = 0');
+                foreach ($types as $fileType => $entityType) $parents->orWhere(function (JoinClause $branch) use ($fileType, $entityType): void {
+                    $branch->where('files.fileable_type', $fileType)->where('document.parent_entity_type', $entityType);
+                });
+            });
+        })->leftJoinSub($units, 'units', 'units.document_id', '=', 'document.id');
+        $unsupported = $types === [] ? 'TRUE' : 'files.fileable_type NOT IN ('.implode(',', array_fill(0, count($types), '?')).')';
+        $supportedFormat = "(LOWER(COALESCE(NULLIF(files.original_name, ''), files.name, '')) ~ '\\.(txt|csv|json|xml|pdf|xlsx|xls|docx|doc)$'
+            OR COALESCE(files.mime_type, '') LIKE 'text/%'
+            OR files.mime_type IN ('application/json', 'application/xml', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp')
+            OR files.mime_type ~ '^application/[a-z0-9.+-]+\\+xml$')";
+        $state = "CASE WHEN files.disk IS DISTINCT FROM 's3' OR $unsupported OR NOT COALESCE($supportedFormat, FALSE) THEN 'unsupported'
+            WHEN document.id IS NULL THEN 'pending'
+            WHEN document.coverage_status = 'empty' OR document.last_error = 'ocr_empty' THEN 'empty'
+            WHEN document.status IN ('failed', 'damaged') OR document.coverage_status = 'failed' THEN 'failed'
+            WHEN document.status = 'unsupported' THEN 'unsupported'
+            WHEN document.status = 'ready' AND COALESCE(BTRIM(document.extracted_text), '') = '' THEN 'empty'
+            WHEN document.status = 'ready' THEN 'ready'
+            WHEN document.status = 'ocr_approved' THEN 'ocr_processing'
+            WHEN document.status = 'ocr_quote_required' THEN 'ocr_required'
+            ELSE 'pending' END";
+        $base->selectRaw($state.' AS coverage_state', array_keys($types))
+            ->selectRaw("COALESCE(units.processed_units, 0) AS processed_units, COALESCE(units.ocr_completed_pages, 0) AS ocr_completed_pages,
+                CASE WHEN (document.metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (document.metadata->>'page_count')::bigint ELSE 0 END AS total_pages");
+        $aggregate = DB::query()->fromSub($base->toBase(), 'coverage')->selectRaw('COUNT(*) AS total');
+        foreach (['ready', 'pending', 'ocr_required', 'ocr_processing', 'failed', 'unsupported', 'empty'] as $status) {
+            $aggregate->selectRaw('COALESCE(SUM(CASE WHEN coverage_state = ? THEN 1 ELSE 0 END), 0) AS '.$status, [$status]);
+        }
+        foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(SUM('.$metric.'), 0) AS '.$metric);
+        $result = $aggregate->first();
+        $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
+        $nativeCoverage = [];
+        $nativeMetadataCount = 0;
+        foreach (\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('attachmentCoverageDefinitions') as $type => $definition) {
+            $native = $this->policy->entityQuery($actor, $organizationId, $type);
+            if ($native === null) { continue; }
+            $count = $native->count();
+            if ($count === 0) { continue; }
+            $nativeMetadataCount += $count;
+            $coverage['total'] += $count;
+            $status = $definition['status'];
+            $coverage[$status] = ($coverage[$status] ?? 0) + $count;
+            $nativeCoverage[$type] = $definition + ['expected_file_count' => $count, 'indexed_file_count' => 0, 'content_scope' => 'metadata_only'];
+        }
+        $unmappedNativeCount = 0;
+        $nativeMappedCount = 0;
+        foreach (AssistantSalesNativeFileMetadata::definitions() + AssistantOperationsNativeFileMetadata::definitions() as $type => $definition) {
+            $isOperations = isset(AssistantOperationsNativeFileMetadata::definitions()[$type]);
+            if ($isOperations) {
+                $expected = $operations->sourceQueryForActor($actor, $organizationId, $type);
+            } else {
+                $readable = $this->policy->entityContentQuery($actor, $organizationId, $type);
+                if ($readable === null) { continue; }
+                $expected = AssistantSalesNativeFileMetadata::sourceQuery($type, $organizationId)
+                    ->whereIn('native_source.id', $readable->select($readable->getModel()->getQualifiedKeyName()))
+                    ->whereNotNull(DB::raw(AssistantSalesNativeFileMetadata::versionExpressions($type)[$definition['path']]));
+            }
+            $expectedCount = $expected->count('native_source.id');
+            if ($expectedCount === 0) { continue; }
+            $nativeDocuments = (clone $documents)->whereNull('file_id')->where('parent_entity_type', $type)
+                ->where('metadata->assistant_native_source', $isOperations ? AssistantOperationsNativeFileMetadata::SOURCE : AssistantSalesNativeFileMetadata::SOURCE);
+            $latestNative = (clone $nativeDocuments)->select([])->selectRaw('MAX(ai_assistant_documents.id)')
+                ->groupBy('parent_entity_type')->groupByRaw("ai_assistant_documents.metadata->>'native_source_id'");
+            $nativeDocuments->whereIn('ai_assistant_documents.id', $latestNative);
+            $mapped = (clone $nativeDocuments)->count();
+            $nativeMappedCount += $mapped;
+            $nativeUnitCounts = DB::table('ai_assistant_document_units')->whereIn('document_id', (clone $nativeDocuments)->select('ai_assistant_documents.id'))
+                ->selectRaw("COUNT(*) AS processed_units, COALESCE(SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END), 0) AS ocr_completed_pages")->first();
+            $coverage['processed_units'] += (int) ($nativeUnitCounts->processed_units ?? 0);
+            $coverage['ocr_completed_pages'] += (int) ($nativeUnitCounts->ocr_completed_pages ?? 0);
+            $nativePages = (clone $nativeDocuments)->select([])->selectRaw("COALESCE(SUM(CASE WHEN (metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (metadata->>'page_count')::bigint ELSE 0 END), 0) AS total_pages")->first();
+            $coverage['total_pages'] += (int) ($nativePages?->total_pages ?? 0);
+            $missing = max(0, $expectedCount - $mapped);
+            $unmappedNativeCount += $missing;
+            $coverage['total'] += $expectedCount;
+            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
+            $counts = (clone $nativeDocuments)->select([])->selectRaw("CASE
+                WHEN coverage_status = 'empty' OR last_error = 'ocr_empty' THEN 'empty'
+                WHEN status IN ('failed', 'damaged') OR coverage_status = 'failed' THEN 'failed'
+                WHEN status = 'unsupported' THEN 'unsupported'
+                WHEN status = 'ready' AND COALESCE(BTRIM(extracted_text), '') = '' THEN 'empty'
+                WHEN status = 'ready' THEN 'ready'
+                WHEN status = 'ocr_approved' THEN 'ocr_processing'
+                WHEN status = 'ocr_quote_required' THEN 'ocr_required'
+                ELSE 'pending' END AS native_coverage_state")->toBase();
+            foreach (DB::query()->fromSub($counts, 'native_documents')->select('native_coverage_state')->selectRaw('COUNT(*) AS file_count')->groupBy('native_coverage_state')->get() as $stateCount) {
+                $state = $stateCount->native_coverage_state;
+                $coverage[$state] = ($coverage[$state] ?? 0) + (int) $stateCount->file_count;
+            }
+            $nativeCoverage[$type] = ['expected_file_count' => $expectedCount, 'indexed_file_count' => $mapped,
+                'unmapped_file_count' => $missing, 'status' => $missing > 0 ? 'needs_access_review' : 'mapped',
+                'manual_ingestion_available' => $missing > 0];
+        }
+        foreach (['design_artifact_version', ...AssistantNativeFileMetadata::types(), ...AssistantLegalNativeFileMetadata::types()] as $type) {
+            $native = $this->policy->entityContentQuery($actor, $organizationId, $type);
+            if ($native === null) { continue; }
+            $model = $native->getModel();
+            $table = $model->getTable();
+            if ($type === 'design_artifact_version') { $native->whereNotNull($table.'.source_file_path'); }
+            if (isset(AssistantLegalNativeFileMetadata::definitions()[$type])) {
+                $native->whereNotNull($table.'.'.AssistantLegalNativeFileMetadata::definitions()[$type]['path']);
+            }
+            $expectedNative = (clone $native)->count();
+            if ($expectedNative === 0) { continue; }
+            $mapped = (clone $files)->whereIn('files.fileable_type', [$model::class, $model->getMorphClass()])
+                ->select([])->selectRaw('CAST(files.fileable_id AS TEXT)');
+            $missing = $native->whereNotIn(DB::raw('CAST('.$model->getQualifiedKeyName().' AS TEXT)'), $mapped)->count();
+            $unmappedNativeCount += $missing;
+            $coverage['total'] += $missing;
+            $coverage['needs_access_review'] = ($coverage['needs_access_review'] ?? 0) + $missing;
+            $nativeCoverage[$type] = ['expected_file_count' => $expectedNative, 'unmapped_file_count' => $missing,
+                'status' => $missing > 0 ? 'needs_access_review' : 'mapped', 'manual_ingestion_available' => $missing > 0];
+        }
+        $settings = AssistantDocumentSettings::query()->where('organization_id', $organizationId)->first();
+        $scanFiles = (clone $files)->where('files.disk', 's3');
+        $expected = (clone $scanFiles)->count('files.id');
+        $cursor = (int) ($settings?->last_file_id ?? 0);
+        $scannedFiles = (clone $scanFiles)->where('files.id', '<=', $cursor);
+        $scanned = (clone $scannedFiles)->count('files.id');
+        $lastVisible = (int) ((clone $scannedFiles)->max('files.id') ?? 0);
+        $completed = $scanned === $expected;
+        $completedAt = $completed ? (clone $scannedFiles)->max('files.updated_at') : null;
+        if (is_string($completedAt) && $completedAt !== '') $completedAt = \Carbon\CarbonImmutable::parse($completedAt)->toAtomString();
+
+        return ['document_coverage' => $coverage, 'native_attachment_coverage' => $nativeCoverage, 'can_manage_document_settings' => $canManage,
+            'archive_scan' => ['expected_file_count' => $expected + $nativeMetadataCount + $unmappedNativeCount + $nativeMappedCount, 'scanned_file_count' => $scanned + $nativeMetadataCount + $nativeMappedCount,
+                'storage_unverified_file_count' => $nativeMetadataCount,
+                'last_file_id' => $lastVisible, 'completed_at' => $completedAt,
+                'processing' => ! $completed || $unmappedNativeCount > 0]];
+    }
+
+    public function canManageSettings(int $organizationId, User $actor): bool
+    {
+        try {
+            $this->documents->assertOwner($actor, $organizationId);
+            return true;
+        } catch (RuntimeException) {
+            return false;
+        }
+    }
+}

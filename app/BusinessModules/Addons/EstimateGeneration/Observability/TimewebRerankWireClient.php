@@ -23,6 +23,7 @@ final class TimewebRerankWireClient implements RerankWireClient
 
     public function call(string $model, array $messages, array $options): array
     {
+        \App\Support\AI\LunaModelPolicy::assert($model, 'timeweb');
         $scope = $options['estimate_generation_scope'] ?? null;
         if (is_array($scope)) {
             $this->costGuard->authorize(

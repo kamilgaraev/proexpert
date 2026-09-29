@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Crm\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\SalesRagMutationBridge;
 use App\BusinessModules\Features\Crm\Models\CrmActivity;
 use App\BusinessModules\Features\Crm\Models\CrmCompany;
 use App\BusinessModules\Features\Crm\Models\CrmContact;
@@ -176,11 +177,17 @@ final class CrmDuplicateService
         $duplicate = CrmCompany::query()->forOrganization($organizationId)->findOrFail($duplicateId);
         $before = $duplicate->toArray();
 
+        SalesRagMutationBridge::changedRows(CrmContact::class, CrmContact::query()->where('company_id', $duplicate->id), $organizationId);
         CrmContact::query()->where('company_id', $duplicate->id)->update(['company_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmLead::class, CrmLead::query()->where('company_id', $duplicate->id), $organizationId);
         CrmLead::query()->where('company_id', $duplicate->id)->update(['company_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmDeal::class, CrmDeal::query()->where('company_id', $duplicate->id), $organizationId);
         CrmDeal::query()->where('company_id', $duplicate->id)->update(['company_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmActivity::class, CrmActivity::query()->where('company_id', $duplicate->id), $organizationId);
         CrmActivity::query()->where('company_id', $duplicate->id)->update(['company_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmContactPoint::class, CrmContactPoint::query()->where('company_id', $duplicate->id), $organizationId);
         CrmContactPoint::query()->where('company_id', $duplicate->id)->update(['company_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmContactIdentity::class, CrmContactIdentity::query()->where('company_id', $duplicate->id), $organizationId);
         CrmContactIdentity::query()->where('company_id', $duplicate->id)->update(['company_id' => $master->id]);
 
         $duplicate->update([
@@ -206,10 +213,15 @@ final class CrmDuplicateService
         $duplicate = CrmContact::query()->forOrganization($organizationId)->findOrFail($duplicateId);
         $before = $duplicate->toArray();
 
+        SalesRagMutationBridge::changedRows(CrmLead::class, CrmLead::query()->where('contact_id', $duplicate->id), $organizationId);
         CrmLead::query()->where('contact_id', $duplicate->id)->update(['contact_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmDeal::class, CrmDeal::query()->where('primary_contact_id', $duplicate->id), $organizationId);
         CrmDeal::query()->where('primary_contact_id', $duplicate->id)->update(['primary_contact_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmActivity::class, CrmActivity::query()->where('contact_id', $duplicate->id), $organizationId);
         CrmActivity::query()->where('contact_id', $duplicate->id)->update(['contact_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmContactPoint::class, CrmContactPoint::query()->where('contact_id', $duplicate->id), $organizationId);
         CrmContactPoint::query()->where('contact_id', $duplicate->id)->update(['contact_id' => $master->id]);
+        SalesRagMutationBridge::changedRows(CrmContactIdentity::class, CrmContactIdentity::query()->where('contact_id', $duplicate->id), $organizationId);
         CrmContactIdentity::query()->where('contact_id', $duplicate->id)->update(['contact_id' => $master->id]);
 
         $duplicate->update([

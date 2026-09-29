@@ -131,6 +131,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
             $refundedAmount = $payment->refunded_amount_minor + $refund->amount_minor;
             $payment->forceFill(['refunded_amount_minor' => $refundedAmount])->save();
+            app(\App\Services\Credits\AICreditCommercialService::class)->refund($order, $refundedAmount);
             $refund->forceFill([
                 'provider_refund_id' => 'balance-'.$refund->id,
                 'provider_status' => 'succeeded',
@@ -240,7 +241,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
                 }
 
-                if ((int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)) {
+                if ($order->kind !== 'ai_credits' && (int) $order->quote_version < (int) config('commercial_offers.quote_version', 1)) {
                     $payment->forceFill([
                         'provider_status' => 'succeeded',
                         'confirmation_url' => null,
@@ -289,7 +290,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'manual_review');
                 }
                 $this->activate($order, $payment, $account, $packageRows, $authoritative);
-                $entitlementsChanged = true;
+                $entitlementsChanged = $order->kind !== 'ai_credits';
                 if ($order->kind === 'purchase') {
                     $order->refresh();
                     $payment->refresh();
@@ -495,6 +496,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 return $this->record($notification, $sourceIp, $fingerprint, $refund->status, 'stale_refund');
             }
 
+            app(\App\Services\Credits\AICreditCommercialService::class)->refund($order, $effectiveRefundedAmount);
             $full = $previousRefundedAmount < $payment->amount_minor
                 && $effectiveRefundedAmount >= $payment->amount_minor;
 
@@ -544,16 +546,27 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             : ($renewal ? $account->auto_renew_enabled : ($order->auto_renew_consent
             && $authoritative->paymentMethodSaved
             && trim((string) $authoritative->paymentMethodId) !== ''));
+        $cumulativeRefundedAmount = max((int) $payment->refunded_amount_minor, $authoritative->refundedAmountMinor);
         $payment->forceFill([
             'provider_status' => 'succeeded',
             'confirmation_url' => null,
             'payment_method_id' => $renewal ? null : ($canRenew ? $authoritative->paymentMethodId : null),
             'payment_method_saved' => ! $renewal && $canRenew,
             'safe_response' => $authoritative->safeResponse,
-            'refunded_amount_minor' => $authoritative->refundedAmountMinor,
+            'refunded_amount_minor' => $cumulativeRefundedAmount,
             'last_reconciled_at' => now(),
             'reconciliation_required' => false,
         ])->save();
+        if ($order->kind === 'ai_credits') {
+            app(\App\Services\Credits\AICreditCommercialService::class)->settlePaidOrder($order);
+            if ($cumulativeRefundedAmount > 0) {
+                app(\App\Services\Credits\AICreditCommercialService::class)->refund($order, $cumulativeRefundedAmount);
+                if ($cumulativeRefundedAmount >= (int) $payment->amount_minor) {
+                    $order->forceFill(['status' => 'refunded'])->save();
+                }
+            }
+            return;
+        }
         $account->forceFill([
             'status' => 'active',
             'offer_type' => $order->offer_type->value,
@@ -627,6 +640,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 continue;
             }
 
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                OrganizationResourceAllocation::class, OrganizationResourceAllocation::query()
+                    ->where('organization_id', $order->organization_id)->where('resource_slug', $slug)
+                    ->where('source', 'paid_addon')->whereIn('status', ['active', 'scheduled_for_removal']),
+                (int) $order->organization_id);
             OrganizationResourceAllocation::query()
                 ->where('organization_id', $order->organization_id)
                 ->where('resource_slug', $slug)
@@ -659,6 +677,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ],
             ]);
         }
+        app(\App\Services\Credits\AICreditCommercialService::class)->settlePaidOrder($order);
     }
 
     private function matchesOrder(

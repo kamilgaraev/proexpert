@@ -309,7 +309,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('current_project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function assignments(int $organizationId, ?int $projectId): iterable
@@ -319,7 +319,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function shiftReports(int $organizationId, ?int $projectId): iterable
@@ -330,7 +330,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function downtimes(int $organizationId, ?int $projectId): iterable
@@ -340,7 +340,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function maintenanceOrders(int $organizationId, ?int $projectId): iterable
@@ -350,7 +350,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function fuelIssues(int $organizationId, ?int $projectId): iterable
@@ -360,7 +360,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function productionRecords(int $organizationId, ?int $projectId): iterable
@@ -370,7 +370,7 @@ final class MachineryRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleAsset(int $organizationId, string|int $entityId): array

@@ -27,7 +27,10 @@ class AssistantGeneratedReportStorage
         string $filename,
         Organization $organization,
         User $user,
+        array $sourceRefs = [],
+        array $requiredDomains = [],
     ): array {
+        app(AssistantReportAccessService::class)->assertReferences($user, (int) $organization->id, $sourceRefs, $requiredDomains);
         $stream = fopen('php://temp', 'w+b');
         if (! is_resource($stream)) {
             throw new RuntimeException('assistant_report_stream_failed');
@@ -52,11 +55,10 @@ class AssistantGeneratedReportStorage
 
         $storageKey = (string) $personalFile->storage_key;
 
+        $access = app(AssistantReportAccessService::class)->register($storageKey, $organization, $user, $sourceRefs, $requiredDomains);
         return [
-            'pdf_url' => $this->files->temporaryDownloadUrl(
-                $storageKey,
-                (int) config('filesystems.s3.download_ttl_seconds'),
-            ),
+            ...$access,
+            'pdf_url' => $access['download_url'],
             'filename' => (string) $personalFile->original_name,
             'storage_disk' => 's3',
             'storage_path' => $storageKey,

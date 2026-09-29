@@ -23,9 +23,11 @@ use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class CommercialRenewalServiceTest extends TestCase
 {
@@ -35,11 +37,21 @@ final class CommercialRenewalServiceTest extends TestCase
 
     private RenewalWebhookProcessorFake $processor;
 
+    private ?string $connectionName = null;
+
+    private ?array $originalConnectionConfiguration = null;
+
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$this->connectionName);
+        config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
+        DB::purge($this->connectionName);
+        DB::connection($this->connectionName);
 
         config()->set('services.yookassa.mode', 'mock');
         $this->schema();
@@ -81,8 +93,22 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame('renewal', $order->kind);
         $this->assertSame(['working-entry', 'machinery'], $order->selected_package_slugs);
         $this->assertSame(4580000, $order->amount_minor);
+        $this->assertSame('renewal', $order->assistant_revenue_allocation['mode']);
+        $this->assertSame(399000, \App\Services\Credits\AssistantRevenueAllocation::verify($order->assistant_revenue_allocation, $payment->amount_minor, $order->amount_minor));
         $this->assertSame(1, $payment->attempt_number);
         $this->assertSame(1, $this->gateway->creates);
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        CarbonImmutable::setTestNow();
+        if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
+            DB::purge($this->connectionName);
+            config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
+            DB::connection($this->connectionName);
+        }
+        parent::tearDown();
     }
 
     public function test_non_empty_test_store_allowlist_denial_creates_no_renewal_state_or_provider_call(): void
@@ -723,6 +749,7 @@ final class CommercialRenewalServiceTest extends TestCase
         Schema::create('commercial_orders', function (Blueprint $t): void {
             $t->id();
             $t->uuid('public_id');
+            $t->jsonb('assistant_revenue_allocation')->nullable();
             $t->foreignId('organization_id');
             $t->foreignId('commercial_account_id');
             $t->foreignId('user_id');

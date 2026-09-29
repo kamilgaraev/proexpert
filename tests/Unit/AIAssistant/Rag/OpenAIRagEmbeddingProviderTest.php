@@ -42,6 +42,9 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
             'input_tokens' => 14,
             'output_tokens' => 0,
             'total_tokens' => 14,
+            'usage_source' => 'provider_response',
+            'provider_usage_available' => true,
+            'estimated_input_tokens' => null,
         ], $provider->lastUsage());
         $this->assertSame([
             'model' => 'text-embedding-3-small',

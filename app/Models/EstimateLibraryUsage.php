@@ -10,6 +10,8 @@ class EstimateLibraryUsage extends Model
 {
     use HasFactory;
 
+    protected $table = 'estimate_library_usage';
+
     public $timestamps = false;
 
     protected $fillable = [
@@ -63,4 +65,3 @@ class EstimateLibraryUsage extends Model
         return $query->where('used_at', '>=', now()->subDays($days));
     }
 }
-

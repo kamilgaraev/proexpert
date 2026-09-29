@@ -32,6 +32,8 @@ class ProjectPulseReport extends Model
         'activity',
         'recommendations',
         'raw_facts',
+        'source_refs',
+        'required_domains',
         'created_by_user_id',
         'generated_at',
     ];
@@ -51,6 +53,8 @@ class ProjectPulseReport extends Model
         'activity' => 'array',
         'recommendations' => 'array',
         'raw_facts' => 'array',
+        'source_refs' => 'array',
+        'required_domains' => 'array',
         'generated_at' => 'datetime',
     ];
 

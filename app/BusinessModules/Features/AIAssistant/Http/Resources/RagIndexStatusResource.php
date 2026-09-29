@@ -20,8 +20,31 @@ class RagIndexStatusResource extends JsonResource
         return [
             'enabled' => (bool) ($payload['enabled'] ?? true),
             'ready' => (bool) ($payload['ready'] ?? false),
+            'can_reindex' => (bool) ($payload['can_reindex'] ?? false),
+            'can_manage_document_settings' => (bool) ($payload['can_manage_document_settings'] ?? false),
+            'document_coverage' => is_array($payload['document_coverage'] ?? null) ? $payload['document_coverage'] : null,
+            'archive_scan' => is_array($payload['archive_scan'] ?? null) ? $payload['archive_scan'] : null,
             'source_count' => (int) ($payload['source_count'] ?? 0),
             'chunk_count' => (int) ($payload['chunk_count'] ?? 0),
+            'expected_source_count' => is_numeric($payload['expected_source_count'] ?? null)
+                ? (int) $payload['expected_source_count']
+                : null,
+            'eligible_count_known' => (bool) ($payload['eligible_count_known'] ?? false),
+            'indexed_source_count' => is_numeric($payload['indexed_source_count'] ?? null) ? (int) $payload['indexed_source_count'] : null,
+            'stored_source_count' => $payload['stored_source_count'] ?? null,
+            'stale_source_count' => $payload['stale_source_count'] ?? null,
+            'coverage_snapshot_at' => $payload['snapshot_at'] ?? null,
+            'pending_source_count' => $payload['pending_source_count'] ?? null,
+            'coverage_complete' => (bool) ($payload['coverage_complete'] ?? false),
+            'lag_seconds' => $payload['lag_seconds'] ?? null,
+            'lag_exceeded' => (bool) ($payload['lag_exceeded'] ?? false),
+            'processing' => (bool) ($payload['processing'] ?? false),
+            'stale_after_seconds' => is_numeric($payload['stale_after_seconds'] ?? null)
+                ? (int) $payload['stale_after_seconds']
+                : null,
+            'lag_goal_seconds' => is_numeric($payload['lag_goal_seconds'] ?? null)
+                ? (int) $payload['lag_goal_seconds']
+                : 300,
             'latest_run' => self::runPayload($payload['latest_run'] ?? null),
             'last_successful_run' => self::runPayload($payload['last_successful_run'] ?? null),
             'last_failed_run' => self::runPayload($payload['last_failed_run'] ?? null),
@@ -47,6 +70,12 @@ class RagIndexStatusResource extends JsonResource
                 return [
                     'type' => $source['type'],
                     'enabled' => (bool) ($source['enabled'] ?? true),
+                    'expected_count' => $source['expected_count'] ?? null,
+                    'indexed_count' => $source['indexed_count'] ?? null,
+                    'stored_count' => $source['stored_count'] ?? null,
+                    'stale_count' => $source['stale_count'] ?? null,
+                    'pending_count' => $source['pending_count'] ?? null,
+                    'error' => $source['error'] ?? null,
                 ];
             },
             $catalog
@@ -77,6 +106,11 @@ class RagIndexStatusResource extends JsonResource
             'source_count' => $run->source_count,
             'chunk_count' => $run->chunk_count,
             'last_error' => $run->last_error,
+            'expected_sources' => $run->expected_sources,
+            'processed_sources' => $run->processed_sources,
+            'heartbeat_at' => $run->heartbeat_at?->toISOString(),
+            'lease_expires_at' => $run->lease_expires_at?->toISOString(),
+            'scan_completed_at' => $run->scan_completed_at?->toISOString(),
         ];
     }
 }

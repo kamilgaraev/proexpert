@@ -34,7 +34,16 @@ trait BuildsProjectPulseFacts
 
     private function table(ProjectPulseContext $context, string $table): Builder
     {
-        return DB::table($table)
+        $actor = $context->userId === null ? null : \App\Models\User::find($context->userId);
+        $query = DB::table($table);
+        if ($actor === null) {
+            return $query->whereRaw('1 = 0');
+        }
+        app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->scopeTable($query, $actor, $context->organizationId, $table, true);
+        if ($context->projectId !== null && $table === 'projects') {
+            $query->where('projects.id', $context->projectId);
+        }
+        return $query
             ->when($this->hasColumn($table, 'organization_id'), fn (Builder $query) => $query->where($table . '.organization_id', $context->organizationId))
             ->when($context->projectId !== null && $this->hasColumn($table, 'project_id'), fn (Builder $query) => $query->where($table . '.project_id', $context->projectId))
             ->when($this->hasColumn($table, 'deleted_at'), fn (Builder $query) => $query->whereNull($table . '.deleted_at'));

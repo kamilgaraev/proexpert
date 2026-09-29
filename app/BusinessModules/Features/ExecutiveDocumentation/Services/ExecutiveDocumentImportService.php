@@ -207,7 +207,11 @@ final class ExecutiveDocumentImportService
     public function fail(int $itemId, int $attempt, \Throwable $exception): void
     {
         $errors = $exception instanceof ValidationException ? $exception->errors() : ['registration' => trans_message('executive_documentation.errors.import_registration_failed')];
-        ExecutiveDocumentImportItem::query()->whereKey($itemId)->where('attempt', $attempt)->where('status', 'queued')->update(['status' => 'failed', 'errors' => json_encode($errors, JSON_THROW_ON_ERROR)]);
+        DB::transaction(static function () use ($itemId,$attempt,$errors): void {
+            $rows = ExecutiveDocumentImportItem::query()->whereKey($itemId)->where('attempt',$attempt)->where('status','queued');
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(ExecutiveDocumentImportItem::class,$rows);
+            $rows->update(['status'=>'failed','errors'=>json_encode($errors,JSON_THROW_ON_ERROR)]);
+        });
     }
 
     public function expireStagedFiles(int $limit = 200): int

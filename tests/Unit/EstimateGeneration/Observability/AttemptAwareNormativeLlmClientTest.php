@@ -80,7 +80,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             public function call(string $model, array $messages, array $options): array
             {
                 $this->calls++;
-                if ($model === 'model-a') {
+                if ($this->calls % 2 === 1) {
                     throw new RuntimeException('wire failed');
                 }
 
@@ -97,7 +97,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
                 $this->rows[] = $data;
             }
         };
-        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['model-a', 'model-b'], []);
+        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], [], settingsResolver: $this->settingsResolver(timeout: 30, retries: 1));
 
         $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
         self::assertCount(2, $store->rows);
@@ -138,7 +138,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
                 $this->rows[] = $data;
             }
         };
-        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []);
+        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []);
 
         try {
             $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
@@ -177,12 +177,13 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             }
         };
 
-        $normal = new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []);
+        $normal = new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []);
         self::assertSame('{}', $normal->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'))['content']);
         self::assertSame('unavailable', $store->rows[0]->usageStatus);
 
         $invalidMeasurement = new AttemptAwareNormativeLlmClient($wire, $store, ['invalid model with spaces'], []);
-        self::assertSame('{}', $invalidMeasurement->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'))['content']);
+        $this->expectException(\DomainException::class);
+        $invalidMeasurement->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'));
     }
 
     #[Test]
@@ -213,7 +214,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
 
         $this->expectException(RerankWireException::class);
         try {
-            (new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []))
+            (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []))
                 ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
         } finally {
             self::assertCount(1, $store->rows);
@@ -252,7 +253,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
 
         $this->expectException(RerankWireException::class);
         try {
-            (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-5-mini'], []))
+            (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []))
                 ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
         } finally {
             self::assertSame('output_budget_exhausted', $this->logger->warnings[0]['context']['reason']);
@@ -293,7 +294,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             }
         };
 
-        $response = (new AttemptAwareNormativeLlmClient($wire, $store, ['provider/model'], []))
+        $response = (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []))
             ->chat([], ['profile' => 'json'], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
 
         self::assertSame('{"schema_version":"residential-work-composition-advice:v2"}', $response['content']);
@@ -325,12 +326,12 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
 
         $this->expectException(RerankWireException::class);
         $this->expectExceptionMessage('reranker_wire_failed');
-        (new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []))
+        (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []))
             ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
     }
 
     #[Test]
-    public function configured_fallback_strategy_uses_distinct_models_with_effective_settings(): void
+    public function configured_legacy_fallbacks_are_rejected_before_any_physical_attempt(): void
     {
         $wire = new class implements RerankWireClient
         {
@@ -369,16 +370,17 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             settingsResolver: $this->settingsResolver(timeout: 600, retries: 3),
         );
 
-        $response = $client->chat([], [], [
-            ...$this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'),
-            'model_strategy' => AttemptAwareNormativeLlmClient::MODEL_STRATEGY_CONFIGURED_FALLBACKS,
-        ]);
-
-        self::assertSame(['provider/fallback-a', 'provider/fallback-b'], $wire->models);
-        self::assertInstanceOf(EffectiveEstimateGenerationSettings::class, $response['effective_settings']);
-        self::assertCount(2, $store->rows);
+        $this->expectException(\DomainException::class);
+        try {
+            $client->chat([], [], [
+                ...$this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'),
+                'model_strategy' => AttemptAwareNormativeLlmClient::MODEL_STRATEGY_CONFIGURED_FALLBACKS,
+            ]);
+        } finally {
+            self::assertSame([], $wire->models);
+            self::assertCount(0, $store->rows);
+        }
     }
-
     #[Test]
     public function normalized_caller_timeout_caps_effective_timeout_and_changes_correlation_identity(): void
     {
@@ -412,7 +414,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         $client = new AttemptAwareNormativeLlmClient(
             $wire,
             $store,
-            modelSet: new NormativeRerankerModelSet(['provider/fallback-a']),
+            modelSet: new NormativeRerankerModelSet(['openai/gpt-6-luna']),
             settingsResolver: $this->settingsResolver(timeout: 600, retries: 0),
         );
         $context = $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c');
@@ -454,7 +456,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         {
             public function record(AiUsageData $data): void {}
         };
-        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['provider/model'], []);
+        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []);
 
         $this->expectException(InvalidArgumentException::class);
         try {
@@ -478,7 +480,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
     {
         $snapshot = [
             'schema_version' => 2,
-            'models' => ['vision' => 'provider/vision', 'classification' => 'provider/classification', 'normative_matching' => 'provider/effective'],
+            'models' => ['vision' => 'provider/vision', 'classification' => 'provider/classification', 'normative_matching' => 'openai/gpt-6-luna'],
             'limits' => ['max_files' => 8, 'max_pages_per_file' => 120, 'max_total_pages' => 500],
             'timeouts' => ['vision' => 10, 'classification' => 30, 'normative_matching' => $timeout],
             'retries' => ['vision' => 2, 'classification' => 1, 'normative_matching' => $retries],

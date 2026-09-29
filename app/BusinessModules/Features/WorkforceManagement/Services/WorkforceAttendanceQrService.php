@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\BusinessModules\Features\WorkforceManagement\Exceptions\WorkforceAttendanceException;
 use App\Models\User;
@@ -487,24 +488,28 @@ final class WorkforceAttendanceQrService
     ): int {
         $scannedAt ??= now();
 
-        return (int) DB::table('workforce_attendance_scan_events')->insertGetId([
-            'qr_token_id' => $token?->id,
-            'organization_id' => $organizationId,
-            'employee_id' => $token?->employee_id,
-            'project_id' => $token?->project_id,
-            'scanned_by_user_id' => $scannerId,
-            'work_date' => $token?->work_date,
-            'result' => $result,
-            'result_label' => $result === 'confirmed'
-                ? trans_message('workforce.attendance.qr_status_confirmed')
-                : trans_message('workforce.attendance.qr_status_rejected'),
-            'failure_reason' => $failureReason,
-            'device_id' => $deviceId,
-            'scanned_at' => $scannedAt,
-            'metadata' => json_encode(['source' => $source], JSON_THROW_ON_ERROR),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        return DB::transaction(function () use ($organizationId, $token, $scannerId, $result, $failureReason, $deviceId, $source, $scannedAt): int {
+            $id = (int) DB::table('workforce_attendance_scan_events')->insertGetId([
+                'qr_token_id' => $token?->id,
+                'organization_id' => $organizationId,
+                'employee_id' => $token?->employee_id,
+                'project_id' => $token?->project_id,
+                'scanned_by_user_id' => $scannerId,
+                'work_date' => $token?->work_date,
+                'result' => $result,
+                'result_label' => $result === 'confirmed'
+                    ? trans_message('workforce.attendance.qr_status_confirmed')
+                    : trans_message('workforce.attendance.qr_status_rejected'),
+                'failure_reason' => $failureReason,
+                'device_id' => $deviceId,
+                'scanned_at' => $scannedAt,
+                'metadata' => json_encode(['source' => $source], JSON_THROW_ON_ERROR),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            app(WorkforceRagMutationBridge::class)->changed('workforce_attendance_scan_events', $organizationId, $id);
+            return $id;
+        });
     }
 
     private function confirmedAttendanceExists(int $organizationId, int $employeeId, string $workDate, ?int $projectId): bool

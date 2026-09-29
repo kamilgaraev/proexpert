@@ -46,6 +46,13 @@ class AIAssistantModule implements ModuleInterface
             'ai_assistant.analytics.view',
             'ai_assistant.settings.manage',
             'ai_assistant.usage.view',
+            'ai_assistant.conversations.manage',
+            'admin.ai_assistant.rag.view',
+            'admin.ai_assistant.rag.manage',
+            'admin.ai_assistant.project_pulse.view',
+            'admin.ai_assistant.project_pulse.generate',
+            'admin.ai_assistant.project_pulse.export',
+            'admin.ai_assistant.project_pulse.delete',
         ];
     }
 
@@ -80,7 +87,6 @@ class AIAssistantModule implements ModuleInterface
     public function getLimits(): array
     {
         return [
-            'max_ai_requests_per_month' => 5000,
             'conversation_history_days' => 90,
             'max_file_upload_mb' => 10,
             'max_concurrent_chats' => 10,
@@ -126,6 +132,12 @@ class AIAssistantModule implements ModuleInterface
             'dependencies' => $this->getDependencies(),
             'conflicts' => $this->getConflicts(),
             'limits' => $this->getLimits(),
+            'assistant_billing' => [
+                'contract_version' => 2,
+                'limiting_resource' => 'organization_ai_credits',
+                'included_units_per_paid_period' => 5000,
+            ],
+            'legacy_limits' => ['max_ai_requests_per_month' => 5000],
         ];
     }
 

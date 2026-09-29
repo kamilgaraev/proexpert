@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 
 class AIPermissionChecker
 {
+    public function __construct(private readonly ?AuthorizationService $authorization = null) {}
     private const TOOL_PERMISSION_MAP = [
         'generate_profitability_report' => ['reports.view', 'admin.reports.view'],
         'generate_work_completion_report' => ['reports.view', 'admin.reports.view'],
@@ -43,6 +45,10 @@ class AIPermissionChecker
     ];
 
     private const PRIVILEGED_TOOLS = [
+        'mass_create_measurement_units',
+        'create_measurement_unit',
+        'update_measurement_unit',
+        'delete_measurement_unit',
         'approve_payment_request',
         'create_schedule_task',
         'update_schedule_task_status',
@@ -55,7 +61,7 @@ class AIPermissionChecker
             return false;
         }
 
-        return $user->belongsToOrganization($organizationId);
+        return app(AssistantDataAccessPolicy::class)->canReadDomain($user, $organizationId, 'assistant');
     }
 
     public function canAccessConversation(User $user, Conversation $conversation, int $organizationId): bool
@@ -72,7 +78,7 @@ class AIPermissionChecker
             return true;
         }
 
-        return $this->canAccessOrganizationConversationsInAdmin($user, $organizationId);
+        return $conversation->participants()->where('user_id', $user->id)->exists();
     }
 
     public function canManageOrganizationConversations(User $user, int $organizationId): bool
@@ -81,7 +87,7 @@ class AIPermissionChecker
             return false;
         }
 
-        return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
+        return $this->canCurrent($user, 'ai_assistant.conversations.manage', $organizationId);
     }
 
     public function canAccessOrganizationConversationsInAdmin(User $user, int $organizationId): bool
@@ -90,13 +96,11 @@ class AIPermissionChecker
             return false;
         }
 
-        return $user->isAdminPanelUser($organizationId);
+        return false;
     }
 
     public function canExecuteTool(User $user, string $toolName, array $params = []): bool
     {
-        unset($params);
-
         $toolName = $this->normalizeToolName($toolName);
 
         $organizationId = (int) $user->current_organization_id;
@@ -105,25 +109,62 @@ class AIPermissionChecker
             return false;
         }
 
-        foreach (self::TOOL_PERMISSION_MAP[$toolName] ?? [] as $permission) {
-            if ($user->hasPermission($permission)) {
-                return true;
-            }
+        $policy = app(AssistantDataAccessPolicy::class);
+        if (in_array($toolName, ['assistant_domain_discover_capabilities', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'], true)) {
+            return $policy->canReadDomain($user, $organizationId, 'assistant');
         }
-
-        if ($this->isReportTool($toolName)) {
+        if (in_array($toolName, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'], true)) {
+            $domain = match ((string) ($params['domain'] ?? '')) { 'works' => 'projects', 'acts' => 'contracts', default => (string) ($params['domain'] ?? '') };
+            return $policy->canReadDomain($user, $organizationId, $domain);
+        }
+        $domains = match ($toolName) {
+            'search_projects', 'send_project_notification' => ['projects'],
+            'get_project_snapshot' => ['projects', 'contracts', 'finance'],
+            'search_warehouse' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
+            'search_materials' => ['materials'], 'search_users' => ['people'], 'search_contractors' => ['contractors'],
+            'get_contract_snapshot', 'generate_contractor_settlements_report', 'generate_contract_payments_report' => ['contracts', 'finance'],
+            'get_procurement_snapshot' => ['procurement', 'finance'],
+            'get_schedule_snapshot', 'create_schedule_task', 'update_schedule_task_status' => ['schedule'],
+            'generate_profitability_report' => ['projects', 'contracts', 'finance', 'warehouse'], 'generate_work_completion_report' => ['projects', 'contracts', 'finance'],
+            'generate_project_timelines_report' => ['projects', 'contracts', 'schedule', 'finance'], 'generate_material_movements_report' => ['warehouse', 'finance'], 'generate_time_tracking_report' => ['time_tracking', 'finance'],
+            'generate_operational_pdf_report', 'generate_rag_pdf_report' => ['reports'],
+            'approve_payment_request' => ['finance'],
+            'create_measurement_unit', 'mass_create_measurement_units', 'update_measurement_unit', 'delete_measurement_unit' => ['measurement_units'],
+            default => [],
+        };
+        if ($domains === []) {
             return false;
         }
-
-        if (in_array($toolName, self::MEMBER_TOOLS, true)) {
-            return true;
+        foreach ($domains as $domain) {
+            if (! $policy->canReadDomain($user, $organizationId, $domain)) {
+                return false;
+            }
         }
-
-        if (in_array($toolName, self::PRIVILEGED_TOOLS, true) || $this->isMutationTool($toolName)) {
-            return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
+        foreach (['project_id' => 'project', 'contract_id' => 'contract', 'task_id' => 'schedule_task', 'schedule_id' => 'schedule', 'payment_document_id' => 'payment_document', 'measurement_unit_id' => 'measurement_unit', 'measurement_id' => 'measurement_unit', 'warehouse_id' => 'warehouse', 'material_id' => 'material', 'user_id' => 'user'] as $key => $type) {
+            if (isset($params[$key]) && ! $policy->canReadEntity($user, $organizationId, $type, (string) $params[$key])) {
+                return false;
+            }
         }
-
-        return false;
+        $idType = match ($toolName) { 'update_measurement_unit', 'delete_measurement_unit' => 'measurement_unit', default => null };
+        if ($idType !== null && (! isset($params['id']) || ! $policy->canReadEntity($user, $organizationId, $idType, (string) $params['id']))) { return false; }
+        if (isset($params['schedule_id'], $params['project_id'])) {
+            $schedule = $policy->entityQuery($user, $organizationId, 'schedule');
+            if ($schedule === null || ! $schedule->whereKey($params['schedule_id'])->where('project_id', $params['project_id'])->exists()) { return false; }
+        }
+        if ($this->isReportTool($toolName) && ! $policy->canReadDomain($user, $organizationId, 'reports')) {
+            return false;
+        }
+        if (in_array($toolName, ['generate_contract_payments_report', 'generate_contractor_settlements_report'], true)
+            && ! $this->canCurrent($user, 'payments.invoice.view', $organizationId) && ! $this->canCurrent($user, 'payments.invoice.view_all', $organizationId)) { return false; }
+        $mutationPermission = match ($toolName) {
+            'create_schedule_task', 'update_schedule_task_status' => 'schedule-management.edit',
+            'send_project_notification' => 'projects.edit',
+            'approve_payment_request' => 'payments.invoice.approve',
+            'create_measurement_unit', 'mass_create_measurement_units' => 'measurement_units.create',
+            'update_measurement_unit' => 'measurement_units.edit', 'delete_measurement_unit' => 'measurement_units.delete',
+            default => null,
+        };
+        return $mutationPermission === null || $this->canCurrent($user, $mutationPermission, $organizationId);
     }
 
     public function isMutationTool(string $toolName): bool
@@ -131,10 +172,6 @@ class AIPermissionChecker
         $toolName = $this->normalizeToolName($toolName);
 
         if (in_array($toolName, self::PRIVILEGED_TOOLS, true)) {
-            return true;
-        }
-
-        if (str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report')) {
             return true;
         }
 
@@ -158,5 +195,11 @@ class AIPermissionChecker
             'update_task_status' => 'update_schedule_task_status',
             default => $toolName,
         };
+    }
+
+    private function canCurrent(User $user, string $permission, int $organizationId): bool
+    {
+        return ($this->authorization ?? app(AuthorizationService::class))
+            ->canCurrent($user, $permission, ['organization_id' => $organizationId]);
     }
 }

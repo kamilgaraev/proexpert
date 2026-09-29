@@ -1,12 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
 interface LLMProviderInterface
 {
     /**
      * @param array $messages
-     * @param array $options Can include 'profile', 'tools', 'timeout', 'model' for routed providers
+     * @param array $options
      */
     public function chat(array $messages, array $options = []): array;
     
@@ -16,4 +18,3 @@ interface LLMProviderInterface
     
     public function getModel(): string;
 }
-

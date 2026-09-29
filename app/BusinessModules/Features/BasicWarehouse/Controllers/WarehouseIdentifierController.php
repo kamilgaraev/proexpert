@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+use Illuminate\Support\Facades\DB;
+
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseIdentifierRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseIdentifierResolveRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\Asset;
@@ -284,12 +287,15 @@ class WarehouseIdentifierController extends Controller
 
     private function clearPrimaryIdentifier(int $organizationId, string $entityType, int $entityId, ?int $exceptId = null): void
     {
-        WarehouseIdentifier::query()
-            ->where('organization_id', $organizationId)
-            ->where('entity_type', $entityType)
-            ->where('entity_id', $entityId)
-            ->when($exceptId !== null, fn ($query) => $query->where('id', '!=', $exceptId))
-            ->update(['is_primary' => false]);
+        DB::transaction(static function () use ($organizationId, $entityType, $entityId, $exceptId): void {
+            $rows = DB::table('warehouse_identifiers')
+                ->where('organization_id', $organizationId)
+                ->where('entity_type', $entityType)
+                ->where('entity_id', $entityId)
+                ->when($exceptId !== null, static fn ($query) => $query->where('id', '!=', $exceptId));
+            app(OperationsRagMutationBridge::class)->changedRows('warehouse_identifiers', $organizationId, $rows);
+            $rows->update(['is_primary' => false, 'updated_at' => now()]);
+        });
     }
 
     private function assertEntityExists(int $organizationId, string $entityType, int $entityId, ?int $warehouseId): void

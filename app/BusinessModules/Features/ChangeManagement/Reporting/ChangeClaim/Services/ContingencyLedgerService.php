@@ -106,6 +106,7 @@ final readonly class ContingencyLedgerService
                 throw new DomainException('contingency_ledger_replay_conflict');
             }
 
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->queue(ContingencyLedgerEntry::class,(int)$change->organization_id,(int)$change->project_id,$entry->id);
             return $entry;
         });
     }

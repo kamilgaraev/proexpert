@@ -911,6 +911,8 @@ class ReportService
                 DB::raw('(SELECT COALESCE(SUM(paid_amount), 0) FROM payment_documents WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND payment_documents.organization_id = ' . $organizationId . ' AND deleted_at IS NULL) as paid_amount')
             );
 
+        $this->applyAssistantQueryScope($request, $query, 'contracts', $organizationId);
+
         // Добавляем completed_amount с учетом фильтра по проекту
         $projectId = $request->filled('project_id') ? (int) $request->query('project_id') : null;
         if ($projectId !== null) {
@@ -1067,6 +1069,8 @@ class ReportService
             ->leftJoin('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->groupBy('contractors.id', 'contractors.name', 'contractors.inn', 'contractors.contact_person', 'contractors.phone');
 
+        $this->applyAssistantQueryScope($request, $query, 'contracts', $organizationId);
+
         if ($request->filled('contractor_id')) {
             $query->where('contractors.id', $request->query('contractor_id'));
         }
@@ -1213,6 +1217,8 @@ class ReportService
                 DB::raw('(warehouse_balances.available_quantity + warehouse_balances.reserved_quantity) as total_quantity'),
                 DB::raw('(warehouse_balances.available_quantity * warehouse_balances.unit_price) as total_value')
             );
+
+        $this->applyAssistantQueryScope($request, $query, 'warehouse_balances', $organizationId);
 
         $this->applyWarehouseStockPresenceFilter($query, $organizationId);
 
@@ -1391,6 +1397,8 @@ class ReportService
                 DB::raw('(warehouse_movements.quantity * warehouse_movements.price_per_unit) as total_amount')
             );
 
+        $this->applyAssistantQueryScope($request, $query, 'warehouse_movements', $organizationId);
+
         if ($request->filled('warehouse_id')) {
             $query->where('warehouse_movements.warehouse_id', $request->query('warehouse_id'));
         }
@@ -1532,6 +1540,8 @@ class ReportService
             ->forDateRange($dateFrom->toDateString(), $dateTo->toDateString())
             ->orderByDesc('work_date')
             ->orderByDesc('created_at');
+
+        $this->applyAssistantQueryScope($request, $query, 'time_entries', $organizationId);
 
         if ($request->filled('user_id')) {
             $selectedUserId = (int) $request->query('user_id');
@@ -1731,6 +1741,8 @@ class ReportService
                 DB::raw('(SELECT COALESCE(SUM(quantity * price), 0) FROM warehouse_movements WHERE project_id = projects.id AND warehouse_movements.organization_id = ' . $organizationId . ' AND movement_type = \'receipt\') as material_costs')
             );
 
+        $this->applyAssistantQueryScope($request, $query, 'projects', $organizationId);
+
         if ($request->filled('project_id')) {
             $query->where('projects.id', $request->query('project_id'));
         }
@@ -1869,6 +1881,8 @@ class ReportService
                 DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE project_id = projects.id AND is_approved = true) as completed_amount')
             );
 
+        $this->applyAssistantQueryScope($request, $query, 'projects', $organizationId);
+
         if ($request->filled('project_id')) {
             $query->where('projects.id', $request->query('project_id'));
         }
@@ -1990,6 +2004,29 @@ class ReportService
             'filters' => $request->only(['project_id', 'status', 'customer', 'date_from', 'date_to']),
             'generated_at' => Carbon::now(),
         ];
+    }
+
+    private function applyAssistantQueryScope(Request $request, \Illuminate\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder $query, string $table, int $organizationId): void
+    {
+        if (! $request->attributes->get('assistant_actor_scope', false)) {
+            return;
+        }
+        $actor = $request->user();
+        if ($actor === null) {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+        $policy = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class);
+        if ($query instanceof \Illuminate\Database\Eloquent\Builder) {
+            $entities = $policy->entityQuery($actor, $organizationId, 'time_entry');
+            if ($entities === null) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('time_entries.id', $entities->select('time_entries.id'));
+            }
+            return;
+        }
+        $policy->scopeTable($query, $actor, $organizationId, $table);
     }
 
 } 

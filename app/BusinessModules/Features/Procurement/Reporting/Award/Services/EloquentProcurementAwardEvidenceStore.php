@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Reporting\Award\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\SalesRagMutationBridge;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Contracts\ProcurementAwardEvidenceStore;
 use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ProcurementAwardCandidateEvidence;
@@ -121,6 +122,8 @@ final class EloquentProcurementAwardEvidenceStore implements ProcurementAwardEvi
         foreach ($event->manifest->candidates as $ordinal => $candidate) {
             $this->insertCandidate($event, $candidate, $ordinal + 1);
         }
+
+        SalesRagMutationBridge::queue(\App\BusinessModules\Features\Procurement\Reporting\Award\Models\ProcurementAwardEvidenceEvent::class, $event->organizationId, $event->projectId, $event->eventId);
 
         return $event;
     }

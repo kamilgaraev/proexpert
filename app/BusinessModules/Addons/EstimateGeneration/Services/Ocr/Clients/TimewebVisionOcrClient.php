@@ -77,6 +77,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         int $attempt,
         ?EffectiveEstimateGenerationSettings $effective,
     ): OcrRecognitionResult {
+        \App\Support\AI\LunaModelPolicy::assert($model, 'timeweb');
         $requestPayload = [
             'model' => $model,
             'messages' => [
@@ -95,8 +96,8 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                     ],
                 ],
             ],
-            'temperature' => 0,
-            'max_tokens' => max(512, (int) config('estimate-generation.ocr.max_tokens', 4096)),
+            'max_completion_tokens' => min(4096, max(512, (int) config('estimate-generation.ocr.max_tokens', 4096))),
+            'reasoning_effort' => 'none',
             'response_format' => [
                 'type' => 'json_object',
             ],

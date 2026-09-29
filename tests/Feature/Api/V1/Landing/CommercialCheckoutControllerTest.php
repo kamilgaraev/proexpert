@@ -21,9 +21,11 @@ use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 class CommercialCheckoutControllerTest extends TestCase
 {
@@ -33,11 +35,21 @@ class CommercialCheckoutControllerTest extends TestCase
 
     private ControllerCheckoutGatewayFake $gateway;
 
+    private ?string $connectionName = null;
+
+    private ?array $originalConnectionConfiguration = null;
+
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$this->connectionName);
+        config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
+        DB::purge($this->connectionName);
+        DB::connection($this->connectionName);
 
         config()->set('services.yookassa.mode', 'mock');
         config()->set('auth_tokens.sessions.enabled', false);
@@ -72,6 +84,17 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 1);
         $this->assertDatabaseCount('commercial_payments', 1);
         $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    protected function tearDown(): void
+    {
+        CarbonImmutable::setTestNow();
+        if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
+            DB::purge($this->connectionName);
+            config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
+            DB::connection($this->connectionName);
+        }
+        parent::tearDown();
     }
 
     public function test_checkout_requires_token(): void
@@ -1249,6 +1272,7 @@ class CommercialCheckoutControllerTest extends TestCase
         Schema::create('commercial_orders', function (Blueprint $table): void {
             $table->id();
             $table->uuid('public_id')->unique();
+            $table->jsonb('assistant_revenue_allocation')->nullable();
             $table->foreignId('organization_id');
             $table->foreignId('commercial_account_id');
             $table->foreignId('user_id');

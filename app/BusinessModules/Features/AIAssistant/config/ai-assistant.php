@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 $configEnv = static function (string $key, mixed $default = null): mixed {
     $value = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
 
@@ -22,15 +24,9 @@ $configEnv = static function (string $key, mixed $default = null): mixed {
     return $value;
 };
 
-$csvEnv = static function (string $key, string $default = '') use ($configEnv): array {
-    $value = (string) $configEnv($key, $default);
-
-    return array_values(array_filter(array_map(
-        static fn (string $item): string => trim($item),
-        explode(',', $value)
-    )));
+$lunaModelsEnv = static function (string $key, string $default = 'openai/gpt-6-luna'): array {
+    return [$default];
 };
-
 return [
     'enabled' => $configEnv('AI_ASSISTANT_ENABLED', true),
 
@@ -40,13 +36,18 @@ return [
 
     'conversation_history_days' => 90,
 
+    'retention' => [
+        'enabled' => $configEnv('AI_ASSISTANT_RETENTION_ENABLED', false),
+        'days' => 90,
+    ],
+
     'llm' => [
         'provider' => $configEnv('LLM_PROVIDER', 'timeweb'),
 
         'openai' => [
             'api_key' => $configEnv('OPENAI_API_KEY'),
             'base_uri' => $configEnv('OPENAI_BASE_URI'),
-            'model' => $configEnv('OPENAI_MODEL', 'gpt-4o-mini'),
+            'model' => $lunaModelsEnv('OPENAI_MODEL', 'gpt-6-luna')[0],
             'max_tokens' => $configEnv('OPENAI_MAX_TOKENS', 2000),
             'temperature' => $configEnv('OPENAI_TEMPERATURE', 0.7),
             'timeout' => $configEnv('OPENAI_TIMEOUT', 45),
@@ -54,7 +55,7 @@ return [
 
         'deepseek' => [
             'api_key' => $configEnv('DEEPSEEK_API_KEY'),
-            'model' => $configEnv('DEEPSEEK_MODEL', 'deepseek-chat'),
+            'model' => 'gpt-6-luna',
             'max_tokens' => $configEnv('DEEPSEEK_MAX_TOKENS', 2000),
             'temperature' => $configEnv('DEEPSEEK_TEMPERATURE', 1),
             'timeout' => $configEnv('DEEPSEEK_TIMEOUT', 45),
@@ -63,51 +64,36 @@ return [
         'timeweb' => [
             'api_key' => $configEnv('TIMEWEB_AI_API_KEY', $configEnv('TIMEWEB_API_KEY', $configEnv('TIMEWEB_AI_PROXY_KEY'))),
             'base_uri' => $configEnv('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1'),
-            'model' => $configEnv('TIMEWEB_AI_MODEL', 'gemini/gemini-3.1-flash-lite'),
+            'model' => $lunaModelsEnv('TIMEWEB_AI_MODEL')[0],
             'max_tokens' => $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000),
             'temperature' => $configEnv('TIMEWEB_AI_TEMPERATURE', 0.7),
             'timeout' => $configEnv('TIMEWEB_AI_TIMEOUT', 25),
-            'input_price_per_million' => $configEnv('TIMEWEB_AI_INPUT_PRICE_PER_MILLION'),
-            'output_price_per_million' => $configEnv('TIMEWEB_AI_OUTPUT_PRICE_PER_MILLION'),
+            'input_price_per_million' => $configEnv('TIMEWEB_AI_INPUT_PRICE_PER_MILLION', 13.5),
+            'output_price_per_million' => $configEnv('TIMEWEB_AI_OUTPUT_PRICE_PER_MILLION', 67.5),
             'default_profile' => $configEnv('TIMEWEB_AI_DEFAULT_PROFILE', 'assistant'),
             'profiles' => [
                 'assistant' => [
-                    'models' => $csvEnv(
-                        'TIMEWEB_AI_ASSISTANT_MODELS',
-                        (string) $configEnv(
-                            'TIMEWEB_AI_MODEL',
-                            'gemini/gemini-3.1-flash-lite,gemini/gemini-2.5-flash'
-                        )
-                    ),
+                    'models' => $lunaModelsEnv('TIMEWEB_AI_ASSISTANT_MODELS'),
                     'timeout' => $configEnv('TIMEWEB_AI_ASSISTANT_TIMEOUT', $configEnv('TIMEWEB_AI_TIMEOUT', 25)),
-                    'max_tokens' => $configEnv('TIMEWEB_AI_ASSISTANT_MAX_TOKENS', $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000)),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_ASSISTANT_MAX_TOKENS', 2048),
                     'temperature' => $configEnv('TIMEWEB_AI_ASSISTANT_TEMPERATURE', $configEnv('TIMEWEB_AI_TEMPERATURE', 0.7)),
                 ],
                 'json' => [
-                    'models' => $csvEnv(
-                        'TIMEWEB_AI_JSON_MODELS',
-                        'gemini/gemini-3.1-flash-lite,gemini/gemini-2.5-flash-lite'
-                    ),
+                    'models' => $lunaModelsEnv('TIMEWEB_AI_JSON_MODELS'),
                     'timeout' => $configEnv('TIMEWEB_AI_JSON_TIMEOUT', 20),
-                    'max_tokens' => $configEnv('TIMEWEB_AI_JSON_MAX_TOKENS', $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000)),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_JSON_MAX_TOKENS', 2048),
                     'temperature' => $configEnv('TIMEWEB_AI_JSON_TEMPERATURE', 0.1),
                 ],
                 'fast' => [
-                    'models' => $csvEnv(
-                        'TIMEWEB_AI_FAST_MODELS',
-                        'gemini/gemini-2.5-flash-lite,gemini/gemini-3.1-flash-lite'
-                    ),
+                    'models' => $lunaModelsEnv('TIMEWEB_AI_FAST_MODELS'),
                     'timeout' => $configEnv('TIMEWEB_AI_FAST_TIMEOUT', 12),
-                    'max_tokens' => $configEnv('TIMEWEB_AI_FAST_MAX_TOKENS', 800),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_FAST_MAX_TOKENS', 1024),
                     'temperature' => $configEnv('TIMEWEB_AI_FAST_TEMPERATURE', 0.2),
                 ],
                 'premium' => [
-                    'models' => $csvEnv(
-                        'TIMEWEB_AI_PREMIUM_MODELS',
-                        'anthropic/claude-4.6-sonnet,gemini/gemini-3.1-pro-preview'
-                    ),
+                    'models' => $lunaModelsEnv('TIMEWEB_AI_PREMIUM_MODELS'),
                     'timeout' => $configEnv('TIMEWEB_AI_PREMIUM_TIMEOUT', 35),
-                    'max_tokens' => $configEnv('TIMEWEB_AI_PREMIUM_MAX_TOKENS', $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000)),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_PREMIUM_MAX_TOKENS', 4096),
                     'temperature' => $configEnv('TIMEWEB_AI_PREMIUM_TEMPERATURE', $configEnv('TIMEWEB_AI_TEMPERATURE', 0.7)),
                 ],
             ],
@@ -115,8 +101,14 @@ return [
     ],
 
     'openai_api_key' => $configEnv('OPENAI_API_KEY'),
-    'openai_model' => $configEnv('OPENAI_MODEL', 'gpt-4o-mini'),
+    'openai_model' => $lunaModelsEnv('OPENAI_MODEL', 'gpt-6-luna')[0],
     'max_tokens' => $configEnv('OPENAI_MAX_TOKENS', 2000),
+
+    'token_budgets' => [
+        'short' => ['input' => 8192, 'output' => 1024, 'calls' => 2],
+        'normal' => ['input' => 16384, 'output' => 2048, 'calls' => 4],
+        'detailed' => ['input' => 32768, 'output' => 4096, 'calls' => 6],
+    ],
 
     'rag' => [
         'enabled' => true,
@@ -125,6 +117,7 @@ return [
         'embedding_base_uri' => $configEnv('AI_RAG_EMBEDDING_BASE_URI'),
         'embedding_model' => $configEnv('AI_RAG_EMBEDDING_MODEL', 'openai/text-embedding-3-large'),
         'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 256),
+        'embedding_input_price_per_million' => $configEnv('AI_RAG_EMBEDDING_INPUT_PRICE_PER_MILLION', 45.0),
         'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
         'job_tries' => $configEnv('AI_RAG_JOB_TRIES', 3),

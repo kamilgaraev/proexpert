@@ -70,7 +70,10 @@ class ReportFileController extends Controller
                 $payload['download_url'] = null;
 
                 try {
-                    if ($storage->exists($file->path)) {
+                    $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
+                    if ($access->isAssistantReportPath((string) $file->path)) {
+                        $payload['download_url'] = $access->urlForPath((string) $file->path, request()->user());
+                    } elseif ($storage->exists($file->path)) {
                         $payload['download_url'] = $storage->temporaryUrl($file->path, now()->addHours(1));
                     }
                 } catch (\Throwable $e) {

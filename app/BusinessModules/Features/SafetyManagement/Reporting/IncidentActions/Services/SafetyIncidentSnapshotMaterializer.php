@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -286,6 +288,7 @@ final readonly class SafetyIncidentSnapshotMaterializer
                     $snapshot->output_hash = (string) DB::table('safety_incident_snapshots')
                         ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
+                    app(OperationsRagMutationBridge::class)->snapshot('safety_incident_snapshots', 'safety_incident_rows', $organizationId, $snapshot->id);
                     if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
                         $this->seals->create(
                             'safety_incident_actions',

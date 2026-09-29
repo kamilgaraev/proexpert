@@ -16,6 +16,7 @@ use RuntimeException;
 
 final class AssistantAgentExecutorTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
     public function test_success_returns_artifact_url_when_tool_returns_storage_evidence(): void
     {
         $tool = $this->makeTool('generate_project_timelines_report', [
@@ -160,7 +161,7 @@ final class AssistantAgentExecutorTest extends TestCase
 
             public function getParametersSchema(): array
             {
-                return ['type' => 'object'];
+                return ['type' => 'object', 'properties' => ['period' => ['type' => 'string']], 'additionalProperties' => false];
             }
 
             public function execute(array $arguments, ?User $user, Organization $organization): array|string

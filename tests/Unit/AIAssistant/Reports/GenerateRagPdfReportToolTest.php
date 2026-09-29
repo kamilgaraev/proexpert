@@ -13,6 +13,7 @@ use PHPUnit\Framework\TestCase;
 
 final class GenerateRagPdfReportToolTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantReportUnitAccess;
     public function test_creates_pdf_from_grounded_rag_report_with_sources(): void
     {
         $composer = new FakeAssistantReportComposer([
@@ -110,6 +111,8 @@ final class GenerateRagPdfReportToolTest extends TestCase
         $user = new User;
         $user->id = 7;
         $user->name = 'Инженер';
+        $user->current_organization_id = 72;
+        $this->grantReportUnitPermissions($user, ['ai_assistant.chat', 'reports.view', 'projects.view']);
 
         return $user;
     }

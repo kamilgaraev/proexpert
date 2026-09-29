@@ -22,7 +22,7 @@ final readonly class LookaheadReadinessCandidateContract
 
     public const FORMULA_HASH = '2a038d2d3876dfcc103d2139a37549d4a8d5999cd32d0d0518e8c449c135175e';
 
-    public const SOURCE_HASH = '46f4908a65866aeab8b12a8df343df9ca8297eb6c0e60fc05d82de5e9356d69d';
+    public const SOURCE_HASH = '1a52a159b095e063aa287134c0b55892ab77379831c07845cc2551236fcd74cd';
 
     public function definition(): ReportDefinition
     {

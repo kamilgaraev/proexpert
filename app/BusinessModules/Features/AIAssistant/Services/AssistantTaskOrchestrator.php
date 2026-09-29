@@ -60,7 +60,7 @@ class AssistantTaskOrchestrator
                 $options['proposed_actions'] ?? [],
                 static fn (mixed $action): bool => is_array($action)
             ))
-        )), $requestUnderstanding);
+        )), $requestUnderstanding, (bool) ($plan['request']['allow_actions'] ?? false));
         $navigationTarget = $this->payloadNavigationTarget($plan['navigation_target'] ?? null, $requestUnderstanding);
 
         $missingData = array_values(array_unique(array_filter(array_merge(
@@ -248,7 +248,7 @@ class AssistantTaskOrchestrator
                 'arguments' => is_array($action['arguments'] ?? null) ? $action['arguments'] : [],
             ];
 
-            $eligibility = $this->toolEligibilityPolicy->canExposeAction($nextAction, $requestUnderstanding);
+            $eligibility = $this->toolEligibilityPolicy->canExposeAction($nextAction, $requestUnderstanding, (bool) ($request['allow_actions'] ?? false));
             if (! $eligibility->allowed) {
                 continue;
             }
@@ -538,14 +538,14 @@ class AssistantTaskOrchestrator
             : null;
     }
 
-    private function filterPayloadActions(array $actions, ?AssistantRequestUnderstanding $requestUnderstanding): array
+    private function filterPayloadActions(array $actions, ?AssistantRequestUnderstanding $requestUnderstanding, bool $allowActions): array
     {
         if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
             return $actions;
         }
 
-        return array_values(array_filter($actions, function (array $action) use ($requestUnderstanding): bool {
-            return $this->toolEligibilityPolicy->canExposeAction($action, $requestUnderstanding)->allowed;
+        return array_values(array_filter($actions, function (array $action) use ($requestUnderstanding, $allowActions): bool {
+            return $this->toolEligibilityPolicy->canExposeAction($action, $requestUnderstanding, $allowActions)->allowed;
         }));
     }
 

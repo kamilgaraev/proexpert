@@ -40,6 +40,8 @@ class ProjectPulseController extends Controller
                 $this->projectPulseService->current($context),
                 trans_message('ai_assistant.project_pulse.loaded')
             );
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            return AdminResponse::error(trans_message('errors.forbidden'), 403);
         } catch (Throwable $exception) {
             Log::error('project_pulse.current_failed', [
                 'user_id' => $request->user()?->id,
@@ -67,6 +69,8 @@ class ProjectPulseController extends Controller
                 $this->projectPulseService->generate($context),
                 trans_message('ai_assistant.project_pulse.generated')
             );
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            return AdminResponse::error(trans_message('errors.forbidden'), 403);
         } catch (Throwable $exception) {
             Log::error('project_pulse.generate_failed', [
                 'user_id' => $request->user()?->id,
@@ -88,7 +92,7 @@ class ProjectPulseController extends Controller
         }
 
         try {
-            $reports = $this->projectPulseService->list($organizationId, $request->validated());
+            $reports = $this->projectPulseService->list($organizationId, $request->validated(), $request->user());
 
             return AdminResponse::paginated(
                 $reports->items(),
@@ -100,6 +104,8 @@ class ProjectPulseController extends Controller
                 ],
                 trans_message('ai_assistant.project_pulse.loaded')
             );
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            return AdminResponse::error(trans_message('errors.forbidden'), 403);
         } catch (Throwable $exception) {
             Log::error('project_pulse.reports_failed', [
                 'user_id' => $request->user()?->id,
@@ -122,11 +128,13 @@ class ProjectPulseController extends Controller
 
         try {
             return AdminResponse::success(
-                $this->projectPulseService->get($organizationId, $report),
+                $this->projectPulseService->get($organizationId, $report, $request->user()),
                 trans_message('ai_assistant.project_pulse.loaded')
             );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('ai_assistant.project_pulse.report_not_found'), 404);
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            return AdminResponse::error(trans_message('errors.forbidden'), 403);
         } catch (Throwable $exception) {
             Log::error('project_pulse.show_failed', [
                 'user_id' => $request->user()?->id,
@@ -148,11 +156,13 @@ class ProjectPulseController extends Controller
         }
 
         try {
-            $this->projectPulseService->delete($organizationId, $report);
+            $this->projectPulseService->delete($organizationId, $report, $request->user());
 
             return AdminResponse::success(null, trans_message('ai_assistant.project_pulse.deleted'));
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('ai_assistant.project_pulse.report_not_found'), 404);
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            return AdminResponse::error(trans_message('errors.forbidden'), 403);
         } catch (Throwable $exception) {
             Log::error('project_pulse.destroy_failed', [
                 'user_id' => $request->user()?->id,

@@ -34,7 +34,7 @@ final class SiteRequestRagSource implements RagSourceCollectorInterface, RagSour
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id');
 
-        foreach ($query->cursor() as $request) {
+        foreach ($query->reorder()->lazyById(100) as $request) {
             yield $this->chunk($request);
         }
     }

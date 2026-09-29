@@ -105,9 +105,7 @@ final class KnowledgeAssistantService
             ['role' => 'user', 'content' => json_encode($input, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
         ], [
             'profile' => 'fast',
-            'model' => 'dashscope/qwen3.5-flash',
-            'enable_thinking' => false,
-            'max_tokens' => 900,
+            'max_tokens' => 1024,
             'temperature' => 0.2,
             'timeout' => 20,
             'response_format' => ['type' => 'json_object'],

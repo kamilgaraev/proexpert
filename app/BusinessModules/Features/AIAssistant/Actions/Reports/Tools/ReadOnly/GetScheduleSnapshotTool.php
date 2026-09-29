@@ -37,14 +37,17 @@ class GetScheduleSnapshotTool extends AbstractReadOnlyTool
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        unset($user);
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
 
         if (!$this->hasTable('project_schedules')) {
             return $this->tableUnavailable('schedules', 'project_schedules');
         }
 
-        $scheduleIds = $this->scheduleIds($arguments, $organization);
-        $tasks = $this->tasks($arguments, $organization, $scheduleIds);
+        $scheduleIds = $this->scheduleIds($arguments, $user, $organization);
+        $tasks = $this->tasks($arguments, $user, $organization, $scheduleIds);
 
         return [
             'status' => 'success',
@@ -59,9 +62,9 @@ class GetScheduleSnapshotTool extends AbstractReadOnlyTool
         ];
     }
 
-    private function scheduleIds(array $arguments, Organization $organization): array
+    private function scheduleIds(array $arguments, User $user, Organization $organization): array
     {
-        $query = $this->withoutDeleted($this->orgTable('project_schedules', $organization), 'project_schedules');
+        $query = $this->withoutDeleted($this->actorTable($user, 'project_schedules', $organization), 'project_schedules');
         $projectId = $this->intArg($arguments, 'project_id');
         $scheduleId = $this->intArg($arguments, 'schedule_id');
 
@@ -76,13 +79,13 @@ class GetScheduleSnapshotTool extends AbstractReadOnlyTool
         return array_map('intval', $query->limit(self::MAX_LIMIT)->pluck('project_schedules.id')->all());
     }
 
-    private function tasks(array $arguments, Organization $organization, array $scheduleIds): array
+    private function tasks(array $arguments, User $user, Organization $organization, array $scheduleIds): array
     {
         if ($scheduleIds === [] || !$this->hasTable('schedule_tasks')) {
             return [];
         }
 
-        $query = $this->withoutDeleted($this->orgTable('schedule_tasks', $organization), 'schedule_tasks')
+        $query = $this->withoutDeleted($this->actorTable($user, 'schedule_tasks', $organization), 'schedule_tasks')
             ->whereIn('schedule_tasks.schedule_id', $scheduleIds);
 
         $status = $this->stringArg($arguments, 'status');

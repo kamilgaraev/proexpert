@@ -217,6 +217,11 @@ final class WorkVolumeStatementService
                     }
                 }
             }
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                WorkVolumeStatement::class, WorkVolumeStatement::query()->where('organization_id', $statement->organization_id)
+                    ->where('project_id', $statement->project_id)->where('statement_key', $statement->statement_key)
+                    ->where('version', '<', $statement->version)->where('status', WorkVolumeStatement::STATUS_APPROVED),
+                (int) $statement->organization_id, (int) $statement->project_id);
             WorkVolumeStatement::query()->where('organization_id', $statement->organization_id)
                 ->where('project_id', $statement->project_id)->where('statement_key', $statement->statement_key)
                 ->where('version', '<', $statement->version)->where('status', WorkVolumeStatement::STATUS_APPROVED)
@@ -288,6 +293,9 @@ final class WorkVolumeStatementService
             $existing = $locked->lines->keyBy('line_key');
             $incomingKeys = array_fill_keys(array_column($lines, 'line_key'), true);
             $removedIds = $existing->reject(static fn (WorkVolumeStatementLine $line): bool => isset($incomingKeys[$line->line_key]))->modelKeys();
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                WorkVolumeStatementLine::class, WorkVolumeStatementLine::query()->where('statement_id', $locked->id),
+                (int) $locked->organization_id, (int) $locked->project_id);
             if ($removedIds !== []) {
                 if (DB::table('work_volume_accepted_allocations')->whereIn('statement_line_id', $removedIds)->exists()) {
                     throw new BusinessLogicException(trans_message('budget_estimates.work_volume_statements.draft_line_allocated'), 409);
@@ -325,6 +333,9 @@ final class WorkVolumeStatementService
                 'result_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'created_at' => now(), 'updated_at' => now(),
             ]);
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                WorkVolumeStatementLine::class, WorkVolumeStatementLine::query()->where('statement_id', $locked->id),
+                (int) $locked->organization_id, (int) $locked->project_id);
             return $snapshot;
         });
     }

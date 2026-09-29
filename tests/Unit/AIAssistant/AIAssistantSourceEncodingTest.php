@@ -12,7 +12,7 @@ class AIAssistantSourceEncodingTest extends TestCase
     #[DataProvider('criticalSourceProvider')]
     public function test_critical_source_strings_do_not_contain_mojibake_markers(string $path): void
     {
-        $contents = file_get_contents(dirname(__DIR__, 3).DIRECTORY_SEPARATOR.$path);
+        $contents = file_get_contents($this->sourcePath($path));
 
         $this->assertIsString($contents);
         $this->assertDoesNotMatchRegularExpression(
@@ -33,6 +33,29 @@ class AIAssistantSourceEncodingTest extends TestCase
         $this->assertIsString($contents);
         $this->assertStringNotContainsString('реальный_pdf_url_из_данных', $contents);
         $this->assertStringNotContainsString('ТУТ_ССЫЛКА', $contents);
+    }
+
+    private function sourcePath(string $path): string
+    {
+        $root = dirname(__DIR__, 3);
+        if (! str_starts_with($path, '../')) {
+            return $root.DIRECTORY_SEPARATOR.$path;
+        }
+
+        $relative = substr($path, 3);
+        $repository = explode('/', $relative, 2)[0];
+        for ($level = 0; $level < 8; $level++) {
+            $parent = dirname($root);
+            if (is_dir($parent.DIRECTORY_SEPARATOR.$repository)) {
+                return $parent.DIRECTORY_SEPARATOR.$relative;
+            }
+            if ($parent === $root) {
+                break;
+            }
+            $root = $parent;
+        }
+
+        $this->markTestSkipped("Related client checkout {$repository} is required for cross-repository encoding verification.");
     }
 
     public static function criticalSourceProvider(): array

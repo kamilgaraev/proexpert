@@ -1,0 +1,13 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\AIAssistant\Models\ReadAdapters;
+
+final class AssistantWorkforceAccountingMappingRecord extends WorkforceReadModel
+{
+    use \Illuminate\Database\Eloquent\SoftDeletes;
+
+    protected $table = 'workforce_accounting_mappings';
+    protected $casts = ['organization_id' => 'integer'];
+}

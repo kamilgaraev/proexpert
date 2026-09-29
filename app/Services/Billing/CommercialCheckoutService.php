@@ -17,6 +17,8 @@ use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
+use App\Services\Credits\AssistantRevenueAllocation;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -87,10 +89,12 @@ class CommercialCheckoutService
                 throw new CommercialCheckoutConflictException('Current commercial contour has changed.');
             }
 
+            $calculatedAt = CarbonImmutable::instance(now());
             $quote = $this->calculator->preview(
                 $input['target_package_slugs'],
                 $serverCurrent,
                 (bool) $input['full_suite'],
+                calculatedAt: $calculatedAt,
                 currentPeriodStartAt: $account?->current_period_start_at,
                 currentPeriodEndAt: $account?->current_period_end_at,
             );
@@ -119,7 +123,7 @@ class CommercialCheckoutService
                 'auto_renew_enabled' => false,
             ]);
 
-            $order = CommercialOrder::query()->create([
+            $order = new CommercialOrder([
                 'public_id' => (string) Str::uuid(),
                 'organization_id' => $organization->getKey(),
                 'commercial_account_id' => $account->getKey(),
@@ -138,6 +142,8 @@ class CommercialCheckoutService
                 'auto_renew_consent' => (bool) $input['auto_renew_consent'],
                 'client_idempotency_key' => (string) $input['client_idempotency_key'],
             ]);
+            $order->forceFill(['assistant_revenue_allocation' => app(AssistantRevenueAllocation::class)->snapshot($quote, $calculatedAt, $account?->current_period_start_at, $account?->current_period_end_at, $amountDueNowMinor)]);
+            $order->save();
             $payment = $order->payments()->create([
                 'provider' => $useBalance ? 'balance' : 'yookassa',
                 'role' => 'initial',
@@ -166,6 +172,43 @@ class CommercialCheckoutService
             return [$order, $payment, true];
         }, 3);
 
+        return $this->completePaymentIntent($order, $payment, $user) + ['_created' => $created];
+    }
+
+    public function checkoutCredits(Organization $organization, User $user, string $packId, string $idempotencyKey): array
+    {
+        $credits = app(\App\Services\Credits\AICreditService::class);
+        $credits->assertCreditPurchasesEnabled();
+        if (! $credits->canPurchase($organization, $user)) { throw new \DomainException('AI credit purchase permission denied.'); }
+        $pack = config('ai-assistant-credits.packs.'.$packId);
+        if (! is_array($pack)) { throw new InvalidArgumentException('Unknown AI credit pack.'); }
+        [$order, $payment] = DB::transaction(function () use ($organization, $user, $pack, $packId, $idempotencyKey): array {
+            Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
+            $account = OrganizationCommercialAccount::query()->where('organization_id', $organization->getKey())->lockForUpdate()->first();
+            $this->selfServiceGuard->assertCanMutate($account);
+            $existing = CommercialOrder::query()->where('organization_id', $organization->getKey())->where('client_idempotency_key', $idempotencyKey)->with('latestPayment')->first();
+            if ($existing !== null) {
+                if ($existing->kind !== 'ai_credits' || ($existing->selected_resource_addons[0]['slug'] ?? null) !== $packId || (int) $existing->user_id !== (int) $user->getKey()) { throw new CommercialCheckoutConflictException('AI credit purchase idempotency conflict.'); }
+                return [$existing, $existing->latestPayment];
+            }
+            $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+            $account ??= OrganizationCommercialAccount::query()->create(['organization_id' => $organization->getKey(), 'responsible_user_id' => $user->getKey(), 'status' => 'free', 'offer_type' => 'packages', 'quote_version' => 1, 'auto_renew_enabled' => false]);
+            $order = CommercialOrder::query()->create([
+                'public_id' => (string) Str::uuid(), 'organization_id' => $organization->getKey(), 'commercial_account_id' => $account->getKey(), 'user_id' => $user->getKey(),
+                'kind' => 'ai_credits', 'status' => CommercialOrderStatus::PendingPayment, 'offer_type' => 'packages', 'quote_version' => (int) config('ai-assistant-credits.price_version', 1),
+                'selected_package_slugs' => [], 'current_package_slugs' => [], 'selected_resource_addons' => [['slug' => $packId, 'units_minor' => (int) $pack['units_minor'], 'amount_minor' => (int) $pack['amount_minor']]],
+                'amount_minor' => (int) $pack['amount_minor'], 'amount' => $this->money((int) $pack['amount_minor']), 'currency' => 'RUB',
+                'period_start_at' => now(), 'period_end_at' => now(), 'auto_renew_consent' => false, 'client_idempotency_key' => $idempotencyKey,
+            ]);
+            $payment = $order->payments()->create(['provider' => 'yookassa', 'role' => 'initial', 'attempt_number' => 1, 'provider_status' => 'created', 'amount_minor' => $order->amount_minor, 'currency' => 'RUB', 'provider_idempotency_key' => (string) Str::uuid(), 'payment_method_saved' => false]);
+            return [$order, $payment];
+        }, 3);
+        return $this->completePaymentIntent($order, $payment, $user);
+    }
+
+    private function completePaymentIntent(CommercialOrder $order, CommercialPayment $payment, User $user): array
+    {
+        if ($order->kind === 'ai_credits') { app(\App\Services\Credits\AICreditService::class)->assertCreditPurchasesEnabled(); }
         if ($payment->provider === 'yookassa' && $payment->provider_payment_id === null) {
             $result = $this->gateway->createPayment(new CreatePaymentData(
                 idempotenceKey: $payment->provider_idempotency_key,
@@ -202,7 +245,7 @@ class CommercialCheckoutService
             }, 3);
         }
 
-        return $this->response($order->fresh(), $payment->fresh()) + ['_created' => $created];
+        return $this->response($order->fresh(), $payment->fresh());
     }
 
     private function currentPackageSlugs(int $organizationId): array

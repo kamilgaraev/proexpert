@@ -7,9 +7,12 @@ namespace Tests\Unit\AIAssistant\RequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     public function test_negative_pdf_report_request_is_text_rag_read_only(): void
     {
         $result = (new AssistantRequestUnderstandingResolver)->resolve(
@@ -170,5 +173,30 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
             'negative report' => ['Без отчета расскажи, какие риски по проекту.', 'no_report'],
             'negative file' => ['Не нужен файл, просто напиши текстом.', 'no_file'],
         ];
+    }
+
+    public function test_estimate_followup_preserves_domain_and_entity(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Какая прибыль и итоговая стоимость?', ['entity_references' => [['type' => 'estimate', 'id' => 7]]]);
+        $this->assertSame('question', $result->primaryIntent);
+        $this->assertSame('read_only', $result->actionPolicy);
+        $this->assertContains('estimate', $result->requestedEntities);
+        $this->assertContains(['type' => 'primary_domain', 'value' => 'estimates'], $result->evidence);
+    }
+
+    public function test_explicit_domain_change_overrides_estimate_context(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Найди сотрудников', ['selected_estimate_id' => 7, 'last_capability' => 'estimates']);
+        $this->assertSame('find', $result->primaryIntent);
+        $this->assertNotContains('estimate', $result->requestedEntities);
+        $this->assertContains(['type' => 'primary_domain', 'value' => 'people'], $result->evidence);
+    }
+
+    public function test_measurement_question_cannot_become_write_request(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Как создать единицу измерения?');
+        $this->assertSame('question', $result->primaryIntent);
+        $this->assertSame('read_only', $result->actionPolicy);
+        $this->assertContains('measurement_unit', $result->requestedEntities);
     }
 }

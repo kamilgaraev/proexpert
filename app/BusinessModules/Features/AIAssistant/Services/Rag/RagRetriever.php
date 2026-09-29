@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use Illuminate\Database\Eloquent\Builder;
 use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
@@ -19,6 +22,7 @@ final class RagRetriever
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly UserProjectAccessService $projectAccessService,
+        private readonly ?AssistantDataAccessPolicy $accessPolicy = null,
         private readonly ?UsageTracker $usageTracker = null
     ) {}
 
@@ -32,12 +36,21 @@ final class RagRetriever
             return [];
         }
 
+        $accessibleSources = $this->accessPolicy()->applyToSources(RagSource::query(), $user, $organizationId)->select('ai_rag_sources.id');
         $limit = $this->configInt('ai-assistant.rag.max_chunks', 8);
         $threshold = $this->configFloat('ai-assistant.rag.min_similarity', 0.72);
         $requestProjectId = $this->requestProjectId($requestContext);
         $allowedProjectIds = $this->allowedProjectIds($user, $organizationId);
+        $allowedSourceTypes = $this->accessPolicy()->allowedSourceTypes($user, $organizationId);
         $preferredSourceTypes = $this->preferredSourceTypes($query);
-        $includeOrganizationWideSources = $this->includeOrganizationWideSources($preferredSourceTypes);
+        $sourceTypes = $preferredSourceTypes === []
+            ? $allowedSourceTypes
+            : array_values(array_intersect($preferredSourceTypes, $allowedSourceTypes));
+        $includeOrganizationWideSources = $this->includeOrganizationWideSources($sourceTypes);
+
+        if ($sourceTypes === []) {
+            return [];
+        }
 
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) {
             return [];
@@ -46,6 +59,7 @@ final class RagRetriever
         try {
             $embedding = $this->embeddingProvider->embed($query, RagEmbeddingProviderInterface::PURPOSE_QUERY);
         } catch (Throwable $throwable) {
+            $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $requestProjectId, false);
             Log::warning('ai_assistant.rag.query_embedding_failed', [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
@@ -58,18 +72,35 @@ final class RagRetriever
                 $allowedProjectIds,
                 $requestProjectId,
                 $limit,
-                $preferredSourceTypes,
-                $includeOrganizationWideSources
+                $sourceTypes,
+                $includeOrganizationWideSources,
+                $accessibleSources,
+                $user
             );
         }
 
         $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $requestProjectId);
 
         $results = [];
-        foreach ($this->candidateRows($embedding, $organizationId, max($limit * 4, $limit), $preferredSourceTypes) as $row) {
+        foreach ($this->candidateRows(
+            $embedding,
+            $organizationId,
+            max($limit * 4, $limit),
+            $sourceTypes,
+            $allowedProjectIds,
+            $requestProjectId,
+            $includeOrganizationWideSources,
+            $accessibleSources
+        ) as $row) {
             $projectId = $row->project_id !== null ? (int) $row->project_id : null;
 
-            if ($projectId !== null && ! in_array($projectId, $allowedProjectIds, true)) {
+            if (! $this->accessPolicy()->canReadSource($user, $organizationId, [
+                'source_type' => $row->source_type,
+                'entity_type' => $row->entity_type,
+                'entity_id' => $row->entity_id,
+                'project_id' => $projectId,
+                'metadata' => $this->metadata($row->chunk_metadata),
+            ])) {
                 continue;
             }
 
@@ -110,8 +141,10 @@ final class RagRetriever
                 $allowedProjectIds,
                 $requestProjectId,
                 $limit,
-                $preferredSourceTypes,
-                $includeOrganizationWideSources
+                $sourceTypes,
+                $includeOrganizationWideSources,
+                $accessibleSources,
+                $user
             );
         }
 
@@ -122,27 +155,39 @@ final class RagRetriever
         string $query,
         int $organizationId,
         User $user,
-        ?int $requestProjectId
+        ?int $requestProjectId,
+        bool $successful = true
     ): void {
         try {
             $usage = $this->embeddingUsage($query);
             $tracker = $this->usageTracker ?? app(UsageTracker::class);
-
-            $tracker->recordUsage(
-                $organizationId,
-                $user->id,
-                $this->embeddingProvider->provider(),
-                $this->embeddingProvider->model(),
-                'rag_query',
-                $usage['input_tokens'],
-                $usage['output_tokens'],
-                $usage['total_tokens'],
-                [
-                    'purpose' => RagEmbeddingProviderInterface::PURPOSE_QUERY,
-                    'project_id' => $requestProjectId,
-                    'text_chars' => mb_strlen($query, 'UTF-8'),
-                ]
-            );
+            $attempts = method_exists($this->embeddingProvider, 'usageAttempts') ? $this->embeddingProvider->usageAttempts() : [];
+            if (! is_array($attempts) || $attempts === []) $attempts = [$usage + ['is_successful' => $successful, 'usage_key' => 'embedding:'.bin2hex(random_bytes(16))]];
+            foreach ($attempts as $attempt) {
+                $usage = OpenAIRagEmbeddingProvider::usageEvidence($attempt, $query);
+                $tracker->recordUsage(
+                    $organizationId,
+                    $user->id,
+                    $this->embeddingProvider->provider(),
+                    $this->embeddingProvider->model(),
+                    'rag_query',
+                    $usage['input_tokens'],
+                    $usage['output_tokens'],
+                    $usage['total_tokens'],
+                    [
+                        'purpose' => RagEmbeddingProviderInterface::PURPOSE_QUERY,
+                        'project_id' => $requestProjectId,
+                        'text_chars' => mb_strlen($query, 'UTF-8'),
+                        'usage_source' => $usage['usage_source'],
+                        'provider_usage_available' => $usage['provider_usage_available'],
+                        'estimated_input_tokens' => $usage['estimated_input_tokens'],
+                        'pricing_estimate' => false,
+                        'usage_key' => $attempt['usage_key'] ?? null,
+                        'attempt' => $attempt['attempt'] ?? 1,
+                        'is_successful' => $attempt['is_successful'] ?? $successful,
+                    ]
+                );
+            }
         } catch (Throwable $throwable) {
             Log::warning('ai_assistant.rag.query_usage_record_failed', [
                 'organization_id' => $organizationId,
@@ -153,7 +198,7 @@ final class RagRetriever
     }
 
     /**
-     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     * @return array<string, mixed>
      */
     private function embeddingUsage(string $content): array
     {
@@ -164,29 +209,13 @@ final class RagRetriever
                 $usage = $provider->lastUsage();
 
                 if (is_array($usage)) {
-                    $inputTokens = max(0, (int) ($usage['input_tokens'] ?? 0));
-                    $outputTokens = max(0, (int) ($usage['output_tokens'] ?? 0));
-                    $totalTokens = max(0, (int) ($usage['total_tokens'] ?? 0));
-
-                    if ($inputTokens > 0 || $totalTokens > 0) {
-                        return [
-                            'input_tokens' => $inputTokens > 0 ? $inputTokens : $totalTokens,
-                            'output_tokens' => $outputTokens,
-                            'total_tokens' => $totalTokens > 0 ? $totalTokens : $inputTokens + $outputTokens,
-                        ];
-                    }
+                    return OpenAIRagEmbeddingProvider::usageEvidence($usage, $content);
                 }
             } catch (Throwable) {
             }
         }
 
-        $inputTokens = max(1, (int) ceil(mb_strlen($content, 'UTF-8') / 4));
-
-        return [
-            'input_tokens' => $inputTokens,
-            'output_tokens' => 0,
-            'total_tokens' => $inputTokens,
-        ];
+        return OpenAIRagEmbeddingProvider::usageEvidence(null, $content);
     }
 
     /**
@@ -201,17 +230,22 @@ final class RagRetriever
         ?int $requestProjectId,
         int $limit,
         array $sourceTypes,
-        bool $includeOrganizationWideSources
+        bool $includeOrganizationWideSources,
+        Builder $accessibleSources,
+        User $actor
     ): array {
         $terms = $this->lexicalTerms($query);
         if ($terms === []) {
             return [];
         }
 
+        $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN lower(c.content || ' ' || s.title) LIKE ? THEN 1 ELSE 0 END"));
+        $orderBindings = array_map(static fn (string $term): string => '%'.$term.'%', $terms);
         $rows = DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
             ->where('c.organization_id', $organizationId)
-            ->whereNotNull('c.embedding')
+            ->where('s.organization_id', $organizationId)
+            ->whereIn('s.id', $accessibleSources)
             ->when(
                 $sourceTypes !== [],
                 static fn ($builder) => $builder->whereIn('s.source_type', $sourceTypes)
@@ -256,10 +290,15 @@ final class RagRetriever
                 's.title',
                 's.indexed_at as source_indexed_at',
             ])
+            ->orderByRaw('('.$order.') DESC', $orderBindings)
             ->limit(max($limit * 12, 48))
             ->get();
 
         return $rows
+            ->filter(fn (object $row): bool => $this->accessPolicy()->canReadSource($actor, $organizationId, [
+                'source_type' => $row->source_type, 'entity_type' => $row->entity_type, 'entity_id' => $row->entity_id, 'project_id' => $row->project_id,
+                'metadata' => $this->metadata($row->chunk_metadata),
+            ]))
             ->map(function (object $row) use ($terms): object {
                 $row->lexical_score = $this->lexicalScore($row, $terms);
 
@@ -288,11 +327,20 @@ final class RagRetriever
      * @param  array<int, string>  $sourceTypes
      * @return iterable<object>
      */
-    private function candidateRows(array $embedding, int $organizationId, int $limit, array $sourceTypes): iterable
+    private function candidateRows(
+        array $embedding,
+        int $organizationId,
+        int $limit,
+        array $sourceTypes,
+        array $allowedProjectIds,
+        ?int $requestProjectId,
+        bool $includeOrganizationWideSources,
+        Builder $accessibleSources
+    ): iterable
     {
         return DB::connection()->getDriverName() === 'pgsql'
-            ? $this->postgresRows($embedding, $organizationId, $limit, $sourceTypes)
-            : $this->fallbackRows($embedding, $organizationId, $limit, $sourceTypes);
+            ? $this->postgresRows($embedding, $organizationId, $limit, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources)
+            : $this->fallbackRows($embedding, $organizationId, $limit, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources);
     }
 
     /**
@@ -300,21 +348,28 @@ final class RagRetriever
      * @param  array<int, string>  $sourceTypes
      * @return array<int, object>
      */
-    private function postgresRows(array $embedding, int $organizationId, int $limit, array $sourceTypes): array
+    private function postgresRows(array $embedding, int $organizationId, int $limit, array $sourceTypes, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder $accessibleSources): array
     {
         $vector = $this->vectorLiteral($embedding);
         $sourceFilter = '';
-        $bindings = [$vector, $organizationId];
+        $bindings = [$organizationId, $this->embeddingProvider->provider(), $this->embeddingProvider->model(), count($embedding)];
 
         if ($sourceTypes !== []) {
             $sourceFilter = '  AND s.source_type IN ('.implode(',', array_fill(0, count($sourceTypes), '?')).')'."\n";
             array_push($bindings, ...$sourceTypes);
         }
 
+        $sourceFilter .= '  AND s.organization_id = ? AND s.id IN ('.$accessibleSources->toSql().')'."\n";
+        $bindings[] = $organizationId;
+        array_push($bindings, ...$accessibleSources->getBindings());
+        $projectFilter = $this->postgresProjectFilter($bindings, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources);
+
+        $bindings[] = $vector;
         $bindings[] = $vector;
         $bindings[] = $limit;
 
         $sql = <<<SQL
+WITH compatible_chunks AS MATERIALIZED (
 SELECT c.id,
        c.project_id,
        c.content,
@@ -324,12 +379,19 @@ SELECT c.id,
        s.entity_id,
        s.title,
        s.indexed_at AS source_indexed_at,
-       1 - (c.embedding <=> ?::vector) AS similarity
+       c.embedding
 FROM ai_rag_chunks c
 JOIN ai_rag_sources s ON s.id = c.source_id
 WHERE c.organization_id = ?
   AND c.embedding IS NOT NULL
-{$sourceFilter}ORDER BY c.embedding <=> ?::vector
+  AND c.embedding_provider = ?
+  AND c.embedding_model = ?
+  AND vector_dims(c.embedding) = ?
+{$sourceFilter}{$projectFilter})
+SELECT id, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at,
+       1 - (embedding <=> ?::vector) AS similarity
+FROM compatible_chunks
+ORDER BY embedding <=> ?::vector
 LIMIT ?
 SQL;
 
@@ -344,16 +406,35 @@ SQL;
      * @param  array<int, string>  $sourceTypes
      * @return Collection<int, object>
      */
-    private function fallbackRows(array $embedding, int $organizationId, int $limit, array $sourceTypes): Collection
+    private function fallbackRows(array $embedding, int $organizationId, int $limit, array $sourceTypes, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder $accessibleSources): Collection
     {
         return DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
             ->where('c.organization_id', $organizationId)
+            ->where('s.organization_id', $organizationId)
+            ->whereIn('s.id', $accessibleSources)
             ->whereNotNull('c.embedding')
+            ->where('c.embedding_provider', $this->embeddingProvider->provider())
+            ->where('c.embedding_model', $this->embeddingProvider->model())
             ->when(
                 $sourceTypes !== [],
                 static fn ($builder) => $builder->whereIn('s.source_type', $sourceTypes)
             )
+            ->where(function ($query) use ($allowedProjectIds, $requestProjectId, $includeOrganizationWideSources): void {
+                if ($requestProjectId !== null) {
+                    $query->where('c.project_id', $requestProjectId);
+                    if ($includeOrganizationWideSources) {
+                        $query->orWhereNull('c.project_id');
+                    }
+
+                    return;
+                }
+
+                $query->whereIn('c.project_id', $allowedProjectIds);
+                if ($includeOrganizationWideSources) {
+                    $query->orWhereNull('c.project_id');
+                }
+            })
             ->select([
                 'c.id',
                 'c.project_id',
@@ -367,6 +448,7 @@ SQL;
                 's.indexed_at as source_indexed_at',
             ])
             ->get()
+            ->filter(fn (object $row): bool => count($this->parseVector((string) $row->embedding)) === count($embedding))
             ->map(function (object $row) use ($embedding): object {
                 $row->similarity = $this->cosineSimilarity($embedding, $this->parseVector((string) $row->embedding));
 
@@ -402,7 +484,7 @@ SQL;
      */
     private function includeOrganizationWideSources(array $sourceTypes): bool
     {
-        return in_array('estimate_reference', $sourceTypes, true);
+        return array_intersect($sourceTypes, $this->accessPolicy()->organizationWideSourceTypes()) !== [];
     }
 
     /**
@@ -582,21 +664,35 @@ SQL;
             ->all();
     }
 
-    private function belongsToOrganization(User $user, int $organizationId): bool
+    private function accessPolicy(): AssistantDataAccessPolicy
     {
-        try {
-            if (method_exists($user, 'isSystemAdmin') && $user->isSystemAdmin()) {
-                return true;
-            }
+        return $this->accessPolicy ?? app(AssistantDataAccessPolicy::class);
+    }
 
-            if (method_exists($user, 'belongsToOrganization')) {
-                return $user->belongsToOrganization($organizationId);
-            }
-        } catch (Throwable) {
-            return false;
+    /** @param array<int, mixed> $bindings @param array<int, int> $allowedProjectIds */
+    private function postgresProjectFilter(array &$bindings, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder $accessibleSources): string
+    {
+        if ($requestProjectId !== null) {
+            $bindings[] = $requestProjectId;
+
+            return $includeOrganizationWideSources
+                ? "  AND (c.project_id = ? OR c.project_id IS NULL)\n"
+                : "  AND c.project_id = ?\n";
         }
 
-        return (int) $user->current_organization_id === $organizationId;
+        if ($allowedProjectIds === []) {
+            return $includeOrganizationWideSources ? "  AND c.project_id IS NULL\n" : "  AND 1 = 0\n";
+        }
+
+        array_push($bindings, ...$allowedProjectIds);
+        $filter = 'c.project_id IN ('.implode(',', array_fill(0, count($allowedProjectIds), '?')).')';
+
+        return $includeOrganizationWideSources ? "  AND (".$filter." OR c.project_id IS NULL)\n" : '  AND '.$filter."\n";
+    }
+
+    private function belongsToOrganization(User $user, int $organizationId): bool
+    {
+        return $this->accessPolicy()->belongsToOrganization($user, $organizationId);
     }
 
     /**
@@ -683,7 +779,8 @@ SQL;
      */
     private function cosineSimilarity(array $left, array $right): float
     {
-        $count = min(count($left), count($right));
+        if (count($left) !== count($right)) return 0.0;
+        $count = count($left);
         $dot = 0.0;
         $leftNorm = 0.0;
         $rightNorm = 0.0;

@@ -30,7 +30,7 @@ final class ProjectPulseRagSource implements RagSourceCollectorInterface
             ->orderByDesc('report_date')
             ->orderByDesc('id');
 
-        foreach ($query->cursor() as $report) {
+        foreach ($query->reorder()->lazyById(100) as $report) {
             yield $this->chunk($report);
         }
     }
