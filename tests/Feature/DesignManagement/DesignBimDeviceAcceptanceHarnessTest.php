@@ -257,6 +257,18 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
                 'project_id' => $data['project_id'], 'version_id' => $data['version_id'],
                 'session_id' => $data['session_id'], 'express_id' => 2863,
             ], JSON_THROW_ON_ERROR)."\n");
+        } catch (\Throwable $exception) {
+            try {
+                require_once base_path(self::HELPERS.'/runtime.php');
+                $archive = \Tests\Runtime\BimDeviceAcceptance\archiveFailure($data ?? [
+                    'schema_version' => 1, 'runtime_directory' => $directory, 'environment' => $environment,
+                ], $exception);
+                if ($archive !== null) {
+                    fwrite(STDOUT, json_encode(['status' => 'failure_archive', 'path' => $archive], JSON_THROW_ON_ERROR)."\n");
+                }
+            } catch (\Throwable) {
+            }
+            throw $exception;
         } finally {
             $cleanupErrors = [];
             foreach (array_reverse($children) as $child) {

@@ -302,6 +302,136 @@ function classifyFailure(string $message): array
     return ['classifier' => null, 'limits' => []];
 }
 
+function safeDiagnosticRecord(array $record): array
+{
+    $safe = [];
+    foreach (['at', 'completed_at'] as $key) {
+        if (is_string($record[$key] ?? null) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/D', $record[$key]) === 1) {
+            $safe[$key] = $record[$key];
+        }
+    }
+    foreach (['class', 'exception_class', 'function'] as $key) {
+        if (is_string($record[$key] ?? null) && preg_match('/^[A-Za-z0-9_\\\\]{1,200}$/D', $record[$key]) === 1) {
+            $safe[$key] = $record[$key];
+        }
+    }
+    foreach (['origin_file', 'fatal_file', 'file'] as $key) {
+        $source = $record[$key] ?? null;
+        if (is_string($source) && ! str_contains($source, '..')
+            && preg_match('#^(?:app|bootstrap|config|routes|vendor|tests/Runtime/bim-device-acceptance|tests/Feature/DesignManagement)/[A-Za-z0-9_./-]{1,500}$#D', $source) === 1) {
+            $safe[$key] = $source;
+        }
+    }
+    foreach (['pid', 'port', 'status', 'status_code', 'max_execution_time', 'fatal_type', 'fatal_line', 'origin_line', 'line'] as $key) {
+        if (is_int($record[$key] ?? null) && $record[$key] >= 0) {
+            $safe[$key] = $record[$key];
+        }
+    }
+    foreach (['elapsed_ms', 'autoload_ms', 'before_application_ms', 'bootstrap_ms', 'kernel_ms', 'terminate_ms', 'total_router_ms'] as $key) {
+        if ((is_int($record[$key] ?? null) || is_float($record[$key] ?? null)) && is_finite((float) $record[$key]) && $record[$key] >= 0) {
+            $safe[$key] = $record[$key];
+        }
+    }
+    foreach (['stage', 'last_marker'] as $key) {
+        if (in_array($record[$key] ?? null, ['application_start', 'bootstrap_done', 'kernel_start', 'kernel_end', 'broadcast_start', 'broadcast_end', 'broadcast_failure', 'shutdown'], true)) {
+            $safe[$key] = $record[$key];
+        }
+    }
+    if (is_string($record['path'] ?? null) && preg_match('#^/api/v1/(?:admin|mobile)/[A-Za-z0-9/_-]{1,500}$#D', $record['path']) === 1) {
+        $safe['path'] = $record['path'];
+    }
+    if (in_array($record['method'] ?? null, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)) {
+        $safe['method'] = $record['method'];
+    }
+    if (is_string($record['request_id'] ?? null) && preg_match('/^[a-f0-9]{24}$/D', $record['request_id']) === 1) {
+        $safe['request_id'] = $record['request_id'];
+    }
+    $safe['classifier'] = in_array($record['classifier'] ?? null, ['maximum_execution_time', 'memory_exhausted'], true) ? $record['classifier'] : null;
+    $safe['limits'] = [];
+    foreach (['limit_seconds', 'limit_bytes', 'allocation_bytes'] as $key) {
+        if (is_int($record['limits'][$key] ?? null) && $record['limits'][$key] >= 0) {
+            $safe['limits'][$key] = $record['limits'][$key];
+        }
+    }
+
+    return $safe;
+}
+
+function archiveFailure(array $data, \Throwable $exception): ?string
+{
+    $stream = null;
+    try {
+        $directory = realpath($data['runtime_directory'] ?? '');
+        $temporary = realpath(sys_get_temp_dir());
+        $environment = $data['environment'] ?? [];
+        if (($data['schema_version'] ?? null) !== 1 || ($environment['APP_ENV'] ?? null) !== 'testing'
+            || ($environment['DB_CONNECTION'] ?? null) !== 'pgsql' || ($environment['DB_HOST'] ?? null) !== '127.0.0.1'
+            || (string) ($environment['DB_PORT'] ?? '') !== '55433' || ! empty($environment['DB_URL'])
+            || preg_match('/^most_phpunit_[a-f0-9]{24}_testing$/D', $environment['DB_DATABASE'] ?? '') !== 1
+            || $directory === false || $temporary === false || dirname($directory) !== $temporary
+            || preg_match('/^most-bim-device-[a-f0-9]{24}$/D', basename($directory)) !== 1) {
+            return null;
+        }
+        $root = str_replace('\\', '/', dirname(__DIR__, 3)).'/';
+        $origin = str_replace('\\', '/', $exception->getFile());
+        $failure = safeDiagnosticRecord(['class' => $exception::class, 'origin_line' => $exception->getLine(),
+            'origin_file' => str_starts_with($origin, $root) ? substr($origin, strlen($root)) : null,
+            ...classifyFailure($exception->getMessage())]);
+        $failure['own_frames'] = [];
+        foreach ($exception->getTrace() as $frame) {
+            $source = str_replace('\\', '/', $frame['file'] ?? '');
+            $relative = str_starts_with($source, $root) ? substr($source, strlen($root)) : '';
+            if (! str_starts_with($relative, 'app/') && ! str_starts_with($relative, 'tests/Runtime/bim-device-acceptance/')
+                && ! str_starts_with($relative, 'tests/Feature/DesignManagement/')) {
+                continue;
+            }
+            $failure['own_frames'][] = safeDiagnosticRecord(['file' => $relative, 'line' => $frame['line'] ?? null,
+                'class' => $frame['class'] ?? null, 'function' => $frame['function'] ?? null]);
+            if (count($failure['own_frames']) === 8) {
+                break;
+            }
+        }
+        $archive = ['schema_version' => 1, 'at' => gmdate('Y-m-d\TH:i:s\Z'), 'parent_failure' => $failure,
+            'stages' => [], 'exceptions' => [], 'timings' => []];
+        $size = strlen(json_encode($archive, JSON_THROW_ON_ERROR));
+        foreach (['stages' => 'stages.jsonl', 'exceptions' => 'exceptions.jsonl', 'timings' => 'http-timings.jsonl'] as $key => $name) {
+            $file = $directory.'/'.$name;
+            if (! is_file($file) || is_link($file) || filesize($file) > 1048576) {
+                continue;
+            }
+            foreach (explode("\n", (string) file_get_contents($file, false, null, 0, 1048576)) as $line) {
+                $record = json_decode($line, true, 32);
+                if (! is_array($record)) {
+                    continue;
+                }
+                $safe = safeDiagnosticRecord($record);
+                $bytes = strlen(json_encode($safe, JSON_THROW_ON_ERROR)) + 1;
+                if ($size + $bytes > 1048576) {
+                    break;
+                }
+                $archive[$key][] = $safe;
+                $size += $bytes;
+            }
+        }
+        $encoded = json_encode($archive, JSON_THROW_ON_ERROR);
+        $public = $temporary.'/most-bim-device-failure-'.bin2hex(random_bytes(12)).'-proof.json';
+        $stream = fopen($public, 'x+b');
+        if ($stream === false || strlen($encoded) > 1048576 || fwrite($stream, $encoded) !== strlen($encoded)) {
+            return null;
+        }
+        chmod($public, 0600);
+        fflush($stream);
+
+        return $public;
+    } catch (\Throwable) {
+        return null;
+    } finally {
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+    }
+}
+
 function recordException(array $data, \Throwable $exception): void
 {
     try {

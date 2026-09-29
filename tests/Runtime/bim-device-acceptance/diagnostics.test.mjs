@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
@@ -135,4 +135,54 @@ test('stage recorder rejects foreign runtime and never exceeds its private file 
     assert.equal(result.status, 0, 'bounded private stage guard child failed');
     assert.equal(statSync(join(directory, 'stages.jsonl')).size, 1048576);
   } finally { cleanup(); }
+});
+
+test('actual preflight failure archive survives private cleanup without leaking data', { timeout: 10_000 }, () => {
+  const { directory, cleanup } = recordingDirectory();
+  let proofPath;
+  try {
+    const result = runPhp(`${stageData(directory)}
+      $context = \\Tests\\Runtime\\BimDeviceAcceptance\\beginStages($data, 'GET', '/api/v1/mobile/design-management/model-versions/1/offline-package');
+      \\Tests\\Runtime\\BimDeviceAcceptance\\stage($context, 'kernel_start');
+      file_put_contents($data['runtime_directory'].'/exceptions.jsonl', json_encode(['at' => gmdate('Y-m-d\\TH:i:s\\Z'),
+        'class' => 'RuntimeException', 'message' => 'SQL secret-canary password', 'classifier' => 'maximum_execution_time',
+        'limits' => ['limit_seconds' => 30, 'credential' => 'secret-canary'], 'args' => ['bearer-token']])."\\n");
+      file_put_contents($data['runtime_directory'].'/http-timings.jsonl', json_encode(['completed_at' => gmdate('Y-m-d\\TH:i:s\\Z'),
+        'path' => '/api/v1/mobile/design-management/model-versions/1/offline-package', 'status' => 500, 'bootstrap_ms' => 3,
+        'body' => 'SQL secret-canary', 'headers' => ['Authorization' => 'bearer-token']])."\\n");
+      set_error_handler(static function ($severity, $message, $file, $line) { throw new ErrorException($message, 0, $severity, $file, $line); });
+      $test = new \\Tests\\Feature\\DesignManagement\\DesignBimDeviceAcceptanceHarnessTest('test_real_device_http_acceptance_until_stop_file');
+      $original = null;
+      try {
+        try { (new ReflectionMethod($test, 'preflight'))->invoke($test, $data + ['version_id' => 1, 'base_url' => 'invalid-test-scheme://secret-canary']); }
+        catch (Throwable $exception) {
+          $original = $exception;
+          $proof = \\Tests\\Runtime\\BimDeviceAcceptance\\archiveFailure($data, $exception);
+          $foreign = $data; $foreign['environment']['APP_ENV'] = 'production';
+          if (\\Tests\\Runtime\\BimDeviceAcceptance\\archiveFailure($foreign, $exception) !== null) { exit(93); }
+          throw $exception;
+        } finally {
+          foreach (glob($data['runtime_directory'].'/*') as $privateFile) { unlink($privateFile); }
+          rmdir($data['runtime_directory']);
+        }
+      } catch (Throwable $rethrown) { if ($rethrown !== $original) { exit(92); } }
+      if (!is_string($proof ?? null) || !is_file($proof) || is_dir($data['runtime_directory'])) { exit(91); }
+      echo json_encode(['proof_path' => $proof]);`);
+    assert.equal(result.status, 0, 'actual preflight archive/rethrow/cleanup failed');
+    proofPath = JSON.parse(result.stdout).proof_path;
+    assert.equal(dirname(realpathSync.native(proofPath)), realpathSync.native(tmpdir()));
+    assert.match(basename(proofPath), /^most-bim-device-failure-[a-f0-9]{24}-proof\.json$/);
+    const text = readFileSync(proofPath, 'utf8');
+    for (const canary of ['secret-canary', 'bearer-token', 'password', 'SQL', 'Authorization', 'invalid-test-scheme']) assert.equal(text.includes(canary), false);
+    const proof = JSON.parse(text);
+    assert.equal(proof.parent_failure.class, 'ErrorException');
+    assert.ok(proof.parent_failure.own_frames.some((frame) => frame.file.endsWith('DesignBimDeviceAcceptanceHarnessTest.php')));
+    assert.ok(proof.stages.some((row) => row.stage === 'kernel_start'));
+    assert.equal(proof.exceptions[0].limits.limit_seconds, 30);
+    assert.equal(proof.timings[0].status, 500);
+    assert.ok(statSync(proofPath).size <= 1048576);
+  } finally {
+    if (proofPath && /^most-bim-device-failure-[a-f0-9]{24}-proof\.json$/.test(basename(proofPath))) rmSync(proofPath);
+    if (existsSync(directory)) cleanup();
+  }
 });
