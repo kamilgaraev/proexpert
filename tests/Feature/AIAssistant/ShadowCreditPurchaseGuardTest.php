@@ -15,14 +15,11 @@ use App\Services\Credits\AICreditsNotReadyException;
 use App\Services\Credits\AICreditService;
 use Mockery;
 use Illuminate\Support\Facades\Validator;
-use Tests\Support\AssistantCreditReadinessFixture;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class ShadowCreditPurchaseGuardTest extends TestCase
 {
-    private ?string $approvalPath = null;
-
     public function test_shadow_balance_distinguishes_billing_permission_from_purchase_availability(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();
@@ -52,21 +49,16 @@ final class ShadowCreditPurchaseGuardTest extends TestCase
         }
     }
 
-    public function test_paid_purchase_availability_requires_valid_readiness_in_addition_to_billing_rights(): void
+    public function test_paid_purchase_availability_uses_enforcement_and_billing_rights(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'most-shadow-purchase-readiness-');
-        config(['ai-assistant-credits.enforce' => true, 'ai-assistant-credits.readiness_approval_path' => $this->approvalPath]);
+        config(['ai-assistant-credits.enforce' => true]);
         $credits = app(AICreditService::class);
-        $unready = $credits->balance($fixture->organization, $fixture->owner);
-        $this->assertSame('paid', $unready['billing_mode']);
-        $this->assertTrue($unready['can_manage_billing']);
-        $this->assertFalse($unready['pack_purchase_enabled']);
-        $this->assertFalse($unready['can_purchase']);
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
-        $ready = $credits->balance($fixture->organization, $fixture->owner);
-        $this->assertTrue($ready['pack_purchase_enabled']);
-        $this->assertTrue($ready['can_purchase']);
+        $owner = $credits->balance($fixture->organization, $fixture->owner);
+        $this->assertSame('paid', $owner['billing_mode']);
+        $this->assertTrue($owner['can_manage_billing']);
+        $this->assertTrue($owner['pack_purchase_enabled']);
+        $this->assertTrue($owner['can_purchase']);
         $member = $credits->balance($fixture->organization, $fixture->member);
         $this->assertTrue($member['pack_purchase_enabled']);
         $this->assertFalse($member['can_manage_billing']);
@@ -90,9 +82,4 @@ final class ShadowCreditPurchaseGuardTest extends TestCase
         $this->assertSame(0, CommercialOrder::query()->where('kind', 'ai_credits')->count());
     }
 
-    protected function tearDown(): void
-    {
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) { unlink($this->approvalPath); }
-        parent::tearDown();
-    }
 }

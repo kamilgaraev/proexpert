@@ -23,7 +23,6 @@ final class AICreditService
     /** @param array<string, mixed> $request */
     public function quote(Organization $organization, User $user, array $request): array
     {
-        $this->assertReady();
         $this->assertMember($organization, $user);
         $profile = (string) ($request['profile'] ?? 'normal');
         $requestKey = trim((string) ($request['request_id'] ?? $request['request_key'] ?? ''));
@@ -75,7 +74,6 @@ final class AICreditService
     /** @param array<string, mixed> $request */
     public function begin(Organization $organization, User $user, string $quoteId, string $requestId, ?string $conversationId = null, array $request = []): AICreditReservation
     {
-        $this->assertReady();
         $this->assertMember($organization, $user);
         if ($request === []) { throw new DomainException('AI credit request is required.'); }
         return DB::transaction(function () use ($organization, $user, $quoteId, $requestId, $conversationId, $request): AICreditReservation {
@@ -342,7 +340,6 @@ final class AICreditService
     public function assertCreditPurchasesEnabled(): void
     {
         if (!(bool) config('ai-assistant-credits.enforce', false)) { throw new AICreditsNotReadyException; }
-        $this->assertReady();
     }
 
     private function assertMember(Organization $organization, User $user): void
@@ -428,20 +425,6 @@ final class AICreditService
     private function reservationPricing(AICreditReservation $reservation): array
     {
         return (array) AICreditQuote::query()->findOrFail($reservation->ai_credit_quote_id)->pricing;
-    }
-
-    private function assertReady(): void
-    {
-        if (! (bool) config('ai-assistant-credits.enforce', false)) { return; }
-        $path = config('ai-assistant-credits.readiness_approval_path') ?: storage_path('app/private/assistant-credit-readiness.json');
-        try {
-            if (! is_string($path) || ! is_file($path) || filesize($path) > 1_048_576) { throw new AICreditsNotReadyException; }
-            $approval = json_decode((string) file_get_contents($path), true, 128, JSON_THROW_ON_ERROR);
-            if (! is_array($approval) || ! app(AICreditReadinessService::class)->verifyApproval($approval, (string) config('app.key'))) { throw new AICreditsNotReadyException; }
-        } catch (\Throwable $exception) {
-            if ($exception instanceof AICreditsNotReadyException) { throw $exception; }
-            throw new AICreditsNotReadyException(previous: $exception);
-        }
     }
 
     /** @param array<string, mixed> $request */

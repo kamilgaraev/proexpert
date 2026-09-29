@@ -388,22 +388,24 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(100, $this->credits->finalize($reservation));
     }
 
-    public function test_enforcement_fails_closed_for_missing_tampered_or_mismatched_approval(): void
+    public function test_signed_qa_approval_does_not_block_credit_operations(): void
     {
+        $this->credits->grant($this->organization, 10000, 'purchase', null, 'pack');
         $request = $this->request();
         $quote = $this->credits->quote($this->organization, $this->user, $request);
         $saved = file_get_contents($this->approvalPath);
         unlink($this->approvalPath);
-        try { $this->credits->quote($this->organization, $this->user, $this->request()); $this->fail('Expected missing approval rejection.'); } catch (\App\Services\Credits\AICreditsNotReadyException) {}
-        file_put_contents($this->approvalPath, $saved);
+        $this->assertTrue($this->credits->creditPurchasesEnabled());
+        $this->assertNotEmpty($this->credits->quote($this->organization, $this->user, $this->request())['quote_id']);
         config()->set('ai-assistant-credits.rub_per_unit', 0.36);
-        try { $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request); $this->fail('Expected changed policy rejection.'); } catch (\App\Services\Credits\AICreditsNotReadyException) {}
+        $reservation = $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request);
+        $this->assertSame($quote['max_units_minor'], $reservation->reserved_minor);
         config()->set('ai-assistant-credits.rub_per_unit', 0.18);
         $approval = json_decode($saved, true, 128, JSON_THROW_ON_ERROR);
         $approval['signature'] = str_repeat('0', 64);
         file_put_contents($this->approvalPath, json_encode($approval, JSON_THROW_ON_ERROR));
-        $this->expectException(\App\Services\Credits\AICreditsNotReadyException::class);
-        $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request);
+        $this->assertTrue($this->credits->creditPurchasesEnabled());
+        $this->assertNotEmpty($this->credits->quote($this->organization, $this->user, $this->request())['quote_id']);
     }
 
     private function request(): array { return ['request_id' => (string) Str::uuid(), 'message' => 'Покажи баланс', 'profile' => 'short']; }

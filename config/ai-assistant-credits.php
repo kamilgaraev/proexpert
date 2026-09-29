@@ -11,7 +11,6 @@ return [
     'rub_per_unit' => 0.18,
     'minimum_units_minor' => 50,
     'charge_step_minor' => 50,
-    'readiness_approval_path' => env('AI_ASSISTANT_CREDITS_READINESS_PATH'),
     'profiles' => [
         'short' => ['input_tokens' => 8192, 'output_tokens' => 1024, 'max_calls' => 2],
         'normal' => ['input_tokens' => 16384, 'output_tokens' => 2048, 'max_calls' => 4],
