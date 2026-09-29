@@ -6,6 +6,7 @@ namespace App\Support\AI;
 
 use Closure;
 use Yethee\Tiktoken\EncoderProvider;
+use Yethee\Tiktoken\Exception\IOError;
 
 final class TokenCounter
 {
@@ -19,8 +20,24 @@ final class TokenCounter
 
     public function __construct(?object $encoder = null)
     {
-        $encoder ??= (self::$provider ??= new EncoderProvider())->get('o200k_base');
+        if ($encoder === null) {
+            if (self::$provider === null) {
+                $cacheDir = getenv('TIKTOKEN_CACHE_DIR');
+                self::ensureCacheDirectory($cacheDir !== false && $cacheDir !== ''
+                    ? $cacheDir
+                    : sys_get_temp_dir().DIRECTORY_SEPARATOR.'tiktoken');
+                self::$provider = new EncoderProvider();
+            }
+            $encoder = self::$provider->get('o200k_base');
+        }
         $this->encode = Closure::fromCallable([$encoder, 'encode']);
+    }
+
+    private static function ensureCacheDirectory(string $cacheDir): void
+    {
+        if (! is_dir($cacheDir) && ! @mkdir($cacheDir, 0750, true) && ! is_dir($cacheDir)) {
+            throw new IOError(sprintf('Directory does not exist and cannot be created: %s', $cacheDir));
+        }
     }
 
     public function text(string $text): int
