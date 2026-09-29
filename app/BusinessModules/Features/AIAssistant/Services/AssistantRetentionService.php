@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantMemory;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
+use App\BusinessModules\Features\AIAssistant\Models\ChatAttachment;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Models\ReportFile;
 use App\Services\Storage\FileService;
@@ -28,6 +29,9 @@ class AssistantRetentionService
         $counts['conversations'] = (clone $expired)->count();
         $counts['messages'] = DB::table('ai_messages')->whereIn('conversation_id', clone $ids)->count();
         $counts['summaries'] = DB::table('ai_conversation_summaries')->whereIn('conversation_id', clone $ids)->count();
+        $counts['attachments'] = ChatAttachment::query()->whereIn('conversation_id', clone $ids)->count();
+        $counts['attachments'] += ChatAttachment::query()->whereNull('message_id')->where('created_at', '<=', now()->subDay())->where(fn (Builder $q) => $q->whereNull('conversation_id')->orWhereNotIn('conversation_id', clone $ids))->count();
+        $counts['files'] += $counts['attachments'];
         $counts['memories'] = AssistantMemory::query()->where(fn (Builder $q) => $q->whereIn('conversation_id', clone $ids)
             ->orWhere('expires_at', '<=', now())->orWhere('last_used_at', '<=', $cutoff))->count();
         foreach ($expired->orderBy('id')->cursor() as $conversation) {
@@ -58,6 +62,20 @@ class AssistantRetentionService
             }
         });
         $counts['memories'] += AssistantMemory::query()->where(fn (Builder $q) => $q->where('expires_at', '<=', now())->orWhere('last_used_at', '<=', $cutoff))->delete();
+        ChatAttachment::query()->whereNull('message_id')->where('created_at', '<=', now()->subDay())->orderBy('id')->chunkById(100, function ($rows) use (&$counts): void {
+            foreach ($rows as $row) {
+                DB::transaction(function () use ($row, &$counts): void {
+                    $locked = ChatAttachment::query()->whereKey($row->id)->whereNull('message_id')->lockForUpdate()->first();
+                    if ($locked === null) { return; }
+                    if (!$this->files->delete($locked->storage_path, \App\Models\Organization::query()->findOrFail($locked->organization_id))) {
+                        throw new RuntimeException('assistant_retention_file_delete_failed');
+                    }
+                    $locked->delete();
+                    $counts['attachments']++;
+                    $counts['files']++;
+                });
+            }
+        });
 
         return ['mode' => 'execute', 'days' => $days, 'cutoff' => $cutoff->toISOString()] + $counts;
     }
@@ -71,6 +89,14 @@ class AssistantRetentionService
                 return null;
             }
             $result = $this->emptyCounts();
+            foreach (ChatAttachment::query()->where('organization_id', $locked->organization_id)->where('conversation_id', $locked->id)->lockForUpdate()->get() as $attachment) {
+                if (!$this->files->delete($attachment->storage_path, $locked->organization)) {
+                    throw new RuntimeException('assistant_retention_file_delete_failed');
+                }
+                $attachment->delete();
+                $result['attachments']++;
+                $result['files']++;
+            }
             foreach ($this->reportCandidates($locked) as $report) {
                 if (! $this->files->delete($report->path, $locked->organization)) {
                     throw new RuntimeException('assistant_retention_file_delete_failed');
@@ -156,7 +182,7 @@ class AssistantRetentionService
 
     private function emptyCounts(): array
     {
-        return ['conversations' => 0, 'messages' => 0, 'summaries' => 0, 'memories' => 0, 'documents' => 0, 'reports' => 0, 'files' => 0];
+        return ['conversations' => 0, 'messages' => 0, 'summaries' => 0, 'memories' => 0, 'documents' => 0, 'attachments' => 0, 'reports' => 0, 'files' => 0];
     }
 
     private function artifacts(array $metadata): array

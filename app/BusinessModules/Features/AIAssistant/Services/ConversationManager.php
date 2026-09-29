@@ -52,6 +52,43 @@ class ConversationManager
         });
     }
 
+    public function updateContext(Conversation $conversation, User $actor, int $organizationId, array $changes, array $remove = [], bool $preserveSelectionDetails = false): Conversation
+    {
+        $this->assertMember($actor, $organizationId);
+        $this->assertAccessible($conversation, $actor, true);
+
+        return DB::transaction(function () use ($conversation, $actor, $organizationId, $changes, $remove, $preserveSelectionDetails): Conversation {
+            $locked = Conversation::query()->lockForUpdate()->findOrFail($conversation->id);
+            $currentActor = User::query()->findOrFail($actor->id);
+            $this->assertMember($currentActor, $organizationId);
+            if ((int) $locked->organization_id !== $organizationId || ! $this->canEdit($locked, $currentActor)) {
+                throw new RuntimeException('conversation_access_denied');
+            }
+
+            $context = is_array($locked->context) ? $locked->context : [];
+            if ($preserveSelectionDetails && is_array($changes['selected_estimate'] ?? null)) {
+                $current = is_array($context['selected_estimate'] ?? null) ? $context['selected_estimate'] : [];
+                if (($changes['selected_estimate']['estimate_id'] ?? null) === ($current['estimate_id'] ?? null)) {
+                    $changes['selected_estimate'] = array_merge($current, $changes['selected_estimate']);
+                } else {
+                    $changes['selected_estimate'] = array_merge(['position_filter' => [], 'position_numbers' => []], $changes['selected_estimate']);
+                }
+            }
+            foreach ($remove as $key) {
+                if (is_string($key)) {
+                    unset($context[$key]);
+                }
+            }
+            $locked->forceFill([
+                'context' => array_merge($context, $changes),
+                'context_version' => (int) $locked->context_version + 1,
+            ])->save();
+            $conversation->setRawAttributes($locked->getAttributes(), true);
+
+            return $conversation;
+        });
+    }
+
     public function touchActivity(Conversation $conversation): void
     {
         $conversation->forceFill(['last_activity_at' => now()])->save();

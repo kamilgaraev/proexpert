@@ -18,6 +18,8 @@ final class AssistantChatRequest extends FormRequest
     {
         return [
             'message' => ['required', 'string', 'max:4000'],
+            'attachment_ids' => ['sometimes', 'array', 'max:2'],
+            'attachment_ids.*' => ['required', 'uuid', 'distinct:ignore_case'],
             'conversation_id' => ['nullable', 'integer', 'min:1'],
             'request_id' => ['required', 'uuid'],
             'quote_id' => ['required', 'uuid'],

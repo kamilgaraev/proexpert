@@ -96,6 +96,62 @@ final class AssistantConversationPrivacyTest extends TestCase
         $this->assertNull($this->manager->findAccessibleConversation($conversation->id, $this->viewer, $this->organization->id));
     }
 
+    public function test_context_update_merges_fresh_context_and_increments_version_without_activity_touch(): void
+    {
+        $conversation = $this->conversation();
+        $activity = now()->subDay()->startOfSecond();
+        $conversation->forceFill(['last_activity_at' => $activity])->save();
+        DB::table('ai_conversations')->where('id', $conversation->id)->update(['context' => json_encode([
+            'unrelated' => 'fresh',
+            'selected_estimate' => ['estimate_id' => 42, 'position_filter' => ['бетон'], 'position_numbers' => [4]],
+        ], JSON_THROW_ON_ERROR)]);
+        $version = (int) $conversation->context_version;
+
+        $this->manager->updateContext($conversation, $this->owner, (int) $this->organization->id, ['last_task_type' => 'financial']);
+        $this->assertSame(['estimate_id' => 42, 'position_filter' => ['бетон'], 'position_numbers' => [4]], $conversation->refresh()->context['selected_estimate']);
+        $this->manager->updateContext($conversation, $this->owner, (int) $this->organization->id, ['selected_estimate' => ['estimate_id' => 42, 'position_filter' => [], 'position_numbers' => []]]);
+
+        $saved = $conversation->refresh();
+        $this->assertSame(['unrelated' => 'fresh', 'selected_estimate' => ['estimate_id' => 42, 'position_filter' => [], 'position_numbers' => []], 'last_task_type' => 'financial'], $saved->context);
+        $this->assertSame($version + 2, (int) $saved->context_version);
+        $this->assertTrue($saved->last_activity_at->equalTo($activity));
+    }
+
+    public function test_context_update_requires_current_organization_and_editor_access(): void
+    {
+        $conversation = $this->conversation();
+        $this->share($conversation);
+        foreach ([
+            fn () => $this->manager->updateContext($conversation, $this->viewer, (int) $this->organization->id, ['selected_estimate' => ['estimate_id' => 99]]),
+            fn () => $this->manager->updateContext($conversation, $this->owner, (int) $this->organization->id + 1, ['selected_estimate' => ['estimate_id' => 99]]),
+        ] as $operation) {
+            try {
+                $operation();
+                $this->fail('Context updates must require current-organization editor access.');
+            } catch (RuntimeException) {
+            }
+        }
+
+        $this->manager->updateParticipants($conversation, $this->owner, (int) $this->organization->id, [['user_id' => $this->viewer->id, 'role' => 'editor']]);
+        $this->manager->updateParticipants($conversation, $this->owner, (int) $this->organization->id, []);
+        try {
+            $this->manager->updateContext($conversation, $this->viewer, (int) $this->organization->id, ['selected_estimate' => ['estimate_id' => 99]]);
+            $this->fail('Revoked editors must not update context.');
+        } catch (RuntimeException) {
+        }
+        $this->assertSame([], $conversation->refresh()->context);
+
+        $otherOrganization = Organization::factory()->create();
+        $this->owner->organizations()->attach($otherOrganization->id, ['is_active' => true]);
+        DB::table('users')->where('id', $this->owner->id)->update(['current_organization_id' => $otherOrganization->id]);
+        try {
+            $this->manager->updateContext($conversation, $this->owner, (int) $this->organization->id, ['selected_estimate' => ['estimate_id' => 99]]);
+            $this->fail('A stale actor model must not authorize an update after its current organization changed.');
+        } catch (RuntimeException) {
+        }
+        $this->assertSame([], $conversation->refresh()->context);
+    }
+
     public function test_only_owner_shares_and_viewer_cannot_edit_or_keep_revoked_access(): void
     {
         $conversation = $this->conversation();

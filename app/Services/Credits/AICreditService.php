@@ -24,6 +24,9 @@ final class AICreditService
     public function quote(Organization $organization, User $user, array $request): array
     {
         $this->assertMember($organization, $user);
+        if (($request['attachment_ids'] ?? []) !== []) {
+            $request = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantChatAttachmentService::class)->prepareRequest($request, $user, (int) $organization->id);
+        }
         $profile = (string) ($request['profile'] ?? 'normal');
         $requestKey = trim((string) ($request['request_id'] ?? $request['request_key'] ?? ''));
         if ($requestKey === '' || strlen($requestKey) > 100) {
@@ -83,6 +86,13 @@ final class AICreditService
         $this->assertMember($organization, $user);
         if ($request === []) { throw new DomainException('AI credit request is required.'); }
         return DB::transaction(function () use ($organization, $user, $quoteId, $requestId, $conversationId, $request): AICreditReservation {
+            if (($request['attachment_ids'] ?? []) !== []) {
+                if ((isset($request['conversation_id']) ? (string) $request['conversation_id'] : null) !== $conversationId) {
+                    throw new DomainException('AI credit attachment conversation conflict.');
+                }
+                $request['request_id'] = $requestId;
+                $request = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantChatAttachmentService::class)->prepareRequest($request, $user, (int) $organization->id, true);
+            }
             $wallet = $this->walletForUpdate((int) $organization->getKey());
             $existing = AICreditReservation::query()
                 ->where('organization_id', $organization->getKey())
@@ -397,6 +407,8 @@ final class AICreditService
             return false;
         }
 
+        if (!empty($request['attachment_ids'])) { return false; }
+
         $context = $request['context'] ?? [];
         if (! is_array($context) || ! $this->hasOnlyImplicitProjectReference($context['entity_refs'] ?? [])
             || ! empty($context['period']) || ! empty($context['filters'])
@@ -472,6 +484,10 @@ final class AICreditService
     public function canonicalAssistantRequest(array $request): string
     {
         unset($request['quote_id'], $request['request_id'], $request['request_key']);
+        $attachments = $request['attachment_ids'] ?? [];
+        if (is_array($attachments)) { $attachments = array_map('strtolower', $attachments); sort($attachments, SORT_STRING); }
+        $manifest = $request['attachment_manifest'] ?? [];
+        if (is_array($manifest)) { usort($manifest, static fn (array $a, array $b): int => strcmp((string) ($a['id'] ?? ''), (string) ($b['id'] ?? ''))); }
         if (($request['profile'] ?? 'normal') !== 'ocr') {
             $request = [
                 'message' => (string) ($request['message'] ?? ''),
@@ -482,6 +498,10 @@ final class AICreditService
                 'goal' => $request['goal'] ?? null,
                 'desired_mode' => $request['desired_mode'] ?? null,
             ];
+            if ($attachments !== []) {
+                $request['attachment_ids'] = $attachments;
+                $request['attachment_manifest'] = $manifest;
+            }
         }
         $this->sortRecursive($request);
         return hash('sha256', json_encode($request, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));

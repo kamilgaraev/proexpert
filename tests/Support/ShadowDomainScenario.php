@@ -134,6 +134,25 @@ final class ShadowDomainScenario
             ShadowObservationVerifier::progress($scenario['id'], 'domain_business_snapshot_before_ask_done');
             $response = null;
             $error = null;
+            $askQueryStats = ['count' => 0, 'duration_ms' => 0.0, 'slowest' => []];
+            $connection = DB::connection();
+            $originalDispatcher = $connection->getEventDispatcher();
+            if ($originalDispatcher !== null) {
+                $askDispatcher = clone $originalDispatcher;
+                $askDispatcher->listen(\Illuminate\Database\Events\QueryExecuted::class, static function (\Illuminate\Database\Events\QueryExecuted $event) use (&$askQueryStats, &$askStarted): void {
+                    $askQueryStats['count']++;
+                    $askQueryStats['duration_ms'] += (float) $event->time;
+                    $key = hash('sha256', $event->sql);
+                    $offset = (int) ceil((hrtime(true) - $askStarted) / 1_000_000);
+                    $query = $askQueryStats['slowest'][$key] ?? ['count' => 0, 'duration_ms' => 0.0, 'max_ms' => 0.0, 'first_ms' => $offset, 'last_ms' => $offset, 'template' => $event->sql];
+                    $query['count']++;
+                    $query['duration_ms'] += (float) $event->time;
+                    $query['max_ms'] = max($query['max_ms'], (float) $event->time);
+                    $query['last_ms'] = $offset;
+                    $askQueryStats['slowest'][$key] = $query;
+                });
+                $connection->setEventDispatcher($askDispatcher);
+            }
             $askStarted = hrtime(true);
             try {
                 ShadowObservationVerifier::progress($scenario['id'], 'domain_ask');
@@ -148,6 +167,9 @@ final class ShadowDomainScenario
                 $error = ShadowObservationVerifier::diagnostic($exception, 'ask');
             } finally {
                 $askDurationMs = (int) ceil((hrtime(true) - $askStarted) / 1_000_000);
+                if ($originalDispatcher !== null) { $connection->setEventDispatcher($originalDispatcher); }
+                uasort($askQueryStats['slowest'], static fn (array $left, array $right): int => $right['duration_ms'] <=> $left['duration_ms']);
+                $askQueryStats['slowest'] = array_slice($askQueryStats['slowest'], 0, 15, true);
             }
             ShadowObservationVerifier::progress($scenario['id'], 'verify');
             $after = self::snapshot($models);
@@ -160,7 +182,7 @@ final class ShadowDomainScenario
                 'readable_at_execution' => $readable, 'database_golden' => $golden,
                 'business_rows_before_ask' => $before, 'business_rows_after_ask' => $after,
                 'business_scope_before_ask' => $businessBefore, 'business_scope_after_ask' => $businessAfter,
-                'response' => $response, 'error' => $error, 'ask_duration_ms' => $askDurationMs, 'domain_verification' => $verification];
+                'response' => $response, 'error' => $error, 'ask_duration_ms' => $askDurationMs, 'ask_query_stats' => $askQueryStats, 'domain_verification' => $verification];
             if ($longQuery) {
                 $conversationId = $response['conversation_id'] ?? null;
                 $persisted = $conversationId === null ? null : Message::query()->where('conversation_id', $conversationId)

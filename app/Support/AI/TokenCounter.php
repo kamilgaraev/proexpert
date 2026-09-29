@@ -78,6 +78,17 @@ final class TokenCounter
     {
         $tokens = 0;
         foreach ($messages as $message) {
+            if (is_array($message['content'] ?? null)) {
+                $content = $message['content'];
+                unset($message['content']);
+                foreach ($content as $part) {
+                    if (($part['type'] ?? null) === 'image_url') {
+                        $tokens += 4096;
+                    } else {
+                        $tokens += $this->value($part);
+                    }
+                }
+            }
             $tokens += self::MESSAGE_OVERHEAD + $this->value($message);
         }
 
@@ -87,6 +98,17 @@ final class TokenCounter
     public function tools(array $tools): int
     {
         return $tools === [] ? 0 : self::TOOL_OVERHEAD + $this->value($tools);
+    }
+
+    public function imageTokens(array $messages): int
+    {
+        $tokens = 0;
+        foreach ($messages as $message) {
+            foreach (is_array($message['content'] ?? null) ? $message['content'] : [] as $part) {
+                if (($part['type'] ?? null) === 'image_url') { $tokens += 4096; }
+            }
+        }
+        return $tokens;
     }
 
     public function value(mixed $value): int

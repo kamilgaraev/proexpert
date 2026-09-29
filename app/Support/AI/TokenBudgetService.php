@@ -31,9 +31,11 @@ final class TokenBudgetService
         $configured = app()->bound('config') ? config("ai-assistant-credits.profiles.{$profile}") : null;
         $limits = $this->normalizeLimits($snapshotLimits ?? $configured ?? self::limits($profile));
         $factor = $this->safetyFactor();
-        $messages = $this->trimMessages($messages, $tools, (int) floor($limits['input'] * 0.99 / $factor));
+        $messages = $this->trimMessages($messages, $tools, (int) floor($limits['input'] * 0.99), $factor);
         $inputTokens = $this->counter->messages($messages);
         $toolsTokens = $this->counter->tools($tools);
+        $imageTokens = $this->counter->imageTokens($messages);
+        $weightedInput = (int) ceil(($inputTokens + $toolsTokens - $imageTokens) * $factor) + $imageTokens;
 
         $defaultPricing = ['input_micro_rub_per_million' => 13_500_000, 'output_micro_rub_per_million' => 67_500_000];
         $pricing = app()->bound('config') ? config('ai-assistant-credits.pricing', $defaultPricing) : $defaultPricing;
@@ -51,17 +53,18 @@ final class TokenBudgetService
             'profile' => self::normalizeProfile($profile),
             'input_limit' => $limits['input'],
             'budget_limits' => ['input_tokens' => $limits['input'], 'output_tokens' => $limits['output'], 'max_calls' => $limits['calls']],
-            'input_tokens' => (int) ceil(($inputTokens + $toolsTokens) * $factor),
+            'input_tokens' => $weightedInput,
             'raw_input_tokens' => $inputTokens + $toolsTokens,
             'safety_factor' => $factor,
             'message_tokens' => $inputTokens,
             'tools_tokens' => $toolsTokens,
             'max_completion_tokens' => $limits['output'],
             'max_calls' => $limits['calls'],
-            'estimated_cost_rub' => round((ceil(($inputTokens + $toolsTokens) * $factor) * $inputPrice + $limits['output'] * $outputPrice) / 1_000_000_000_000, 6),
+            'estimated_cost_rub' => round(($weightedInput * $inputPrice + $limits['output'] * $outputPrice) / 1_000_000_000_000, 6),
             'max_cost_rub' => ($limits['input'] * $inputPrice + $limits['output'] * $outputPrice) * $limits['calls'] / 1_000_000_000_000,
             'token_count_encoding' => 'o200k_base',
             'token_count_exact' => false,
+            'contains_images' => $this->containsImages($messages),
         ];
     }
 
@@ -82,7 +85,7 @@ final class TokenBudgetService
         $cache = $this->cache();
         $persisted = true;
         $factor = (float) ($prepared['safety_factor'] ?? 1.1);
-        if ($ratio !== null && $ratio > 1.0 && $cache !== null) {
+        if ($ratio !== null && $ratio > 1.0 && $cache !== null && !($prepared['contains_images'] ?? false)) {
             try {
                 $lock = app()->bound('cache') ? app('cache')->lock($this->calibrationKey().':lock', 5) : null;
                 $update = function () use ($cache, $ratio, &$factor): void {
@@ -106,6 +109,7 @@ final class TokenBudgetService
             'actual_to_estimate_ratio' => $ratio,
             'safety_factor' => $factor,
             'persisted' => $persisted,
+            'text_calibration_skipped' => (bool) ($prepared['contains_images'] ?? false),
             'profile_input_exceeded' => $actualInputTokens > (int) ($prepared['input_limit'] ?? self::limits((string) ($prepared['profile'] ?? 'normal'))['input']),
             'exact' => false,
         ];
@@ -116,6 +120,16 @@ final class TokenBudgetService
         $value = $this->cache()?->get($this->calibrationKey(), 1.1);
 
         return is_numeric($value) ? max(1.1, (float) $value) : 1.1;
+    }
+
+    private function containsImages(array $messages): bool
+    {
+        foreach ($messages as $message) {
+            foreach (is_array($message['content'] ?? null) ? $message['content'] : [] as $part) {
+                if (($part['type'] ?? null) === 'image_url') { return true; }
+            }
+        }
+        return false;
     }
 
     private function calibrationKey(): string
@@ -155,14 +169,14 @@ final class TokenBudgetService
         return $normalized;
     }
 
-    private function trimMessages(array $messages, array $tools, int $limit): array
+    private function trimMessages(array $messages, array $tools, int $limit, float $factor): array
     {
-        $available = $limit - $this->counter->tools($tools);
+        $available = $limit - (int) ceil($this->counter->tools($tools) * $factor);
         if ($available < 1) {
             throw new DomainException('ai_token_budget_exhausted');
         }
         $currentQuery = $this->currentQueryIndex($messages);
-        while ($this->counter->messages($messages) > $available) {
+        while (ceil(($this->counter->messages($messages) - $this->counter->imageTokens($messages)) * $factor) + $this->counter->imageTokens($messages) > $available) {
             $drop = $this->lowestPriorityIndex($messages, $currentQuery);
             if ($drop === null) {
                 throw new DomainException('ai_token_budget_exhausted');
@@ -192,6 +206,9 @@ final class TokenBudgetService
     private function lowestPriorityIndex(array $messages, ?int $currentQuery): ?int
     {
         foreach ($messages as $index => $message) {
+            if (is_array($message['content'] ?? null) && array_filter($message['content'], static fn (array $part): bool => ($part['type'] ?? null) === 'image_url') !== []) {
+                continue;
+            }
             if (($currentQuery === null || $index < $currentQuery)
                 && !in_array($message['role'] ?? null, ['system', 'developer'], true)) {
                 return $index;

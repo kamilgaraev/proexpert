@@ -51,7 +51,8 @@ RUN apk add --no-cache \
     libzip-dev \
     freetype-dev \
     icu-dev \
-    libjpeg-turbo-dev
+    libjpeg-turbo-dev \
+    libwebp-dev
 
 COPY --from=geometry-runtime /opt/libredwg /opt/libredwg
 COPY --from=geometry-runtime /tmp/libredwg.tar.xz /usr/share/source/libredwg-0.13.4.tar.xz
@@ -78,12 +79,12 @@ ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="073fbc2f9209418afbb415a46897e038a896260c7a3193d9367b8fdc8cd211dd"
 
 # Конфигурация расширений GD
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp
 
 # Установка PHP расширений
 RUN apk add --no-cache --virtual .curl-build-deps curl-dev \
     && docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache intl bcmath curl \
-    && php -r "exit(function_exists('bcdiv') && extension_loaded('curl') ? 0 : 1);" \
+    && php -r "exit(function_exists('bcdiv') && extension_loaded('curl') && function_exists('imagewebp') && function_exists('imagecreatefromwebp') ? 0 : 1);" \
     && apk del .curl-build-deps
 
 # Установка PECL расширений (Redis, Igbinary)

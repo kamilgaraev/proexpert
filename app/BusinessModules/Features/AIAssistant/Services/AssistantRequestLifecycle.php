@@ -53,6 +53,9 @@ final class AssistantRequestLifecycle
         $payload['request_id'] = $requestId;
         $payload['conversation_id'] = $conversationId;
         $payload['profile'] ??= 'normal';
+        if (($payload['attachment_ids'] ?? []) !== []) {
+            $payload = app(AssistantChatAttachmentService::class)->prepareRequest($payload, $actor, (int) $organization->id);
+        }
         $requestHash = $this->credits->canonicalAssistantRequest($payload);
 
         return DB::transaction(function () use ($organization, $actor, $conversationId, $payload, $requestId, $requestHash, $surface, $queued): array {
@@ -103,7 +106,7 @@ final class AssistantRequestLifecycle
                 'conversation_id' => $conversationId,
                 'reservation_id' => $reservation->id,
                 'request_hash' => $requestHash,
-                'payload' => $queued ? $payload : null,
+                'payload' => $queued ? array_diff_key($payload, ['attachment_manifest' => true]) : null,
                 'surface' => $surface,
                 'profile' => (string) $payload['profile'],
                 'status' => 'running',

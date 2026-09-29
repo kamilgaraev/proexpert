@@ -116,6 +116,10 @@ class AIAssistantService
 
     private ?int $resolvedEstimateId = null;
 
+    private array $currentAttachmentIds = [];
+
+    private array $currentImageParts = [];
+
     public function __construct(
         LLMProviderInterface $llmProvider,
         ConversationManager $conversationManager,
@@ -178,6 +182,10 @@ class AIAssistantService
         $this->requestOutcome = null;
         $this->estimateResolutionAttempted = false;
         $this->resolvedEstimateId = null;
+        $this->currentAttachmentIds = $requestPayload['attachment_ids'] ?? [];
+        $this->currentAttachmentIds = array_map('strtolower', $this->currentAttachmentIds);
+        sort($this->currentAttachmentIds, SORT_STRING);
+        $this->currentImageParts = [];
         if ($this->requestLifecycle === null) {
             try {
                 return $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
@@ -206,6 +214,8 @@ class AIAssistantService
             $this->activeActor = null;
             $this->activeToolResults = [];
             $this->pendingSummary = null;
+            $this->currentAttachmentIds = [];
+            $this->currentImageParts = [];
         }
     }
 
@@ -229,7 +239,15 @@ class AIAssistantService
         $this->estimateResolutionAttempted = false;
         $this->resolvedEstimateId = null;
         $this->activeRequest = $request;
+        $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
+        $this->currentImageParts = [];
         try {
+            if ($this->currentAttachmentIds !== []) {
+                $validated = app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id);
+                if (!hash_equals($request->request_hash, app(\App\Services\Credits\AICreditService::class)->canonicalAssistantRequest($validated))) {
+                    throw new AuthorizationException(trans_message('ai_assistant.request_mismatch'));
+                }
+            }
             $this->requestLifecycle->stage($request, $user, 'reading');
             $result = $this->performAsk($query, (int) $request->organization_id, $user, $conversationId, $payload);
             return $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
@@ -243,6 +261,8 @@ class AIAssistantService
             $this->activeActor = null;
             $this->activeToolResults = [];
             $this->pendingSummary = null;
+            $this->currentAttachmentIds = [];
+            $this->currentImageParts = [];
         }
     }
 
@@ -281,7 +301,7 @@ class AIAssistantService
             $this->recordRequestOutcome('access_denied');
         }
 
-        $this->conversationManager->addMessage(
+        $userMessage = $this->conversationManager->addMessage(
             $conversation,
             'user',
             $query,
@@ -297,7 +317,11 @@ class AIAssistantService
             ]
         );
 
-        $financialResult = $this->answerFinancialRequest($query, $organizationId, $user, $conversation, $taskPlan);
+        if ($this->currentAttachmentIds !== []) {
+            app(AssistantChatAttachmentService::class)->linkMessage($this->currentAttachmentIds, $userMessage, $user);
+        }
+
+        $financialResult = $this->currentAttachmentIds === [] ? $this->answerFinancialRequest($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($financialResult !== null) {
             return $financialResult;
         }
@@ -344,7 +368,7 @@ class AIAssistantService
         $conversation->context = $conversationContext;
         $conversation->save();
 
-        $agentResult = $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan);
+        $agentResult = $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($agentResult !== null) {
             return $agentResult;
         }
@@ -1106,13 +1130,14 @@ class AIAssistantService
         $payload['entity_references'] = $answer['source_refs'] ?? [];
         $payload['rag_context'] = ['used' => false, 'sources' => []];
         $payload = $this->decorateMetadata($payload, $user);
-        $context = array_merge($conversation->context ?? [], $this->buildLastRequestContext($query, $taskPlan));
+        $contextChanges = $this->buildLastRequestContext($query, $taskPlan);
+        $contextRemovals = [];
         if (is_array($answer['selection'] ?? null)) {
-            $context['selected_estimate'] = $answer['selection'];
+            $contextChanges['selected_estimate'] = $answer['selection'];
         } elseif (($answer['pinned_estimate_id'] ?? null) === null) {
-            unset($context['selected_estimate']);
+            $contextRemovals[] = 'selected_estimate';
         }
-        $this->conversationManager->updateContext($conversation, $context);
+        $this->conversationManager->updateContext($conversation, $user, $organizationId, $contextChanges, $contextRemovals);
         $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, $this->llmProvider->getModel(), $payload);
         if ($answer['validation_status'] === 'verified') {
             $this->pendingSummary = [
@@ -1153,17 +1178,17 @@ class AIAssistantService
         if (! $this->estimateResolutionAttempted) {
             return;
         }
-        $context = $conversation->context ?? [];
         if ($this->resolvedEstimateId === null || ! ($this->dataAccess?->canReadEntity($actor, $organizationId, 'estimate', $this->resolvedEstimateId) ?? false)) {
-            unset($context['selected_estimate'], $context['selected_estimate_id']);
+            $changes = [];
+            $remove = ['selected_estimate', 'selected_estimate_id'];
         } else {
-            $previous = is_array($context['selected_estimate'] ?? null) ? $context['selected_estimate'] : [];
-            $context['selected_estimate'] = ($previous['estimate_id'] ?? null) === $this->resolvedEstimateId
-                ? $previous
-                : ['estimate_id' => $this->resolvedEstimateId, 'position_filter' => [], 'position_numbers' => []];
-            $context['selected_estimate_id'] = $this->resolvedEstimateId;
+            $changes = [
+                'selected_estimate' => ['estimate_id' => $this->resolvedEstimateId],
+                'selected_estimate_id' => $this->resolvedEstimateId,
+            ];
+            $remove = [];
         }
-        $this->conversationManager->updateContext($conversation, $context);
+        $this->conversationManager->updateContext($conversation, $actor, $organizationId, $changes, $remove, preserveSelectionDetails: true);
     }
 
     private function collectSourceRefs(array $ragMetadata, array $toolResults): array
@@ -2051,6 +2076,8 @@ class AIAssistantService
             return false;
         }
 
+        if (!empty($requestPayload['attachment_ids'])) { return false; }
+
         $context = $requestPayload['context'] ?? [];
         if (! is_array($context) || ! $this->hasOnlyImplicitProjectReference($context['entity_refs'] ?? [])
             || ! empty($context['period'])
@@ -2224,6 +2251,9 @@ class AIAssistantService
             'role' => 'system',
             'content' => $this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.trusted_instruction_boundary'),
         ]];
+        if ($this->currentAttachmentIds !== []) {
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_instruction_boundary');
+        }
 
         $history = $this->conversationManager->getMessagesForContextWithBudget(
             $conversation,
@@ -2258,7 +2288,15 @@ class AIAssistantService
         }
         $messages[] = ['role' => 'user', 'content' => json_encode($references, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
         if ($currentQuery !== '') {
-            $messages[] = ['role' => 'user', 'content' => $currentQuery];
+            if ($this->currentAttachmentIds !== []) {
+                if ($this->activeActor === null || $this->activeRequest === null) {
+                    throw new RuntimeException('assistant_attachment_request_required');
+                }
+                $this->currentImageParts = app(AssistantChatAttachmentService::class)->providerParts($this->currentAttachmentIds, $this->activeActor, (int) $conversation->organization_id, $this->activeRequest->request_id);
+                $messages[] = ['role' => 'user', 'content' => array_merge([['type' => 'text', 'text' => $currentQuery]], $this->currentImageParts), '_trusted_chat_images' => true];
+            } else {
+                $messages[] = ['role' => 'user', 'content' => $currentQuery];
+            }
         }
         return $messages;
     }
@@ -2657,6 +2695,14 @@ class AIAssistantService
     protected function normalizeMessageForProvider(array $message): ?array
     {
         $normalized = $message;
+        unset($normalized['_trusted_chat_images']);
+        if (is_array($message['content'] ?? null)) {
+            if (($message['_trusted_chat_images'] ?? false) !== true || ($message['role'] ?? null) !== 'user'
+                || array_slice($message['content'], 1) !== $this->currentImageParts) {
+                throw new RuntimeException('assistant_untrusted_image_parts');
+            }
+            return $normalized;
+        }
         $content = (string) ($message['content'] ?? '');
         $normalized['content'] = $content;
 

@@ -13,6 +13,9 @@ use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Models\Message;
+use App\BusinessModules\Features\AIAssistant\Models\ChatAttachment;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantChatAttachmentService;
+use App\Services\Storage\FileService;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
@@ -97,6 +100,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
         (require database_path('migrations/2026_09_29_000009_create_ai_assistant_requests_table.php'))->up();
         (require database_path('migrations/2026_09_29_000010_add_async_payload_to_ai_assistant_requests.php'))->up();
+        (require database_path('migrations/2026_09_30_000001_create_ai_chat_attachments_table.php'))->up();
         $this->organization = Organization::withoutEvents(fn () => Organization::query()->create(['name' => 'Запросы помощника']));
         $this->actor = $this->member('Автор');
         $authorization = $this->mock(AuthorizationService::class);
@@ -943,6 +947,97 @@ final class AssistantRequestLifecycleTest extends TestCase
         return $payload + ['quote_id' => $quote['quote_id']];
     }
 
+    public function test_image_ask_uses_current_image_parts_and_actual_receipt_instead_of_free_greeting(): void
+    {
+        $image = $this->imageFixture();
+        $payload = $this->quote(['message' => 'Привет', 'profile' => 'normal', 'attachment_ids' => [$image->public_id]]);
+        $this->assertGreaterThan(0, AICreditQuote::query()->where('public_id', $payload['quote_id'])->sole()->max_units_minor);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $imageCall = 0;
+        $provider->expects($this->exactly(2))->method('chat')->willReturnCallback(function (array $messages, array $options) use (&$imageCall): array {
+            $imageCall++;
+            if ($imageCall === 2) {
+                foreach ($messages as $message) { $this->assertIsString($message['content']); }
+                return ['content' => 'Могу помочь разобрать документы и данные.', 'tool_calls' => [], 'input_tokens' => 100, 'output_tokens' => 7, 'tokens_used' => 107, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true];
+            }
+            $current = $messages[array_key_last($messages)];
+            $this->assertSame('user', $current['role']);
+            $this->assertSame(['type' => 'text', 'text' => 'Привет'], $current['content'][0]);
+            $this->assertSame('high', $current['content'][1]['image_url']['detail']);
+            $this->assertStringStartsWith('data:image/png;base64,', $current['content'][1]['image_url']['url']);
+            $this->assertArrayNotHasKey('_trusted_chat_images', $current);
+            $this->assertLessThanOrEqual(16384, $options['estimated_input_tokens']);
+            return ['content' => 'На изображении виден цветной квадрат.', 'tool_calls' => [], 'input_tokens' => 3020, 'output_tokens' => 7, 'tokens_used' => 3027, 'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true];
+        });
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->method('plan')->willReturn(['request' => ['message' => 'Привет', 'context' => []], 'task_type' => 'summary', 'access_context_public' => [], 'capability' => []]);
+        $orchestrator->method('buildPayload')->willReturn(['next_actions' => [], 'needs_clarification' => false]);
+        $service = $this->providerService($provider, null, $orchestrator);
+        $service->ragContextOverride = ['prompt' => '', 'metadata' => ['used' => false, 'sources' => []]];
+        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+        $this->assertSame('completed', $response['status']);
+        $this->assertSame(3020, AICreditProviderUsage::query()->sole()->metadata['input_tokens']);
+        $this->assertSame(7, AICreditProviderUsage::query()->sole()->metadata['output_tokens']);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        $userMessage = Message::query()->where('role', 'user')->sole();
+        $this->assertSame('Привет', $userMessage->content);
+        $this->assertSame($image->public_id, $userMessage->metadata['attachments'][0]['id']);
+        $this->assertStringNotContainsString('base64', json_encode($userMessage->getAttributes(), JSON_THROW_ON_ERROR));
+        $followup = $this->quote(['message' => 'Привет', 'profile' => 'normal'], conversationId: $response['conversation_id']);
+        $this->assertSame('completed', $service->ask('Привет', $this->organization->id, $this->actor, $response['conversation_id'], $followup)['status']);
+        $this->assertSame(2, AICreditProviderUsage::query()->count());
+    }
+
+    public function test_quoted_images_cannot_be_swapped_and_failed_begin_does_not_bind_or_charge(): void
+    {
+        $first = $this->imageFixture();
+        $second = $this->imageFixture();
+        $payload = $this->quote(['profile' => 'normal', 'attachment_ids' => [$first->public_id]]);
+        $changed = array_replace($payload, ['attachment_ids' => [$second->public_id]]);
+        $this->assertOperationThrows(DomainException::class, fn () => $this->lifecycle->start($this->organization, $this->actor, null, $changed));
+        $this->assertNull($second->fresh()->request_id);
+        $this->assertSame(0, AICreditReservation::query()->count());
+        $this->assertSame(10000, $this->credits->balance($this->organization)['available_minor']);
+    }
+
+    public function test_queued_image_checksum_change_fails_worker_and_releases_all_credits(): void
+    {
+        $image = $this->imageFixture();
+        $payload = $this->quote(['profile' => 'normal', 'attachment_ids' => [$image->public_id]]);
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload, 'lk')['request'];
+        $this->assertSame([$image->public_id], $request->payload['attachment_ids']);
+        $this->assertArrayNotHasKey('attachment_manifest', $request->payload);
+        $this->assertStringNotContainsString('base64', json_encode($request->payload, JSON_THROW_ON_ERROR));
+        $image->forceFill(['checksum' => str_repeat('f', 64)])->save();
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->never())->method('chat');
+        $this->assertOperationThrows(AuthorizationException::class, fn () => (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, $this->providerService($provider), app(AssistantDataAccessPolicy::class)));
+        $this->assertSame('failed', $request->fresh()->status);
+        $this->assertSame(0, AICreditProviderUsage::query()->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        $this->assertSame(10000, $this->credits->balance($this->organization)['available_minor']);
+    }
+
+    private function imageFixture(): ChatAttachment
+    {
+        $image = imagecreatetruecolor(16, 16);
+        ob_start();
+        imagepng($image);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($image);
+        $id = (string) Str::uuid();
+        $row = ChatAttachment::query()->create(['public_id' => $id, 'organization_id' => $this->organization->id, 'user_id' => $this->actor->id, 'name' => 'photo.png', 'mime' => 'image/png', 'width' => 16, 'height' => 16, 'size' => strlen($bytes), 'checksum' => hash('sha256', $bytes), 'storage_path' => 'org-'.$this->organization->id.'/ai-assistant/chat-images/'.$id.'.png']);
+        $files = $this->mock(FileService::class);
+        $files->shouldReceive('readCurrentBounded')->andReturnUsing(static function () use ($bytes) {
+            $stream = fopen('php://memory', 'r+');
+            fwrite($stream, $bytes);
+            rewind($stream);
+            return $stream;
+        });
+        $this->app->instance(AssistantChatAttachmentService::class, new AssistantChatAttachmentService($files, $this->conversations, app(AIPermissionChecker::class)));
+        return $row;
+    }
+
     private function assertSameJsonObject(array $expected, array $actual): void
     {
         $this->assertSame($this->sortJsonObjectKeys($expected), $this->sortJsonObjectKeys($actual));
@@ -971,7 +1066,7 @@ final class AssistantRequestLifecycleTest extends TestCase
 
     private function tables(): array
     {
-        return ['ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_orders', 'users', 'organizations'];
+        return ['ai_chat_attachments', 'ai_assistant_requests', 'ai_messages', 'ai_conversation_summaries', 'ai_conversation_participants', 'ai_conversations', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'commercial_orders', 'users', 'organizations'];
     }
 
     private function providerService(LLMProviderInterface $provider, ?AIToolRegistry $registry = null, ?\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator $orchestrator = null, ?\App\BusinessModules\Features\AIAssistant\Services\UsageTracker $usageOverride = null): LifecycleProviderAIAssistantService

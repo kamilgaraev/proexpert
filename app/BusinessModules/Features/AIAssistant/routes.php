@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantAttachmentController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantCreditsController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantDocumentController;
@@ -15,6 +16,8 @@ use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Route;
 
 $assistantRoutes = static function (): void {
+    Route::post('attachments', [AssistantAttachmentController::class, 'upload'])->name('attachments.upload');
+    Route::get('attachments/{attachment}/content', [AssistantAttachmentController::class, 'content'])->whereUuid('attachment')->name('attachments.content');
     Route::get('rag/status', [AIAssistantRagController::class, 'status'])->name('rag.status');
     Route::post('chat', [AIAssistantController::class, 'chat'])->name('chat');
     Route::post('actions/preview', [AIAssistantController::class, 'previewAction'])->name('actions.preview');
