@@ -154,7 +154,9 @@ if ($path === '/__bim_acceptance/file') {
 $acceptanceBeforeApplication = hrtime(true);
 $request = Request::capture();
 $acceptanceBootstrapProfile = [];
-$app = \Tests\Runtime\BimDeviceAcceptance\application($data, $request, $acceptanceBootstrapProfile);
+$acceptanceStageContext = \Tests\Runtime\BimDeviceAcceptance\beginStages($data, $_SERVER['REQUEST_METHOD'], $path ?? '');
+$app = \Tests\Runtime\BimDeviceAcceptance\application($data, $request, $acceptanceBootstrapProfile, $acceptanceStageContext);
+\Tests\Runtime\BimDeviceAcceptance\stage($acceptanceStageContext, 'bootstrap_done');
 $acceptanceExceptionHandler = $app->make(\Illuminate\Contracts\Debug\ExceptionHandler::class);
 if ($acceptanceExceptionHandler instanceof \Illuminate\Foundation\Exceptions\Handler) {
     $acceptanceExceptionHandler->reportable(static function (\Throwable $exception) use ($data): void {
@@ -163,7 +165,9 @@ if ($acceptanceExceptionHandler instanceof \Illuminate\Foundation\Exceptions\Han
 }
 $acceptanceBootstrapped = hrtime(true);
 $kernel = $app->make(Kernel::class);
+\Tests\Runtime\BimDeviceAcceptance\stage($acceptanceStageContext, 'kernel_start');
 $response = $kernel->handle($request);
+\Tests\Runtime\BimDeviceAcceptance\stage($acceptanceStageContext, 'kernel_end');
 $acceptanceHandled = hrtime(true);
 $response->send();
 $kernel->terminate($request, $response);

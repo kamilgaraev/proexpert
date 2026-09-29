@@ -60,7 +60,7 @@ function descriptor(): array
     return $data;
 }
 
-function application(array $data, Request $request, array &$bootstrapProfile = []): Application
+function application(array $data, Request $request, array &$bootstrapProfile = [], ?array &$stageContext = null): Application
 {
     $profileStarted = hrtime(true);
     foreach ($data['environment'] as $key => $value) {
@@ -137,9 +137,169 @@ function application(array $data, Request $request, array &$bootstrapProfile = [
         ]);
     }
     configureStorage($app, $data);
+    if ($stageContext !== null) {
+        $app['config']->set('broadcasting.connections.reverb.client_options', reverbClientOptions(
+            $app['config']->get('broadcasting.connections.reverb.client_options', []), $stageContext,
+        ));
+    }
     $bootstrapProfile['test_storage_setup_ms'] = round((hrtime(true) - $storageStarted) / 1000000, 2);
 
     return $app;
+}
+
+function appendPrivateRecord(array $data, string $name, array $record): void
+{
+    $stream = null;
+    try {
+        $directory = realpath($data['runtime_directory'] ?? '');
+        $temporary = realpath(sys_get_temp_dir());
+        if ($directory === false || $temporary === false || dirname($directory) !== $temporary
+            || preg_match('/^most-bim-device-[a-f0-9]{24}$/D', basename($directory)) !== 1
+            || ! in_array($name, ['stages.jsonl', 'exceptions.jsonl'], true) || is_link($directory.'/'.$name)) {
+            return;
+        }
+        $stream = fopen($directory.'/'.$name, 'c+b');
+        if ($stream === false || ! flock($stream, LOCK_EX)) {
+            return;
+        }
+        $encoded = json_encode($record, JSON_THROW_ON_ERROR)."\n";
+        $size = fstat($stream)['size'] ?? 1048576;
+        if ($size + strlen($encoded) > 1048576) {
+            return;
+        }
+        fseek($stream, 0, SEEK_END);
+        fwrite($stream, $encoded);
+        fflush($stream);
+    } catch (\Throwable) {
+    } finally {
+        if (is_resource($stream)) {
+            flock($stream, LOCK_UN);
+            fclose($stream);
+        }
+    }
+}
+
+function beginStages(array $data, string $method, string $path): ?array
+{
+    $environment = $data['environment'] ?? [];
+    $directory = realpath($data['runtime_directory'] ?? '');
+    $temporary = realpath(sys_get_temp_dir());
+    $path = parse_url($path, PHP_URL_PATH);
+    if (($data['schema_version'] ?? null) !== 1 || ($data['expires_at'] ?? 0) < time()
+        || ($environment['APP_ENV'] ?? null) !== 'testing' || ($environment['DB_CONNECTION'] ?? null) !== 'pgsql'
+        || ($environment['DB_HOST'] ?? null) !== '127.0.0.1' || (string) ($environment['DB_PORT'] ?? '') !== '55433'
+        || preg_match('/^most_phpunit_[a-f0-9]{24}_testing$/D', $environment['DB_DATABASE'] ?? '') !== 1
+        || ! empty($environment['DB_URL']) || $directory === false || $temporary === false
+        || dirname($directory) !== $temporary || preg_match('/^most-bim-device-[a-f0-9]{24}$/D', basename($directory)) !== 1
+        || ! in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'], true)
+        || ! is_string($path) || preg_match('#^/api/v1/(?:admin|mobile)/[A-Za-z0-9/_-]{1,500}$#D', $path) !== 1) {
+        return null;
+    }
+    $context = ['runtime_directory' => $directory, 'started' => hrtime(true), 'state' => (object) ['last_marker' => null],
+        'request_id' => bin2hex(random_bytes(12)), 'method' => $method, 'path' => $path];
+    stage($context, 'application_start');
+    register_shutdown_function(static function () use (&$context): void {
+        $error = error_get_last();
+        $fatal = is_array($error) && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true);
+        $source = $fatal ? str_replace('\\', '/', $error['file']) : '';
+        $root = str_replace('\\', '/', dirname(__DIR__, 3)).'/';
+        stage($context, 'shutdown', ['last_marker' => $context['state']->last_marker,
+            'fatal_type' => $fatal ? $error['type'] : null,
+            'fatal_file' => str_starts_with($source, $root) ? substr($source, strlen($root)) : null,
+            'fatal_line' => $fatal ? $error['line'] : null, ...classifyFailure($fatal ? $error['message'] : '')]);
+    });
+
+    return $context;
+}
+
+function stage(?array &$context, string $marker, array $details = []): void
+{
+    $markers = ['application_start', 'bootstrap_done', 'kernel_start', 'kernel_end',
+        'broadcast_start', 'broadcast_end', 'broadcast_failure', 'shutdown'];
+    if ($context === null || ! in_array($marker, $markers, true)) {
+        return;
+    }
+    $record = ['at' => gmdate('Y-m-d\TH:i:s\Z'), 'request_id' => $context['request_id'], 'stage' => $marker,
+        'pid' => getmypid(), 'max_execution_time' => (int) ini_get('max_execution_time'),
+        'elapsed_ms' => round((hrtime(true) - $context['started']) / 1000000, 2),
+        'method' => $context['method'], 'path' => $context['path']];
+    if (isset($details['status_code']) && is_int($details['status_code'])) {
+        $record['status_code'] = $details['status_code'];
+    }
+    if (isset($details['exception_class']) && is_string($details['exception_class'])
+        && preg_match('/^[A-Za-z0-9_\\\\]{1,200}$/D', $details['exception_class']) === 1) {
+        $record['exception_class'] = $details['exception_class'];
+    }
+    if ($marker === 'shutdown') {
+        $record['last_marker'] = in_array($details['last_marker'] ?? null, $markers, true) ? $details['last_marker'] : null;
+        $record['fatal_type'] = $details['fatal_type'] ?? null;
+        $record['fatal_line'] = $details['fatal_line'] ?? null;
+        $source = $details['fatal_file'] ?? null;
+        $record['fatal_file'] = is_string($source) && ! str_contains($source, '..')
+            && preg_match('#^(?:app|bootstrap|config|routes|vendor|tests/Runtime/bim-device-acceptance)/[A-Za-z0-9_./-]{1,500}$#D', $source) === 1 ? $source : null;
+        $record['classifier'] = in_array($details['classifier'] ?? null, ['maximum_execution_time', 'memory_exhausted'], true) ? $details['classifier'] : null;
+        $record['limits'] = [];
+        foreach (['limit_seconds', 'limit_bytes', 'allocation_bytes'] as $key) {
+            if (isset($details['limits'][$key]) && is_int($details['limits'][$key])) {
+                $record['limits'][$key] = $details['limits'][$key];
+            }
+        }
+    }
+    $context['state']->last_marker = $marker;
+    appendPrivateRecord($context, 'stages.jsonl', $record);
+}
+
+function reverbClientOptions(array $options, ?array &$context): array
+{
+    if ($context === null) {
+        return $options;
+    }
+    $middleware = static function (callable $handler) use (&$context): callable {
+        return static function (\Psr\Http\Message\RequestInterface $request, array $requestOptions) use ($handler, &$context): \GuzzleHttp\Promise\PromiseInterface {
+            stage($context, 'broadcast_start');
+            try {
+                $promise = $handler($request, $requestOptions);
+            } catch (\Throwable $exception) {
+                stage($context, 'broadcast_failure', ['exception_class' => $exception::class]);
+                throw $exception;
+            }
+
+            return $promise->then(static function ($response) use (&$context) {
+                stage($context, 'broadcast_end', $response instanceof \Psr\Http\Message\ResponseInterface
+                    ? ['status_code' => $response->getStatusCode()] : []);
+
+                return $response;
+            }, static function ($reason) use (&$context): \GuzzleHttp\Promise\RejectedPromise {
+                stage($context, 'broadcast_failure', ['exception_class' => is_object($reason) ? $reason::class : get_debug_type($reason)]);
+
+                return new \GuzzleHttp\Promise\RejectedPromise($reason);
+            });
+        };
+    };
+    $handler = $options['handler'] ?? \GuzzleHttp\HandlerStack::create();
+    if ($handler instanceof \GuzzleHttp\HandlerStack) {
+        $handler = clone $handler;
+        $handler->unshift($middleware, 'bim_acceptance_stages');
+        $options['handler'] = $handler;
+    } elseif (is_callable($handler)) {
+        $options['handler'] = $middleware($handler);
+    }
+
+    return $options;
+}
+
+function classifyFailure(string $message): array
+{
+    if (preg_match('/^Maximum execution time of ([0-9]{1,18}) seconds exceeded(?:\b|$)/', $message, $matches) === 1) {
+        return ['classifier' => 'maximum_execution_time', 'limits' => ['limit_seconds' => (int) $matches[1]]];
+    }
+    if (preg_match('/^Allowed memory size of ([0-9]{1,18}) bytes exhausted.*tried to allocate ([0-9]{1,18}) bytes/', $message, $matches) === 1) {
+        return ['classifier' => 'memory_exhausted', 'limits' => [
+            'limit_bytes' => (int) $matches[1], 'allocation_bytes' => (int) $matches[2],
+        ]];
+    }
+
+    return ['classifier' => null, 'limits' => []];
 }
 
 function recordException(array $data, \Throwable $exception): void
@@ -169,9 +329,10 @@ function recordException(array $data, \Throwable $exception): void
         $origin = str_replace('\\', '/', $exception->getFile());
         $safeMessage = str_starts_with($exception->getMessage(), 'Error while reading line from the server.')
             ? 'Error while reading line from the server.' : null;
-        file_put_contents($file, json_encode(['at' => gmdate('Y-m-d\TH:i:s\Z'), 'class' => $exception::class,
+        appendPrivateRecord($data, 'exceptions.jsonl', ['at' => gmdate('Y-m-d\TH:i:s\Z'), 'class' => $exception::class,
             'message' => $safeMessage, 'origin_file' => str_starts_with($origin, $root) ? substr($origin, strlen($root)) : null,
-            'origin_line' => $exception->getLine(), 'own_frames' => $frames], JSON_THROW_ON_ERROR)."\n", FILE_APPEND | LOCK_EX);
+            'origin_line' => $exception->getLine(), 'own_frames' => $frames,
+            ...classifyFailure($exception->getMessage())]);
     } catch (\Throwable) {
     }
 }
