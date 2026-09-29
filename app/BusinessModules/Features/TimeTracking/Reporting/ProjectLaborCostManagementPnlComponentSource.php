@@ -30,15 +30,16 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
             ->where('approved_at', '<=', $query->asOf)
             ->when($scope->projectIds !== [], static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
             ->orderBy('id')
-            ->get()
-            ->groupBy('currency');
+            ->get();
+        $unpricedRows = $rows->filter(static fn (ApprovedTimeEntryReportingFact $row): bool => $row->currency === null);
+        $rows = $rows->whereNotNull('currency')->groupBy('currency');
         if ($rows->isEmpty()) {
             throw new DomainException('management_pnl_project_labor_cost_unavailable');
         }
 
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
         foreach ($rows as $currency => $currencyRows) {
-            $identities = $currencyRows->map(static fn (ApprovedTimeEntryReportingFact $row): array => [
+            $identities = $currencyRows->concat($unpricedRows)->sortBy('id')->values()->map(static fn (ApprovedTimeEntryReportingFact $row): array => [
                 'id' => (int) $row->id,
                 'hash' => (string) $row->source_hash,
             ])->all();
@@ -89,7 +90,9 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
                 rowCount: $currencyRows->count(),
                 coverageNumerator: count($facts),
                 coverageDenominator: $currencyRows->count(),
-                warnings: count($facts) === $currencyRows->count() ? [] : ['approved_time_entry_rate_missing'],
+                warnings: count($facts) === $currencyRows->count() && $unpricedRows->isEmpty()
+                    ? []
+                    : ['approved_time_entry_rate_missing'],
             );
         }
     }

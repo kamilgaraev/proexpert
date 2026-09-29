@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Features\TimeTracking\Reporting\ApprovedTimeEntryReportingFactRecorder;
+use App\BusinessModules\Features\TimeTracking\Reporting\Models\ApprovedTimeEntryReportingFact;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
@@ -325,6 +327,109 @@ final class TimeTrackingMobileTest extends TestCase
                 'reason' => 'Не совпадают подтвержденные часы',
             ])
             ->assertStatus(403);
+    }
+
+    public function test_mobile_approves_unpriced_manual_time_without_fabricating_money(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.view', 'time_tracking.create', 'time_tracking.submit', 'time_tracking.approve']);
+
+        foreach ([false, true] as $billable) {
+            $entry = $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson('/api/v1/mobile/time-tracking/entries', [
+                    'project_id' => $project->id,
+                    'work_date' => '2026-05-22',
+                    'hours_worked' => 0.01,
+                    'title' => $billable ? 'Время без тарифа' : 'Время без оплаты',
+                    'is_billable' => $billable,
+                ])
+                ->assertCreated()
+                ->json('data');
+
+            $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry['id'] . '/submit')
+                ->assertOk();
+
+            $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry['id'] . '/approve')
+                ->assertOk()
+                ->assertJsonPath('data.status', 'approved')
+                ->assertJsonPath('data.hours_worked', 0.01);
+
+            $this->assertDatabaseHas('time_entry_approval_reporting_facts', [
+                'organization_id' => $context->organization->id,
+                'time_entry_id' => $entry['id'],
+                'project_id' => $project->id,
+                'hours' => '0.01',
+                'currency' => null,
+                'hourly_rate_minor' => null,
+                'cost_minor' => null,
+                'quality_status' => 'partial',
+            ]);
+            $fact = ApprovedTimeEntryReportingFact::query()->where('time_entry_id', $entry['id'])->sole();
+            $replayed = (new ApprovedTimeEntryReportingFactRecorder)->record(TimeEntry::query()->findOrFail($entry['id']));
+            self::assertSame($fact->id, $replayed->id);
+            self::assertSame($fact->source_hash, $replayed->source_hash);
+        }
+
+        $this->assertDatabaseCount('time_entry_approval_reporting_facts', 2);
+    }
+
+    public function test_mobile_approval_preserves_priced_cost_and_reporting_replay(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.approve']);
+        $entry = $this->timeEntry($context, $project, [
+            'status' => 'submitted',
+            'hours_worked' => 0.01,
+            'hourly_rate' => 1500,
+            'custom_fields' => ['rate_currency' => 'rub'],
+        ]);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/approve')
+            ->assertOk()
+            ->assertJsonPath('data.status', 'approved');
+
+        $fact = ApprovedTimeEntryReportingFact::query()->where('time_entry_id', $entry->id)->sole();
+        self::assertSame('RUB', $fact->currency);
+        self::assertSame('time_entry_rate', $fact->currency_source);
+        self::assertSame(150000, (int) $fact->hourly_rate_minor);
+        self::assertSame(1500, (int) $fact->cost_minor);
+        self::assertSame('complete', $fact->quality_status);
+
+        $replayed = (new ApprovedTimeEntryReportingFactRecorder)->record($entry->refresh());
+        self::assertSame($fact->id, $replayed->id);
+        self::assertSame($fact->source_hash, $replayed->source_hash);
+        $this->assertDatabaseCount('time_entry_approval_reporting_facts', 1);
+    }
+
+    public function test_mobile_priced_approval_rejects_missing_or_invalid_currency_atomically(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAccess(['time_tracking.approve']);
+
+        foreach ([[], ['rate_currency' => 'RUBLE']] as $customFields) {
+            $entry = $this->timeEntry($context, $project, [
+                'status' => 'submitted',
+                'hourly_rate' => 1500,
+                'custom_fields' => $customFields,
+            ]);
+
+            $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson('/api/v1/mobile/time-tracking/entries/' . $entry->id . '/approve')
+                ->assertStatus(409);
+
+            $entry->refresh();
+            self::assertSame('submitted', $entry->status);
+            self::assertNull($entry->approved_at);
+            self::assertNull($entry->approved_by_user_id);
+        }
+
+        $this->assertDatabaseCount('time_entry_approval_reporting_facts', 0);
     }
 
     private function timeEntry(AdminApiTestContext $context, Project $project, array $attributes = []): TimeEntry

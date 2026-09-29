@@ -221,7 +221,10 @@ final readonly class ManagementPnlProjectionService
             'query_hash' => $query->queryHash->value,
         ])));
         $totals = $this->totals($rows);
-        $qualityStatus = $coverageNumerator === $coverageDenominator ? 'complete' : 'partial';
+        $qualityStatus = $coverageNumerator === $coverageDenominator
+            && ! in_array('approved_time_entry_rate_missing', array_column($warnings, 'code'), true)
+            ? 'complete'
+            : 'partial';
 
         $persistedSnapshotId = DB::transaction(function () use (
             $scope,
@@ -254,16 +257,16 @@ final readonly class ManagementPnlProjectionService
                 'policy_version' => $policy->version(),
                 'definition_hash' => $query->definition->definitionHash->value,
                 'formula_version' => $query->definition->formulaVersion,
-                'component_snapshots' => $componentIdentities,
+                'component_snapshots' => CanonicalJson::encode($componentIdentities),
                 'as_of' => $query->asOf,
                 'generated_at' => $generatedAt,
                 'stale_at' => $staleAt,
                 'row_count' => count($rows),
-                'totals' => $totals,
+                'totals' => CanonicalJson::encode($totals),
                 'coverage_numerator' => $coverageNumerator,
                 'coverage_denominator' => $coverageDenominator,
                 'quality_status' => $qualityStatus,
-                'warnings' => $warnings,
+                'warnings' => CanonicalJson::encode($warnings),
                 'created_at' => now(),
                 'updated_at' => now(),
             ]]);
