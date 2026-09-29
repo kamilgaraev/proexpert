@@ -748,14 +748,25 @@ class AIAssistantServiceBudgetTest extends TestCase
 
         $context = $service->exposeBuildRagContext('Привет', 15, $user, [], [
             'conversation_id' => null,
-            'context' => ['source_module' => 'ai-assistant', 'ui_state' => ['assistant_path' => 'chat']],
+            'context' => [
+                'source_module' => 'ai-assistant',
+                'entity_refs' => [['type' => 'project', 'id' => 56, 'label' => 'Текущий проект']],
+                'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+            ],
         ]);
         $this->assertFalse($service->ragQueryResolved);
         $this->assertFalse($context['metadata']['used']);
 
         $service->exposeBuildRagContext('Привет', 15, $user, [], [
             'conversation_id' => 24,
-            'context' => ['source_module' => 'ai-assistant', 'ui_state' => []],
+            'context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'project', 'id' => 56]], 'ui_state' => []],
+        ]);
+        $this->assertTrue($service->ragQueryResolved);
+
+        $service->ragQueryResolved = false;
+        $service->exposeBuildRagContext('Привет', 15, $user, [], [
+            'conversation_id' => null,
+            'context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'material', 'id' => 56]], 'ui_state' => []],
         ]);
         $this->assertTrue($service->ragQueryResolved);
     }

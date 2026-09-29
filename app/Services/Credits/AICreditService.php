@@ -394,13 +394,28 @@ final class AICreditService
         }
 
         $context = $request['context'] ?? [];
-        if (! is_array($context) || ! empty($context['entity_refs']) || ! empty($context['period']) || ! empty($context['filters'])
+        if (! is_array($context) || ! $this->hasOnlyImplicitProjectReference($context['entity_refs'] ?? [])
+            || ! empty($context['period']) || ! empty($context['filters'])
             || ! empty($context['source_route']) || ! in_array($context['source_module'] ?? null, [null, 'ai-assistant'], true)) {
             return false;
         }
 
         $uiState = $context['ui_state'] ?? [];
         return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path']) === [];
+    }
+
+    private function hasOnlyImplicitProjectReference(mixed $references): bool
+    {
+        if (! is_array($references)) {
+            return false;
+        }
+
+        if ($references === []) {
+            return true;
+        }
+
+        return array_is_list($references) && count($references) === 1
+            && is_array($references[0]) && ($references[0]['type'] ?? null) === 'project';
     }
 
     private function successfulChargeMinor(AICreditReservation $reservation): int

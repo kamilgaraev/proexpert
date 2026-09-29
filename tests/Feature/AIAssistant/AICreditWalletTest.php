@@ -116,8 +116,7 @@ final class AICreditWalletTest extends TestCase
             'conversation_id' => null,
             'context' => [
                 'source_module' => 'ai-assistant',
-                'source_route' => null,
-                'entity_refs' => [],
+                'entity_refs' => [['type' => 'project', 'id' => 56, 'label' => 'Текущий проект']],
                 'period' => null,
                 'filters' => [],
                 'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
@@ -137,11 +136,18 @@ final class AICreditWalletTest extends TestCase
             ['message' => 'Привет, покажи проекты'],
             ['conversation_id' => 123],
             ['allow_actions' => true],
-            ['context' => array_replace($request['context'], ['entity_refs' => [['type' => 'project', 'id' => 1]]])],
+            ['context' => array_replace($request['context'], ['entity_refs' => [['type' => 'material', 'id' => 1]]])],
+            ['context' => array_replace($request['context'], ['entity_refs' => [['type' => 'project', 'id' => 1], ['type' => 'project', 'id' => 2]]])],
         ] as $change) {
             $other = array_replace($request, $change, ['request_id' => (string) Str::uuid()]);
             $this->assertSame(800, $this->credits->quote($this->organization, $this->user, $other)['max_units_minor']);
         }
+
+        $withoutProject = array_replace($request, [
+            'request_id' => (string) Str::uuid(),
+            'context' => array_replace($request['context'], ['entity_refs' => []]),
+        ]);
+        $this->assertSame(100, $this->credits->quote($this->organization, $this->user, $withoutProject)['max_units_minor']);
     }
 
     public function test_included_expires_during_reservation_and_purchased_credits_never_expire(): void
