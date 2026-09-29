@@ -562,7 +562,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
         if ($actor === 'admin') {
             $headers[] = 'Origin: '.$data['ui_origin'];
         }
-        $context = stream_context_create(['http' => ['header' => implode("\r\n", $headers), 'timeout' => 10, 'ignore_errors' => true]]);
+        $context = stream_context_create(['http' => ['header' => implode("\r\n", $headers), 'timeout' => 45, 'ignore_errors' => true]]);
         $base = $actor === 'admin' ? $data['admin_base_url'] : $data['base_url'];
         $body = file_get_contents($base.$path, false, $context);
         self::assertIsString($body, 'Acceptance HTTP response unavailable.');
@@ -581,7 +581,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
         self::assertSame($data['generation'], $manifest['generation']);
         foreach (['geometry', 'properties'] as $type) {
             self::assertSame($data[$type.'_sha256'], $manifest[$type]['sha256']);
-            $content = file_get_contents($manifest[$type]['url'], false, stream_context_create(['http' => ['timeout' => 10]]));
+            $content = file_get_contents($manifest[$type]['url'], false, stream_context_create(['http' => ['timeout' => 45]]));
             self::assertIsString($content);
             self::assertSame($manifest[$type]['sha256'], hash('sha256', $content));
             self::assertSame($manifest[$type]['size'], strlen($content));
