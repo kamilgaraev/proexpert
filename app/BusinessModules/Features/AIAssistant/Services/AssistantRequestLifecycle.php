@@ -22,6 +22,8 @@ use RuntimeException;
 
 final class AssistantRequestLifecycle
 {
+    private const LEASE_MINUTES = 8;
+
     public function __construct(
         private readonly AICreditService $credits,
         private readonly AIPermissionChecker $permissions,
@@ -98,7 +100,7 @@ final class AssistantRequestLifecycle
                 'max_calls' => (int) ($limits['max_calls'] ?? $limits['calls'] ?? 4),
                 'approved_max_minor' => $this->credits->approvedMaximumMinor($reservation),
                 'heartbeat_at' => now(),
-                'lease_expires_at' => now()->addMinutes(3),
+                'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES),
             ]);
 
             return ['request' => $request, 'response' => null];
@@ -118,7 +120,7 @@ final class AssistantRequestLifecycle
     public function stage(AssistantRequest $request, User $actor, string $stage): void
     {
         $this->assertActive($request, $actor);
-        $request->forceFill(['stage' => $stage, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(3)])->save();
+        $request->forceFill(['stage' => $stage, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
     }
 
     public function beforeProviderCall(AssistantRequest $request, User $actor, int $inputTokens, int $outputTokens): int
@@ -134,7 +136,7 @@ final class AssistantRequestLifecycle
                 throw new AssistantBudgetExceeded();
             }
             $attempt = $current->calls_used + 1;
-            $current->forceFill(['calls_used' => $attempt, 'stage' => 'generating', 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(3)])->save();
+            $current->forceFill(['calls_used' => $attempt, 'stage' => 'generating', 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
             $request->setRawAttributes($current->getAttributes(), true);
             return $attempt;
         }, 3);

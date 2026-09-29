@@ -18,17 +18,22 @@ final class TokenCounter
 
     private static ?EncoderProvider $provider = null;
 
+    private static string $cacheDir;
+
     public function __construct(?object $encoder = null)
     {
         if ($encoder === null) {
             if (self::$provider === null) {
                 $cacheDir = getenv('TIKTOKEN_CACHE_DIR');
-                self::ensureCacheDirectory($cacheDir !== false && $cacheDir !== ''
+                $cacheDir = $cacheDir !== false && $cacheDir !== ''
                     ? $cacheDir
-                    : sys_get_temp_dir().DIRECTORY_SEPARATOR.'tiktoken');
+                    : sys_get_temp_dir().DIRECTORY_SEPARATOR.'tiktoken';
+                self::ensureCacheDirectory($cacheDir);
                 self::$provider = new EncoderProvider();
+                self::$cacheDir = $cacheDir;
             }
-            $encoder = self::$provider->get('o200k_base');
+            $provider = self::$provider;
+            $encoder = self::withCacheLock(self::$cacheDir, static fn (): object => $provider->get('o200k_base'));
         }
         $this->encode = Closure::fromCallable([$encoder, 'encode']);
     }
@@ -37,6 +42,30 @@ final class TokenCounter
     {
         if (! is_dir($cacheDir) && ! @mkdir($cacheDir, 0750, true) && ! is_dir($cacheDir)) {
             throw new IOError(sprintf('Directory does not exist and cannot be created: %s', $cacheDir));
+        }
+    }
+
+    private static function withCacheLock(string $cacheDir, Closure $load): mixed
+    {
+        $lockFile = $cacheDir.DIRECTORY_SEPARATOR.'.o200k_base.lock';
+        $lock = @fopen($lockFile, 'c');
+
+        if ($lock === false) {
+            throw new IOError(sprintf('Could not open file for write: %s', $lockFile));
+        }
+
+        try {
+            if (! flock($lock, LOCK_EX)) {
+                throw new IOError(sprintf('Could not lock file: %s', $lockFile));
+            }
+
+            try {
+                return $load();
+            } finally {
+                flock($lock, LOCK_UN);
+            }
+        } finally {
+            fclose($lock);
         }
     }
 

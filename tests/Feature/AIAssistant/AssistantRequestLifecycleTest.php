@@ -254,6 +254,40 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
     }
 
+    public function test_slow_rag_can_reach_first_provider_call_after_five_minutes(): void
+    {
+        $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
+        $this->lifecycle->stage($request, $this->actor, 'reading');
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->once())->method('chat')->willReturn([
+            'content' => 'Ответ', 'input_tokens' => 100, 'output_tokens' => 10,
+            'provider' => 'test-fixture', 'model' => 'gpt-6-luna',
+        ]);
+
+        try {
+            $this->travel(5)->minutes();
+            $this->providerService($provider)->invokeProvider($request, $this->actor, [['role' => 'user', 'content' => 'Запрос']]);
+            $this->assertSame(1, $request->fresh()->calls_used);
+        } finally {
+            $this->travelBack();
+        }
+    }
+
+    public function test_expired_lease_still_blocks_provider_and_cannot_be_renewed(): void
+    {
+        $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->never())->method('chat');
+
+        try {
+            $this->travel(9)->minutes();
+            $this->assertOperationThrows(AssistantRequestCancelled::class, fn () => $this->lifecycle->stage($request, $this->actor, 'reading'));
+            $this->assertOperationThrows(AssistantRequestCancelled::class, fn () => $this->providerService($provider)->invokeProvider($request, $this->actor, [['role' => 'user', 'content' => 'Запрос']]));
+        } finally {
+            $this->travelBack();
+        }
+    }
+
     public function test_call_limit_and_approved_cost_are_checked_before_starting_another_call(): void
     {
         $request = $this->lifecycle->start($this->organization, $this->actor, null, $this->quote())['request'];
