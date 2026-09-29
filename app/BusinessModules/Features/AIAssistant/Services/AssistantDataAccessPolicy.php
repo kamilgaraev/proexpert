@@ -326,9 +326,15 @@ final class AssistantDataAccessPolicy
         if (! $expectedProjection) {
             \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($query, $table);
         }
-        return $query->where(function (Builder $scope) use ($user, $organizationId, $table): void {
+        $sourceIdentities = [];
+        foreach (\Illuminate\Support\Facades\DB::table($table)->where('organization_id', $organizationId)
+            ->distinct()->get(['source_type', 'entity_type']) as $identity) {
+            $sourceIdentities[(string) $identity->entity_type][(string) $identity->source_type] = true;
+        }
+        return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities): void {
             $scope->whereRaw('1 = 0');
             foreach ($this->entities() as $type => $definition) {
+                if (! isset($sourceIdentities[$type][$definition[0]])) { continue; }
                 if (in_array(AssistantExtendedDomainRegistry::retrievalMode($type), ['live_only', 'unavailable'], true)) { continue; }
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $type) : null;
                 if ($entities !== null) {
@@ -339,11 +345,13 @@ final class AssistantDataAccessPolicy
                     });
                 }
             }
-            $documents = $this->accessibleDocuments($user, $organizationId);
-            $scope->orWhere(function (Builder $branch) use ($documents, $table): void {
-                $branch->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')
-                    ->whereIn($table.'.entity_id', $documents->select([])->selectRaw('CAST(ai_assistant_documents.id AS TEXT)'));
-            });
+            if (isset($sourceIdentities['assistant_document']['file_document'])) {
+                $documents = $this->accessibleDocuments($user, $organizationId);
+                $scope->orWhere(function (Builder $branch) use ($documents, $table): void {
+                    $branch->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')
+                        ->whereIn($table.'.entity_id', $documents->select([])->selectRaw('CAST(ai_assistant_documents.id AS TEXT)'));
+                });
+            }
         });
     }
 

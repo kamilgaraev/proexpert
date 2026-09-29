@@ -40,6 +40,7 @@ final class AssistantFinancialEvidenceTest extends TestCase
         $can = fn (User $actor, string $permission): bool => $permission !== 'budget-estimates.finance.view' || $this->financeAllowed;
         $authorization->shouldReceive('can')->andReturnUsing($can);
         $authorization->shouldReceive('canCurrent')->andReturnUsing($can);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $this->mock(OrganizationEntitlementService::class)->shouldReceive('getEffectiveModules')
             ->andReturn(collect([new Module(['slug' => 'budget-estimates']), new Module(['slug' => 'project-management'])]));
         $this->mock(UserProjectAccessService::class)->shouldReceive('queryAccessibleProjects')

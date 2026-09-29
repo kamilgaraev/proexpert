@@ -158,6 +158,10 @@
             <file>tests/Feature/AIAssistant/AssistantPolicyReferenceCycleTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantPublishedReportFinancialEvidenceTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantRealAuthorizationTest.php</file>
+            <file>tests/Feature/Authorization/AuthorizationCurrentReadScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/PaymentDocumentEstimateSplitRepairMigrationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantEstimateStructuredBridgeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRagSourceIdentityScopeTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantRevenueAllocationStorageTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantSalesBusinessCoverageTest.php</file>
@@ -249,6 +253,12 @@
             <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
             <file>tests/Feature/Console/AIAssistantRagBackfillCommandTest.php</file>
             <file>tests/Unit/AIAssistant/Reports/AssistantReportFileServiceTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantRuntimeRegressions">
+            <file>tests/Feature/Authorization/AuthorizationCurrentReadScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/PaymentDocumentEstimateSplitRepairMigrationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantEstimateStructuredBridgeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRagSourceIdentityScopeTest.php</file>
         </testsuite>
         <testsuite name="AIAssistantRequests">
             <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
