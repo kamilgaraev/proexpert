@@ -52,7 +52,9 @@ final class ShadowProviderCollector
                 $request = $request->withUri(new \GuzzleHttp\Psr7\Uri($this->relay.$path))
                     ->withHeader('Authorization', 'Bearer '.$this->token);
                 ShadowObservationVerifier::progress($this->activeScenario, 'provider_dispatched', ['endpoint' => $path]);
-                return $next($request, $options)->then(function (ResponseInterface $response) use ($host, $path, $payload) {
+                $dispatchedAt = gmdate('c');
+                $dispatchedNs = hrtime(true);
+                return $next($request, $options)->then(function (ResponseInterface $response) use ($host, $path, $payload, $dispatchedAt, $dispatchedNs) {
                     $raw = (string) $response->getBody();
                     $response->getBody()->rewind();
                     $body = json_decode($raw, true);
@@ -82,17 +84,18 @@ final class ShadowProviderCollector
                         'usage_source' => $verified ? 'provider_response' : 'unverified',
                         'evidence' => $verified && $priceVerified ? 'provider_usage' : 'unverified_usage_or_pricing',
                         'provider_evidence_sha256' => hash('sha256', $raw), 'provider_usage' => $usage,
-                        'http_status' => $response->getStatusCode(), 'raw_provider_response' => $raw, 'cost_verification' => $verified && $priceVerified ? 'primary_pricing_snapshot' : 'unverified_usage_or_pricing', 'pricing_evidence' => $this->priceEvidence, 'pricing_snapshot' => ['input_micro_rub_per_million' => $inputRate, 'output_micro_rub_per_million' => $outputRate], 'observed_at' => gmdate('c'),
+                        'http_status' => $response->getStatusCode(), 'raw_provider_response' => $raw, 'cost_verification' => $verified && $priceVerified ? 'primary_pricing_snapshot' : 'unverified_usage_or_pricing', 'pricing_evidence' => $this->priceEvidence, 'pricing_snapshot' => ['input_micro_rub_per_million' => $inputRate, 'output_micro_rub_per_million' => $outputRate], 'dispatched_at' => $dispatchedAt, 'latency_ms' => (int) ((hrtime(true) - $dispatchedNs) / 1_000_000), 'observed_at' => gmdate('c'),
                     ];
                     return $response;
-                }, function ($failure) use ($host, $path, $payload) {
+                }, function ($failure) use ($host, $path, $payload, $dispatchedAt, $dispatchedNs) {
                     $error = ['exception_class' => is_object($failure) ? $failure::class : gettype($failure)];
                     $this->calls[] = ['kind' => $path === '/v1/embeddings' ? 'index' : $this->activeKind, 'success' => false,
                         'generative' => $path !== '/v1/embeddings', 'provider' => $host === 'api.timeweb.ai' ? 'timeweb' : 'openai',
                         'model' => $payload['model'] ?? 'unknown', 'raw_model' => $payload['model'] ?? 'unknown',
                         'input_tokens' => 0, 'output_tokens' => 0, 'cost_micro_rub' => 0, 'usage_source' => 'unverified',
                         'evidence' => 'transport_failed_without_provider_usage', 'provider_evidence_sha256' => hash('sha256', json_encode($error, JSON_THROW_ON_ERROR)),
-                        'transport_evidence' => $error];
+                        'transport_evidence' => $error, 'dispatched_at' => $dispatchedAt,
+                        'latency_ms' => (int) ((hrtime(true) - $dispatchedNs) / 1_000_000), 'observed_at' => gmdate('c')];
                     return new \GuzzleHttp\Promise\RejectedPromise($failure);
                 });
             };
