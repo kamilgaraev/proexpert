@@ -27,8 +27,11 @@ final class GetEstimateFinancialSnapshotTool extends ReadonlyEstimateTool
         $evidence = $this->evidence->snapshot((int) $arguments['estimate_id'], (int) $organization->id, $actor);
 
         $receipt = array_diff_key($evidence, ['positions' => true]);
+        $facts = AssistantEstimateStructuredFacts::identity($evidence, (int) $organization->id);
 
         return ['financial_evidence' => $receipt, 'server_formatted_answer' => $this->answers->format('', $evidence),
+            'server_formatted_facts' => $facts['server_formatted_facts'],
+            'structured_fact_evidence' => $facts['structured_fact_evidence'],
             'source_refs' => $evidence['source_refs'], 'validation_status' => $evidence['validation_status']];
     }
 }

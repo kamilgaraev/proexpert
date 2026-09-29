@@ -28,10 +28,13 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
             'page' => ['required', 'integer', 'between:1,1000000'], 'per_page' => ['required', 'integer', 'between:1,100']]);
         $evidence = $this->evidence->snapshot((int) $arguments['estimate_id'], (int) $organization->id, $actor);
         $positions = array_slice($evidence['positions'], ((int) $arguments['page'] - 1) * (int) $arguments['per_page'], (int) $arguments['per_page']);
+        $facts = AssistantEstimateStructuredFacts::positions($evidence, $positions, (int) $organization->id);
 
         return ['estimate' => $evidence['estimate'], 'positions' => $positions,
             'meta' => ['page' => (int) $arguments['page'], 'per_page' => (int) $arguments['per_page'], 'total' => $evidence['position_count']],
             'source_refs' => AssistantEstimateEvidenceService::publicSourceReferences($evidence, $positions),
+            'server_formatted_facts' => $facts['server_formatted_facts'],
+            'structured_fact_evidence' => $facts['structured_fact_evidence'],
             'fetched_at' => $evidence['fetched_at'], 'validation_status' => $evidence['validation_status']];
     }
 }

@@ -35,7 +35,8 @@ final class AssistantFactIntentClassifier
 
     public static function isMoneyOnly(string $query): bool
     {
-        return ! self::isNarrative($query) && (bool) preg_match(self::MONEY, $query) && ! self::requiresStructuredRead($query);
+        return ! self::isNarrative($query) && (bool) preg_match(self::MONEY, $query)
+            && ! self::requiresStructuredRead($query) && ! preg_match('/позиц/iu', $query);
     }
 
     public static function requirements(string $query): array
@@ -56,6 +57,9 @@ final class AssistantFactIntentClassifier
         }
         if (preg_match(self::OWNER, $query)) {
             $requirements[] = array_merge(['owner_user_id', 'assignee_id', 'assigned_to'], $groups['owner'] ?? []);
+        }
+        if (preg_match('/позиц/iu', $query)) {
+            $requirements[] = ['position_number'];
         }
         if (preg_match('/(?:сумм|стоимост|(?<![\pL\pN])цен[а-яё]*|ден[еь]г|итог|бюджет)/iu', $query)) {
             $requirements[] = array_merge(['unit_price', 'total_amount', 'total_amount_with_vat', 'amount', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount'], $groups['money'] ?? []);

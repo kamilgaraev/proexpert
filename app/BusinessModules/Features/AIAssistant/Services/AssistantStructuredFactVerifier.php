@@ -14,6 +14,7 @@ final class AssistantStructuredFactVerifier
         $rows = [];
         $seen = [];
         $truncated = false;
+        $positionPages = [];
         $fetchedAt = null;
         foreach ($toolResults as $result) {
             if (! is_array($result) || ! is_string($result['server_formatted_facts'] ?? null) || ! is_array($result['structured_fact_evidence'] ?? null)) {
@@ -22,6 +23,10 @@ final class AssistantStructuredFactVerifier
             $evidence = $result['structured_fact_evidence'];
             if (! $this->trusted($evidence)) {
                 continue;
+            }
+            if (($evidence['truncated'] ?? false) === true) {
+                $truncated = true;
+                $positionPages[$evidence['position_page']['estimate_id']] = $evidence['position_page'];
             }
             $fetchedAt ??= $evidence['fetched_at'];
             foreach ($evidence['rows'] as $row) {
@@ -53,6 +58,14 @@ final class AssistantStructuredFactVerifier
                 'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => $truncated];
         }
         $payload = AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
+        foreach ($positionPages as $estimateId => $positionPage) {
+            $shown = count(array_filter($rows, static fn (array $row): bool => $row['entity_type'] === 'estimate_item'
+                && (int) ($row['source_ref']['estimate_id'] ?? 0) === (int) $estimateId));
+            $payload['server_formatted_facts'] .= "\n".trans_message('ai_assistant_facts.positions_partial', [
+                'shown' => $shown,
+                'total' => $positionPage['total'],
+            ]);
+        }
 
         return ['text' => $payload['server_formatted_facts'], 'validation_status' => 'partial',
             'source_refs' => $payload['structured_fact_evidence']['source_refs'], 'replaced' => $text !== $payload['server_formatted_facts'],
@@ -84,6 +97,20 @@ final class AssistantStructuredFactVerifier
             || ($evidence['version'] ?? null) !== hash('sha256', json_encode($evidence['rows'], JSON_THROW_ON_ERROR))) {
             return false;
         }
+        if (array_key_exists('truncated', $evidence)) {
+            $page = $evidence['position_page'] ?? null;
+            $shown = count(array_filter($evidence['rows'], static fn (mixed $row): bool => is_array($row) && ($row['entity_type'] ?? null) === 'estimate_item'));
+            if (! is_bool($evidence['truncated']) || ! is_array($page)
+                || ! is_int($page['estimate_id'] ?? null)
+                || ($evidence['rows'][0]['entity_type'] ?? null) !== 'estimate'
+                || ($evidence['rows'][0]['entity_id'] ?? null) !== $page['estimate_id']
+                || ! is_int($page['shown'] ?? null) || $page['shown'] !== $shown
+                || ! is_int($page['returned'] ?? null) || $page['returned'] < $shown
+                || ! is_int($page['total'] ?? null) || $page['total'] < $page['returned']
+                || $evidence['truncated'] !== ($page['returned'] > $shown)) {
+                return false;
+            }
+        }
         foreach ($evidence['rows'] as $row) {
             if (! is_array($row) || ! is_string($row['entity_type'] ?? null) || ! is_scalar($row['entity_id'] ?? null)
                 || ! is_array($row['fields'] ?? null) || $row['fields'] === [] || ! is_string($row['version'] ?? null)
@@ -94,6 +121,10 @@ final class AssistantStructuredFactVerifier
                 || ! is_array($row['source_ref']['checked_fields'] ?? null)
                 || array_diff(array_keys($row['fields']), $row['source_ref']['checked_fields']) !== []
                 || ($row['source_ref']['fetched_at'] ?? null) !== $evidence['fetched_at']) {
+                return false;
+            }
+            if (isset($page) && $row['entity_type'] === 'estimate_item'
+                && ($row['source_ref']['estimate_id'] ?? null) !== $page['estimate_id']) {
                 return false;
             }
             foreach ($row['fields'] as $value) {
