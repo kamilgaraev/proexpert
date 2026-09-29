@@ -61,7 +61,7 @@ final class ModuleController extends Controller
             $request,
             fn (int $organizationId): array => Module::toPublicCollection(
                 $this->entitlements->getEffectiveModules($organizationId),
-            )->all(),
+            ),
         );
     }
 
