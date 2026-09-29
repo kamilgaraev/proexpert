@@ -134,6 +134,7 @@ final class ShadowDomainScenario
             ShadowObservationVerifier::progress($scenario['id'], 'domain_business_snapshot_before_ask_done');
             $response = null;
             $error = null;
+            $askStarted = hrtime(true);
             try {
                 ShadowObservationVerifier::progress($scenario['id'], 'domain_ask');
                 $response = app(AIAssistantService::class)->ask($query, (int) $organization->id, $actor, null, [
@@ -145,6 +146,8 @@ final class ShadowDomainScenario
             } catch (Throwable $exception) {
                 if ($exception instanceof \Illuminate\Database\QueryException || $exception->getPrevious() instanceof \PDOException) { throw $exception; }
                 $error = ShadowObservationVerifier::diagnostic($exception, 'ask');
+            } finally {
+                $askDurationMs = (int) ceil((hrtime(true) - $askStarted) / 1_000_000);
             }
             ShadowObservationVerifier::progress($scenario['id'], 'verify');
             $after = self::snapshot($models);
@@ -157,7 +160,7 @@ final class ShadowDomainScenario
                 'readable_at_execution' => $readable, 'database_golden' => $golden,
                 'business_rows_before_ask' => $before, 'business_rows_after_ask' => $after,
                 'business_scope_before_ask' => $businessBefore, 'business_scope_after_ask' => $businessAfter,
-                'response' => $response, 'error' => $error, 'domain_verification' => $verification];
+                'response' => $response, 'error' => $error, 'ask_duration_ms' => $askDurationMs, 'domain_verification' => $verification];
             if ($longQuery) {
                 $conversationId = $response['conversation_id'] ?? null;
                 $persisted = $conversationId === null ? null : Message::query()->where('conversation_id', $conversationId)

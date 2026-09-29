@@ -24,9 +24,18 @@ final class AssistantStructuredFactVerifier
             if (! $this->trusted($evidence)) {
                 continue;
             }
-            if (($evidence['truncated'] ?? false) === true) {
-                $truncated = true;
-                $positionPages[$evidence['position_page']['estimate_id']] = $evidence['position_page'];
+            if (is_array($evidence['position_page'] ?? null)) {
+                $page = $evidence['position_page'];
+                $estimateId = $page['estimate_id'];
+                if (! isset($positionPages[$estimateId])) {
+                    $positionPages[$estimateId] = ['total' => $page['total'], 'incomplete' => false, 'inconsistent' => false];
+                } elseif ($positionPages[$estimateId]['total'] !== $page['total']) {
+                    $positionPages[$estimateId]['inconsistent'] = true;
+                }
+                if ($evidence['truncated'] === true) {
+                    $truncated = true;
+                    $positionPages[$estimateId]['incomplete'] = true;
+                }
             }
             $fetchedAt ??= $evidence['fetched_at'];
             foreach ($evidence['rows'] as $row) {
@@ -34,7 +43,14 @@ final class AssistantStructuredFactVerifier
                 if (isset($seen[$key])) {
                     continue;
                 }
-                if (count($rows) >= AssistantStructuredFactFormatter::MAX_ROWS) { $truncated = true; continue; }
+                if (count($rows) >= AssistantStructuredFactFormatter::MAX_ROWS) {
+                    $truncated = true;
+                    $estimateId = $row['source_ref']['estimate_id'] ?? null;
+                    if ($row['entity_type'] === 'estimate_item' && isset($positionPages[$estimateId])) {
+                        $positionPages[$estimateId]['incomplete'] = true;
+                    }
+                    continue;
+                }
                 $seen[$key] = true;
                 $rows[] = $row;
             }
@@ -59,12 +75,19 @@ final class AssistantStructuredFactVerifier
         }
         $payload = AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
         foreach ($positionPages as $estimateId => $positionPage) {
-            $shown = count(array_filter($rows, static fn (array $row): bool => $row['entity_type'] === 'estimate_item'
-                && (int) ($row['source_ref']['estimate_id'] ?? 0) === (int) $estimateId));
-            $payload['server_formatted_facts'] .= "\n".trans_message('ai_assistant_facts.positions_partial', [
-                'shown' => $shown,
-                'total' => $positionPage['total'],
-            ]);
+            if (! $positionPage['incomplete']) {
+                continue;
+            }
+            $shownIds = [];
+            foreach ($rows as $row) {
+                if ($row['entity_type'] === 'estimate_item' && (int) ($row['source_ref']['estimate_id'] ?? 0) === (int) $estimateId) {
+                    $shownIds[(string) $row['entity_id']] = true;
+                }
+            }
+            $shown = count($shownIds);
+            $payload['server_formatted_facts'] .= "\n".($positionPage['inconsistent'] || $shown > $positionPage['total']
+                ? trans_message('ai_assistant_facts.positions_partial_unknown')
+                : trans_message('ai_assistant_facts.positions_partial', ['shown' => $shown, 'total' => $positionPage['total']]));
         }
 
         return ['text' => $payload['server_formatted_facts'], 'validation_status' => 'partial',
@@ -95,6 +118,9 @@ final class AssistantStructuredFactVerifier
             || ! is_array($evidence['source_refs'] ?? null) || $evidence['source_refs'] === []
             || count($evidence['rows']) > AssistantStructuredFactFormatter::MAX_ROWS
             || ($evidence['version'] ?? null) !== hash('sha256', json_encode($evidence['rows'], JSON_THROW_ON_ERROR))) {
+            return false;
+        }
+        if (array_key_exists('truncated', $evidence) !== array_key_exists('position_page', $evidence)) {
             return false;
         }
         if (array_key_exists('truncated', $evidence)) {

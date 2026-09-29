@@ -259,6 +259,7 @@
             <file>tests/Feature/AIAssistant/PaymentDocumentEstimateSplitRepairMigrationTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantEstimateStructuredBridgeTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantRagSourceIdentityScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
         </testsuite>
         <testsuite name="AIAssistantRequests">
             <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>

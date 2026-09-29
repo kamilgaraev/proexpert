@@ -445,6 +445,39 @@ class AIAssistantService
                 $loopCount++;
             }
 
+            $terminalToolResponse = ! empty($response['tool_calls']);
+            if ($terminalToolResponse) {
+                $user->refresh();
+                $this->stage('tools');
+                $toolCalls = $response['tool_calls'];
+                $toolCall = is_array($toolCalls) && count($toolCalls) === 1 ? reset($toolCalls) : null;
+                $toolName = is_array($toolCall) ? (string) ($toolCall['function']['name'] ?? '') : '';
+                $advertisedTools = array_column(array_column($tools, 'function'), 'name');
+
+                if (is_array($toolCall) && in_array($toolName, $advertisedTools, true)
+                    && $this->isTerminalReadOnlyTool($toolName) && $this->toolRegistry->getTool($toolName) !== null) {
+                    if (! $organization instanceof Organization) {
+                        $organization = $this->resolveOrganization($organizationId);
+                    }
+                    $this->handleToolCall(
+                        $toolCall,
+                        $organization,
+                        $user,
+                        $organizationId,
+                        $taskPlan,
+                        false,
+                        $executedAction,
+                        $toolEvidence,
+                        $toolFailures,
+                        $proposedActions,
+                        $trustedDownloadUrls
+                    );
+                }
+
+                $response['content'] = trans_message('ai_assistant_facts.live_proof_required');
+                $response['tool_calls'] = [];
+            }
+
             $toolFailures = array_values(array_unique(array_filter(
                 $toolFailures,
                 static fn (mixed $value): bool => is_string($value) && trim($value) !== ''
@@ -485,12 +518,13 @@ class AIAssistantService
 
             $assistantPayload['source_refs'] = is_array($structuredCheck) && ($structuredCheck['replaced'] || $structuredCheck['source_refs'] !== [])
                 ? $structuredCheck['source_refs']
-                : $this->collectSourceRefs($ragMetadata, $this->activeToolResults);
+                : ($terminalToolResponse ? [] : $this->collectSourceRefs($ragMetadata, $this->activeToolResults));
             $validationStatus = $structuredCheck['validation_status'] ?? $financialCheck['validation_status'] ?? 'unverified';
             $assistantPayload['validation_status'] = $validationStatus === 'unverified' && $assistantPayload['source_refs'] !== []
                 ? 'partial' : $validationStatus;
             $assistantPayload['needs_clarification'] = (bool) ($assistantPayload['needs_clarification'] ?? false)
-                || (bool) ($structuredCheck['needs_clarification'] ?? false);
+                || (bool) ($structuredCheck['needs_clarification'] ?? false)
+                || ($terminalToolResponse && $assistantPayload['source_refs'] === []);
             if (($structuredCheck['structured_evidence_truncated'] ?? false) === true) {
                 $assistantPayload['structured_evidence_truncated'] = true;
             }
@@ -1161,6 +1195,17 @@ class AIAssistantService
             $result[AssistantSourceReferenceIdentity::key($ref)] = $ref;
         }
         return array_values($result);
+    }
+
+    private function isTerminalReadOnlyTool(string $toolName): bool
+    {
+        return in_array($toolName, [
+            'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
+            'resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot',
+            'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
+            'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
+            'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
+        ], true);
     }
 
     protected function handleToolCall(

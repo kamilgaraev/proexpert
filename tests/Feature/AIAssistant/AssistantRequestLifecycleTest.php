@@ -18,6 +18,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
@@ -780,6 +781,160 @@ final class AssistantRequestLifecycleTest extends TestCase
         ];
     }
 
+    public function test_last_budgeted_provider_call_executes_one_read_and_publishes_only_verified_facts(): void
+    {
+        $authorization = $this->mock(AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->andReturn(true);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModules')->andReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'users'])]));
+        $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
+        $this->app->instance(AssistantDataAccessPolicy::class, $policy);
+        $permissions = $this->mock(AIPermissionChecker::class);
+        $permissions->shouldReceive('canUseAssistant')->andReturn(true);
+        $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('isMutationTool')->andReturn(false);
+        $this->conversations = new ConversationManager($policy);
+        $this->lifecycle = new AssistantRequestLifecycle($this->credits, $permissions, $this->conversations, $policy);
+
+        $fetchedAt = now()->toISOString();
+        $reference = ['entity_type' => 'user', 'entity_id' => $this->actor->id, 'organization_id' => $this->organization->id,
+            'content_scope' => 'structured', 'checked_fields' => ['name', 'is_active'], 'required_permissions' => [],
+            'required_domains' => ['people'], 'fetched_at' => $fetchedAt];
+        $row = ['entity_type' => 'user', 'entity_id' => $this->actor->id, 'fields' => ['name' => $this->actor->name, 'is_active' => true],
+            'source_ref' => $reference, 'source_version' => null];
+        $row['version'] = hash('sha256', json_encode($row, JSON_THROW_ON_ERROR));
+        $proof = AssistantStructuredFactFormatter::payload([$row], $fetchedAt);
+
+        $registry = new AIToolRegistry;
+        $discovery = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+        $discovery->method('getName')->willReturn('assistant_domain_discover_capabilities');
+        $discovery->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
+        $discovery->expects($this->once())->method('execute')->willReturn(['capabilities' => ['people']]);
+        $registry->registerTool($discovery);
+        $reader = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+        $reader->method('getName')->willReturn('assistant_domain_read');
+        $reader->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['domain' => ['type' => 'string']]]);
+        $reader->expects($this->once())->method('execute')->willReturn($proof);
+        $registry->registerTool($reader);
+
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
+        $provider->expects($this->exactly(2))->method('chat')->willReturnOnConsecutiveCalls(
+            $usage + ['content' => '', 'tool_calls' => [['id' => 'discover', 'function' => ['name' => 'assistant_domain_discover_capabilities', 'arguments' => '{}']]]],
+            $usage + ['content' => 'Неподтверждённое утверждение', 'tool_calls' => [['id' => 'read', 'function' => ['name' => 'assistant_domain_read', 'arguments' => '{"domain":"people"}']]]]
+        );
+        $payload = $this->quote(['message' => 'Покажи текущий статус пользователя']);
+        $service = $this->providerService($provider, $registry);
+
+        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+
+        $this->assertSameJsonObject(['source_refs' => [$reference]], ['source_refs' => $response['message']['metadata']['source_refs']]);
+        $this->assertSame('partial', $response['message']['metadata']['validation_status']);
+        $this->assertFalse($response['message']['metadata']['needs_clarification']);
+        $this->assertStringContainsString($this->actor->name, $response['message']['content']);
+        $this->assertStringNotContainsString('Неподтверждённое', $response['message']['content']);
+        $this->assertSame(2, AssistantRequest::query()->sole()->calls_used);
+        $this->assertSame(2, AICreditProviderUsage::query()->count());
+        $this->assertSameJsonObject($response, $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload));
+    }
+
+    public function test_last_budgeted_provider_call_cannot_execute_report_export_or_publish_unverified_content(): void
+    {
+        $permissions = app(AIPermissionChecker::class);
+        $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('isMutationTool')->andReturn(false);
+        $registry = new AIToolRegistry;
+        foreach (['assistant_domain_discover_capabilities', 'generate_operational_pdf_report'] as $name) {
+            $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+            $tool->method('getName')->willReturn($name);
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
+            $tool->expects($name === 'assistant_domain_discover_capabilities' ? $this->once() : $this->never())
+                ->method('execute')->willReturn(['status' => 'ok']);
+            $registry->registerTool($tool);
+        }
+        $orchestrator = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator::class);
+        $orchestrator->method('plan')->willReturn(['request' => ['context' => [], 'allow_actions' => true],
+            'task_type' => 'summary', 'access_context_public' => [], 'capability' => ['id' => 'reports']]);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
+        $provider->expects($this->exactly(2))->method('chat')->willReturnOnConsecutiveCalls(
+            $usage + ['content' => '', 'tool_calls' => [['id' => 'discover', 'function' => ['name' => 'assistant_domain_discover_capabilities', 'arguments' => '{}']]]],
+            $usage + ['content' => 'Отчёт создан: https://example.test/secret.pdf',
+                'tool_calls' => [['id' => 'export', 'function' => ['name' => 'generate_operational_pdf_report', 'arguments' => '{}']]]]
+        );
+        $payload = $this->quote(['message' => 'Покажи текущий статус проекта', 'allow_actions' => true]);
+        $service = $this->providerService($provider, $registry, $orchestrator);
+        $service->ragContextOverride = ['prompt' => '', 'metadata' => ['sources' => [[
+            'entity_type' => 'user', 'entity_id' => $this->actor->id, 'organization_id' => $this->organization->id,
+        ]]]];
+
+        $response = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+
+        $this->assertSame([], $response['message']['metadata']['source_refs']);
+        $this->assertTrue($response['message']['metadata']['needs_clarification']);
+        $this->assertStringNotContainsString('Отчёт создан', $response['message']['content']);
+        $this->assertEmpty($response['message']['metadata']['proposed_actions'] ?? []);
+        $this->assertArrayNotHasKey('executed_action', $response);
+        $this->assertSame(0, $response['credit_usage']['charged_minor']);
+        $this->assertSame(2, AssistantRequest::query()->sole()->calls_used);
+    }
+
+    #[DataProvider('terminalRequestChanges')]
+    public function test_request_change_after_last_provider_call_blocks_terminal_read_and_publication(string $change, string $exception, string $status): void
+    {
+        $permissions = app(AIPermissionChecker::class);
+        $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('isMutationTool')->andReturn(false);
+        $registry = new AIToolRegistry;
+        foreach (['assistant_domain_discover_capabilities', 'assistant_domain_read'] as $name) {
+            $tool = $this->createMock(\App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface::class);
+            $tool->method('getName')->willReturn($name);
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
+            $tool->expects($name === 'assistant_domain_discover_capabilities' ? $this->once() : $this->never())
+                ->method('execute')->willReturn(['status' => 'ok']);
+            $registry->registerTool($tool);
+        }
+        $payload = $this->quote(['message' => 'Покажи текущий статус пользователя']);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->method('getModel')->willReturn('gpt-6-luna');
+        $usage = ['input_tokens' => 100, 'output_tokens' => 100, 'tokens_used' => 200, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
+        $call = 0;
+        $provider->expects($this->exactly(2))->method('chat')->willReturnCallback(function () use (&$call, $usage, $payload, $change): array {
+            $call++;
+            if ($call === 2) {
+                if ($change === 'cancel') {
+                    $this->lifecycle->cancel($payload['request_id'], $this->actor, $this->organization->id);
+                } else {
+                    $this->actor->forceFill(['current_organization_id' => null])->saveQuietly();
+                }
+            }
+            return $usage + ['content' => '', 'tool_calls' => [[
+                'id' => $call === 1 ? 'discover' : 'read',
+                'function' => ['name' => $call === 1 ? 'assistant_domain_discover_capabilities' : 'assistant_domain_read', 'arguments' => '{}'],
+            ]]];
+        });
+
+        $this->assertOperationThrows($exception, fn () => $this->providerService($provider, $registry)
+            ->ask($payload['message'], $this->organization->id, $this->actor, null, $payload));
+
+        $request = AssistantRequest::query()->sole();
+        $this->assertSame($status, $request->status);
+        $this->assertSame(2, $request->calls_used);
+        $this->assertSame(0, Message::query()->where('role', 'assistant')->count());
+        $this->assertSame(0, (int) AICreditReservation::query()->sole()->consumed_minor);
+    }
+
+    public static function terminalRequestChanges(): array
+    {
+        return [
+            'cancelled request' => ['cancel', AssistantRequestCancelled::class, 'cancelled'],
+            'actor leaves current organization' => ['actor_org', AuthorizationException::class, 'failed'],
+        ];
+    }
+
     private function quote(array $overrides = [], ?User $actor = null, ?int $conversationId = null): array
     {
         $payload = array_replace(['request_id' => (string) Str::uuid(), 'message' => 'Проверь текущие данные', 'profile' => 'short', 'allow_actions' => false, 'conversation_id' => $conversationId, 'context' => []], $overrides);
@@ -859,11 +1014,15 @@ final class LifecycleProviderAIAssistantService extends AIAssistantService
 {
     public bool $probeProviderDuringAsk = false;
     public bool $failOnRagBuild = false;
+    public ?array $ragContextOverride = null;
 
     protected function buildRagContext(string $query, int $organizationId, User $user, array $taskPlan, array $requestPayload): array
     {
         if ($this->failOnRagBuild) {
             throw new \RuntimeException('greeting_must_not_build_rag_context');
+        }
+        if ($this->ragContextOverride !== null) {
+            return $this->ragContextOverride;
         }
         return parent::buildRagContext($query, $organizationId, $user, $taskPlan, $requestPayload);
     }

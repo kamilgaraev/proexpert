@@ -166,4 +166,34 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
         self::assertTrue($guarded['structured_evidence_truncated']);
         self::assertStringContainsString('Показаны 23 из 30 найденных позиций', $guarded['text']);
     }
+
+    public function test_two_complete_position_pages_report_global_row_cap(): void
+    {
+        for ($index = 2; $index <= 40; $index++) {
+            EstimateItem::query()->create(['estimate_id' => $this->estimate->id, 'position_number' => (string) $index,
+                'name' => 'Позиция '.$index, 'item_type' => 'work', 'quantity' => '1',
+                'total_amount' => '1.00', 'unit_price' => '1.00', 'is_manual' => true]);
+        }
+        Carbon::setTestNow(now());
+        try {
+            $tool = app(GetEstimatePositionsTool::class);
+            $first = $tool->execute(['estimate_id' => $this->estimate->id, 'page' => 1, 'per_page' => 20], $this->actor, $this->organization);
+            $second = $tool->execute(['estimate_id' => $this->estimate->id, 'page' => 2, 'per_page' => 20], $this->actor, $this->organization);
+        } finally {
+            Carbon::setTestNow();
+        }
+        self::assertIsArray($first);
+        self::assertIsArray($second);
+        self::assertFalse($first['structured_fact_evidence']['truncated']);
+        self::assertFalse($second['structured_fact_evidence']['truncated']);
+        self::assertSame(40, $first['structured_fact_evidence']['position_page']['total']);
+        self::assertSame(40, $second['structured_fact_evidence']['position_page']['total']);
+
+        $guarded = (new AssistantStructuredFactVerifier)->guard('Покажи позиции сметы', 'Непроверенный текст', [$first, $second]);
+        $visiblePositions = array_values(array_filter($guarded['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'estimate_item'));
+        self::assertCount(24, $visiblePositions);
+        self::assertTrue($guarded['structured_evidence_truncated']);
+        self::assertStringContainsString('Показаны 24 из 40 найденных позиций', $guarded['text']);
+        self::assertStringNotContainsString('Позиция 40', $guarded['text']);
+    }
 }
