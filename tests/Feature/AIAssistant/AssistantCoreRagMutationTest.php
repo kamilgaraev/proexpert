@@ -42,6 +42,8 @@ final class AssistantCoreRagMutationTest extends TestCase
         [$fixture, $document, $old, $unrelated] = $this->fixture();
         Queue::fake([IndexRagSourceJob::class]);
         DB::beginTransaction();
+        self::assertSame(['ready' => true, 'phase' => 'phase_b', 'reason' => null],
+            app(ImmutableAuditWriterReadinessService::class)->status(DB::connection(), (string) config('legal_archive.audit_writer_secret')));
         $replacement = app(PaymentScheduleService::class)->replacePendingSchedule($document, $this->installments(), $fixture->owner);
         Queue::assertNotPushed(IndexRagSourceJob::class);
         self::assertFalse(PaymentSchedule::query()->whereKey($old->id)->exists());
