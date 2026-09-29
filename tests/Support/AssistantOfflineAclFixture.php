@@ -18,7 +18,31 @@ final class AssistantOfflineAclFixture
         $a->instance('config',new \Illuminate\Config\Repository(['app'=>['timezone'=>'UTC'],'database'=>['default'=>'offline']]));
         $a->instance('request',\Illuminate\Http\Request::create('/api/v1/admin/offline','GET'));
         $c=new class(null,'offline','',[]) extends \Illuminate\Database\PostgresConnection{
-         public int $fake=0;public function select($q,$b=[],$r=true,array $f=[]){$this->fake++;return str_contains($q,'authorization_contexts')?[]:[(object)['exists'=>!str_contains($q,'from "projects"'),'aggregate'=>0]];}};
+            public int $fake=0;
+
+            public function select($q,$b=[],$r=true,array $f=[])
+            {
+                $this->fake++;
+                if (str_contains($q,'authorization_contexts')) { return []; }
+                if (str_contains($q,'from "ai_rag_sources"') || str_contains($q,'from "ai_rag_expected_sources"')) {
+                    if (str_contains($q,'distinct') && str_contains($q,'"source_type"') && str_contains($q,'"entity_type"')) {
+                        $identities=[];
+                        foreach (P::entityDefinitions() as $type=>$definition) {
+                            $identities[]=(object)['source_type'=>$definition[0],'entity_type'=>$type];
+                        }
+                        $identities[]=(object)['source_type'=>'file_document','entity_type'=>'assistant_document'];
+                        return $identities;
+                    }
+                }
+                if (str_contains($q,'distinct') && str_contains($q,'from "ai_assistant_documents"') && str_contains($q,'"parent_entity_type"')) {
+                    return [(object)['parent_entity_type'=>'project']];
+                }
+                if (str_contains($q,'distinct') && str_contains($q,'from "files"') && str_contains($q,'"fileable_type"')) {
+                    return [(object)['fileable_type'=>\App\Models\Project::class]];
+                }
+                return [(object)['exists'=>!str_contains($q,'from "projects"'),'aggregate'=>0]];
+            }
+        };
         $dr=new \Illuminate\Database\ConnectionResolver(['offline'=>$c]);$dr->setDefaultConnection('offline');\Illuminate\Database\Eloquent\Model::setConnectionResolver($dr);
         $a->instance('db',new class($c){function __construct(private $c){}function connection($n=null){return $this->c;}function table($n){return $this->c->table($n);}function raw($n){return new \Illuminate\Database\Query\Expression($n);}});
         $cols=[];foreach(P::entityDefinitions()as$t=>$d){$m=new $d[1];$cols[$m->getTable()]=array_values(array_unique([...$m->getFillable(),...array_keys($m->getCasts()),...(R::values('safeSelectColumns')[$t]??[]),'id','organization_id']));}
