@@ -1,6 +1,7 @@
 import { readSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { ByteBuffer } from "flatbuffers";
 import pako from "pako";
 import * as FRAGS from "@thatopen/fragments";
@@ -10,6 +11,21 @@ import { writeConverterMessage } from "./converter-output.mjs";
 
 const [, , inputPath, outputPath, indexPath] = process.argv;
 const VIEWER_GEOMETRY_PROFILE = "ifc_properties_geometry_v2";
+const require = createRequire(import.meta.url);
+
+const dependencyVersion = async (name) => {
+  let directory = path.dirname(require.resolve(name));
+  while (directory !== path.dirname(directory)) {
+    try {
+      const metadata = JSON.parse(await fs.readFile(path.join(directory, "package.json"), "utf8"));
+      if (metadata.name === name && typeof metadata.version === "string") return metadata.version;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    directory = path.dirname(directory);
+  }
+  throw new Error(`Runtime version is unavailable: ${name}`);
+};
 
 const emit = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -194,7 +210,7 @@ const extractIfcIndex = async (sourcePath, destination) => {
         getElementPropertySets(api, modelID, expressID),
         api.properties.getMaterialsProperties(modelID, expressID, true, true),
       ]);
-      await output.write(`${JSON.stringify({
+      await output.writeFile(`${JSON.stringify({
         express_id: expressID,
         global_id: value(item.GlobalId),
         category: api.GetNameFromTypeCode(item.type).toUpperCase(),
@@ -272,6 +288,12 @@ try {
   const ifcMetadata = await extractIfcIndex(inputPath, indexPath);
   const metrics = {
     profile: VIEWER_GEOMETRY_PROFILE,
+    runtime: {
+      fragments: await dependencyVersion("@thatopen/fragments"),
+      web_ifc: await dependencyVersion("web-ifc"),
+      three: await dependencyVersion("three"),
+      node: process.versions.node,
+    },
     ifc_metadata: ifcMetadata,
     ...inspectFragments(fragmentsData, false),
   };

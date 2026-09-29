@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Http\Requests;
 
+use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionPayloadValidator as Payload;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
 
@@ -16,9 +17,14 @@ final class StoreDesignModelSessionTransientEventRequest extends FormRequest
 
     public function rules(): array
     {
+        $versioned = $this->input('schema_version') !== null;
+
         return [
-            'type' => ['required', 'string', 'in:cursor,select,camera'],
-            'payload' => ['required', 'array', 'max:5'],
+            'schema_version' => ['sometimes', 'integer', 'in:2'],
+            'client_id' => [$versioned ? 'required' : 'sometimes', 'string', 'max:100', 'regex:/^[A-Za-z0-9_-]+$/'],
+            'sequence' => [$versioned ? 'required' : 'sometimes', 'integer', 'min:0', 'max:9007199254740991'],
+            'type' => ['required', 'string', 'in:cursor,select,camera,view,heartbeat,leave'],
+            'payload' => ['present', 'nullable', 'array', 'max:7'],
         ];
     }
 
@@ -27,45 +33,20 @@ final class StoreDesignModelSessionTransientEventRequest extends FormRequest
         $validator->after(function (Validator $validator): void {
             $type = $this->input('type');
             $payload = $this->input('payload');
-            if (! is_array($payload)) {
-                return;
-            }
-            if (strlen((string) json_encode($payload)) > 1024) {
-                $validator->errors()->add('payload', trans_message('design_bim.errors.event_payload_invalid'));
-
-                return;
-            }
-
-            $rules = match ($type) {
-                'cursor' => ['x', 'y', 'z'],
-                'select' => ['model_version_id', 'element_id'],
-                'camera' => ['position', 'target'],
-                default => [],
+            $valid = strlen((string) json_encode($payload)) <= 4096 && match ($type) {
+                'camera' => Payload::camera($payload, $this->input('schema_version') === null),
+                'cursor' => $payload === null || (is_array($payload) && count($payload) === 3
+                    && Payload::coordinate($payload['x'] ?? null) && Payload::coordinate($payload['y'] ?? null)
+                    && Payload::coordinate($payload['z'] ?? null)),
+                'select' => Payload::selection($payload, $this->input('schema_version') === null),
+                'view' => is_array($payload) && array_keys($payload) === ['revision']
+                    && is_int($payload['revision']) && $payload['revision'] > 0,
+                'heartbeat', 'leave' => $payload === null || $payload === [],
+                default => false,
             };
-            if (array_diff(array_keys($payload), $rules) !== [] || array_diff($rules, array_keys($payload)) !== []) {
-                $validator->errors()->add('payload', trans_message('design_bim.errors.event_payload_invalid'));
-
-                return;
-            }
-            if ($type === 'cursor' && (! $this->coordinate($payload['x']) || ! $this->coordinate($payload['y']) || ! $this->coordinate($payload['z']))) {
-                $validator->errors()->add('payload', trans_message('design_bim.errors.event_payload_invalid'));
-            }
-            if ($type === 'select' && (! is_int($payload['model_version_id']) || ($payload['element_id'] !== null && (! is_string($payload['element_id']) || strlen($payload['element_id']) > 255)))) {
-                $validator->errors()->add('payload', trans_message('design_bim.errors.event_payload_invalid'));
-            }
-            if ($type === 'camera' && (! $this->vector($payload['position'] ?? null) || ! $this->vector($payload['target'] ?? null))) {
+            if (! $valid) {
                 $validator->errors()->add('payload', trans_message('design_bim.errors.event_payload_invalid'));
             }
         });
-    }
-
-    private function vector(mixed $value): bool
-    {
-        return is_array($value) && array_keys($value) === [0, 1, 2] && collect($value)->every(fn ($coordinate): bool => $this->coordinate($coordinate));
-    }
-
-    private function coordinate(mixed $value): bool
-    {
-        return (is_int($value) || is_float($value)) && is_finite((float) $value);
     }
 }

@@ -19,8 +19,9 @@ final class DesignModelSessionTransientEvent implements ShouldBroadcastNow
     public function __construct(
         private readonly int $sessionId,
         private readonly string $type,
-        private readonly array $payload,
+        private readonly ?array $payload,
         private readonly array $sender,
+        private readonly ?array $envelope = null,
     ) {}
 
     public function broadcastOn(): PresenceChannel
@@ -35,6 +36,10 @@ final class DesignModelSessionTransientEvent implements ShouldBroadcastNow
 
     public function broadcastWith(): array
     {
+        if ($this->envelope !== null) {
+            return $this->envelope;
+        }
+
         return [
             'type' => $this->type,
             'payload' => $this->payload,

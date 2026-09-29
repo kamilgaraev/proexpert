@@ -20,6 +20,7 @@ final readonly class DesignViewerConversionResult
         private ?array $boundingBox,
         private array $warnings,
         private array $ifcMetadata,
+        private array $runtime,
     ) {
     }
 
@@ -40,6 +41,7 @@ final readonly class DesignViewerConversionResult
             boundingBox: self::boundingBox($metrics['bounding_box'] ?? $metrics['bbox'] ?? null),
             warnings: self::warnings($payload['warnings'] ?? $metrics['warnings'] ?? []),
             ifcMetadata: self::normalizeIfcMetadata($metrics['ifc_metadata'] ?? []),
+            runtime: is_array($metrics['runtime'] ?? null) ? $metrics['runtime'] : [],
         );
     }
 
@@ -51,6 +53,15 @@ final readonly class DesignViewerConversionResult
 
         if (!$this->hasValidBoundingBox()) {
             throw new RuntimeException('Prepared viewer file has an invalid BIM bounding box.');
+        }
+    }
+
+    public function assertOfflineRuntime(): void
+    {
+        foreach (['fragments', 'web_ifc', 'three', 'node'] as $dependency) {
+            if (! is_string($this->runtime[$dependency] ?? null) || $this->runtime[$dependency] === '') {
+                throw new RuntimeException('Prepared viewer file does not report its runtime version.');
+            }
         }
     }
 
@@ -70,6 +81,7 @@ final readonly class DesignViewerConversionResult
             ],
             'warnings' => $this->warnings,
             'ifc_metadata' => $this->ifcMetadata,
+            'runtime' => $this->runtime,
         ];
     }
 

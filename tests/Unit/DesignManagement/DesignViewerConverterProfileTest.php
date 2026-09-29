@@ -11,7 +11,7 @@ final class DesignViewerConverterProfileTest extends TestCase
 {
     public function test_viewer_converter_version_targets_property_preserving_derivatives(): void
     {
-        $this->assertSame(5, DesignViewerConverter::version());
+        $this->assertSame(6, DesignViewerConverter::version());
     }
 
     public function test_public_metadata_drops_coordinate_matrices_and_keeps_viewer_summary(): void
@@ -44,7 +44,7 @@ final class DesignViewerConverterProfileTest extends TestCase
         $this->assertStringContainsString('importer.includeRelationNames = true', $script);
         $this->assertStringContainsString('COORDINATE_TO_ORIGIN: false', $script);
         $this->assertStringContainsString('OpenModelFromCallback', $script);
-        $this->assertStringContainsString('getPropertySets', $script);
+        $this->assertStringContainsString('getElementPropertySets', $script);
         $this->assertStringContainsString('getMaterialsProperties', $script);
         $this->assertStringContainsString('classificationMap', $script);
         $this->assertStringContainsString('coordination_matrix', $script);

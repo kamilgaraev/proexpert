@@ -17,7 +17,7 @@ use Tests\TestCase;
 
 final class DesignBimEventThrottleTest extends TestCase
 {
-    public function test_events_share_a_limit_per_participant_and_session_and_recover_after_expiry(): void
+    public function test_motion_and_control_have_separate_limits_per_participant_and_session(): void
     {
         $middleware = new ThrottleDesignModelSessionEvents(new RateLimiter(new Repository(new ArrayStore)));
         Carbon::setTestNow(Carbon::parse('2026-09-10 12:00:00'));
@@ -25,7 +25,7 @@ final class DesignBimEventThrottleTest extends TestCase
             foreach (range(1, 10) as $number) {
                 self::assertSame(204, $this->send($middleware, 1, 1, $number % 2 ? 'cursor' : 'camera'));
             }
-            self::assertSame(429, $this->send($middleware, 1, 1, 'select'));
+            self::assertSame(204, $this->send($middleware, 1, 1, 'select'));
             self::assertSame(429, $this->send($middleware, 1, 1, 'cursor'));
             self::assertSame(204, $this->send($middleware, 2, 1, 'cursor'));
             self::assertSame(204, $this->send($middleware, 1, 2, 'cursor'));

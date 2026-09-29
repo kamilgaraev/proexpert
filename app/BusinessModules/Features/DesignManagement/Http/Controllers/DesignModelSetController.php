@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Http\Controllers;
 
-use App\BusinessModules\Features\DesignManagement\Events\DesignModelSessionTransientEvent;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\StoreDesignModelSessionRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\StoreDesignModelSessionTransientEventRequest;
+use App\BusinessModules\Features\DesignManagement\Http\Requests\StoreDesignModelSessionViewStateRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\ListDesignModelSessionsRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelSessionListResource;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\StoreDesignModelSetRequest;
@@ -15,6 +15,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelSess
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelSetResource;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSet;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionAccessService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionStateService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelSetService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -27,6 +28,7 @@ final class DesignModelSetController extends Controller
     public function __construct(
         private readonly DesignModelSetService $service,
         private readonly DesignModelSessionAccessService $sessionAccess,
+        private readonly DesignModelSessionStateService $sessionState,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -148,25 +150,43 @@ final class DesignModelSetController extends Controller
 
     public function transientEvent(StoreDesignModelSessionTransientEventRequest $request, int $sessionId): JsonResponse
     {
-        $actor = $request->user();
-        if (! $actor || ! $this->sessionAccess->canJoin($actor, $sessionId)) {
-            return AdminResponse::error(trans_message('design_bim.errors.session_access_denied'), 403);
+        try {
+            $event = $this->sessionState->relay($this->org($request), $request->user(), $sessionId, $request->validated());
+
+            return AdminResponse::success($event, trans_message('design_bim.messages.event_relayed'), 202);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
         }
+    }
 
-        $data = $request->validated();
-        $session = $this->service->sessionBootstrap($this->org($request), $actor, $sessionId);
-        if ($data['type'] === 'select' && ! in_array((int) $data['payload']['model_version_id'], $session->modelSetRevision->version_ids, true)) {
-            return AdminResponse::error(trans_message('design_bim.errors.event_payload_invalid'), 422);
+    public function participants(Request $request, int $sessionId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->sessionState->participants($this->org($request), $request->user(), $sessionId), trans_message('design_bim.messages.session_loaded'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
         }
+    }
 
-        event(new DesignModelSessionTransientEvent(
-            $sessionId,
-            $data['type'],
-            $data['payload'],
-            ['id' => (int) $actor->id, 'name' => (string) $actor->name]
-        ));
+    public function storeViewState(StoreDesignModelSessionViewStateRequest $request, int $sessionId): JsonResponse
+    {
+        try {
+            return AdminResponse::success($this->sessionState->storeViewState($this->org($request), $request->user(), $sessionId, $request->validated()), trans_message('design_bim.messages.event_relayed'), 202);
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        }
+    }
 
-        return AdminResponse::success(null, trans_message('design_bim.messages.event_relayed'), 202);
+    public function viewState(Request $request, int $sessionId, string $clientId): JsonResponse
+    {
+        $request->validate(['revision' => ['sometimes', 'integer', 'min:1']]);
+        try {
+            $state = $this->sessionState->viewState($this->org($request), $request->user(), $sessionId, $clientId, $request->has('revision') ? $request->integer('revision') : null);
+
+            return AdminResponse::success($state, trans_message('design_bim.messages.session_loaded'));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        }
     }
 
     private function org(Request $request): int

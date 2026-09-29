@@ -2243,7 +2243,7 @@ final class DesignManagementApiTest extends TestCase
         $response->assertJsonPath('data.derivative.download_url', null);
         $response->assertJsonPath('data.derivative.processing_stage', 'stale');
         $response->assertJsonPath('data.derivative.metadata.is_stale', true);
-        $response->assertJsonPath('data.derivative.metadata.required_converter_version', 5);
+        $response->assertJsonPath('data.derivative.metadata.required_converter_version', \App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version());
 
         $downloadResponse = $this->withHeaders($context->authHeaders())
             ->get("/api/v1/admin/design-management/model-versions/{$version->id}/derivative-file");
@@ -2276,7 +2276,7 @@ final class DesignManagementApiTest extends TestCase
             'progress_percent' => 100,
             'processing_stage' => 'ready',
             'metadata' => [
-                'converter_version' => 5,
+                'converter_version' => \App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version(),
                 'prepared_on' => 'server',
                 'indexed_element_count' => 4,
                 'coordinate_transformations' => [[1, 0, 0, 0]],
@@ -2294,7 +2294,7 @@ final class DesignManagementApiTest extends TestCase
 
         $show->assertOk();
         $list->assertOk();
-        $show->assertJsonPath('data.derivative.metadata.converter_version', 5);
+        $show->assertJsonPath('data.derivative.metadata.converter_version', \App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version());
         $show->assertJsonPath('data.derivative.metadata.geometry.local_id_count', 4);
         $show->assertJsonPath('data.derivative.metadata.indexed_element_count', 4);
         $show->assertJsonMissingPath('data.derivative.metadata.coordinate_transformations');
@@ -2310,7 +2310,7 @@ final class DesignManagementApiTest extends TestCase
         $this->assertSame([[0, 1, 0, 0]], $stored->metadata['ifc_metadata']['transformations']);
         $this->assertArrayNotHasKey('coordinate_transformations', $slim->metadata);
         $this->assertArrayNotHasKey('transformations', $slim->metadata['ifc_metadata']);
-        $this->assertSame(5, $slim->metadata['converter_version']);
+        $this->assertSame(\App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version(), $slim->metadata['converter_version']);
     }
 
     public function test_derivative_upload_accepts_frag_file(): void
@@ -2706,7 +2706,7 @@ final class DesignManagementApiTest extends TestCase
         $response->assertStatus(202);
         $response->assertJsonPath('data.status', 'queued');
         $response->assertJsonPath('data.progress_percent', 0);
-        $response->assertJsonPath('data.metadata.converter_version', 5);
+        $response->assertJsonPath('data.metadata.converter_version', \App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version());
 
         $derivative->refresh();
         $this->assertSame('queued', $derivative->status->value);

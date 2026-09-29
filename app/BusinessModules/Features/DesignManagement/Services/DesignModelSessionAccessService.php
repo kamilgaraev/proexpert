@@ -10,6 +10,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Project\UserProjectAccessService;
+use DomainException;
 
 final readonly class DesignModelSessionAccessService
 {
@@ -20,21 +21,42 @@ final readonly class DesignModelSessionAccessService
     ) {
     }
 
-    public function canJoin(User $user, int $sessionId): bool
+    public function canJoin(User $user, int $sessionId, ?int $organizationId = null): bool
     {
-        $session = DesignModelSession::query()->with('modelSetRevision')->find($sessionId);
-        if (! $session || ! $this->canAccessProject($user, (int) $session->organization_id, (int) $session->project_id)) {
+        try {
+            $this->requireSession($user, $sessionId, $organizationId);
+
+            return true;
+        } catch (DomainException) {
             return false;
+        }
+    }
+
+    public function requireSession(User $user, int $sessionId, ?int $organizationId = null): DesignModelSession
+    {
+        $session = DesignModelSession::query()->with(['modelSetRevision', 'modelSet'])->find($sessionId);
+        if (! $session
+            || ($organizationId !== null && (int) $session->organization_id !== $organizationId)
+            || ! $this->canAccessProject($user, (int) $session->organization_id, (int) $session->project_id)
+            || ! $session->modelSetRevision || ! $session->modelSet
+            || (int) $session->modelSetRevision->model_set_id !== (int) $session->model_set_id
+            || (int) $session->modelSet->organization_id !== (int) $session->organization_id
+            || (int) $session->modelSet->project_id !== (int) $session->project_id) {
+            throw new DomainException(trans_message('design_bim.errors.session_access_denied'));
         }
         $versionIds = array_values(array_unique(array_map('intval', $session->modelSetRevision?->version_ids ?? [])));
 
-        return $versionIds !== [] && DesignArtifactVersion::query()
+        if ($versionIds === [] || DesignArtifactVersion::query()
             ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->whereIn('id', $versionIds)->where('file_format', 'ifc')
             ->whereHas('artifact', fn ($query) => $query->where('organization_id', $session->organization_id)
                 ->where('project_id', $session->project_id)->whereHas('package', fn ($packages) => $packages
                     ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)))
-            ->count() === count($versionIds);
+            ->count() !== count($versionIds)) {
+            throw new DomainException(trans_message('design_bim.errors.session_access_denied'));
+        }
+
+        return $session;
     }
 
     public function canAccessProject(User $user, int $organizationId, int $projectId, string $permission = 'design-management.models.view'): bool

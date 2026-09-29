@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Broadcasting;
 
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionAccessService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionStateService;
 use App\Models\User;
 
 final readonly class DesignModelSessionChannel
@@ -15,10 +16,11 @@ final readonly class DesignModelSessionChannel
 
     public function join(User $user, int|string $sessionId): array|bool
     {
-        if (! $this->access->canJoin($user, (int) $sessionId)) {
+        $organizationId = request()->attributes->get('current_organization_id');
+        if (! $this->access->canJoin($user, (int) $sessionId, $organizationId !== null ? (int) $organizationId : null)) {
             return false;
         }
 
-        return ['id' => (int) $user->id, 'name' => (string) $user->name];
+        return DesignModelSessionStateService::sender($user);
     }
 }

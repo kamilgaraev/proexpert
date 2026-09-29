@@ -48,7 +48,7 @@ final class DesignIfcToFragmentsConverterTest extends TestCase
     {
         $extension = PHP_OS_FAMILY === 'Windows' ? 'cmd' : 'sh';
         $path = $this->temporaryPath($extension);
-        $resultPayload = '{"event":"result","metrics":{"format":"thatopen_frag","profile":"ifc_properties_geometry_v2","local_id_count":2,"category_count":1,"sample_count":2,"representation_count":1,"shell_count":1,"bounding_box":{"min":{"x":0,"y":0,"z":0},"max":{"x":1,"y":1,"z":1}},"ifc_metadata":{"indexed_element_count":1,"coordination_matrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}}}';
+        $resultPayload = '{"event":"result","metrics":{"format":"thatopen_frag","profile":"ifc_properties_geometry_v2","runtime":{"fragments":"3.4.5","web_ifc":"0.0.77","three":"0.184.0","node":"22.0.0"},"local_id_count":2,"category_count":1,"sample_count":2,"representation_count":1,"shell_count":1,"bounding_box":{"min":{"x":0,"y":0,"z":0},"max":{"x":1,"y":1,"z":1}},"ifc_metadata":{"indexed_element_count":1,"coordination_matrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}}}';
         $progressPayload = '{"event":"progress","progress":45,"stage":"converting"}';
 
         if (PHP_OS_FAMILY === 'Windows') {
@@ -56,6 +56,7 @@ final class DesignIfcToFragmentsConverterTest extends TestCase
                 '@echo off',
                 'set "TARGET=%3"',
                 '> "%TARGET%" <nul set /p "=fragment binary"',
+                '> "%TARGET%.ifc-index.ndjson" echo {"express_id":42}',
                 'echo ' . $progressPayload,
                 'echo ' . $resultPayload,
                 'exit /b 0',
@@ -66,6 +67,7 @@ final class DesignIfcToFragmentsConverterTest extends TestCase
                 '#!/usr/bin/env sh',
                 'target="$3"',
                 'printf "%s" "fragment binary" > "$target"',
+                'printf "%s\\n" \'{"express_id":42}\' > "$target.ifc-index.ndjson"',
                 "printf '%s\\n' " . escapeshellarg($progressPayload),
                 "printf '%s\\n' " . escapeshellarg($resultPayload),
                 '',
