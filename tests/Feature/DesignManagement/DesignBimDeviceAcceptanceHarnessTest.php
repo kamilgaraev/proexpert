@@ -52,7 +52,8 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
 
     private const UI_ORIGIN = 'http://127.0.0.1:31391';
 
-    private const PREVIOUS_RUN_PORTS = [2014, 2016, 2018, 2019, 11097, 11103, 11107, 11108];
+    private const PREVIOUS_RUN_PORTS = [2014, 2016, 2018, 2019, 11097, 11103, 11107, 11108,
+        29945, 29948, 29951, 29952, 34581, 34582, 34585, 34586];
 
     private const ADMIN_HTTP_WORKERS = 4;
 
@@ -104,19 +105,22 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
             while ($adminHttpPort === $httpPort) {
                 $adminHttpPort = $this->availablePort();
             }
+            do {
+                $controlPort = $this->availablePort();
+            } while (in_array($controlPort, [$httpPort, $adminHttpPort], true));
             $reverbPort = $this->availablePort();
-            while (in_array($reverbPort, [$httpPort, $adminHttpPort], true)) {
+            while (in_array($reverbPort, [$httpPort, $adminHttpPort, $controlPort], true)) {
                 $reverbPort = $this->availablePort();
             }
             $redisPort = $this->availablePort();
-            while (in_array($redisPort, [$httpPort, $adminHttpPort, $reverbPort], true)) {
+            while (in_array($redisPort, [$httpPort, $adminHttpPort, $controlPort, $reverbPort], true)) {
                 $redisPort = $this->availablePort();
             }
             $adminWorkerPorts = [];
             for ($workerIndex = 0; $workerIndex < self::ADMIN_HTTP_WORKERS; $workerIndex++) {
                 do {
                     $workerPort = $this->availablePort();
-                } while (in_array($workerPort, [$httpPort, $adminHttpPort, $reverbPort, $redisPort, ...$adminWorkerPorts], true));
+                } while (in_array($workerPort, [$httpPort, $adminHttpPort, $controlPort, $reverbPort, $redisPort, ...$adminWorkerPorts], true));
                 $adminWorkerPorts[] = $workerPort;
             }
             $redis = new Process(['docker', 'run', '--rm', '--detach', '--name', $redisContainer,
@@ -127,6 +131,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
             $redisStarted = true;
             $base = 'http://127.0.0.1:'.$httpPort;
             $adminBase = 'http://127.0.0.1:'.$adminHttpPort;
+            $controlBase = 'http://127.0.0.1:'.$controlPort;
             $environment = array_replace($environment, [
                 'DB_DATABASE' => DB::connection()->getDatabaseName(),
                 'APP_URL' => $base, 'APP_KEY' => 'base64:'.base64_encode(random_bytes(32)),
@@ -148,14 +153,17 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
                 'LOG_CHANNEL' => 'single', 'LOG_LEVEL' => 'error',
             ]);
             $data = $fixture + [
-                'schema_version' => 1, 'base_url' => $base, 'admin_base_url' => $adminBase, 'ui_origin' => self::UI_ORIGIN, 'environment' => $environment,
+                'schema_version' => 1, 'base_url' => $base, 'admin_base_url' => $adminBase, 'control_base_url' => $controlBase,
+                'ui_origin' => self::UI_ORIGIN, 'environment' => $environment,
                 'runtime_directory' => realpath($directory), 'expires_at' => time() + self::MAX_SECONDS,
                 'file_signing_key' => bin2hex(random_bytes(32)), 'stop_file' => $directory.'/stop.json',
                 'http_port' => $httpPort, 'admin_http_port' => $adminHttpPort, 'reverb_port' => $reverbPort,
+                'control_port' => $controlPort,
                 'redis_port' => $redisPort, 'admin_worker_ports' => $adminWorkerPorts,
             ];
             $data['device_config'] = [
                 'BIM_API_BASE_URL' => $base.'/api/v1/mobile', 'BIM_API_ADMIN_BASE_URL' => $adminBase.'/api/v1/admin',
+                'BIM_API_CONTROL_BASE_URL' => $controlBase,
                 'BIM_API_TOKEN' => $data['mobile_token'], 'BIM_API_ADMIN_TOKEN' => $data['admin_token'],
                 'BIM_API_USER_ID' => (string) $data['mobile_user_id'], 'BIM_API_ORGANIZATION_ID' => (string) $data['organization_id'],
                 'BIM_API_PROJECT_ID' => (string) $data['project_id'], 'BIM_API_VERSION_ID' => (string) $data['version_id'],
@@ -168,7 +176,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
             ];
             $data['device_config_url'] = $base.'/__bim_acceptance/device-config?signature='
                 .hash_hmac('sha256', 'device-config|'.$data['expires_at'], $data['file_signing_key']);
-            $data['device_config']['BIM_API_CONTROL_URL'] = $base.'/__bim_acceptance/control?signature='
+            $data['device_config']['BIM_API_CONTROL_URL'] = $controlBase.'/__bim_acceptance/control?signature='
                 .hash_hmac('sha256', 'control|'.$data['expires_at'], $data['file_signing_key']);
             $this->writeJson($directory.'/descriptor.json', $data);
             require_once base_path(self::HELPERS.'/runtime.php');
@@ -187,6 +195,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
             $helper = base_path(self::HELPERS);
             $children[] = $reverb = new Process([PHP_BINARY, $helper.'/reverb.php'], base_path(), $childEnvironment);
             $children[] = $http = new Process([...$httpPhpCommand, '-S', '127.0.0.1:'.$httpPort, $helper.'/router.php'], base_path(), $childEnvironment);
+            $children[] = $controlHttp = new Process([...$httpPhpCommand, '-S', '127.0.0.1:'.$controlPort, $helper.'/control.php'], base_path(), $childEnvironment);
             $adminWorkers = [];
             foreach ($adminWorkerPorts as $workerPort) {
                 $children[] = $adminWorkers[] = new Process([...$httpPhpCommand, '-S', '127.0.0.1:'.$workerPort, $helper.'/router.php'], base_path(), $childEnvironment);
@@ -202,6 +211,9 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
                 $child->start();
             }
             $this->waitForServers($http, $adminHttp, $reverb, $data);
+            self::assertTrue($controlHttp->isRunning(), 'Acceptance control HTTP startup failed.');
+            $controlHealth = $this->request(array_replace($data, ['base_url' => $controlBase]), '/__bim_acceptance/health', '');
+            self::assertSame('ready', $controlHealth['status'] ?? null);
             foreach ($adminWorkerPorts as $workerPort) {
                 $health = $this->request(array_replace($data, ['base_url' => 'http://127.0.0.1:'.$workerPort]), '/__bim_acceptance/health', '');
                 self::assertSame('ready', $health['status'] ?? null);
@@ -210,14 +222,15 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
             $data['expires_at'] = time() + self::MAX_SECONDS;
             $data['device_config_url'] = $base.'/__bim_acceptance/device-config?signature='
                 .hash_hmac('sha256', 'device-config|'.$data['expires_at'], $data['file_signing_key']);
-            $data['device_config']['BIM_API_CONTROL_URL'] = $base.'/__bim_acceptance/control?signature='
+            $data['device_config']['BIM_API_CONTROL_URL'] = $controlBase.'/__bim_acceptance/control?signature='
                 .hash_hmac('sha256', 'control|'.$data['expires_at'], $data['file_signing_key']);
             $this->writeJson($directory.'/descriptor.json', $data);
             $this->writeJson($directory.'/flutter-defines.json', [
                 'API_BASE_URL' => $base.'/api/v1/mobile', 'BIM_API_CONFIG_URL' => $data['device_config_url'],
             ]);
             fwrite(STDOUT, "\n".json_encode([
-                'status' => 'ready', 'endpoint' => $base, 'admin_endpoint' => $adminBase, 'reverb_endpoint' => 'ws://127.0.0.1:'.$reverbPort,
+                'status' => 'ready', 'endpoint' => $base, 'admin_endpoint' => $adminBase, 'control_endpoint' => $controlBase,
+                'control_port' => $controlPort, 'reverb_endpoint' => 'ws://127.0.0.1:'.$reverbPort,
                 'descriptor' => $directory.'/descriptor.json', 'flutter_defines' => $directory.'/flutter-defines.json',
                 'stop_file' => $data['stop_file'], 'expires_at' => $data['expires_at'],
                 'organization_id' => $data['organization_id'], 'project_id' => $data['project_id'],
@@ -230,6 +243,7 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
                 self::assertLessThan($data['expires_at'], time(), 'Device acceptance timeout; no complete stop file.');
                 self::assertTrue($http->isRunning(), 'Acceptance HTTP server exited.');
                 self::assertTrue($adminHttp->isRunning(), 'Acceptance admin HTTP server exited.');
+                self::assertTrue($controlHttp->isRunning(), 'Acceptance control HTTP server exited.');
                 self::assertTrue($reverb->isRunning(), 'Acceptance Reverb server exited.');
                 foreach ($adminWorkers as $adminWorker) {
                     self::assertTrue($adminWorker->isRunning(), 'Acceptance admin worker exited.');

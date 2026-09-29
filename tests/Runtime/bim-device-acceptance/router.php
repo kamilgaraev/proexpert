@@ -6,11 +6,17 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Request;
 
 $acceptanceStarted = hrtime(true);
-require __DIR__.'/runtime.php';
+require_once __DIR__.'/runtime.php';
 $acceptanceAutoloaded = hrtime(true);
 
 $data = \Tests\Runtime\BimDeviceAcceptance\descriptor();
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($path === '/__bim_acceptance/control' && isset($data['control_port'])
+    && (int) ($_SERVER['SERVER_PORT'] ?? 0) !== $data['control_port']) {
+    http_response_code(403);
+
+    return;
+}
 if (is_string($path) && str_starts_with($path, '/__bim_acceptance/')) {
     $origin = (string) ($_SERVER['HTTP_ORIGIN'] ?? '');
     if ($origin !== '') {
@@ -149,6 +155,12 @@ $acceptanceBeforeApplication = hrtime(true);
 $request = Request::capture();
 $acceptanceBootstrapProfile = [];
 $app = \Tests\Runtime\BimDeviceAcceptance\application($data, $request, $acceptanceBootstrapProfile);
+$acceptanceExceptionHandler = $app->make(\Illuminate\Contracts\Debug\ExceptionHandler::class);
+if ($acceptanceExceptionHandler instanceof \Illuminate\Foundation\Exceptions\Handler) {
+    $acceptanceExceptionHandler->reportable(static function (\Throwable $exception) use ($data): void {
+        \Tests\Runtime\BimDeviceAcceptance\recordException($data, $exception);
+    });
+}
 $acceptanceBootstrapped = hrtime(true);
 $kernel = $app->make(Kernel::class);
 $response = $kernel->handle($request);

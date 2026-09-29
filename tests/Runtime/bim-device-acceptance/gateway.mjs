@@ -16,13 +16,18 @@ function descriptor() {
   if (dirname(root) !== realpathSync.native(tmpdir()) || !/^most-bim-device-[a-f0-9]{24}$/.test(basename(root))) throw new Error('descriptor_root_invalid');
   const data = JSON.parse(readFileSync(descriptorPath, 'utf8'));
   const env = data.environment;
+  const hasControl = data.control_port !== undefined || data.control_base_url !== undefined;
+  const ports = [data.http_port, data.admin_http_port, data.reverb_port, data.redis_port, ...(data.admin_worker_ports ?? []),
+    ...(hasControl ? [data.control_port] : [])];
   if (env.APP_ENV !== 'testing' || env.DB_CONNECTION !== 'pgsql' || env.DB_HOST !== '127.0.0.1' || env.DB_PORT !== '55433'
     || !/^most_phpunit_[a-f0-9]{24}_testing$/.test(env.DB_DATABASE) || env.DB_USERNAME !== 'most_testing' || env.DB_PASSWORD !== 'most_testing_password'
     || realpathSync.native(data.runtime_directory) !== root || data.ui_origin !== 'http://127.0.0.1:31391'
     || env.WEB_AUTH_ADMIN_ALLOWED_ORIGINS !== data.ui_origin || Date.now() >= data.expires_at * 1000
     || !Array.isArray(data.admin_worker_ports) || data.admin_worker_ports.length !== 4
     || data.admin_worker_ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65535)
-    || new Set([data.http_port, data.admin_http_port, data.reverb_port, data.redis_port, ...data.admin_worker_ports]).size !== 8
+    || new Set(ports).size !== (hasControl ? 9 : 8)
+    || (hasControl && (!Number.isInteger(data.control_port) || data.control_port < 1 || data.control_port > 65535
+      || data.control_base_url !== `http://127.0.0.1:${data.control_port}`))
     || data.admin_base_url !== `http://127.0.0.1:${data.admin_http_port}`) throw new Error('descriptor_guard_invalid');
   return data;
 }

@@ -37,6 +37,25 @@ function descriptor(): array
         || $env['WEB_AUTH_ADMIN_ALLOWED_ORIGINS'] !== $data['ui_origin']) {
         throw new RuntimeException('bim_acceptance_descriptor_unsafe_or_expired');
     }
+    if (array_key_exists('control_port', $data) || array_key_exists('control_base_url', $data)) {
+        $controlPort = $data['control_port'] ?? null;
+        $controlBase = $data['control_base_url'] ?? null;
+        $ports = [$data['http_port'], $data['admin_http_port'], $data['reverb_port'], $data['redis_port'],
+            ...$data['admin_worker_ports'], $controlPort];
+        if (! is_int($controlPort) || $controlPort < 1 || $controlPort > 65535
+            || $controlBase !== 'http://127.0.0.1:'.$controlPort
+            || ($data['device_config']['BIM_API_CONTROL_BASE_URL'] ?? null) !== $controlBase
+            || ! is_string($data['device_config']['BIM_API_CONTROL_URL'] ?? null)
+            || ! str_starts_with($data['device_config']['BIM_API_CONTROL_URL'], $controlBase.'/__bim_acceptance/control?signature=')
+            || count($ports) !== 9 || count(array_unique($ports, SORT_REGULAR)) !== 9) {
+            throw new RuntimeException('bim_acceptance_control_resource_invalid');
+        }
+        foreach ($ports as $port) {
+            if (! is_int($port) || $port < 1 || $port > 65535) {
+                throw new RuntimeException('bim_acceptance_control_resource_invalid');
+            }
+        }
+    }
 
     return $data;
 }
@@ -121,6 +140,40 @@ function application(array $data, Request $request, array &$bootstrapProfile = [
     $bootstrapProfile['test_storage_setup_ms'] = round((hrtime(true) - $storageStarted) / 1000000, 2);
 
     return $app;
+}
+
+function recordException(array $data, \Throwable $exception): void
+{
+    try {
+        $file = $data['runtime_directory'].'/exceptions.jsonl';
+        if (is_file($file) && filesize($file) >= 1048576) {
+            return;
+        }
+        $root = str_replace('\\', '/', dirname(__DIR__, 3)).'/';
+        $frames = [];
+        foreach ($exception->getTrace() as $frame) {
+            $source = str_replace('\\', '/', $frame['file'] ?? '');
+            if (! str_starts_with($source, $root)) {
+                continue;
+            }
+            $relative = substr($source, strlen($root));
+            if (! str_starts_with($relative, 'app/') && ! str_starts_with($relative, 'tests/Runtime/bim-device-acceptance/')) {
+                continue;
+            }
+            $frames[] = ['file' => $relative, 'line' => $frame['line'] ?? null,
+                'class' => $frame['class'] ?? null, 'function' => $frame['function'] ?? null];
+            if (count($frames) === 8) {
+                break;
+            }
+        }
+        $origin = str_replace('\\', '/', $exception->getFile());
+        $safeMessage = str_starts_with($exception->getMessage(), 'Error while reading line from the server.')
+            ? 'Error while reading line from the server.' : null;
+        file_put_contents($file, json_encode(['at' => gmdate('Y-m-d\TH:i:s\Z'), 'class' => $exception::class,
+            'message' => $safeMessage, 'origin_file' => str_starts_with($origin, $root) ? substr($origin, strlen($root)) : null,
+            'origin_line' => $exception->getLine(), 'own_frames' => $frames], JSON_THROW_ON_ERROR)."\n", FILE_APPEND | LOCK_EX);
+    } catch (\Throwable) {
+    }
 }
 
 function configureStorage(Application $app, array $data): void

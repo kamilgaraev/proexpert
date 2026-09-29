@@ -79,12 +79,13 @@ test('gateway forwards streamed bytes and cookies, dispatches four workers, and 
       workerPorts.push(await listen(server));
     }
     const ports = [...workerPorts];
-    for (let index = 0; index < 4; index++) ports.push(await freePort(ports));
-    const [httpPort, gatewayPort, reverbPort, redisPort] = ports.slice(4);
+    for (let index = 0; index < 5; index++) ports.push(await freePort(ports));
+    const [httpPort, gatewayPort, reverbPort, redisPort, controlPort] = ports.slice(4);
     const descriptorPath = join(directory, 'descriptor.json');
     writeFileSync(descriptorPath, JSON.stringify({
       runtime_directory: realpathSync.native(directory), expires_at: Math.floor(Date.now() / 1000) + 60,
       ui_origin: 'http://127.0.0.1:31391', admin_base_url: `http://127.0.0.1:${gatewayPort}`,
+      control_base_url: `http://127.0.0.1:${controlPort}`, control_port: controlPort,
       http_port: httpPort, admin_http_port: gatewayPort, reverb_port: reverbPort, redis_port: redisPort, admin_worker_ports: workerPorts,
       environment: { APP_ENV: 'testing', DB_CONNECTION: 'pgsql', DB_HOST: '127.0.0.1', DB_PORT: '55433',
         DB_DATABASE: `most_phpunit_${nonce}_testing`, DB_USERNAME: 'most_testing', DB_PASSWORD: 'most_testing_password',
