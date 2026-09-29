@@ -185,8 +185,10 @@ final class AssistantShadowEvaluationTest extends TestCase
                 if ($result === null && ! isset($categoryObservation['error'])) {
                     ShadowObservationVerifier::progress($scenario['id'], 'ask', ['completed' => count($trace['scenarios']), 'total' => $limit]);
                     $before = ShadowObservationVerifier::domainState();
+                    ShadowObservationVerifier::progress($scenario['id'], 'ask_ready', ['completed' => count($trace['scenarios']), 'total' => $limit]);
                     $result = app(AIAssistantService::class)->ask($scenario['input']['message'], $fixtures->organization->id, $actor, null,
                         ['request_id' => $scenario['input']['request_id'], 'profile' => $scenario['requested_profile'], 'project_id' => $categoryObservation['request_context']['project_id'] ?? $project->id, 'allow_actions' => false]);
+                    ShadowObservationVerifier::progress($scenario['id'], 'ask_returned', ['completed' => count($trace['scenarios']), 'total' => $limit]);
                 }
                 DB::commit();
             } catch (Throwable $exception) {
