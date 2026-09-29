@@ -14,6 +14,7 @@ final class ShadowProviderCollector
 {
     public array $calls = [];
     public string $activeKind = 'assistant';
+    public string $activeScenario = 'bootstrap';
 
     public function __construct(private readonly string $relay, private readonly string $token, private readonly array $pricing, private readonly array $priceEvidence = [])
     {
@@ -50,6 +51,7 @@ final class ShadowProviderCollector
                 $request->getBody()->rewind();
                 $request = $request->withUri(new \GuzzleHttp\Psr7\Uri($this->relay.$path))
                     ->withHeader('Authorization', 'Bearer '.$this->token);
+                ShadowObservationVerifier::progress($this->activeScenario, 'provider_dispatched', ['endpoint' => $path]);
                 return $next($request, $options)->then(function (ResponseInterface $response) use ($host, $path, $payload) {
                     $raw = (string) $response->getBody();
                     $response->getBody()->rewind();

@@ -159,6 +159,7 @@ final class AssistantShadowEvaluationTest extends TestCase
         foreach ($selected as $scenario) {
             self::assertSame($trace['assistant_implementation_fingerprint'], app(\App\Services\Credits\AICreditReadinessService::class)->assistantImplementationFingerprint(true), 'Assistant sources changed during the shadow run.');
             $collector->activeKind = 'assistant';
+            $collector->activeScenario = $scenario['id'];
             $offset = count($collector->calls);
             $transportOffset = count($transportReceipts);
             ShadowObservationVerifier::progress($scenario['id'], 'setup', ['completed' => count($trace['scenarios']), 'total' => $limit]);
@@ -170,7 +171,9 @@ final class AssistantShadowEvaluationTest extends TestCase
             $scenarioLevel = DB::connection()->transactionLevel();
             try {
                 DB::beginTransaction();
+                ShadowObservationVerifier::progress($scenario['id'], 'domain_snapshot_before_fixture');
                 $before = ShadowObservationVerifier::domainState();
+                ShadowObservationVerifier::progress($scenario['id'], 'domain_snapshot_before_fixture_done');
                 $helper = self::helper($scenario['category']);
                 $categoryObservation = null;
                 if ($helper !== null) {
@@ -183,9 +186,9 @@ final class AssistantShadowEvaluationTest extends TestCase
                     }
                 }
                 if ($result === null && ! isset($categoryObservation['error'])) {
-                    ShadowObservationVerifier::progress($scenario['id'], 'ask', ['completed' => count($trace['scenarios']), 'total' => $limit]);
+                    ShadowObservationVerifier::progress($scenario['id'], 'fallback_domain_snapshot', ['completed' => count($trace['scenarios']), 'total' => $limit]);
                     $before = ShadowObservationVerifier::domainState();
-                    ShadowObservationVerifier::progress($scenario['id'], 'ask_ready', ['completed' => count($trace['scenarios']), 'total' => $limit]);
+                    ShadowObservationVerifier::progress($scenario['id'], 'fallback_ask', ['completed' => count($trace['scenarios']), 'total' => $limit]);
                     $result = app(AIAssistantService::class)->ask($scenario['input']['message'], $fixtures->organization->id, $actor, null,
                         ['request_id' => $scenario['input']['request_id'], 'profile' => $scenario['requested_profile'], 'project_id' => $categoryObservation['request_context']['project_id'] ?? $project->id, 'allow_actions' => false]);
                     ShadowObservationVerifier::progress($scenario['id'], 'ask_returned', ['completed' => count($trace['scenarios']), 'total' => $limit]);

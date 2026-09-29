@@ -129,16 +129,19 @@ final class ShadowDomainScenario
                 }
             }
             $before = self::snapshot($models);
+            ShadowObservationVerifier::progress($scenario['id'], 'domain_business_snapshot_before_ask');
             $businessBefore = self::businessScopeSnapshot((int) $organization->id);
+            ShadowObservationVerifier::progress($scenario['id'], 'domain_business_snapshot_before_ask_done');
             $response = null;
             $error = null;
             try {
-                ShadowObservationVerifier::progress($scenario['id'], 'ask');
+                ShadowObservationVerifier::progress($scenario['id'], 'domain_ask');
                 $response = app(AIAssistantService::class)->ask($query, (int) $organization->id, $actor, null, [
                     'request_id' => (string) ($scenario['input']['request_id'] ?? Str::uuid()),
                     'profile' => (string) ($scenario['requested_profile'] ?? 'normal'),
                     'project_id' => $project->id, 'allow_actions' => false,
                 ]);
+                ShadowObservationVerifier::progress($scenario['id'], 'domain_ask_returned');
             } catch (Throwable $exception) {
                 if ($exception instanceof \Illuminate\Database\QueryException || $exception->getPrevious() instanceof \PDOException) { throw $exception; }
                 $error = ShadowObservationVerifier::diagnostic($exception, 'ask');
