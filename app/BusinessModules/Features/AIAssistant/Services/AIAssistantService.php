@@ -2796,10 +2796,14 @@ class AIAssistantService
     {
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
         if ($this->activeActor !== null) {
+            $this->executionCheckpoint();
             $filter = fn (): array => array_values(array_filter($toolNames,
                 fn (string $toolName): bool => $this->permissionChecker->canExposeTool($this->activeActor, $toolName, false)));
             $toolNames = $this->dataAccess === null ? $filter() : $this->dataAccess->withCurrentChecks(
-                $this->activeActor, (int) $this->activeActor->current_organization_id, $filter, true, fn () => $this->executionCheckpoint());
+                $this->activeActor, (int) $this->activeActor->current_organization_id, $filter, true,
+                fn (): ?int => app()->bound(AssistantRequestExecutionContext::class)
+                    ? app(AssistantRequestExecutionContext::class)->remainingMilliseconds() : null);
+            $this->executionCheckpoint();
         }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
 
