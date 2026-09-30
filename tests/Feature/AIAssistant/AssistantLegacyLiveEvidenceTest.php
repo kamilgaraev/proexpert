@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetProcurementSnapshotTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool;
+use App\BusinessModules\Features\AIAssistant\Http\Resources\MessageResource;
+use App\BusinessModules\Features\AIAssistant\Models\Message;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyLiveEvidenceAdapter;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -73,6 +77,35 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
             $this->assertStringContainsString('98765432109.17', $guard['text']);
             $this->assertStringNotContainsString('999999', $guard['text']);
         }
+    }
+
+    public function test_legacy_project_search_proves_acl_scoped_result_window_and_keeps_explicit_metadata(): void
+    {
+        $permission = Mockery::mock(AIPermissionChecker::class);
+        $permission->shouldReceive('canExecuteTool')->andReturn(true);
+        $this->app->instance(AIPermissionChecker::class, $permission);
+        $visible = [$this->project('QA_LEGACY_WINDOW_0'), $this->project('QA_LEGACY_WINDOW_1'), $this->project('QA_LEGACY_WINDOW_2')];
+        $private = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id,
+            'name' => 'QA_LEGACY_WINDOW_PRIVATE', 'is_archived' => false]));
+        $tool = new SearchProjectsTool;
+
+        $limited = $tool->execute(['query' => 'QA_LEGACY_WINDOW', 'limit' => 2], $this->actor, $this->organization);
+        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true], $limited['result_window']);
+        self::assertNotContains($private->id, array_column($limited['results'], 'id'));
+        self::assertSame($limited['result_window'], AssistantToolResultProjection::forProvider('search_projects', $limited)['result_window']);
+        self::assertArrayNotHasKey('result_window', AssistantToolResultProjection::forProvider('search_contractors', ['status' => 'success']));
+
+        $reads = $this->adapter->read('search_projects', $limited, $this->actor, $this->organization->id);
+        self::assertCount(2, $reads);
+        self::assertSame($visible[0]->name, $reads[0]['source_refs'][0]['display_label']);
+        $message = new Message(['metadata' => ['source_refs' => $reads[0]['source_refs'], 'result_window' => $limited['result_window']]]);
+        $resource = (new MessageResource($message))->toArray(request());
+        self::assertSame($reads[0]['source_refs'], $resource['source_refs']);
+        self::assertSame($limited['result_window'], $resource['metadata']['result_window']);
+
+        $complete = $tool->execute(['query' => 'QA_LEGACY_WINDOW', 'limit' => 3], $this->actor, $this->organization);
+        self::assertSame(['limit' => 3, 'returned' => 3, 'has_more' => false], $complete['result_window']);
+        self::assertSame(array_map(static fn (Project $project): int => $project->id, $visible), array_column($complete['results'], 'id'));
     }
 
     public function test_contract_snapshot_rereads_exact_money_and_dates(): void

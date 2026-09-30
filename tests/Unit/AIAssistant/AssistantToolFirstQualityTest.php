@@ -125,6 +125,68 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame('object', $definitions[1]['function']['parameters']['type']);
     }
 
+    public function test_actual_ask_renders_model_selected_presentation_from_checked_rows_only(): void
+    {
+        $query = 'Какой статус у проекта?';
+        $fetchedAt = now()->toISOString();
+        $fields = ['name' => '[Корпус](https://evil.test)', 'status' => 'active'];
+        $reference = ['entity_type' => 'project', 'entity_id' => 17, 'organization_id' => 15, 'content_scope' => 'structured',
+            'checked_fields' => array_keys($fields), 'required_permissions' => ['projects.view'], 'required_domains' => ['projects'],
+            'source_version' => 'project-current', 'fetched_at' => $fetchedAt];
+        $model = new class extends \Illuminate\Database\Eloquent\Model {};
+        $model->setRawAttributes(['id' => 17] + $fields, true);
+        $row = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::row($model, 'project', array_keys($fields), $reference);
+        $result = ['status' => 'success',
+            ...\App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload([$row], $fetchedAt),
+            'source_refs' => [$reference], 'results' => [['entity_type' => 'project', 'id' => 17, 'fields' => $fields]]];
+        $contract = \App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner::providerView($result);
+        $plan = ['kind' => 'verified_rows', 'version' => 1, 'result_sets' => [[
+            'result_set' => $contract['result_set'], 'layout' => 'list', 'columns' => ['status', 'name'], 'order' => ['r01'], 'group_by' => null,
+        ]]];
+        $service = $this->service(['assistant_domain_read' => $result], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]],
+            ['content' => json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
+        ]);
+
+        $response = $service->ask($query, 15, $this->actor(), 7);
+
+        $this->assertStringStartsWith("Проект:\nСтатус: Активный\nНазвание: \\[Корпус\\]", $response['message']['content']);
+        $this->assertStringNotContainsString('](https://evil.test)', $response['message']['content']);
+        $this->assertSame('partial', $response['message']['metadata']['validation_status']);
+        $this->assertCount(1, $response['message']['metadata']['source_refs']);
+        $toolMessage = array_values(array_filter($this->providerCalls[1]['messages'], static fn (array $message): bool => ($message['role'] ?? null) === 'tool'))[0];
+        $providerResult = json_decode($toolMessage['content'], true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame($contract, $providerResult['presentation_contract']);
+        $this->assertSame('r01', $providerResult['results'][0]['presentation_ref']);
+        $this->assertSame(['name', 'status'], $providerResult['presentation_contract']['fields']);
+        $this->assertArrayNotHasKey('rows', $providerResult['presentation_contract']);
+        $this->assertStringNotContainsString('Корпус', json_encode($providerResult['presentation_contract'], JSON_UNESCAPED_UNICODE));
+        $this->assertStringNotContainsString('все готово', $response['message']['content']);
+    }
+
+    public function test_actual_ask_allows_money_plan_only_when_financial_receipt_covers_every_selected_row(): void
+    {
+        [$completeService] = $this->moneyPlanService(true, [0, 1]);
+        $complete = $completeService->ask('Какая сумма по документам?', 15, $this->actor(), 7);
+
+        $this->assertStringStartsWith('Платёжный документ:', $complete['message']['content']);
+        $this->assertTrue(strpos($complete['message']['content'], '20.50') < strpos($complete['message']['content'], '10.25'), $complete['message']['content']);
+        $this->assertCount(2, $complete['message']['metadata']['source_refs']);
+        $this->assertSame('partial', $complete['message']['metadata']['validation_status']);
+
+        [$missingService] = $this->moneyPlanService(false, []);
+        $missing = $missingService->ask('Какая сумма по документам?', 15, $this->actor(), 7);
+        $this->assertSame(trans_message('ai_assistant_financial.unverified_claim'), $missing['message']['content']);
+        $this->assertSame([], $missing['message']['metadata']['source_refs']);
+        $this->assertStringNotContainsString('10.25', $missing['message']['content']);
+
+        [$partialService] = $this->moneyPlanService(true, [0]);
+        $partial = $partialService->ask('Какая сумма по документам?', 15, $this->actor(), 7);
+        $this->assertSame('Сумма документа: 10.25 RUB', $partial['message']['content']);
+        $this->assertCount(1, $partial['message']['metadata']['source_refs']);
+        $this->assertStringNotContainsString('20.50', $partial['message']['content']);
+    }
+
     public function test_document_search_runs_only_after_luna_choice_and_preserves_sources(): void
     {
         $source = ['entity_type' => 'knowledge_article', 'entity_id' => '11', 'content_scope' => 'unstructured',
@@ -145,6 +207,145 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame('До приёмки проверьте комплектность [1].', $response['message']['content']);
         $this->assertTrue($response['message']['metadata']['rag_context']['used']);
         $this->assertSame('11', $response['message']['metadata']['source_refs'][0]['entity_id']);
+    }
+
+    public function test_three_large_position_reads_fit_next_provider_without_losing_server_receipts_or_causal_messages(): void
+    {
+        $query = 'Найди позиции в сметах и покажи состав материалов с количеством и единицами.';
+        $fetchedAt = now()->toISOString();
+        $toolResults = [];
+        $rawMessages = [['role' => 'user', 'content' => $query]];
+        $responses = [];
+        foreach (['assistant_domain_search', 'assistant_domain_read', 'get_estimate_answer'] as $index => $name) {
+            $type = $index === 1 ? 'estimate_item_resource' : 'estimate_item';
+            $rows = [];
+            $results = [];
+            $positions = [];
+            for ($offset = 0; $offset < 20; $offset++) {
+                $id = ($index + 1) * 100 + $offset;
+                $fields = ['name' => 'Материал '.$offset, 'position_number' => (string) ($offset + 1),
+                    'quantity' => '12.34560000', 'unit' => 'м³', 'unit_price' => '230.5000', 'currency' => 'RUB',
+                    'current_unit_price' => '230.5000', 'total_amount' => '2845.66', 'current_total_amount' => '2845.66',
+                    'direct_costs' => '2000.0000', 'materials_cost' => '1500.0000', 'machinery_cost' => '200.0000',
+                    'labor_cost' => '300.0000', 'equipment_cost' => '0.0000', 'overhead_amount' => '500.00',
+                    'profit_amount' => '345.66', 'parent_work_id' => null, 'excluded' => false, 'included_in_total' => true];
+                $reference = ['entity_type' => $type, 'entity_id' => $id, 'organization_id' => 15, 'estimate_id' => 99,
+                    'content_scope' => 'structured', 'checked_fields' => array_keys($fields),
+                    'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
+                    'required_domains' => ['estimates'], 'source_version' => str_repeat('a', 64),
+                    'fetched_at' => $fetchedAt, 'navigation' => ['url' => '/estimates/99?position_id='.$id]];
+                $rows[] = ['entity_type' => $type, 'entity_id' => $id, 'fields' => $fields,
+                    'source_ref' => $reference, 'source_version' => str_repeat('a', 64), 'version' => str_repeat('b', 64)];
+                $results[] = ['entity_type' => $type, 'id' => $id, 'fields' => $fields, 'navigation' => $reference['navigation']];
+                $positions[] = ['id' => $id, ...$fields, 'navigation' => $reference['navigation']];
+            }
+            $result = ['status' => $index === 2 ? 'resolved' : 'success',
+                ...\App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload($rows, $fetchedAt),
+                'source_refs' => array_column($rows, 'source_ref'), 'needs_clarification' => false,
+                'result_window' => ['limit' => 20, 'returned' => 20, 'has_more' => true]];
+            if ($index === 2) {
+                $result['financial_evidence'] = ['positions' => $positions, 'version' => str_repeat('c', 64),
+                    'source_refs' => $result['source_refs'], 'fetched_at' => $fetchedAt, 'validation_status' => 'partial'];
+            } else {
+                $result['results'] = $results;
+            }
+            $toolResults[$name] = $result;
+            $call = ['id' => 'call_'.$index, 'type' => 'function', 'function' => ['name' => $name, 'arguments' => '{}']];
+            $responses[] = ['content' => '', 'tool_calls' => [$call]];
+            $rawMessages[] = ['role' => 'assistant', 'content' => '', 'tool_calls' => [$call]];
+            $rawMessages[] = ['role' => 'tool', 'tool_call_id' => $call['id'], 'name' => $name,
+                'content' => json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)];
+        }
+        $counter = new TokenCounter(new class {
+            public function encode(string $text): array { return array_fill(0, (int) ceil(mb_strlen($text) / 4), 1); }
+        });
+        try {
+            (new TokenBudgetService($counter))->prepare($rawMessages, [], 'normal');
+            $this->fail('The original duplicated tool chain must reproduce the exhausted input budget');
+        } catch (\DomainException $exception) {
+            $this->assertSame('ai_token_budget_exhausted', $exception->getMessage());
+        }
+        $responses[] = ['content' => 'Проверены возвращённые позиции и материалы.'];
+        $service = $this->service($toolResults, $responses);
+
+        $response = $service->ask($query, 15, $this->actor(), 7);
+
+        $this->assertCount(4, $this->providerCalls);
+        $this->assertLessThanOrEqual(16384, $this->providerCalls[3]['options']['estimated_input_tokens']);
+        $realCounter = new TokenCounter;
+        $realMessages = $this->providerCalls[3]['messages'];
+        $realTools = $this->providerCalls[3]['options']['tools'] ?? [];
+        $realPrepared = (new TokenBudgetService($realCounter))->prepare($realMessages, $realTools, 'normal');
+        $this->assertLessThanOrEqual($realPrepared['input_limit'], $realPrepared['input_tokens']);
+        $this->assertSame(3, $this->toolExecutions);
+        $this->assertSame(array_values($toolResults), $service->providerSourceResults);
+        $messages = $this->providerCalls[3]['messages'];
+        $userMessages = array_values(array_filter($messages, static fn (array $message): bool => $message['role'] === 'user'));
+        $this->assertSame($query, $userMessages[array_key_last($userMessages)]['content']);
+        $tools = array_values(array_filter($messages, static fn (array $message): bool => $message['role'] === 'tool'));
+        $this->assertSame(['call_0', 'call_1', 'call_2'], array_column($tools, 'tool_call_id'));
+        $calls = array_values(array_filter($messages, static fn (array $message): bool => isset($message['tool_calls'])));
+        $this->assertSame(['call_0', 'call_1', 'call_2'], array_map(static fn (array $message): string => $message['tool_calls'][0]['id'], $calls));
+        foreach ($tools as $index => $tool) {
+            $view = json_decode($tool['content'], true, 512, JSON_THROW_ON_ERROR);
+            $this->assertSame(['limit' => 20, 'returned' => 20, 'has_more' => true], $view['result_window']);
+            $this->assertSame(['organization_id' => 15, 'estimate_id' => 99, 'content_scope' => 'structured',
+                'fetched_at' => $fetchedAt], $view['source_context']);
+            $originalReferences = array_values($toolResults)[$index]['source_refs'];
+            foreach ($view['source_refs'] as $rowIndex => $reference) {
+                $restored = $reference + $view['source_context'];
+                foreach ($restored as $field => $value) { $this->assertSame($originalReferences[$rowIndex][$field], $value); }
+            }
+            $rows = $index === 2 ? $view['financial_evidence']['positions'] : array_column($view['results'], 'fields');
+            $this->assertCount(20, $rows);
+            $this->assertSame('12.34560000', $rows[19]['quantity']);
+            $this->assertSame('м³', $rows[19]['unit']);
+            $this->assertSame('RUB', $rows[19]['currency']);
+        }
+        $this->assertNotEmpty($response['message']['metadata']['source_refs']);
+    }
+
+    public function test_unrelated_domain_failure_after_read_is_not_converted_to_context_partial(): void
+    {
+        $service = $this->service(['assistant_domain_read' => ['status' => 'success', 'results' => []]], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]],
+        ]);
+        $service->preparationFailure = new \DomainException('ai_token_limits_invalid');
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('ai_token_limits_invalid');
+        $service->ask('Покажи данные позиции.', 15, $this->actor(), 7);
+    }
+
+    public function test_oversized_nonduplicated_facts_stop_with_explicit_partial_and_keep_original_receipt(): void
+    {
+        $fetchedAt = now()->toISOString();
+        $reference = ['entity_type' => 'estimate_item_resource', 'entity_id' => 91, 'organization_id' => 15,
+            'content_scope' => 'structured', 'checked_fields' => ['name', 'quantity', 'unit'],
+            'fetched_at' => $fetchedAt, 'navigation' => ['url' => '/estimates/99?position_id=91']];
+        $fields = ['name' => 'Раствор', 'quantity' => '5.12500000', 'unit' => 'м³'];
+        $proof = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload([
+            ['entity_type' => 'estimate_item_resource', 'entity_id' => 91, 'fields' => $fields,
+                'source_ref' => $reference, 'version' => str_repeat('a', 64)],
+        ], $fetchedAt);
+        $result = ['status' => 'success', ...$proof, 'source_refs' => [$reference],
+            'results' => [['entity_type' => 'estimate_item_resource', 'id' => 91,
+                'fields' => $fields + ['description' => str_repeat('Подробная спецификация. ', 5000)]]],
+            'result_window' => ['limit' => 1, 'returned' => 1, 'has_more' => true]];
+        $service = $this->service(['assistant_domain_read' => $result], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]],
+        ]);
+
+        $response = $service->ask('Покажи количество ресурса и его спецификацию.', 15, $this->actor(), 7);
+
+        $metadata = $response['message']['metadata'];
+        $this->assertCount(1, $this->providerCalls);
+        $this->assertSame([$result], $service->providerSourceResults);
+        $this->assertSame('partial', $metadata['validation_status']);
+        $this->assertTrue($metadata['degraded_mode']);
+        $this->assertContains(trans_message('ai_assistant.context_budget_exhausted'), $metadata['missing_data']);
+        $this->assertSame([$reference], $metadata['source_refs']);
+        $this->assertStringContainsString('5.12500000', $response['message']['content']);
     }
 
     public function test_financial_answer_uses_computed_value_in_two_calls_and_skips_document_search(): void
@@ -674,6 +875,49 @@ final class AssistantToolFirstQualityTest extends TestCase
         return ['id' => 'call_read', 'type' => 'function', 'function' => ['name' => $name, 'arguments' => '{}']];
     }
 
+    private function moneyPlanService(bool $withFinancialProof, array $coveredRows): array
+    {
+        $query = 'Какая сумма по документам?';
+        $fetchedAt = now()->toISOString();
+        $rows = [];
+        $results = [];
+        foreach ([10.25, 20.50] as $index => $amount) {
+            $id = 51 + $index;
+            $fields = ['amount' => number_format($amount, 2, '.', ''), 'currency' => 'RUB'];
+            $reference = ['entity_type' => 'payment_document', 'entity_id' => $id, 'organization_id' => 15,
+                'content_scope' => 'structured', 'checked_fields' => array_keys($fields), 'required_permissions' => ['finance.view'],
+                'required_domains' => ['finance'], 'source_version' => 'payment-'.$id, 'fetched_at' => $fetchedAt];
+            $model = new class extends \Illuminate\Database\Eloquent\Model {};
+            $model->setRawAttributes(['id' => $id] + $fields, true);
+            $rows[] = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::row(
+                $model, 'payment_document', array_keys($fields), $reference);
+            $results[] = ['entity_type' => 'payment_document', 'id' => $id, 'fields' => $fields];
+        }
+        $result = ['status' => 'success',
+            ...\App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload($rows, $fetchedAt),
+            'source_refs' => array_column($rows, 'source_ref'), 'results' => $results];
+        $financialRefs = [];
+        foreach ($coveredRows as $index) {
+            $financialRefs[] = $rows[$index]['source_ref'];
+        }
+        if ($withFinancialProof) {
+            $result['server_formatted_answer'] = $coveredRows === [0, 1] ? 'Сумма документов: 10.25 и 20.50 RUB' : 'Сумма документа: 10.25 RUB';
+            $result['financial_evidence'] = ['source_refs' => $financialRefs, 'fetched_at' => $fetchedAt,
+                'version' => 'financial-current', 'validation_status' => 'verified'];
+        }
+        $contract = \App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner::providerView($result);
+        $plan = ['kind' => 'verified_rows', 'version' => 1, 'result_sets' => [[
+            'result_set' => $contract['result_set'], 'layout' => 'list', 'columns' => ['amount', 'currency'],
+            'order' => ['r02', 'r01'], 'group_by' => null,
+        ]]];
+        $service = $this->service(['assistant_domain_read' => $result], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]],
+            ['content' => json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)],
+        ]);
+
+        return [$service, array_column($financialRefs, 'entity_id')];
+    }
+
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null): ToolFirstStubService
     {
@@ -756,6 +1000,24 @@ final class ToolFirstStubService extends AIAssistantService
     public ?array $verifiedStock = null;
 
     public int $stockVerifications = 0;
+
+    public array $providerSourceResults = [];
+
+    public ?\Throwable $preparationFailure = null;
+
+    protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array
+    {
+        if ($this->preparationFailure !== null && array_filter($messages, static fn (array $message): bool => ($message['role'] ?? null) === 'tool') !== []) {
+            throw $this->preparationFailure;
+        }
+        return parent::prepareProviderPayload($messages, $options, $organizationId, $user);
+    }
+
+    protected function toolResultForProvider(string $toolName, array|string $result): array|string
+    {
+        if (is_array($result)) { $this->providerSourceResults[] = $result; }
+        return parent::toolResultForProvider($toolName, $result);
+    }
 
     protected function verifyMaterialStock(array $result, User $actor, int $organizationId): ?array
     {

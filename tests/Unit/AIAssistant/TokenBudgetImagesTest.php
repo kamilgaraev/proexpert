@@ -37,6 +37,33 @@ final class TokenBudgetImagesTest extends TestCase
         self::assertSame($small['raw_input_tokens'], $large['raw_input_tokens']);
     }
 
+    public function test_fitting_multimodal_payload_reuses_terminal_message_and_image_counts(): void
+    {
+        $calls = (object) ['count' => 0];
+        $counter = new TokenCounter(new class($calls)
+        {
+            public function __construct(private \stdClass $calls) {}
+
+            public function encode(string $text): array
+            {
+                $this->calls->count++;
+
+                return array_fill(0, mb_strlen($text), 1);
+            }
+        });
+        $messages = [['role' => 'user', 'content' => [
+            ['type' => 'text', 'text' => 'Посмотри изображение'],
+            ['type' => 'image_url', 'image_url' => ['url' => 'https://example.test/image.png']],
+        ]]];
+
+        $prepared = (new TokenBudgetService($counter, new Repository(new ArrayStore)))->prepare($messages, [], 'short');
+
+        self::assertSame($messages, $prepared['messages']);
+        self::assertSame(2, $calls->count);
+        self::assertTrue($prepared['contains_images']);
+        self::assertSame(4096, $prepared['input_tokens'] - (int) ceil(($prepared['message_tokens'] - 4096) * $prepared['safety_factor']));
+    }
+
     public function test_each_image_reserves_4096_tokens_in_addition_to_text(): void
     {
         $counter = new TokenCounter(new class

@@ -8,7 +8,8 @@ final class AssistantStructuredFactVerifier
 {
     public function guard(string $query, string $text, array $toolResults = []): array
     {
-        if (! AssistantFactIntentClassifier::isFactual($query)) {
+        $planCandidate = AssistantPresentationPlanner::isPlanCandidate($text);
+        if (! AssistantFactIntentClassifier::isFactual($query) && ! $planCandidate) {
             return ['text' => $text, 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => false, 'needs_clarification' => false];
         }
         return $this->verifiedResults($query, $text, $toolResults);
@@ -84,7 +85,8 @@ final class AssistantStructuredFactVerifier
                 'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => $truncated];
         }
         $payload = AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
-        $payload['server_formatted_facts'] = AssistantStructuredFactFormatter::presentation($rows, $presentationQuery ?? $query);
+        $payload['server_formatted_facts'] = (new AssistantPresentationPlanner)->render($text, $toolResults, $presentationQuery ?? $query)
+            ?? AssistantStructuredFactFormatter::presentation($rows, $presentationQuery ?? $query);
         foreach ($positionPages as $estimateId => $positionPage) {
             if (! $positionPage['incomplete']) {
                 continue;
@@ -172,5 +174,10 @@ final class AssistantStructuredFactVerifier
         }
 
         return true;
+    }
+
+    public function trustedEvidence(array $evidence): bool
+    {
+        return $this->trusted($evidence);
     }
 }

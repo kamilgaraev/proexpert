@@ -30,6 +30,76 @@ final class TokenBudgetServiceTest extends TestCase
         self::assertGreaterThan(0.0, $budget['estimated_cost_rub']);
     }
 
+    public function test_fitting_messages_are_tokenized_once_and_counts_are_reused(): void
+    {
+        $calls = (object) ['count' => 0];
+        $counter = new TokenCounter(new class($calls)
+        {
+            public function __construct(private \stdClass $calls) {}
+
+            public function encode(string $text): array
+            {
+                $this->calls->count++;
+
+                return array_fill(0, mb_strlen($text), 1);
+            }
+        });
+        $query = 'краткий запрос';
+        $tools = [['type' => 'function', 'function' => ['name' => 'lookup', 'parameters' => ['type' => 'object']]]];
+
+        $prepared = (new TokenBudgetService($counter))->prepare([['role' => 'user', 'content' => $query]], $tools, 'short');
+
+        self::assertSame([['role' => 'user', 'content' => $query]], $prepared['messages']);
+        self::assertSame($tools, $prepared['tools']);
+        self::assertSame(2, $calls->count);
+        self::assertSame($prepared['message_tokens'] + $prepared['tools_tokens'], $prepared['raw_input_tokens']);
+        self::assertSame(
+            (int) ceil($prepared['raw_input_tokens'] * $prepared['safety_factor']),
+            $prepared['input_tokens'],
+        );
+    }
+
+    public function test_trimmed_messages_reuse_terminal_counts_without_changing_payload_or_budget(): void
+    {
+        $calls = (object) ['count' => 0];
+        $counter = new TokenCounter(new class($calls)
+        {
+            public function __construct(private \stdClass $calls) {}
+
+            public function encode(string $text): array
+            {
+                $this->calls->count++;
+
+                return array_fill(0, mb_strlen($text), 1);
+            }
+        });
+        $messages = [
+            ['role' => 'system', 'content' => 'правила'],
+            ['role' => 'user', 'content' => str_repeat('h', 9000)],
+            ['role' => 'user', 'content' => 'текущий запрос'],
+        ];
+
+        $prepared = (new TokenBudgetService($counter))->prepare($messages, [], 'short');
+        $reference = new TokenCounter(new class
+        {
+            public function encode(string $text): array
+            {
+                return array_fill(0, mb_strlen($text), 1);
+            }
+        });
+        $messageTokens = $reference->messages($prepared['messages']);
+
+        self::assertSame([$messages[0], $messages[2]], $prepared['messages']);
+        self::assertSame(5, $calls->count);
+        self::assertSame($messageTokens, $prepared['message_tokens']);
+        self::assertSame($messageTokens, $prepared['raw_input_tokens']);
+        self::assertSame(
+            (int) ceil($messageTokens * $prepared['safety_factor']),
+            $prepared['input_tokens'],
+        );
+        self::assertLessThanOrEqual(8192, $prepared['input_tokens']);
+    }
+
     public function test_current_query_above_reserve_is_preserved_in_full(): void
     {
         $query = str_repeat('q', 5000);

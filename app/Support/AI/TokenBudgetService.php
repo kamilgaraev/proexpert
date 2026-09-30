@@ -31,10 +31,11 @@ final class TokenBudgetService
         $configured = app()->bound('config') ? config("ai-assistant-credits.profiles.{$profile}") : null;
         $limits = $this->normalizeLimits($snapshotLimits ?? $configured ?? self::limits($profile));
         $factor = $this->safetyFactor();
-        $messages = $this->trimMessages($messages, $tools, (int) floor($limits['input'] * 0.99), $factor);
-        $inputTokens = $this->counter->messages($messages);
-        $toolsTokens = $this->counter->tools($tools);
-        $imageTokens = $this->counter->imageTokens($messages);
+        $counts = $this->trimMessages($messages, $tools, (int) floor($limits['input'] * 0.99), $factor);
+        $messages = $counts['messages'];
+        $inputTokens = $counts['message_tokens'];
+        $toolsTokens = $counts['tools_tokens'];
+        $imageTokens = $counts['image_tokens'];
         $weightedInput = (int) ceil(($inputTokens + $toolsTokens - $imageTokens) * $factor) + $imageTokens;
 
         $defaultPricing = ['input_micro_rub_per_million' => 13_500_000, 'output_micro_rub_per_million' => 67_500_000];
@@ -171,12 +172,15 @@ final class TokenBudgetService
 
     private function trimMessages(array $messages, array $tools, int $limit, float $factor): array
     {
-        $available = $limit - (int) ceil($this->counter->tools($tools) * $factor);
+        $toolsTokens = $this->counter->tools($tools);
+        $available = $limit - (int) ceil($toolsTokens * $factor);
         if ($available < 1) {
             throw new DomainException('ai_token_budget_exhausted');
         }
+        $messageTokens = $this->counter->messages($messages);
+        $imageTokens = $this->counter->imageTokens($messages);
         $currentQuery = $this->currentQueryIndex($messages);
-        while (ceil(($this->counter->messages($messages) - $this->counter->imageTokens($messages)) * $factor) + $this->counter->imageTokens($messages) > $available) {
+        while (ceil(($messageTokens - $imageTokens) * $factor) + $imageTokens > $available) {
             $drop = $this->lowestPriorityIndex($messages, $currentQuery);
             if ($drop === null) {
                 throw new DomainException('ai_token_budget_exhausted');
@@ -186,10 +190,17 @@ final class TokenBudgetService
                 $end++;
             }
             array_splice($messages, $drop, $end - $drop);
+            $messageTokens = $this->counter->messages($messages);
+            $imageTokens = $this->counter->imageTokens($messages);
             $currentQuery = $this->currentQueryIndex($messages);
         }
 
-        return array_values($messages);
+        return [
+            'messages' => array_values($messages),
+            'message_tokens' => $messageTokens,
+            'tools_tokens' => $toolsTokens,
+            'image_tokens' => $imageTokens,
+        ];
     }
 
     private function currentQueryIndex(array $messages): ?int

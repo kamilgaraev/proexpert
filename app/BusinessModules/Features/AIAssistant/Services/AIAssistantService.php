@@ -470,6 +470,15 @@ class AIAssistantService
                     $response['tool_calls'] = [];
                     $degradedMode = true;
                     break;
+                } catch (\DomainException $exception) {
+                    if ($exception->getMessage() !== 'ai_token_budget_exhausted') {
+                        throw $exception;
+                    }
+                    $toolFailures[] = trans_message('ai_assistant.context_budget_exhausted');
+                    $response['content'] = trans_message('ai_assistant.context_budget_exhausted');
+                    $response['tool_calls'] = [];
+                    $degradedMode = true;
+                    break;
                 }
                 $response = $responseEnvelope['response'];
                 $degradedMode = $degradedMode || (bool) ($responseEnvelope['degraded_mode'] ?? false);
@@ -522,6 +531,9 @@ class AIAssistantService
 
             $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
+            $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $this->activeToolResults, $query) : null;
+            $rawPresentationPlan = $plannedPresentation !== null
+                ? $assistantContent : null;
             $this->stage('verifying');
             if ($assistantContent === '') {
                 $assistantContent = $this->assistantMessage('ai_assistant.empty_response', 'Не удалось сформировать содержательный ответ по текущему запросу.');
@@ -533,18 +545,27 @@ class AIAssistantService
             ]);
             $assistantContent = $this->softenUnsupportedCriticalClaims($assistantContent, $ragMetadata);
 
-            $financialCheck = $this->financialClaims?->guard($assistantContent, $this->activeToolResults);
+            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $this->activeToolResults);
             if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
                 $assistantContent = $financialCheck['text'];
             }
+            $rejectedFinancialPlan = $rawPresentationPlan !== null && AssistantPresentationPlanner::hasFinancialSelection($rawPresentationPlan)
+                && (!in_array($financialCheck['validation_status'] ?? null, ['verified', 'partial'], true)
+                    || ($financialCheck['source_refs'] ?? []) === []
+                    || !(new AssistantPresentationPlanner)->financialSelectionCovered($rawPresentationPlan, $this->activeToolResults, $financialCheck['source_refs'] ?? []));
+            if ($rejectedFinancialPlan) {
+                $rawPresentationPlan = null;
+            }
             $structuredCheck = $proposedActions === []
-                ? $this->structuredFacts->guard($query, $assistantContent, $this->activeToolResults)
+                ? ($rejectedFinancialPlan ? ($financialCheck ?? ['text' => trans_message('ai_assistant_financial.unverified_claim'),
+                    'validation_status' => 'partial', 'source_refs' => []])
+                    : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $this->activeToolResults))
                 : null;
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
             $stockDomainResolved = false;
-            foreach (array_reverse($this->activeToolResults) as $toolResult) {
+            foreach ($rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
                 if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
                     $verifiedStock = $this->verifyMaterialStock($toolResult, $user, $organizationId);
                     if ($verifiedStock !== null) {
@@ -1122,8 +1143,8 @@ class AIAssistantService
 
     protected function toolResultForProvider(string $toolName, array|string $result): array|string
     {
-        return $toolName === 'get_material_stock' && is_array($result)
-            ? array_intersect_key($result, array_flip(['status', 'stock', 'quantity_scope', 'server_formatted_answer', 'validation_status', 'error', 'reason']))
+        return is_array($result)
+            ? AssistantToolResultProjection::forProvider($toolName, $result)
             : $result;
     }
 
