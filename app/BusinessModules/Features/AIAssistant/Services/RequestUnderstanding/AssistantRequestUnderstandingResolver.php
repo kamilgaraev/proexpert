@@ -453,7 +453,7 @@ final class AssistantRequestUnderstandingResolver
 
     private function isSectionNavigation(string $normalized, array $context, ?array $capability): bool
     {
-        if ($capability === null || !empty($context['entity_refs']) || !empty($context['filters'])
+        if ($capability === null || !self::hasOnlyBackgroundProjectReferences($context) || !empty($context['filters'])
             || !empty($context['period']) || !empty($context['selected_estimate_id'])
             || !empty($context['selected_estimate']) || !empty($context['selected_entities'])
             || array_diff(array_keys($context), ['source_module', 'source_route', 'entity_refs', 'period', 'filters', 'ui_state']) !== []) {
@@ -484,6 +484,21 @@ final class AssistantRequestUnderstandingResolver
             }
         }
         return false;
+    }
+
+    public static function hasOnlyBackgroundProjectReferences(array $context): bool
+    {
+        $references = $context['entity_refs'] ?? [];
+        if ($references === []) {
+            return true;
+        }
+        if (!is_array($references) || count($references) !== 1) {
+            return false;
+        }
+        $reference = reset($references);
+        return is_array($reference) && ($reference['type'] ?? null) === 'project'
+            && array_diff(array_keys($reference), ['type', 'id', 'label']) === []
+            && (is_int($reference['id'] ?? null) || is_string($reference['id'] ?? null));
     }
 
     private function isCreateRequest(string $normalized): bool

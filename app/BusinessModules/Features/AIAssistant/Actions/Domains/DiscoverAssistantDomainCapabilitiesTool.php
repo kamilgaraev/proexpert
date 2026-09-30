@@ -48,7 +48,7 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
             fn (): array => $this->executeCurrent($arguments, $user, $organization), true);
     }
 
-    public function compactForActor(User $actor, int $organizationId): array
+    public function compactForActor(User $actor, int $organizationId, bool $fresh = true): array
     {
         return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId): array {
             if (!$this->access->canReadDomain($actor, $organizationId, 'assistant')) {
@@ -58,7 +58,7 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
                 fn (string $domain): bool => $this->access->canReadDomain($actor, $organizationId, $domain),
                 fn (string $permission): bool => $this->access->canCurrentPermission($actor, $organizationId, $permission),
             );
-        }, true);
+        }, $fresh);
     }
 
     public function compact(callable $domainAllowed, callable $permissionAllowed): array

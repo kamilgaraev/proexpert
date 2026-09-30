@@ -288,6 +288,42 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->assertLessThanOrEqual(4, $definitionChecks);
     }
 
+    public function test_preparation_metadata_shares_one_fresh_scope_and_execution_stays_fresh(): void
+    {
+        $this->prepareActualChain();
+        $readsInsideMetadata = 0;
+        $metadata = $this->readPhase(function () use (&$readsInsideMetadata): array {
+            $before = $this->freshRequestReads;
+            $result = (new ReflectionMethod(AIAssistantService::class, 'buildPreparationMetadata'))
+                ->invoke($this->service, ['task_type' => 'find'], $this->actor, 38);
+            $readsInsideMetadata = $this->freshRequestReads - $before;
+
+            return $result;
+        });
+
+        $this->assertSame(2, $readsInsideMetadata);
+        $names = array_column(array_column($metadata['tools'], 'function'), 'name');
+        $this->assertContains('get_material_stock', $names);
+        $this->assertNotEmpty($metadata['capability_hints']['domains']);
+
+        $this->deniedPermissions = ['warehouse.view'];
+        $checker = (new ReflectionProperty(AIAssistantService::class, 'permissionChecker'))->getValue($this->service);
+        $this->assertFalse($checker->canExecuteTool($this->actor, 'get_material_stock'));
+    }
+
+    public function test_preparation_metadata_rechecks_permission_after_the_fresh_scope(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AuthorizationException::class);
+        $this->permissionInterruptionAt = $this->permissionChecks + 10;
+        $this->permissionInterruption = function (): void {
+            $this->allowed = false;
+        };
+
+        (new ReflectionMethod(AIAssistantService::class, 'buildPreparationMetadata'))
+            ->invoke($this->service, ['task_type' => 'find'], $this->actor, 38);
+    }
+
     public function test_tool_definitions_remove_tools_without_current_domain_permission(): void
     {
         $this->prepareActualChain();

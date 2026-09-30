@@ -41,6 +41,7 @@ use App\Models\Organization;
 use App\Models\User;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Services\Project\UserProjectAccessService;
+use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Credits\AICreditService;
 use App\Services\Logging\LoggingService;
 use App\Support\AI\TokenBudgetService;
@@ -99,6 +100,29 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertContains($history[1], $this->providerCalls[0]['messages']);
         $this->assertSame(0, $this->toolExecutions);
         $this->assertSame([], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_general_request_preparation_passes_messages_and_tool_schema_to_provider(): void
+    {
+        $query = 'Какие типы данных доступны по проектам?';
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
+        $policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class),
+            $this->createMock(OrganizationEntitlementService::class));
+        $service = $this->service([
+            'assistant_domain_discover_capabilities' => ['status' => 'success'],
+            'get_material_stock' => ['status' => 'empty'],
+        ], [['content' => 'Проверю доступные данные.']], navigationPolicy: $policy);
+
+        $service->ask($query, 15, $this->actor(), 7);
+
+        $providerRequest = $this->providerCalls[0];
+        $this->assertSame($query, end($providerRequest['messages'])['content']);
+        $this->assertCount(2, $providerRequest['options']['tools']);
+        $definitions = $providerRequest['options']['tools'];
+        $this->assertSame(['assistant_domain_discover_capabilities', 'get_material_stock'], array_column(array_column($definitions, 'function'), 'name'));
+        $this->assertSame('object', $definitions[0]['function']['parameters']['type']);
+        $this->assertSame('object', $definitions[1]['function']['parameters']['type']);
     }
 
     public function test_document_search_runs_only_after_luna_choice_and_preserves_sources(): void
@@ -525,6 +549,26 @@ final class AssistantToolFirstQualityTest extends TestCase
             ['Как найти договоры?', 'contracts.view', '/contracts']];
     }
 
+    public function test_bare_section_navigation_with_background_project_does_not_use_provider_or_publish_unverified_project(): void
+    {
+        $service = $this->service([], [], navigationPermissions: [['budget-estimates.view'], ['budget-estimates.view']]);
+
+        $response = $service->ask('Где сметы?', 15, $this->actor(), 7, ['allow_actions' => false, 'context' => [
+            'source_module' => 'ai-assistant', 'source_route' => null,
+            'entity_refs' => [['type' => 'project', 'id' => 42, 'label' => 'Закрытый проект']],
+            'filters' => [], 'period' => null, 'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+        ]]);
+
+        $metadata = $response['message']['metadata'];
+        $this->assertSame(['route' => '/estimates'], $metadata['navigation_target']);
+        $this->assertSame('navigation', $metadata['response_kind']);
+        $this->assertSame('verified', $metadata['validation_status']);
+        $this->assertSame([], $metadata['source_refs']);
+        $this->assertStringNotContainsString('Закрытый проект', json_encode($metadata, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $this->assertSame(0, $response['tokens_used']);
+        $this->assertSame([], $this->providerCalls);
+    }
+
     public function test_section_navigation_rechecks_revoked_permission_and_does_not_publish_old_route(): void
     {
         $service = $this->service([], [], navigationPermissions: [['budget-estimates.view'], []]);
@@ -611,6 +655,7 @@ final class AssistantToolFirstQualityTest extends TestCase
     public static function sectionDataScopes(): array
     {
         return [['Где смета «Дом у реки»?', []], ['Где смета №42?', []],
+            ['Где сметы проекта «Северный дом»?', ['entity_refs' => [['type' => 'project', 'id' => 42]]]],
             ['Где сметы?', ['filters' => ['status' => 'draft']]],
             ['Где сметы?', ['entity_refs' => [['type' => 'estimate', 'id' => 99]]]],
             ['Где сметы?', ['selected_estimate_id' => 99]],

@@ -60,7 +60,7 @@ class AIPermissionChecker
         'send_project_notification',
     ];
 
-    public function canUseAssistant(User $user, int $organizationId): bool
+    public function canUseAssistant(User $user, int $organizationId, bool $fresh = true): bool
     {
         if ($organizationId <= 0) {
             return false;
@@ -68,7 +68,7 @@ class AIPermissionChecker
 
         $policy = app(AssistantDataAccessPolicy::class);
         return $policy->withCurrentChecks($user, $organizationId,
-            fn (): bool => $policy->canReadDomain($user, $organizationId, 'assistant'), true);
+            fn (): bool => $policy->canReadDomain($user, $organizationId, 'assistant'), $fresh);
     }
 
     public function canAccessConversation(User $user, Conversation $conversation, int $organizationId): bool
@@ -106,19 +106,21 @@ class AIPermissionChecker
         return false;
     }
 
-    public function canExecuteTool(User $user, string $toolName, array $params = []): bool
+    public function canExecuteTool(User $user, string $toolName, array $params = [], bool $fresh = true): bool
     {
         $organizationId = (int) $user->current_organization_id;
-        return app(AssistantDataAccessPolicy::class)->withCurrentChecks($user, $organizationId, function () use ($user, $toolName, $params, $organizationId): bool {
+        return app(AssistantDataAccessPolicy::class)->withCurrentChecks($user, $organizationId, function (AuthorizationService $authorization) use ($user, $toolName, $params, $organizationId, $fresh): bool {
             $previous = $this->batchAuthorization;
-            $this->batchAuthorization = ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true);
+            $this->batchAuthorization = $fresh
+                ? ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true)
+                : $authorization;
             try {
                 return $this->checkTool($user, $toolName, $params, $organizationId);
             } finally {
                 $this->batchAuthorization = $previous === null ? null
                     : ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true);
             }
-        }, true);
+        }, $fresh);
     }
 
     private function checkTool(User $user, string $toolName, array $params, int $organizationId, bool $requireEntityAuthorization = true): bool

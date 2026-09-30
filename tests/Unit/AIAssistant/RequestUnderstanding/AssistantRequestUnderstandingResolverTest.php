@@ -175,6 +175,18 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         ];
     }
 
+    public function test_background_project_context_does_not_change_bare_registered_section_intent(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Где сметы?', [
+            'source_module' => 'ai-assistant', 'source_route' => null,
+            'entity_refs' => [['type' => 'project', 'id' => 42, 'label' => 'Проект']],
+            'filters' => [], 'period' => null, 'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+        ]);
+
+        $this->assertSame('navigate', $result->primaryIntent);
+        $this->assertContains(['type' => 'section_navigation', 'value' => 'estimates'], $result->evidence);
+    }
+
     #[DataProvider('nonSectionNavigationProvider')]
     public function test_entity_scopes_and_semantic_requests_are_not_bare_section_navigation(string $message, array $context): void
     {
@@ -191,6 +203,11 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
             ['Где сметы? Без навигации.', []], ['Где сметы?', ['filters' => ['status' => 'approved']]],
             ['Где проекты?', ['period' => ['from' => '2026-01-01']]],
             ['Где сметы?', ['entity_refs' => [['type' => 'estimate', 'id' => 5]]]],
+            ['Где сметы по проекту?', ['entity_refs' => [['type' => 'project', 'id' => 42]]]],
+            ['Где сметы проекта Северный дом?', ['entity_refs' => [['type' => 'project', 'id' => 42]]]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'project', 'id' => 42]], 'period' => ['from' => '2026-01-01']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'project', 'id' => 42]], 'filters' => ['status' => 'draft']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'project', 'id' => 42], ['type' => 'estimate', 'id' => 5]]]],
             ['Где сметы?', ['selected_estimate_id' => 5]],
             ['Где сметы?', ['ui_state' => ['selected_estimate' => ['estimate_id' => 5]]]],
             ['Где договоры с заказчиком?', []],
