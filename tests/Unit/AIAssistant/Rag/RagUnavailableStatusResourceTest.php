@@ -33,4 +33,49 @@ final class RagUnavailableStatusResourceTest extends TestCase
         $this->assertSame(0, $result['source_count']);
         $this->assertSame(0, $result['chunk_count']);
     }
+
+    public function test_source_catalog_preserves_only_valid_optional_display_labels(): void
+    {
+        $result = (new RagIndexStatusResource([
+            'source_catalog' => [
+                ['type' => 'known_source', 'display_label' => 'Проекты', 'expected_count' => 4, 'error' => null],
+                ['type' => 'future_source', 'display_label' => ['invalid'], 'expected_count' => 2, 'error' => 'unavailable'],
+                ['type' => 'unlabelled_source', 'expected_count' => 0],
+            ],
+        ]))->toArray(new Request);
+
+        $this->assertSame([
+            [
+                'type' => 'known_source',
+                'enabled' => true,
+                'expected_count' => 4,
+                'indexed_count' => null,
+                'stored_count' => null,
+                'stale_count' => null,
+                'pending_count' => null,
+                'error' => null,
+                'display_label' => 'Проекты',
+            ],
+            [
+                'type' => 'future_source',
+                'enabled' => true,
+                'expected_count' => 2,
+                'indexed_count' => null,
+                'stored_count' => null,
+                'stale_count' => null,
+                'pending_count' => null,
+                'error' => 'unavailable',
+            ],
+            [
+                'type' => 'unlabelled_source',
+                'enabled' => true,
+                'expected_count' => 0,
+                'indexed_count' => null,
+                'stored_count' => null,
+                'stale_count' => null,
+                'pending_count' => null,
+                'error' => null,
+            ],
+        ], $result['source_catalog']);
+    }
 }

@@ -32,6 +32,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool;
 use App\BusinessModules\Features\AIAssistant\Services\IntentRecognizer;
@@ -377,13 +378,37 @@ final class AssistantToolFirstQualityTest extends TestCase
         $service = $this->service(['get_estimate_answer' => ['status' => 'ambiguous', 'server_formatted_answer' => $clarification,
             'needs_clarification' => true, 'source_refs' => [$source]]], [
             ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_answer')]], ['content' => 'Итого: 999,00 ₽'],
-        ]);
+        ], financialAnswers: $this->financialAnswerService());
 
         $response = $service->ask('Какова сумма сметы?', 15, $this->actor(), 7);
 
         $this->assertSame($clarification, $response['message']['content']);
         $this->assertTrue($response['message']['metadata']['needs_clarification']);
         $this->assertSame(99, $response['message']['metadata']['source_refs'][0]['entity_id']);
+    }
+
+    public function test_irrelevant_estimate_clarification_does_not_override_verified_stock_answer(): void
+    {
+        $clarification = 'Уточните смету: вариант А или вариант Б.';
+        $stockAnswer = 'Бетон: доступно 10 м³.';
+        $stockSource = ['entity_type' => 'warehouse_balance', 'entity_id' => 41, 'organization_id' => 15];
+        $service = $this->service([
+            'get_material_stock' => ['status' => 'success', 'source_refs' => [$stockSource], 'stock_evidence' => ['version' => 'stock-v1']],
+            'get_estimate_answer' => ['status' => 'ambiguous', 'server_formatted_answer' => $clarification,
+                'needs_clarification' => true, 'source_refs' => [['entity_type' => 'estimate', 'entity_id' => 99, 'organization_id' => 15]]],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock'), $this->toolCall('get_estimate_answer')]],
+            ['content' => 'По смете нужно уточнение, остаток — 10 м³.'],
+        ], financialAnswers: $this->financialAnswerService());
+        $service->verifiedStock = ['text' => $stockAnswer, 'validation_status' => 'verified', 'source_refs' => [$stockSource],
+            'replaced' => true, 'needs_clarification' => false];
+
+        $response = $service->ask('Сколько бетона на складе?', 15, $this->actor(), 7);
+
+        $this->assertSame($stockAnswer, $response['message']['content']);
+        $this->assertSame('verified', $response['message']['metadata']['validation_status']);
+        $this->assertFalse($response['message']['metadata']['needs_clarification']);
+        $this->assertSame(1, $service->stockVerifications);
     }
 
     public function test_additional_source_read_remains_available_within_normal_call_budget(): void
@@ -919,7 +944,8 @@ final class AssistantToolFirstQualityTest extends TestCase
     }
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
-        ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null): ToolFirstStubService
+        ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
+        ?AssistantFinancialAnswerService $financialAnswers = null): ToolFirstStubService
     {
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
@@ -987,9 +1013,14 @@ final class AssistantToolFirstQualityTest extends TestCase
             new AssistantAgentExecutor($registry, $permissions, new AssistantArtifactNormalizer), new AssistantResponseVerifier,
             tokenBudget: new TokenBudgetService(new TokenCounter(new class {
                 public function encode(string $text): array { return array_fill(0, (int) ceil(mb_strlen($text) / 4), 1); }
-            })), financialClaims: new AssistantFinancialClaimVerifier, dataAccess: $navigationPolicy);
+            })), financialAnswers: $financialAnswers, financialClaims: new AssistantFinancialClaimVerifier, dataAccess: $navigationPolicy);
         $service->conversation = $conversation;
         return $service;
+    }
+
+    private function financialAnswerService(): AssistantFinancialAnswerService
+    {
+        return (new \ReflectionClass(AssistantFinancialAnswerService::class))->newInstanceWithoutConstructor();
     }
 }
 

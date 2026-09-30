@@ -6,6 +6,7 @@ namespace Tests\Unit\Monitoring;
 
 use App\Http\Middleware\RecordApiResponseTime;
 use Illuminate\Container\Container;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Facade;
@@ -75,6 +76,116 @@ final class RecordApiResponseTimeTest extends TestCase
             self::assertSame(404, $captured['status_code']);
             self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
         }
+    }
+
+    public function test_it_logs_only_the_uuid_from_an_accepted_assistant_chat_response(): void
+    {
+        $responseRequestId = '1b45f61f-87ea-4fc0-ae72-4369f529e311';
+        $request = Request::create('/api/v1/admin/ai-assistant/chat', 'POST', [
+            'request_id' => 'b74df874-a0bb-48e6-b036-d0a9f8301396',
+            'message' => 'private prompt',
+            'organization_id' => 731,
+        ]);
+        $request->setRouteResolver(static fn (): Route => new Route(
+            'POST',
+            'api/v1/admin/ai-assistant/chat',
+            static fn (): null => null,
+        ));
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+
+        $response = (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+            'success' => true,
+            'data' => ['request_id' => $responseRequestId],
+        ], 202));
+
+        self::assertSame(202, $response->getStatusCode());
+        self::assertSame($responseRequestId, $captured['request_id']);
+        self::assertStringNotContainsString('private prompt', json_encode($captured, JSON_THROW_ON_ERROR));
+        self::assertArrayNotHasKey('organization_id', $captured);
+    }
+
+    public function test_it_does_not_log_assistant_request_id_for_nonaccepted_status(): void
+    {
+        $requestId = '1b45f61f-87ea-4fc0-ae72-4369f529e311';
+        $request = Request::create('/api/v1/admin/ai-assistant/chat', 'POST');
+        $request->setRouteResolver(static fn (): Route => new Route(
+            'POST',
+            'api/v1/admin/ai-assistant/chat',
+            static fn (): null => null,
+        ));
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+
+        (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+            'success' => true,
+            'data' => ['request_id' => $requestId],
+        ], 200));
+
+        self::assertArrayNotHasKey('request_id', $captured);
+    }
+
+    public function test_it_does_not_log_an_invalid_assistant_request_uuid_or_fall_back_to_request_input(): void
+    {
+        $requestIdFromInput = 'b74df874-a0bb-48e6-b036-d0a9f8301396';
+        $request = Request::create('/api/v1/admin/ai-assistant/chat', 'POST', [
+            'request_id' => $requestIdFromInput,
+            'message' => 'private prompt',
+        ]);
+        $request->setRouteResolver(static fn (): Route => new Route(
+            'POST',
+            'api/v1/admin/ai-assistant/chat',
+            static fn (): null => null,
+        ));
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+
+        (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+            'success' => true,
+            'data' => ['request_id' => 'invalid-uuid'],
+        ], 202));
+
+        self::assertArrayNotHasKey('request_id', $captured);
+        self::assertStringNotContainsString($requestIdFromInput, json_encode($captured, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('private prompt', json_encode($captured, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_it_does_not_log_assistant_request_ids_for_other_routes(): void
+    {
+        $requestId = '1b45f61f-87ea-4fc0-ae72-4369f529e311';
+        $request = Request::create('/api/v1/admin/projects', 'POST', ['message' => 'private prompt']);
+        $request->setRouteResolver(static fn (): Route => new Route(
+            'POST',
+            'api/v1/admin/projects',
+            static fn (): null => null,
+        ));
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+
+        (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+            'success' => true,
+            'data' => ['request_id' => $requestId],
+        ], 202));
+
+        self::assertArrayNotHasKey('request_id', $captured);
+        self::assertStringNotContainsString($requestId, json_encode($captured, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('private prompt', json_encode($captured, JSON_THROW_ON_ERROR));
     }
 
     public function test_it_skips_cors_preflight(): void

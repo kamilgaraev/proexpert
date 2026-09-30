@@ -564,6 +564,18 @@ class AIAssistantService
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
+            $clarificationSelection = is_array($conversation->context['selected_estimate'] ?? null)
+                ? $conversation->context['selected_estimate'] : null;
+            $clarificationPinnedId = isset($clarificationSelection['estimate_id']) ? (int) $clarificationSelection['estimate_id'] : null;
+            if ($clarificationPinnedId === null) {
+                foreach ($taskPlan['request']['context']['entity_refs'] ?? [] as $ref) {
+                    if (is_array($ref) && ($ref['type'] ?? null) === 'estimate' && is_numeric($ref['id'] ?? null)) {
+                        $clarificationPinnedId = (int) $ref['id'];
+                        break;
+                    }
+                }
+            }
+            $financialIntentSupported = $this->financialAnswers?->supports($query, $clarificationPinnedId) ?? false;
             $stockDomainResolved = false;
             foreach ($rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
                 if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
@@ -609,7 +621,7 @@ class AIAssistantService
                         break;
                     }
                 }
-                if (($toolResult['_tool_name'] ?? null) === 'get_estimate_answer' && ($toolResult['needs_clarification'] ?? false)
+                if ($financialIntentSupported && ($toolResult['_tool_name'] ?? null) === 'get_estimate_answer' && ($toolResult['needs_clarification'] ?? false)
                     && is_string($toolResult['server_formatted_answer'] ?? null)) {
                     $assistantContent = $toolResult['server_formatted_answer'];
                     $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
