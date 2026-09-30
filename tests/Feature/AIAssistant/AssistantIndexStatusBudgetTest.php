@@ -15,6 +15,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderIn
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -30,6 +31,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
 use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 final class AssistantIndexStatusBudgetTest extends TestCase
@@ -95,7 +97,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $organization = Organization::factory()->create();
         $actor = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
         $actor->organizations()->attach($organization->id, ['is_active' => true]);
-        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:0', [
+        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, [
             'source_count' => 987, 'chunk_count' => 654, 'ready' => true,
             'source_catalog' => [['type' => 'private-source', 'error' => 'private-error']],
         ], 300);
@@ -144,6 +147,96 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         (new RefreshAssistantIndexStatusJob($organization->id, PHP_INT_MAX, KnowledgeSurface::ADMIN, 'test:surface-context'))
             ->handle($service, $policy);
         $this->assertSame(KnowledgeSurface::MOBILE, $policy->trustedSurface());
+    }
+
+    public function test_legacy_complete_coverage_without_expected_proof_keeps_actor_scoped_status_available(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $organization = $fixture->organization;
+        $actor = $fixture->owner;
+        $project = Project::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $organization->id,
+            'is_archived' => false,
+        ]));
+        $source = RagSource::withoutEvents(fn () => RagSource::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'source_type' => 'project',
+            'entity_type' => 'project',
+            'entity_id' => (string) $project->id,
+            'title' => 'Legacy proof fixture',
+            'checksum' => hash('sha256', 'legacy-proof-fixture'),
+        ]));
+        DB::table('ai_rag_chunks')->insert([
+            'source_id' => $source->id,
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'chunk_index' => 0,
+            'content' => 'Legacy proof fixture',
+            'content_hash' => hash('sha256', 'legacy-proof-fixture'),
+            'embedding' => '['.implode(',', RagTestEmbedding::fromLeadingValues([1.0])).']',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $collector = Mockery::mock(RagSourceCollectorInterface::class);
+        $collector->shouldReceive('sourceType')->andReturn('project');
+        $collector->shouldReceive('enabled')->andReturnTrue();
+        $registry = new RagSourceRegistry([$collector]);
+        $service = $this->service(true, $registry, ['project-management', 'payments']);
+        $policy = app(AssistantDataAccessPolicy::class);
+
+        $first = $service->status($organization->id, $actor);
+        $this->assertFalse($first['status_available']);
+
+        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, [
+            'eligible_count_known' => true,
+            'coverage_complete' => true,
+            'stored_source_count' => 1,
+            'indexed_source_count' => 1,
+            'expected_source_count' => 1,
+            'snapshot_at' => now()->toIso8601String(),
+            'source_catalog' => [[
+                'type' => 'project',
+                'stored_count' => 1,
+                'indexed_count' => 1,
+                'expected_count' => 1,
+            ]],
+        ], 300);
+
+        $coverage = new RagCoverageService($registry, new RagIndexer(Mockery::mock(RagEmbeddingProviderInterface::class), $registry), $policy);
+        $projectionProof = null;
+        $legacyCoverage = $coverage->coverageForActor($organization->id, $actor, null, null, $projectionProof);
+        $this->assertTrue($legacyCoverage['eligible_count_known']);
+        $this->assertSame(1, $legacyCoverage['source_count']);
+        $this->assertSame(1, $legacyCoverage['indexed_source_count']);
+        $this->assertNull($projectionProof);
+
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, function (RefreshAssistantIndexStatusJob $job) use ($service, $policy): bool {
+            $job->handle($service, $policy);
+
+            return true;
+        });
+
+        $snapshotKey = 'ai-rag-status:'.$organization->id.':'.$actor->id.':lk';
+        $this->assertTrue(Cache::has($snapshotKey));
+        $second = $service->status($organization->id, $actor);
+
+        $this->assertTrue($second['status_available']);
+        $this->assertSame(1, $second['source_count']);
+        $this->assertSame(1, $second['indexed_source_count']);
+        $this->assertNull($second['expected_source_count']);
+        $this->assertNull($second['pending_source_count']);
+        $this->assertNull($second['stale_source_count']);
+        $this->assertFalse($second['eligible_count_known']);
+        $this->assertFalse($second['coverage_complete']);
+        $sourceStatus = $second['source_catalog'][0];
+        $this->assertSame(1, $sourceStatus['stored_count']);
+        $this->assertSame(1, $sourceStatus['indexed_count']);
+        $this->assertNull($sourceStatus['expected_count']);
+        $this->assertNull($sourceStatus['pending_count']);
+        $this->assertNull($sourceStatus['stale_count']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
     }
 
     public function test_status_snapshot_is_invalidated_when_source_project_access_is_revoked(): void
@@ -226,20 +319,20 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             checkpoint: static function (): void { throw new RagStatusBudgetExceeded; });
     }
 
-    private function service(): AssistantIndexStatusService
+    private function service(bool $canCurrent = false, ?RagSourceRegistry $registry = null, array $moduleSlugs = []): AssistantIndexStatusService
     {
         $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('canCurrent')->andReturnFalse();
+        $authorization->shouldReceive('canCurrent')->andReturn($canCurrent);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
-        $modules->shouldReceive('getEffectiveModules')->andReturnUsing(function () {
+        $modules->shouldReceive('getEffectiveModules')->andReturnUsing(function () use ($moduleSlugs) {
             $this->moduleReads++;
 
-            return collect();
+            return collect(array_map(static fn (string $slug): object => (object) ['slug' => $slug], $moduleSlugs));
         });
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
-        $registry = new RagSourceRegistry([]);
+        $registry ??= new RagSourceRegistry([]);
         $indexer = new RagIndexer(Mockery::mock(RagEmbeddingProviderInterface::class), $registry);
 
         return new AssistantIndexStatusService(

@@ -116,6 +116,9 @@ final class AssistantIndexStatusService
                 $coverage = $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof);
                 $documents = $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
                 $ragProof = $this->captureRagProof($organizationId, $actor, $checkpoint, $projectionProof);
+                if (($coverage['eligible_count_known'] ?? false) && ! is_array($ragProof['expected'] ?? null)) {
+                    $coverage = $this->withoutUnprovenExpectedCoverage($coverage);
+                }
                 $nativeTypes = array_keys($documents['native_attachment_coverage'] ?? []);
                 $documentProof = $this->documents->captureStatusProof(
                     $organizationId,
@@ -271,6 +274,32 @@ final class AssistantIndexStatusService
             + count($proof['files'] ?? []) + count($proof['documents'] ?? [])
             + array_sum(array_map('count', $proof['entities'] ?? []))
             + array_sum(array_map('count', $proof['content_entities'] ?? []));
+    }
+
+    private function withoutUnprovenExpectedCoverage(array $coverage): array
+    {
+        $coverage['expected_source_count'] = null;
+        $coverage['indexed_source_count'] = array_sum(array_map(
+            static fn (array $source): int => (int) ($source['indexed_count'] ?? 0),
+            $coverage['source_catalog'] ?? [],
+        ));
+        $coverage['pending_source_count'] = null;
+        $coverage['stale_source_count'] = null;
+        $coverage['eligible_count_known'] = false;
+        $coverage['coverage_complete'] = false;
+        $coverage['lag_seconds'] = null;
+        $coverage['lag_exceeded'] = false;
+        $coverage['snapshot_at'] = null;
+        $catalog = $coverage['source_catalog'] ?? [];
+        foreach ($catalog as &$source) {
+            $source['expected_count'] = null;
+            $source['pending_count'] = null;
+            $source['stale_count'] = null;
+        }
+        unset($source);
+        $coverage['source_catalog'] = $catalog;
+
+        return $coverage;
     }
 
     private function isFreshSnapshot(array $snapshot): bool
