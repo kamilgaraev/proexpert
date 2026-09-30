@@ -763,35 +763,52 @@ final class AssistantDataAccessPolicy
             return $this->accessibleProjects($user, $organizationId);
         }
         $aggregate = AssistantExtendedDomainRegistry::values('organizationAggregates')[$type] ?? false;
-        $restrictedAggregate = $aggregate && Project::query()->where('organization_id', $organizationId)->whereNotIn('id',
-            $this->accessibleProjects($user, $organizationId)->select('projects.id'))->exists();
+        $restrictedAggregate = $aggregate && $this->rememberCurrent($user, $organizationId, 'restricted-project-scope',
+            fn (): bool => Project::query()->where('organization_id', $organizationId)->whereNotIn('id',
+                $this->accessibleProjects($user, $organizationId)->select('projects.id'))->exists());
         if ($restrictedAggregate && $aggregate === true) { return null; }
         if ($type === 'user') {
             return User::query()->where('users.is_active', true)->whereHas('organizations', static fn (Builder $organizations): Builder => $organizations->where('organizations.id', $organizationId)->where('organization_user.is_active', true));
         }
         if ($type === 'knowledge_article') {
-            $request = \Illuminate\Http\Request::create('/', 'GET');
-            $request->setUserResolver(static fn (): User => $user);
             $surface = $this->trustedSurface ?? (request()->is('api/v1/mobile/*') ? KnowledgeSurface::MOBILE
                 : (request()->is('api/v1/admin/*') ? KnowledgeSurface::ADMIN : KnowledgeSurface::LK));
-            $context = app(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessContextFactory::class)->fromRequest($request, $surface);
-            $permissionKeys = array_values(array_filter($context->permissionKeys, fn (string $permission): bool => $this->currentAuthorization()->canCurrent($user, $permission, ['organization_id' => $organizationId])));
-            $moduleSlugs = ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))->getEffectiveModules($organizationId)->pluck('slug')->all();
-            $audiences = ['all'];
-            if ($surface === \App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface::ADMIN) { $audiences[] = 'admin'; }
-            $authContext = \App\Domain\Authorization\Models\AuthorizationContext::query()->where('type', 'organization')->where('resource_id', $organizationId)->first();
-            $roles = $authContext === null ? collect() : $this->authorization->forCurrentChecks()->getUserRoles($user, $authContext);
-            foreach ($roles as $role) {
-                $slug = str_replace('-', '_', strtolower($role->role_slug));
-                $audience = match (true) {
-                    str_contains($slug, 'owner') => 'owner', str_contains($slug, 'admin') => 'admin',
-                    str_contains($slug, 'manager') => 'manager', str_contains($slug, 'foreman') || str_contains($slug, 'master') => 'foreman',
-                    str_contains($slug, 'worker') => 'worker', str_contains($slug, 'contractor') => 'contractor',
-                    str_contains($slug, 'accountant') || str_contains($slug, 'finance') => 'accountant', default => null,
-                };
-                if ($audience !== null) { $audiences[] = $audience; }
-            }
-            $context = new \App\BusinessModules\Features\KnowledgeHub\DTOs\KnowledgeAccessContext($surface, array_values(array_unique($audiences)), $permissionKeys, $moduleSlugs, null, null, null, (int) $user->id, $organizationId);
+            $context = $this->rememberCurrent($user, $organizationId, 'knowledge_article_context:'.$surface->value, function () use ($user, $organizationId, $surface): \App\BusinessModules\Features\KnowledgeHub\DTOs\KnowledgeAccessContext {
+                $authorization = $this->currentAuthorization();
+                try {
+                    $rawPermissionKeys = $authorization->getUserPermissions($user);
+                } catch (\Throwable) {
+                    $rawPermissionKeys = [];
+                }
+                $permissionKeys = collect($rawPermissionKeys)
+                    ->filter(static fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '')
+                    ->map(static fn (string $permission): string => trim($permission))
+                    ->unique()
+                    ->values()
+                    ->all();
+                $permissionKeys = array_values(array_filter($permissionKeys,
+                    fn (string $permission): bool => $authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])));
+                $moduleSlugs = ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))
+                    ->getEffectiveModules($organizationId)->pluck('slug')->all();
+                $audiences = ['all'];
+                if ($surface === KnowledgeSurface::ADMIN) { $audiences[] = 'admin'; }
+                $authContext = $this->rememberCurrent($user, $organizationId, 'knowledge_article_organization_context',
+                    fn (): ?\App\Domain\Authorization\Models\AuthorizationContext => \App\Domain\Authorization\Models\AuthorizationContext::query()
+                        ->where('type', 'organization')->where('resource_id', $organizationId)->first());
+                $roles = $authContext === null ? collect() : $authorization->getUserRoles($user, $authContext);
+                foreach ($roles as $role) {
+                    $slug = str_replace('-', '_', strtolower($role->role_slug));
+                    $audience = match (true) {
+                        str_contains($slug, 'owner') => 'owner', str_contains($slug, 'admin') => 'admin',
+                        str_contains($slug, 'manager') => 'manager', str_contains($slug, 'foreman') || str_contains($slug, 'master') => 'foreman',
+                        str_contains($slug, 'worker') => 'worker', str_contains($slug, 'contractor') => 'contractor',
+                        str_contains($slug, 'accountant') || str_contains($slug, 'finance') => 'accountant', default => null,
+                    };
+                    if ($audience !== null) { $audiences[] = $audience; }
+                }
+                return new \App\BusinessModules\Features\KnowledgeHub\DTOs\KnowledgeAccessContext(
+                    $surface, array_values(array_unique($audiences)), $permissionKeys, $moduleSlugs, null, null, null, (int) $user->id, $organizationId);
+            });
             return app(\App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessFilter::class)->apply($model->newQuery()->where('status', 'published'), $context);
         }
         $query = $model->newQuery();
