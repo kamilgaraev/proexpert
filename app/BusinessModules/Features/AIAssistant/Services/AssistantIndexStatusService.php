@@ -219,20 +219,44 @@ final class AssistantIndexStatusService
 
     private function validateIdentityProof(\Illuminate\Database\Eloquent\Builder $base, int $organizationId, User $actor, array $proof, callable $checkpoint, bool $expected): bool
     {
+        if ($proof === []) {
+            return true;
+        }
+
+        $identities = [];
+        foreach ($proof as $row) {
+            if (! is_array($row) || ! is_string($row[0] ?? null) || ! is_string($row[1] ?? null)) {
+                return false;
+            }
+            $identities[$row[0]."\0".$row[1]] = [$row[0], $row[1]];
+        }
+
+        $table = $expected ? 'ai_rag_expected_sources' : 'ai_rag_sources';
+        $identityScoped = clone $base;
+        $identityScoped->where(function (\Illuminate\Database\Eloquent\Builder $identityScope) use ($identities, $table): void {
+            $identityScope->whereRaw('1 = 0');
+            foreach ($identities as [$sourceType, $entityType]) {
+                $identityScope->orWhere(function (\Illuminate\Database\Eloquent\Builder $identity) use ($table, $sourceType, $entityType): void {
+                    $identity->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType);
+                });
+            }
+        });
+        $checkpoint();
+        $scoped = $expected
+            ? $this->access->applyToExpectedSources($identityScoped, $actor, $organizationId)
+            : $this->access->applyToSources($identityScoped, $actor, $organizationId);
+
         foreach (array_chunk(array_keys($proof), self::PROOF_BATCH_SIZE) as $ids) {
             $checkpoint();
-            $query = (clone $base)->whereIn(($expected ? 'ai_rag_expected_sources' : 'ai_rag_sources').'.id', $ids);
+            $query = (clone $scoped)->whereIn($table.'.id', $ids);
             $columns = $expected
                 ? ['ai_rag_expected_sources.id', 'ai_rag_expected_sources.source_type', 'ai_rag_expected_sources.entity_type',
                     'ai_rag_expected_sources.entity_id', 'ai_rag_expected_sources.project_id', 'ai_rag_expected_sources.identity_project_id',
                     'ai_rag_expected_sources.identity_part_key', 'ai_rag_expected_sources.checksum']
                 : ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id',
                     'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key', 'ai_rag_sources.source_version', 'ai_rag_sources.checksum'];
-            $scoped = $expected
-                ? $this->access->applyToExpectedSources($query, $actor, $organizationId)
-                : $this->access->applyToSources($query, $actor, $organizationId);
             $visible = [];
-            foreach ($scoped->select($columns)->get() as $row) {
+            foreach ($query->select($columns)->get() as $row) {
                 $visible[(string) $row->id] = $expected ? $this->expectedProofRow($row) : $this->sourceProofRow($row);
             }
             $expectedRows = array_intersect_key($proof, array_flip($ids));

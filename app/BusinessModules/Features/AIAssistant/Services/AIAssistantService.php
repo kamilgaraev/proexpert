@@ -30,6 +30,8 @@ use App\Support\AI\LunaModelPolicy;
 use App\Support\AI\TokenBudgetService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
+use Illuminate\Log\LogManager;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -1624,7 +1626,33 @@ class AIAssistantService
         try {
             $this->executionCheckpoint();
             $providerStarted = true;
-            $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
+            $providerCallStarted = hrtime(true);
+            $providerCallFailure = null;
+            try {
+                $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
+            } catch (Throwable $exception) {
+                $providerCallFailure = $exception;
+                throw $exception;
+            } finally {
+                try {
+                    $providerCallDuration = round((hrtime(true) - $providerCallStarted) / 1_000_000, 2);
+                    $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
+                    $model = $this->llmProvider->getModel();
+                    $logger = Log::getFacadeRoot();
+                    if (! $logger instanceof LogManager || is_string(config('logging.default'))) {
+                        Log::info('ai.assistant.provider_call_completed', [
+                            'request_id' => $this->activeRequest?->request_id,
+                            'call_attempt' => (int) $attempt,
+                            'provider' => in_array($provider, ['timeweb', 'openai'], true) ? $provider : 'unknown',
+                            'model' => LunaModelPolicy::isLuna($model, $provider) ? $model : 'unknown',
+                            'duration_ms' => $providerCallDuration,
+                            'success' => $providerCallFailure === null,
+                            'exception_class' => $providerCallFailure === null ? null : $providerCallFailure::class,
+                        ]);
+                    }
+                } catch (Throwable) {
+                }
+            }
             $this->executionCheckpoint();
             if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
                 throw new AssistantResponseIncomplete($response);
@@ -2314,14 +2342,13 @@ class AIAssistantService
         $context = $requestPayload['context'] ?? [];
         if (! is_array($context) || ! $this->hasOnlyImplicitProjectReference($context['entity_refs'] ?? [])
             || ! empty($context['period'])
-            || ! empty($context['filters']) || ! empty($context['source_route'])
-            || ! in_array($context['source_module'] ?? null, [null, 'ai-assistant'], true)) {
+            || ! empty($context['filters'])) {
             return false;
         }
 
         $uiState = $context['ui_state'] ?? [];
 
-        return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path']) === [];
+        return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path', 'pathname']) === [];
     }
 
     private function answerStandaloneGreeting(string $query, int $organizationId, User $user, Conversation $conversation, array $requestPayload): array
