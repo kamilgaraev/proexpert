@@ -33,6 +33,7 @@ final class AssistantDomainCatalogTest extends TestCase
         $this->assertSame('budget-estimates.finance.view', $estimates->fieldPermissions['total_amount']);
         $this->assertSame('crm.deals.view', $catalog->definition('crm')->entityPermissions['crm_deal']);
         $this->assertContains('estimate_item_resource', $estimates->entityTypes);
+        $this->assertContains('currency', $catalog->definition('finance')->fields);
         $this->assertSame('/projects/{id}', $catalog->definition('projects')->navigation);
         $this->assertSame('/knowledge-hub/articles/{slug}', $catalog->definition('knowledge')->navigation);
     }

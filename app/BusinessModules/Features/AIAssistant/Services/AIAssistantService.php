@@ -449,7 +449,8 @@ class AIAssistantService
                         $trustedDownloadUrls
                     );
 
-                    $providerResult = $this->toolResultForProvider((string) ($toolCall['function']['name'] ?? ''), $toolResult);
+                    $toolName = (string) ($toolCall['function']['name'] ?? '');
+                    $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
                         : (json_encode($providerResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{"error":"tool_result_serialization_failed"}');
@@ -460,6 +461,110 @@ class AIAssistantService
                         'name' => $toolCall['function']['name'] ?? 'unknown_tool',
                         'content' => $toolContent,
                     ];
+
+                    $serverResult = $this->activeToolResults[0] ?? null;
+                    $serverAnswer = is_array($serverResult) ? ($serverResult['server_formatted_answer'] ?? null) : null;
+                    $financialEvidence = is_array($serverResult) ? ($serverResult['financial_evidence'] ?? null) : null;
+                    $sourceRefs = is_array($serverResult) ? ($serverResult['source_refs'] ?? null) : null;
+                    $resolution = is_array($serverResult) ? ($serverResult['resolution'] ?? null) : null;
+                    $selection = is_array($serverResult) ? ($serverResult['selection'] ?? null) : null;
+                    $estimateEvidence = is_array($financialEvidence) ? ($financialEvidence['estimate'] ?? null) : null;
+                    $stockEvidence = is_array($serverResult) ? ($serverResult['stock_evidence'] ?? null) : null;
+                    if (
+                        $loopCount === 0
+                        && is_array($response['tool_calls'] ?? null)
+                        && count($response['tool_calls']) === 1
+                        && count($this->activeToolResults) === 1
+                        && $toolName === 'get_material_stock'
+                        && $this->isTerminalReadOnlyTool($toolName)
+                        && $executedAction === null
+                        && $proposedActions === []
+                        && $toolFailures === []
+                        && ! $degradedMode
+                        && is_array($serverResult)
+                        && ($serverResult['_tool_name'] ?? null) === $toolName
+                        && ($serverResult['status'] ?? null) === 'empty'
+                        && ($serverResult['validation_status'] ?? null) === 'verified'
+                        && ($serverResult['needs_clarification'] ?? false) === false
+                        && is_string($serverAnswer)
+                        && trim($serverAnswer) !== ''
+                        && is_array($serverResult['stock'] ?? null)
+                        && $serverResult['stock'] === []
+                        && is_array($sourceRefs)
+                        && $sourceRefs === []
+                        && is_array($serverResult['quantity_scope'] ?? null)
+                        && is_array($stockEvidence)
+                        && ($stockEvidence['scope'] ?? null) === 'warehouse_balance_sum'
+                        && ($stockEvidence['organization_id'] ?? null) === $organizationId
+                        && ($stockEvidence['actor_id'] ?? null) === (int) $user->id
+                        && is_array($stockEvidence['filters'] ?? null)
+                        && ($stockEvidence['quantity_scope'] ?? null) === $serverResult['quantity_scope']
+                        && is_array($stockEvidence['rows'] ?? null)
+                        && $stockEvidence['rows'] === []
+                        && ($stockEvidence['validation_status'] ?? null) === 'verified'
+                        && is_string($stockEvidence['version'] ?? null)
+                        && $stockEvidence['version'] !== ''
+                    ) {
+                        $response['content'] = $serverAnswer;
+                        $response['tool_calls'] = [];
+                        break 2;
+                    }
+
+                    if (
+                        $loopCount === 0
+                        && is_array($response['tool_calls'] ?? null)
+                        && count($response['tool_calls']) === 1
+                        && count($this->activeToolResults) === 1
+                        && $toolName === 'get_estimate_answer'
+                        && $this->isTerminalReadOnlyTool($toolName)
+                        && $executedAction === null
+                        && $proposedActions === []
+                        && $toolFailures === []
+                        && ! $degradedMode
+                        && is_array($serverResult)
+                        && ($serverResult['_tool_name'] ?? null) === $toolName
+                        && ($serverResult['status'] ?? null) === 'resolved'
+                        && ($serverResult['validation_status'] ?? null) === 'verified'
+                        && ($serverResult['needs_clarification'] ?? null) === false
+                        && is_array($resolution)
+                        && ($resolution['status'] ?? null) === 'resolved'
+                        && is_int($resolution['estimate_id'] ?? null)
+                        && is_array($selection)
+                        && ($selection['estimate_id'] ?? null) === $resolution['estimate_id']
+                        && is_string($serverAnswer)
+                        && trim($serverAnswer) !== ''
+                        && is_array($sourceRefs)
+                        && $sourceRefs !== []
+                        && is_array($financialEvidence)
+                        && ($financialEvidence['validation_status'] ?? null) === 'verified'
+                        && ($financialEvidence['totals_validation_status'] ?? null) === 'verified'
+                        && is_array($estimateEvidence)
+                        && ($estimateEvidence['id'] ?? null) === $resolution['estimate_id']
+                        && is_array($financialEvidence['totals'] ?? null)
+                        && is_string($financialEvidence['fetched_at'] ?? null)
+                        && $financialEvidence['fetched_at'] !== ''
+                        && is_string($financialEvidence['version'] ?? null)
+                        && $financialEvidence['version'] !== ''
+                        && ($financialEvidence['source_refs'] ?? null) === $sourceRefs
+                    ) {
+                        $financialProof = $this->financialClaims?->guard($serverAnswer, [$serverResult]);
+                        $structuredProof = $this->structuredFacts->guard($query, $serverAnswer, [$serverResult]);
+                        if (
+                            is_array($financialProof)
+                            && ($financialProof['validation_status'] ?? null) === 'verified'
+                            && ($financialProof['source_refs'] ?? null) === $sourceRefs
+                            && ($financialProof['text'] ?? null) === $serverAnswer
+                            && is_array($structuredProof)
+                            && ($structuredProof['validation_status'] ?? null) === 'verified'
+                            && ($structuredProof['needs_clarification'] ?? null) === false
+                            && ($structuredProof['source_refs'] ?? null) === $sourceRefs
+                            && ($structuredProof['text'] ?? null) === $serverAnswer
+                        ) {
+                            $response['content'] = $serverAnswer;
+                            $response['tool_calls'] = [];
+                            break 2;
+                        }
+                    }
                 }
 
                 try {
@@ -1166,6 +1271,16 @@ class AIAssistantService
             return $read();
         }
         $execution = app(AssistantRequestExecutionContext::class);
+        $requestId = $this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null;
+        $timingCallback = $requestId === null ? null : static function (
+            string $phase,
+            float $durationMs,
+            bool $success,
+            ?string $exceptionClass,
+        ) use ($requestId): void {
+            AssistantRequestPhaseTimer::recordDuration($requestId, $phase, $durationMs, $success, $exceptionClass);
+        };
+
         return app(AssistantReadConcurrencyLimiter::class)->run(
             fn (callable $heartbeat): mixed => $execution->withOperationBudget(function () use ($heartbeat, $read, $actor, $organizationId): mixed {
                 $heartbeat();
@@ -1173,7 +1288,7 @@ class AIAssistantService
                     $actor, $organizationId, $read, false, $heartbeat);
                 $heartbeat();
                 return $result;
-            }, 30_000), fn () => $this->executionCheckpoint(), $organizationId, fn (): int => $execution->remainingMilliseconds());
+            }, 30_000), fn () => $this->executionCheckpoint(), $organizationId, fn (): int => $execution->remainingMilliseconds(), $timingCallback);
     }
 
     protected function verifyMaterialStock(array $result, User $actor, int $organizationId): ?array

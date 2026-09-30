@@ -323,6 +323,84 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
         $this->assertSame(['enqueue', 'acquire', 'renew', 'release'], $redis->events);
     }
 
+    public function test_wait_and_hold_time_are_reported_separately(): void
+    {
+        $redis = $this->redis([0, 1]);
+        $clock = (object) ['now' => 0];
+        $limiter = new AssistantReadConcurrencyLimiter('test:', static fn (): int => $clock->now);
+        $checkpoints = 0;
+        $measurements = [];
+
+        $result = $limiter->run(
+            function (callable $heartbeat) use ($clock): string {
+                $clock->now += 75_000_000;
+                $heartbeat();
+
+                return 'unchanged';
+            },
+            function () use (&$checkpoints, $clock): void {
+                if (++$checkpoints === 2) {
+                    $clock->now += 250_000_000;
+                }
+            },
+            38,
+            null,
+            function (string $phase, float $durationMs, bool $success, ?string $exceptionClass) use (&$measurements, $redis): void {
+                $measurements[$phase] = [
+                    'duration_ms' => $durationMs,
+                    'success' => $success,
+                    'exception_class' => $exceptionClass,
+                ];
+                $redis->events[] = 'timing_'.$phase;
+            },
+        );
+
+        $this->assertSame('unchanged', $result);
+        $this->assertSame(250.0, $measurements['read_permit_wait']['duration_ms']);
+        $this->assertSame(75.0, $measurements['read_permit_hold']['duration_ms']);
+        $this->assertTrue($measurements['read_permit_wait']['success']);
+        $this->assertTrue($measurements['read_permit_hold']['success']);
+        $this->assertSame(['release', 'timing_read_permit_wait', 'timing_read_permit_hold'], array_slice($redis->events, -3));
+    }
+
+    public function test_failed_read_reports_hold_failure_and_releases_permit(): void
+    {
+        $redis = $this->redis();
+        $clock = (object) ['now' => 0];
+        $limiter = new AssistantReadConcurrencyLimiter('test:', static fn (): int => $clock->now);
+        $failure = new RuntimeException('private_read_failure_fixture');
+        $measurements = [];
+
+        try {
+            $limiter->run(
+                function (callable $heartbeat) use ($clock, $failure): never {
+                    $clock->now += 35_000_000;
+                    throw $failure;
+                },
+                static fn (): null => null,
+                38,
+                null,
+                function (string $phase, float $durationMs, bool $success, ?string $exceptionClass) use (&$measurements, $redis): void {
+                    $measurements[$phase] = [
+                        'duration_ms' => $durationMs,
+                        'success' => $success,
+                        'exception_class' => $exceptionClass,
+                    ];
+                    $redis->events[] = 'timing_'.$phase;
+                },
+            );
+            $this->fail('The original read failure must propagate.');
+        } catch (RuntimeException $actual) {
+            $this->assertSame($failure, $actual);
+        }
+
+        $this->assertSame(35.0, $measurements['read_permit_hold']['duration_ms']);
+        $this->assertFalse($measurements['read_permit_hold']['success']);
+        $this->assertSame(RuntimeException::class, $measurements['read_permit_hold']['exception_class']);
+        $this->assertSame(['release', 'timing_read_permit_wait', 'timing_read_permit_hold'], array_slice($redis->events, -3));
+        $this->assertStringNotContainsString('private_read_failure_fixture', json_encode($measurements, JSON_THROW_ON_ERROR));
+    }
+
     private function redis(array $admissions = [1], array $renewals = [1, 1, 1]): object
     {
         $reflection = new ReflectionClass(AssistantReadConcurrencyLimiter::class);

@@ -349,26 +349,96 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertStringContainsString('5.12500000', $response['message']['content']);
     }
 
-    public function test_financial_answer_uses_computed_value_in_two_calls_and_skips_document_search(): void
+    public function test_verified_financial_answer_skips_second_provider_call_and_preserves_verified_refs(): void
     {
-        $source = ['entity_type' => 'estimate', 'entity_id' => 99, 'organization_id' => 15];
+        $fetchedAt = now()->toISOString();
+        $source = ['entity_type' => 'estimate', 'entity_id' => 99, 'organization_id' => 15, 'content_scope' => 'structured',
+            'checked_fields' => ['number', 'name', 'status', 'estimate_date'],
+            'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
+            'required_domains' => ['estimates'], 'fetched_at' => $fetchedAt, 'version' => 'v1'];
         $computed = 'Итого: 1 234,56 ₽';
-        $result = ['status' => 'resolved', 'server_formatted_answer' => $computed, 'needs_clarification' => false,
-            'financial_evidence' => ['source_refs' => [$source], 'fetched_at' => now()->toISOString(), 'version' => 'v1', 'validation_status' => 'verified'],
-            'source_refs' => [$source], 'selection' => ['estimate_id' => 99]];
+        $financialEvidence = ['estimate' => ['id' => 99, 'number' => 'S-99', 'name' => 'Основная смета',
+            'status' => 'approved', 'estimate_date' => '2026-10-01'],
+            'totals' => ['total_amount' => '1234.56'], 'totals_validation_status' => 'verified',
+            'source_refs' => [$source], 'positions' => [], 'position_count' => 0,
+            'fetched_at' => $fetchedAt, 'version' => 'v1', 'validation_status' => 'verified'];
+        $structuredFacts = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateStructuredFacts::positions($financialEvidence, [], 15);
+        $result = [...$structuredFacts,
+            'status' => 'resolved', 'resolution' => ['status' => 'resolved', 'estimate_id' => 99],
+            'selection' => ['estimate_id' => 99, 'position_filter' => [], 'position_numbers' => []],
+            'server_formatted_answer' => $computed, 'needs_clarification' => false,
+            'validation_status' => 'verified',
+            'financial_evidence' => $financialEvidence,
+            'source_refs' => [$source]];
         $service = $this->service(['get_estimate_answer' => $result, 'search_assistant_documents' => ['status' => 'success']], [
             ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_answer')]],
-            ['content' => 'Итого: 999,00 ₽'],
+        ]);
+
+        $response = $service->ask('Какова сумма сметы?', 15, $this->actor(), 7);
+
+        $this->assertCount(1, $this->providerCalls);
+        $this->assertSame(1, $this->toolExecutions);
+        $this->assertSame($computed, $response['message']['content']);
+        $this->assertSame('verified', $response['message']['metadata']['validation_status']);
+        $this->assertFalse($response['message']['metadata']['needs_clarification']);
+        $this->assertFalse($response['message']['metadata']['rag_context']['used']);
+        $this->assertSame([$source], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_incomplete_or_unproven_financial_answers_keep_second_provider_call(): void
+    {
+        $source = ['entity_type' => 'estimate', 'entity_id' => 99, 'organization_id' => 15];
+        $fetchedAt = now()->toISOString();
+        $verified = ['status' => 'resolved', 'server_formatted_answer' => 'Итого: 1 234,56 ₽', 'needs_clarification' => false,
+            'validation_status' => 'verified', 'source_refs' => [$source], 'selection' => ['estimate_id' => 99],
+            'financial_evidence' => ['source_refs' => [$source], 'fetched_at' => $fetchedAt, 'version' => 'v1', 'validation_status' => 'verified']];
+        $cases = [
+            'incomplete evidence' => array_replace($verified, [
+                'financial_evidence' => ['source_refs' => [$source], 'fetched_at' => $fetchedAt, 'validation_status' => 'verified'],
+            ]),
+            'empty references' => array_replace($verified, [
+                'source_refs' => [], 'financial_evidence' => ['source_refs' => [], 'fetched_at' => $fetchedAt, 'version' => 'v1', 'validation_status' => 'verified'],
+            ]),
+            'needs clarification' => array_replace($verified, ['status' => 'ambiguous', 'needs_clarification' => true]),
+            'unproven finance' => array_replace($verified, [
+                'validation_status' => 'partial',
+                'financial_evidence' => ['source_refs' => [$source], 'fetched_at' => $fetchedAt, 'version' => 'v1', 'validation_status' => 'partial'],
+            ]),
+        ];
+
+        foreach ($cases as $case => $result) {
+            $service = $this->service(['get_estimate_answer' => $result], [
+                ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_answer')]],
+                ['content' => 'Итого: 999,00 ₽'],
+            ]);
+            $callCount = count($this->providerCalls);
+
+            $service->ask('Какова сумма сметы?', 15, $this->actor(), 7);
+
+            $this->assertCount($callCount + 2, $this->providerCalls, $case);
+        }
+    }
+
+    public function test_multiple_tool_calls_keep_second_provider_call_even_with_verified_financial_answer(): void
+    {
+        $source = ['entity_type' => 'estimate', 'entity_id' => 99, 'organization_id' => 15];
+        $result = ['status' => 'resolved', 'server_formatted_answer' => 'Итого: 1 234,56 ₽', 'needs_clarification' => false,
+            'validation_status' => 'verified',
+            'financial_evidence' => ['source_refs' => [$source], 'fetched_at' => now()->toISOString(), 'version' => 'v1', 'validation_status' => 'verified'],
+            'source_refs' => [$source], 'selection' => ['estimate_id' => 99]];
+        $service = $this->service([
+            'get_estimate_answer' => $result,
+            'assistant_domain_search' => ['status' => 'success', 'source_refs' => []],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_answer'), $this->toolCall('assistant_domain_search')]],
+            ['content' => 'Итого: 1 234,56 ₽'],
         ]);
 
         $response = $service->ask('Какова сумма сметы?', 15, $this->actor(), 7);
 
         $this->assertCount(2, $this->providerCalls);
-        $this->assertSame(1, $this->toolExecutions);
-        $this->assertSame($computed, $response['message']['content']);
+        $this->assertSame(2, $this->toolExecutions);
         $this->assertSame('verified', $response['message']['metadata']['validation_status']);
-        $this->assertFalse($response['message']['metadata']['rag_context']['used']);
-        $this->assertSame(99, $response['message']['metadata']['source_refs'][0]['entity_id']);
     }
 
     public function test_estimate_ambiguity_preserves_server_clarification_and_its_references(): void
@@ -669,20 +739,74 @@ final class AssistantToolFirstQualityTest extends TestCase
     public function test_verified_empty_stock_is_a_useful_scoped_answer_without_generic_missing_proof_warning(): void
     {
         $emptyText = trans_message('ai_assistant.material_stock_empty');
+        $quantityScope = ['kind' => 'warehouse_balance', 'project_id' => null, 'project_allocation_quantity_calculated' => false,
+            'on_site_quantity_calculated' => false, 'free_for_allocation_calculated' => false];
         $service = $this->service(['get_material_stock' => ['status' => 'empty', 'stock' => [],
-            'stock_evidence' => ['version' => 'checked-empty-scope'], 'source_refs' => []]],
-            [['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]], ['content' => 'Всего материалов в организации 0.']]);
+            'server_formatted_answer' => $emptyText, 'validation_status' => 'verified', 'source_refs' => [], 'quantity_scope' => $quantityScope,
+            'stock_evidence' => ['scope' => 'warehouse_balance_sum', 'quantity_scope' => $quantityScope, 'organization_id' => 15,
+                'actor_id' => 7, 'filters' => ['query' => 'арматура', 'material_ids' => null, 'project_id' => null, 'warehouse_id' => null],
+                'rows' => [], 'fetched_at' => now()->toISOString(), 'validation_status' => 'verified', 'version' => 'checked-empty-scope']]],
+            [['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]]]);
         $service->verifiedStock = ['text' => $emptyText, 'validation_status' => 'verified', 'source_refs' => [],
             'replaced' => true, 'needs_clarification' => false];
 
         $response = $service->ask('Сколько арматуры на складе?', 15, $this->actor(), 7);
 
+        $this->assertCount(1, $this->providerCalls);
         $this->assertSame($emptyText, $response['message']['content']);
         $this->assertSame('verified', $response['message']['metadata']['validation_status']);
         $this->assertFalse($response['message']['metadata']['needs_clarification']);
         $this->assertSame([], $response['message']['metadata']['source_refs']);
         $this->assertSame([], $response['message']['metadata']['missing_data']);
+        $this->assertSame(1, $service->stockVerifications);
         $this->assertTrue((new \ReflectionMethod(AIAssistantService::class, 'isUsefulAnswer'))->invoke($service, $response));
+    }
+
+    public function test_empty_stock_shortcut_requires_verified_empty_scope_receipt_and_single_tool(): void
+    {
+        $quantityScope = ['kind' => 'warehouse_balance', 'project_id' => null, 'project_allocation_quantity_calculated' => false,
+            'on_site_quantity_calculated' => false, 'free_for_allocation_calculated' => false];
+        $base = ['status' => 'empty', 'stock' => [], 'server_formatted_answer' => trans_message('ai_assistant.material_stock_empty'),
+            'validation_status' => 'verified', 'source_refs' => [], 'quantity_scope' => $quantityScope,
+            'stock_evidence' => ['scope' => 'warehouse_balance_sum', 'quantity_scope' => $quantityScope, 'organization_id' => 15,
+                'actor_id' => 7, 'filters' => ['query' => 'арматура', 'material_ids' => null, 'project_id' => null, 'warehouse_id' => null],
+                'rows' => [], 'fetched_at' => now()->toISOString(), 'validation_status' => 'verified', 'version' => 'checked-empty-scope']];
+        $stockRef = ['entity_type' => 'warehouse_balance', 'entity_id' => 41, 'organization_id' => 15];
+        $invalid = [
+            'nonempty receipt' => array_replace($base, ['stock_evidence' => array_replace($base['stock_evidence'], ['rows' => [['material_id' => 11]]])]),
+            'source reference on empty result' => array_replace($base, ['source_refs' => [$stockRef]]),
+            'unverified result' => array_replace($base, ['validation_status' => 'partial']),
+            'missing receipt version' => array_replace($base, ['stock_evidence' => array_replace($base['stock_evidence'], ['version' => ''])]),
+        ];
+
+        foreach ($invalid as $case => $result) {
+            $service = $this->service(['get_material_stock' => $result], [
+                ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]],
+                ['content' => 'Проверка остатков выполнена.'],
+            ]);
+            $callCount = count($this->providerCalls);
+            $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
+                'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
+
+            $service->ask('Сколько арматуры на складе?', 15, $this->actor(), 7);
+
+            $this->assertCount($callCount + 2, $this->providerCalls, $case);
+        }
+
+        $service = $this->service([
+            'get_material_stock' => $base,
+            'assistant_domain_search' => ['status' => 'success', 'source_refs' => []],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock'), $this->toolCall('assistant_domain_search')]],
+            ['content' => 'Проверка остатков выполнена.'],
+        ]);
+        $callCount = count($this->providerCalls);
+        $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
+            'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
+
+        $service->ask('Сколько арматуры на складе?', 15, $this->actor(), 7);
+
+        $this->assertCount($callCount + 2, $this->providerCalls, 'multiple tool calls');
     }
 
     public function test_resolved_estimate_without_current_access_does_not_become_selected_while_answer_sources_remain_for_fresh_verification(): void

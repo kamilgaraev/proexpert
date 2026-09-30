@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 final class AssistantReadConcurrencyLimiter
 {
@@ -128,7 +129,13 @@ LUA;
      * @param callable(): mixed $checkpoint
      * @return TResult
      */
-    public function run(callable $read, callable $checkpoint, int|string $organizationId, ?callable $readGuard = null): mixed
+    public function run(
+        callable $read,
+        callable $checkpoint,
+        int|string $organizationId,
+        ?callable $readGuard = null,
+        ?callable $timingCallback = null,
+    ): mixed
     {
         $organization = trim((string) $organizationId);
         if ($organization === '') {
@@ -144,10 +151,16 @@ LUA;
         }
         $redis = Redis::connection($redisConnection);
         $startedAt = hrtime(true);
+        $admissionStartedAt = $timingCallback === null ? null : $this->measurementTimestamp();
+        $readStartedAt = null;
+        $failureAt = null;
+        $enqueued = false;
+        $failureClass = null;
         $firstAdmissionAttempt = true;
         try {
             $nowMs = (int) floor(microtime(true) * 1000);
             $redis->eval(self::ENQUEUE_SCRIPT, 6, $keys['sequence'], $keys['waiters'], $keys['waiter_orgs'], $keys['waiter_since'], $keys['active'], $keys['active_orgs'], $token, $organization, $nowMs, self::STALE_WAITER_TTL_MS);
+            $enqueued = true;
 
             do {
                 if (! $firstAdmissionAttempt) {
@@ -216,8 +229,67 @@ LUA;
 
                 usleep(self::POLL_INTERVAL_US);
             } while (true);
+        } catch (Throwable $exception) {
+            $failureClass = $exception::class;
+            $failureAt = $timingCallback === null ? null : $this->measurementTimestamp();
+            throw $exception;
         } finally {
-            $redis->eval(self::RELEASE_SCRIPT, 5, $keys['active'], $keys['active_orgs'], $keys['waiters'], $keys['waiter_orgs'], $keys['waiter_since'], $token);
+            try {
+                $redis->eval(self::RELEASE_SCRIPT, 5, $keys['active'], $keys['active_orgs'], $keys['waiters'], $keys['waiter_orgs'], $keys['waiter_since'], $token);
+            } catch (Throwable $releaseFailure) {
+                $failureClass ??= $releaseFailure::class;
+                $failureAt ??= $timingCallback === null ? null : $this->measurementTimestamp();
+                throw $releaseFailure;
+            } finally {
+                $releasedAt = $timingCallback === null ? null : $this->measurementTimestamp();
+
+                if ($timingCallback !== null && $enqueued && $admissionStartedAt !== null && $releasedAt !== null) {
+                    $waitEndedAt = $readStartedAt ?? $failureAt ?? $releasedAt;
+                    $this->notifyTiming(
+                        $timingCallback,
+                        'read_permit_wait',
+                        $this->durationMilliseconds($admissionStartedAt, $waitEndedAt),
+                        $readStartedAt !== null,
+                        $readStartedAt !== null ? null : $failureClass,
+                    );
+                }
+
+                if ($timingCallback !== null && $readStartedAt !== null && $releasedAt !== null) {
+                    $this->notifyTiming(
+                        $timingCallback,
+                        'read_permit_hold',
+                        $this->durationMilliseconds($readStartedAt, $releasedAt),
+                        $failureClass === null,
+                        $failureClass,
+                    );
+                }
+            }
+        }
+    }
+
+    private function notifyTiming(?callable $timingCallback, string $phase, float $durationMs, bool $success, ?string $exceptionClass): void
+    {
+        if ($timingCallback === null) {
+            return;
+        }
+
+        try {
+            $timingCallback($phase, $durationMs, $success, $exceptionClass);
+        } catch (Throwable) {
+        }
+    }
+
+    private function durationMilliseconds(int $startedAt, int $finishedAt): float
+    {
+        return round(max(0, $finishedAt - $startedAt) / 1_000_000, 2);
+    }
+
+    private function measurementTimestamp(): ?int
+    {
+        try {
+            return $this->nowNanoseconds();
+        } catch (Throwable) {
+            return null;
         }
     }
 

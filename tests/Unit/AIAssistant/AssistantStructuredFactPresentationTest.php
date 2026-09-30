@@ -66,6 +66,118 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertStringContainsString('Полнота списка и общие итоги не подтверждены', $result['text']);
     }
 
+    public function test_natural_payment_query_renders_checked_rows_as_a_table_without_inventing_currency(): void
+    {
+        $receipts = [];
+        for ($id = 1; $id <= 7; $id++) {
+            $receipts[] = $this->payload('payment_document', [
+                'document_number' => 'ПЛ-'.$id,
+                'amount' => '100.0'.$id,
+            ], 320 + $id);
+        }
+        $combined = AssistantStructuredFactFormatter::payload(array_merge(...array_map(
+            static fn (array $receipt): array => $receipt['structured_fact_evidence']['rows'], $receipts)), '2026-09-30T12:00:00Z');
+        $text = (new AssistantStructuredFactVerifier)->guard('Что с платежами?', 'Найдено семь платежей: ...', [$combined])['text'];
+
+        $this->assertStringContainsString('| Запись | Номер документа | Сумма |', $text);
+        $this->assertStringContainsString('| ПЛ\-1 | 100.01 |', $text);
+        $this->assertStringContainsString('| ПЛ\-7 | 100.07 |', $text);
+        $this->assertStringNotContainsString('RUB', $text);
+        $this->assertStringNotContainsString('не указано', $text);
+    }
+
+    public function test_payment_currency_is_rendered_only_for_rows_with_verified_nonempty_currency(): void
+    {
+        $first = $this->payload('payment_document', ['document_number' => 'ПЛ-1', 'amount' => '12.50', 'currency' => 'EUR'], 401);
+        $second = $this->payload('payment_document', ['document_number' => 'ПЛ-2', 'amount' => '7.25', 'currency' => null], 402);
+        $combined = AssistantStructuredFactFormatter::payload(array_merge(
+            $first['structured_fact_evidence']['rows'], $second['structured_fact_evidence']['rows']), '2026-09-30T12:00:00Z');
+        $text = (new AssistantStructuredFactVerifier)->confirmedResults([$combined], 'Что с платежами?')['text'];
+
+        $this->assertStringContainsString('EUR', $text);
+        $this->assertStringNotContainsString('RUB', $text);
+        $this->assertStringNotContainsString('Валюта: не указано', $text);
+    }
+
+    public function test_explanatory_payment_question_keeps_narrative_response(): void
+    {
+        $receipt = $this->payload('payment_document', ['document_number' => 'ПЛ-1', 'amount' => '12.50'], 403);
+        $answer = 'Объясню общий порядок обработки платежей.';
+
+        $result = (new AssistantStructuredFactVerifier)->guard('Почему платежи задерживаются?', $answer, [$receipt]);
+
+        $this->assertSame($answer, $result['text']);
+        $this->assertSame([], $result['source_refs']);
+        $this->assertFalse($result['needs_clarification']);
+    }
+
+    public function test_unrelated_question_keeps_original_response_even_with_payment_evidence(): void
+    {
+        $receipt = $this->payload('payment_document', ['document_number' => 'ПЛ-1', 'amount' => '12.50'], 404);
+        $answer = 'Сегодня хорошая погода.';
+
+        $result = (new AssistantStructuredFactVerifier)->guard('Расскажи анекдот.', $answer, [$receipt]);
+
+        $this->assertSame($answer, $result['text']);
+        $this->assertSame([], $result['source_refs']);
+        $this->assertFalse($result['replaced']);
+        $this->assertFalse($result['needs_clarification']);
+    }
+
+    public function test_composition_page_metadata_adds_partial_footer_from_verified_resource_rows(): void
+    {
+        $rows = $this->compositionRows(20);
+        $payload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 25, 'page' => 1,
+            'per_page' => 20, 'has_more' => true, 'next_page' => 2,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->confirmedResults([$payload], 'Покажи состав позиции');
+
+        $this->assertStringContainsString('Показаны 20 из 25 найденных ресурсов.', $result['text']);
+        $this->assertSame(22, count($result['source_refs']));
+        $this->assertFalse($result['needs_clarification']);
+    }
+
+    public function test_conflicting_composition_pages_use_unknown_resources_footer(): void
+    {
+        $firstPage = AssistantStructuredFactFormatter::payload($this->compositionRows(20), '2026-09-30T12:00:00Z');
+        $firstPage['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 25, 'page' => 1,
+            'per_page' => 20, 'has_more' => true, 'next_page' => 2,
+        ];
+        $secondPage = AssistantStructuredFactFormatter::payload($this->compositionRows(6, 21), '2026-09-30T12:00:00Z');
+        $secondPage['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 26, 'page' => 2,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+        $verifier = new AssistantStructuredFactVerifier;
+        $this->assertTrue($verifier->trustedEvidence($firstPage['structured_fact_evidence']));
+        $this->assertTrue($verifier->trustedEvidence($secondPage['structured_fact_evidence']));
+
+        $result = $verifier->confirmedResults([$firstPage, $secondPage], 'Покажи состав позиции');
+
+        $this->assertStringContainsString('Показана часть найденных ресурсов.', $result['text']);
+        $this->assertStringNotContainsString('найденных позиций', $result['text']);
+        $this->assertFalse($result['needs_clarification']);
+    }
+
+    public function test_inconsistent_composition_page_metadata_is_not_trusted(): void
+    {
+        $payload = AssistantStructuredFactFormatter::payload($this->compositionRows(20), '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 25, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => 2,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->confirmedResults([$payload], 'Покажи состав позиции');
+
+        $this->assertSame([], $result['source_refs']);
+        $this->assertStringNotContainsString('Показаны 20 из 25 найденных ресурсов.', $result['text']);
+        $this->assertTrue($result['needs_clarification']);
+    }
+
     public function test_explicit_missing_date_and_owner_proof_remain_meaningful_without_invented_names_or_dates(): void
     {
         $payload = $this->payload('crm_deal', ['name' => 'Поставка утеплителя', 'status' => 'draft', 'owner_user_id' => 42, 'expected_close_at' => null]);
@@ -78,14 +190,28 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertStringNotContainsString('завтра', $result['text']);
     }
 
-    private function payload(string $type, array $fields): array
+    private function payload(string $type, array $fields, int $id = 321, array $sourceExtras = []): array
     {
         $model = new class extends Model {};
-        $model->setRawAttributes(['id' => 321, ...$fields], true);
-        $reference = ['organization_id' => 15, 'entity_type' => $type, 'entity_id' => 321, 'content_scope' => 'structured',
+        $model->setRawAttributes(['id' => $id, ...$fields], true);
+        $reference = ['organization_id' => 15, 'entity_type' => $type, 'entity_id' => $id, 'content_scope' => 'structured',
             'checked_fields' => array_keys($fields), 'source_version' => 'current-version', 'fetched_at' => '2026-09-30T12:00:00Z',
-            'navigation' => ['url' => '/records?entity_id=321']];
+            'navigation' => ['url' => '/records?entity_id='.$id], ...$sourceExtras];
 
         return AssistantStructuredFactFormatter::payload([AssistantStructuredFactFormatter::row($model, $type, array_keys($fields), $reference)], $reference['fetched_at']);
+    }
+
+    private function compositionRows(int $resourceCount, int $firstResourceId = 1): array
+    {
+        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100);
+        $position = $this->payload('estimate_item', ['name' => 'Позиция'], 200, ['estimate_id' => 100]);
+        $rows = array_merge($estimate['structured_fact_evidence']['rows'], $position['structured_fact_evidence']['rows']);
+        for ($id = $firstResourceId; $id < $firstResourceId + $resourceCount; $id++) {
+            $resource = $this->payload('estimate_item_resource', ['name' => 'Ресурс '.$id], 1000 + $id,
+                ['estimate_id' => 100, 'estimate_item_id' => 200]);
+            $rows[] = $resource['structured_fact_evidence']['rows'][0];
+        }
+
+        return $rows;
     }
 }
