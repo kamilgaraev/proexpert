@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
@@ -194,6 +195,45 @@ final class AssistantApiContractTest extends TestCase
         $this->assertSame(['provider' => 0, 'tools' => 0], $resolutions);
     }
 
+    public function test_chat_and_status_run_one_authoritative_assistant_permission_gate(): void
+    {
+        Queue::fake([ExecuteAssistantChatJob::class]);
+        $checker = new CountingAssistantPermissionChecker;
+        $this->app->instance(AIPermissionChecker::class, $checker);
+        $scopedRequestId = null;
+
+        foreach (self::PREFIXES as $index => $prefix) {
+            $payload = $this->payload();
+            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk();
+            $checker->resetCalls();
+
+            $this->postJson($prefix.'/chat', $payload + ['quote_id' => $quote->json('data.quote_id')])->assertStatus(202);
+            $this->assertSame(1, $checker->calls, 'Chat submit must rely on one authoritative lifecycle permission gate.');
+            $scopedRequestId ??= $payload['request_id'];
+
+            $checker->resetCalls();
+            $this->getJson($prefix.'/requests/'.$payload['request_id'])->assertOk();
+            $this->assertSame(1, $checker->calls, 'Status must rely on one authoritative lifecycle permission gate.');
+
+            $otherPrefix = self::PREFIXES[($index + 1) % count(self::PREFIXES)];
+            $this->getJson($otherPrefix.'/requests/'.$payload['request_id'])->assertForbidden();
+        }
+
+        $context = $this->app->make(AssistantApiFixtureContext::class);
+        $context->organizationId++;
+        $this->getJson(self::PREFIXES[0].'/requests/'.$scopedRequestId)->assertForbidden();
+        $context->organizationId = $this->organization->id;
+
+        $this->moduleEnabled = false;
+        $this->getJson(self::PREFIXES[0].'/requests/'.$scopedRequestId)->assertForbidden();
+        $this->moduleEnabled = true;
+        $this->permissionGranted = false;
+        $this->getJson(self::PREFIXES[0].'/requests/'.$scopedRequestId)->assertForbidden();
+        $this->permissionGranted = true;
+        DB::table('organization_user')->where('user_id', $this->actor->id)->update(['is_active' => false]);
+        $this->getJson(self::PREFIXES[0].'/requests/'.$scopedRequestId)->assertForbidden();
+    }
+
     public function test_guarded_current_organization_module_and_permission_for_quote_and_chat(): void
     {
         $service = $this->mock(AIAssistantService::class);
@@ -290,5 +330,22 @@ final class AssistantApiFixtureAuthentication
         $request->setUserResolver(fn () => $context->actor);
         $request->attributes->set('current_organization_id', $context->organizationId);
         return $next($request);
+    }
+}
+
+final class CountingAssistantPermissionChecker extends AIPermissionChecker
+{
+    public int $calls = 0;
+
+    public function canUseAssistant(User $user, int $organizationId): bool
+    {
+        $this->calls++;
+
+        return parent::canUseAssistant($user, $organizationId);
+    }
+
+    public function resetCalls(): void
+    {
+        $this->calls = 0;
     }
 }
