@@ -24,7 +24,12 @@ final class AssistantRagObserverIsolationTest extends TestCase
             public array $entries = [];
             public function log($level, string|\Stringable $message, array $context = []): void { $this->entries[] = [$level, $message, $context]; }
         };
+        $database = new class {
+            public int $level = 0;
+            public function transactionLevel(): int { return $this->level; }
+        };
         $container->instance('log', $logger);
+        $container->instance('db', $database);
         $container->bind(AssistantIndexingState::class, static function (): never { throw new RuntimeException('index_queue_unavailable'); });
         Container::setInstance($container);
         Facade::clearResolvedInstances();
@@ -41,6 +46,17 @@ final class AssistantRagObserverIsolationTest extends TestCase
                 $this->assertSame('7', $context['entity_id']);
                 $this->assertSame(RuntimeException::class, $context['exception_class']);
             }
+
+            $database->level = 1;
+            foreach (['saved', 'deleted', 'restored'] as $event) {
+                try {
+                    $observer->{$event}($model);
+                    $this->fail('Queue failures inside a business transaction must escape and trigger rollback.');
+                } catch (RuntimeException $exception) {
+                    $this->assertSame('index_queue_unavailable', $exception->getMessage());
+                }
+            }
+            $this->assertCount(3, $logger->entries);
         } finally {
             Container::setInstance($previousContainer);
             Facade::clearResolvedInstances();

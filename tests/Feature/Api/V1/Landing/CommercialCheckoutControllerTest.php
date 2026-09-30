@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Landing;
 
+use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
@@ -22,9 +23,11 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
+use Tests\Support\AssistantRagTestSchema;
 use Tests\Support\IsolatedPostgresTestDatabase;
 
 class CommercialCheckoutControllerTest extends TestCase
@@ -55,6 +58,8 @@ class CommercialCheckoutControllerTest extends TestCase
         config()->set('auth_tokens.sessions.enabled', false);
 
         $this->createSchema();
+        AssistantRagTestSchema::create();
+        Queue::fake([IndexRagSourceJob::class]);
         $this->organization = Organization::withoutEvents(fn (): Organization => Organization::create([
             'name' => 'Checkout API organization',
             'is_active' => true,
@@ -1069,7 +1074,7 @@ class CommercialCheckoutControllerTest extends TestCase
     {
         foreach ([
             'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions',
-            'organization_commercial_accounts', 'organization_module_activations', 'modules',
+            'organization_commercial_accounts', 'organization_module_activations', 'modules', 'projects',
             'role_conditions', 'user_role_assignments',
             'organization_custom_roles', 'authorization_contexts', 'organization_user', 'user_auth_sessions', 'users', 'organizations',
         ] as $table) {
@@ -1085,6 +1090,9 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->foreignId('parent_organization_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+        Schema::create('projects', function (Blueprint $table): void {
+            $table->id();
         });
         Schema::create('organization_user', function (Blueprint $table): void {
             $table->id();
@@ -1373,6 +1381,7 @@ SQL);
             $table->timestamps();
         });
     }
+
 }
 
 class ControllerCheckoutGatewayFake implements PaymentGatewayInterface

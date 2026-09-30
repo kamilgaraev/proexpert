@@ -25,10 +25,12 @@ use App\Services\Billing\CommercialCheckoutService;
 use App\Services\Billing\CommercialWebhookService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
 use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantRagTestSchema;
 use Illuminate\Support\Facades\DB;
 
 class CommercialCheckoutServiceTest extends TestCase
@@ -57,6 +59,7 @@ class CommercialCheckoutServiceTest extends TestCase
         config()->set('services.yookassa.mode', 'mock');
 
         $this->createSchema();
+        Queue::fake([\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class]);
         $this->organization = Organization::withoutEvents(fn (): Organization => Organization::create([
             'name' => 'Checkout organization',
             'is_active' => true,
@@ -609,6 +612,7 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs',
             'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user',
             'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_resource_allocations', 'organization_package_subscriptions',
             'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'modules', 'users', 'organizations',
@@ -711,6 +715,7 @@ class CommercialCheckoutServiceTest extends TestCase
         });
         $this->createCommercialCheckoutTables();
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
+        AssistantRagTestSchema::create();
     }
 
     private function createCommercialCheckoutTables(): void

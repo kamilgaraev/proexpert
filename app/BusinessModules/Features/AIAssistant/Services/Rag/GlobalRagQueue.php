@@ -49,12 +49,12 @@ final class GlobalRagQueue
             $identity = ['source_type' => $sourceType, 'entity_type' => $entityType, 'entity_id' => (string) $entityId];
             $inserted = RagGlobalIndexEvent::query()->insertOrIgnore($identity + ['revision' => 1,
                 'after_organization_id' => max(0, $initialCursor), 'status' => RagGlobalIndexEvent::STATUS_QUEUED,
-                'queued_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+                'queued_at' => now(), 'last_error' => RagDispatchIntent::pending(), 'created_at' => now(), 'updated_at' => now()]);
             $event = RagGlobalIndexEvent::query()->where($identity)->lockForUpdate()->firstOrFail();
             if ($inserted === 0) {
                 $event->fill(['revision' => $event->revision + 1, 'after_organization_id' => 0,
                     'status' => RagGlobalIndexEvent::STATUS_QUEUED, 'queued_at' => now(), 'heartbeat_at' => null,
-                    'lease_expires_at' => null, 'lease_token' => null, 'completed_at' => null, 'last_error' => null])->save();
+                    'lease_expires_at' => null, 'lease_token' => null, 'completed_at' => null, 'last_error' => RagDispatchIntent::pending()])->save();
             }
             $this->dispatchAfterCommit($event);
             return $event;
@@ -94,7 +94,7 @@ final class GlobalRagQueue
         $continuation = $organizations->count() === 50;
         $updated = $this->owned($event)->update(['status' => $continuation ? RagGlobalIndexEvent::STATUS_QUEUED : RagGlobalIndexEvent::STATUS_SUCCEEDED,
             'queued_at' => now(), 'lease_expires_at' => null, 'lease_token' => null,
-            'completed_at' => $continuation ? null : now(), 'last_error' => null, 'updated_at' => now()]);
+            'completed_at' => $continuation ? null : now(), 'last_error' => $continuation ? RagDispatchIntent::pending() : null, 'updated_at' => now()]);
         if ($updated === 1 && $continuation) {
             $this->dispatchAfterCommit($event->refresh());
         }
@@ -117,10 +117,11 @@ final class GlobalRagQueue
         $recovered = 0;
         foreach ($events as $event) {
             $updated = RagGlobalIndexEvent::query()->whereKey($event->id)->where('revision', $event->revision)
-                ->where('status', $event->status)->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
+                ->where('status', $event->status)->where('last_error', $event->last_error)->where('lease_token', $event->lease_token)
+                ->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
                     $this->recoveryScope($query, $cutoff, $recoverQueued);
                 })->update(['status' => RagGlobalIndexEvent::STATUS_QUEUED, 'queued_at' => now(),
-                    'lease_expires_at' => null, 'lease_token' => null, 'last_error' => null, 'updated_at' => now()]);
+                    'lease_expires_at' => null, 'lease_token' => null, 'last_error' => RagDispatchIntent::pending(), 'updated_at' => now()]);
             if ($updated === 1) {
                 $this->dispatchAfterCommit($event->refresh());
                 $recovered++;
@@ -150,7 +151,7 @@ final class GlobalRagQueue
     {
         $retryMinutes = max(1, min(4, (int) config('ai-assistant.rag.queued_retry_minutes', 2)));
         $query->where(static fn (Builder $queued): Builder => $queued->where('status', RagGlobalIndexEvent::STATUS_QUEUED)
-            ->when(! $recoverQueued, static fn (Builder $query): Builder => $query->whereRaw('1 = 0'))
+            ->when(! $recoverQueued, static function (Builder $query): void { RagDispatchIntent::scopePending($query); })
             ->where('queued_at', '<=', $cutoff->copy()->subMinutes($retryMinutes)))
             ->orWhere(static fn (Builder $running): Builder => $running->where('status', RagGlobalIndexEvent::STATUS_RUNNING)
                 ->where('lease_expires_at', '<=', $cutoff));
@@ -172,19 +173,23 @@ final class GlobalRagQueue
     {
         $eventId = $event->id;
         $revision = $event->revision;
-        DB::afterCommit(function () use ($eventId, $revision): void {
+        $marker = $event->last_error;
+        DB::afterCommit(function () use ($eventId, $revision, $marker): void {
             try {
                 $current = RagGlobalIndexEvent::query()->whereKey($eventId)->where('revision', $revision)
-                    ->where('status', RagGlobalIndexEvent::STATUS_QUEUED)->first();
-                if (! $current) {
+                    ->where('status', RagGlobalIndexEvent::STATUS_QUEUED)->where('last_error', $marker)->first();
+                if (! $current || ! RagDispatchIntent::isPending($marker)) {
                     return;
                 }
                 $this->bus->dispatch(new IndexGlobalRagEntityJob($current->source_type, $current->entity_type, $current->entity_id,
                     $current->after_organization_id, $current->id, $current->revision));
+                RagGlobalIndexEvent::query()->whereKey($eventId)->where('revision', $revision)
+                    ->where('status', RagGlobalIndexEvent::STATUS_QUEUED)->where('last_error', $marker)
+                    ->update(['last_error' => null, 'updated_at' => now()]);
             } catch (Throwable $exception) {
                 try {
                     RagGlobalIndexEvent::query()->whereKey($eventId)->where('revision', $revision)->where('status', RagGlobalIndexEvent::STATUS_QUEUED)
-                        ->update(['last_error' => $exception::class, 'updated_at' => now()]);
+                        ->where('last_error', $marker)->update(['last_error' => RagDispatchIntent::failed((string) $marker, $exception), 'updated_at' => now()]);
                 } catch (Throwable $persistenceException) {
                     $this->warning('ai_assistant.rag.global_dispatch_status_failed', $eventId, $persistenceException);
                 }

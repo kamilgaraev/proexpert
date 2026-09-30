@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagDispatchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagJobDispatcher;
 use App\Jobs\ProcessAssistantDocument;
 use App\Jobs\RegisterAssistantEntityFile;
@@ -112,7 +113,8 @@ final class RagFileProducerDurabilityTest extends TestCase
         $this->assertDatabaseHas('ai_assistant_document_settings', ['organization_id' => $file->organization_id, 'last_file_id' => $file->id]);
         $run = $this->runs($file)->firstOrFail();
         self::assertSame(RagIndexRun::STATUS_QUEUED, $run->status);
-        self::assertSame(\RuntimeException::class, $run->last_error);
+        self::assertSame(\RuntimeException::class, RagDispatchIntent::publicError($run->last_error));
+        self::assertTrue(RagDispatchIntent::isPending($run->last_error));
         (new ScanAssistantDocuments((int) $file->organization_id))->handle();
         self::assertSame(1, $this->runs($file)->count());
     }

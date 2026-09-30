@@ -13,6 +13,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\GlobalRagQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagDispatchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagJobDispatcher;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateReferenceRagSource;
@@ -167,7 +168,8 @@ final class RagProducerDurabilityTest extends TestCase
 
         $this->assertSame(1, $attempts);
         $this->assertSame(RagIndexRun::STATUS_QUEUED, $run->fresh()->status);
-        $this->assertSame(\RuntimeException::class, $run->fresh()->last_error);
+        $this->assertSame(\RuntimeException::class, RagDispatchIntent::publicError($run->fresh()->last_error));
+        $this->assertTrue(RagDispatchIntent::isPending($run->fresh()->last_error));
         $this->travel(2)->minutes();
         $this->assertSame(1, $coordinator->recoverExpiredRuns());
         $this->assertSame(2, $attempts);

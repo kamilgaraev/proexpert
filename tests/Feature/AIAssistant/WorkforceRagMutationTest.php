@@ -52,7 +52,7 @@ final class WorkforceRagMutationTest extends TestCase
             'file_type' => 'source_csv', 'file_name' => 'payroll-source.csv', 'storage_disk' => 's3',
             'storage_path' => 'org-'.$org.'/workforce/payroll-exports/period-'.$period.'/package-'.$key.'/payroll-source.csv',
             'size_bytes' => strlen($content), 'created_at' => now(), 'updated_at' => now()]);
-        [$indexer, $coordinator] = $this->pipeline();
+        [$indexer, $coordinator, $jobs] = $this->pipeline();
         DB::beginTransaction();
         app(\App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge::class)
             ->changed('workforce_export_package_files', $org, (int) $nativeId);
@@ -70,6 +70,7 @@ final class WorkforceRagMutationTest extends TestCase
         } finally {
             \Illuminate\Support\Facades\Bus::swap($originalBus);
         }
+        Queue::fake();
         $this->assertSame(RagIndexRun::STATUS_QUEUED, $run->fresh()->status);
         $this->assertSame(\RuntimeException::class, $run->fresh()->last_error);
         $document = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::query()
@@ -77,15 +78,27 @@ final class WorkforceRagMutationTest extends TestCase
         $this->assertSame(hash('sha256', $content), $document->checksum);
         $this->assertSame('queued', $document->status);
         $this->travel(2)->minutes();
+        $queuedBeforeRecovery = count($jobs->items);
         $this->assertGreaterThanOrEqual(1, $coordinator->recoverExpiredRuns());
-        (new IndexRagSourceJob($org, null, 'workforce_payroll', $run->id, 'workforce_export_package_file', (int) $nativeId))->handle($indexer, $coordinator);
+        $recoveredJobs = array_values(array_filter(
+            array_slice($jobs->items, $queuedBeforeRecovery),
+            static fn (IndexRagSourceJob $job): bool => $job->runId === $run->id,
+        ));
+        $this->assertCount(1, $recoveredJobs);
+        $this->assertSame($run->id, $recoveredJobs[0]->runId);
+        $this->assertSame('workforce_export_package_file', $recoveredJobs[0]->entityType);
+        $this->assertSame((string) $nativeId, (string) $recoveredJobs[0]->entityId);
+        $recoveredJobs[0]->handle($indexer, $coordinator);
         $this->assertSame(RagIndexRun::STATUS_SUCCEEDED, $run->fresh()->status);
+        $this->assertSame($document->id, $document->fresh()->id);
+        $this->assertSame(hash('sha256', $content), $document->fresh()->checksum);
         $this->assertSame(1, \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::query()
             ->where('organization_id', $org)->where('parent_entity_type', 'workforce_export_package_file')->where('parent_entity_id', (string) $nativeId)->count());
         Queue::assertPushed(\App\Jobs\ProcessAssistantDocument::class, fn ($job): bool => $job->documentId === $document->id);
+        Queue::assertPushed(\App\Jobs\ProcessAssistantDocument::class, 1);
     }
 
-    public function test_raw_brigade_specialization_sync_queues_deleted_and_new_pivots_only_after_commit(): void
+    public function test_raw_brigade_specialization_sync_persists_intents_and_dispatches_only_after_commit(): void
     {
         Queue::fake();
         $org = Organization::withoutEvents(fn () => Organization::factory()->create());
@@ -103,14 +116,28 @@ final class WorkforceRagMutationTest extends TestCase
         $service = app(\App\BusinessModules\Contractors\Brigades\Domain\Services\BrigadeWorkflowService::class);
         DB::beginTransaction();
         $service->syncSpecializations($brigade, ['Новый монтаж']);
-        $this->assertSame(0, \App\BusinessModules\Features\AIAssistant\Models\RagGlobalIndexEvent::query()->where('source_type', 'brigades')->count());
+        $newSpecialization = (int) DB::table('brigade_specializations')->where('name', 'Новый монтаж')->value('id');
+        $newPivot = (int) DB::table('brigade_profile_specialization')->where('brigade_id', $brigade->id)->value('id');
+        $intentIdentities = \App\BusinessModules\Features\AIAssistant\Models\RagGlobalIndexEvent::query()->where('source_type', 'brigades')
+            ->get(['entity_type', 'entity_id'])->map(static fn ($event): string => $event->entity_type.':'.$event->entity_id)->all();
+        $this->assertEqualsCanonicalizing([
+            'brigade_specialization:'.$newSpecialization,
+            'brigade_specialization_link:'.$oldPivot,
+            'brigade_specialization_link:'.$newPivot,
+            'brigade_profile:'.$brigade->id,
+        ], $intentIdentities);
+        Queue::assertNotPushed(\App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class);
         DB::rollBack();
         $this->assertSame(1, DB::table('brigade_profile_specialization')->where('id', $oldPivot)->count());
+        $this->assertSame(0, DB::table('brigade_profile_specialization')->where('id', $newPivot)->count());
         $this->assertSame(0, \App\BusinessModules\Features\AIAssistant\Models\RagGlobalIndexEvent::query()->where('source_type', 'brigades')->count());
+        Queue::assertNotPushed(\App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class);
         DB::beginTransaction();
         $service->syncSpecializations($brigade, ['Новый монтаж']);
         $newPivot = (int) DB::table('brigade_profile_specialization')->where('brigade_id', $brigade->id)->value('id');
+        $newSpecialization = (int) DB::table('brigade_specializations')->where('name', 'Новый монтаж')->value('id');
         $this->assertNotSame($oldPivot, $newPivot);
+        Queue::assertNotPushed(\App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class);
         DB::commit();
         $events = \App\BusinessModules\Features\AIAssistant\Models\RagGlobalIndexEvent::query()->where('source_type', 'brigades')
             ->where('entity_type', 'brigade_specialization_link')->pluck('entity_id')->all();
@@ -118,6 +145,18 @@ final class WorkforceRagMutationTest extends TestCase
         $this->assertSame(0, DB::table('brigade_profile_specialization')->where('id', $oldPivot)->count());
         $this->assertSame(1, \App\BusinessModules\Features\AIAssistant\Models\RagGlobalIndexEvent::query()
             ->where('source_type', 'brigades')->where('entity_type', 'brigade_profile')->where('entity_id', (string) $brigade->id)->count());
+        $this->assertSame(1, \App\BusinessModules\Features\AIAssistant\Models\RagGlobalIndexEvent::query()
+            ->where('source_type', 'brigades')->where('entity_type', 'brigade_specialization')->where('entity_id', (string) $newSpecialization)->count());
+        Queue::assertPushed(\App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class, 4);
+        foreach ([
+            ['brigade_specialization_link', $oldPivot],
+            ['brigade_specialization_link', $newPivot],
+            ['brigade_profile', $brigade->id],
+            ['brigade_specialization', $newSpecialization],
+        ] as [$entityType, $entityId]) {
+            Queue::assertPushed(\App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class,
+                static fn ($job): bool => $job->sourceType === 'brigades' && $job->entityType === $entityType && (string) $job->entityId === (string) $entityId);
+        }
     }
 
     public function test_actual_query_builder_assignment_update_dispatches_after_commit_and_rollback_preserves_source(): void

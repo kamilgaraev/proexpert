@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagDispatchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagJobDispatcher;
@@ -70,7 +71,8 @@ final class OperationsRagMutationTest extends TestCase
         self::assertSame([], $jobs->items);
         $run = $this->runs($fixture->organization->id)->where('entity_type', 'asset_category')->firstOrFail();
         self::assertSame(RagIndexRun::STATUS_QUEUED, $run->status);
-        self::assertSame(RuntimeException::class, $run->last_error);
+        self::assertTrue(RagDispatchIntent::isPending($run->last_error));
+        self::assertSame(RuntimeException::class, RagDispatchIntent::publicError($run->last_error));
         DB::table('ai_rag_index_runs')->where('id', $run->id)->update(['queued_at' => now()->subMinutes(6), 'updated_at' => now()->subMinutes(6)]);
         [$indexer, $coordinator, $recoveredJobs] = $this->pipeline();
         self::assertSame(1, $coordinator->recoverExpiredRuns());

@@ -28,10 +28,12 @@ use App\Services\Billing\CommercialWebhookService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantRagTestSchema;
 use Tests\TestCase;
 
 class CommercialWebhookServiceTest extends TestCase
@@ -61,6 +63,7 @@ class CommercialWebhookServiceTest extends TestCase
         DB::purge($this->connectionName);
         DB::connection($this->connectionName);
         $this->createSchema();
+        Queue::fake([\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class]);
         config()->set('services.yookassa.mode', 'yookassa_test');
         $this->gateway = new AuthoritativeGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
@@ -1108,7 +1111,7 @@ class CommercialWebhookServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
+        foreach (['ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('modules', function (Blueprint $table): void {
@@ -1294,6 +1297,7 @@ class CommercialWebhookServiceTest extends TestCase
             $table->timestamps();
         });
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
+        AssistantRagTestSchema::create();
     }
 }
 

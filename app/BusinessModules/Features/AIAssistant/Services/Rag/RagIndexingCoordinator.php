@@ -184,6 +184,7 @@ class RagIndexingCoordinator
             'status' => RagIndexRun::STATUS_QUEUED,
             'mode' => $mode,
             'queued_at' => now(),
+            'last_error' => RagDispatchIntent::pending(),
         ]);
 
         $this->invalidateCoverageAfterCommit($organizationId);
@@ -208,6 +209,7 @@ class RagIndexingCoordinator
 
         foreach ($runs as $run) {
             $updated = RagIndexRun::query()->whereKey($run->id)->where('updated_at', $run->updated_at)->where('status', $run->status)
+                ->where('last_error', $run->last_error)->where('lease_token', $run->lease_token)
                 ->where(function (Builder $query) use ($cutoff, $recoverQueued): void { $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued); })->update([
                 'status' => RagIndexRun::STATUS_QUEUED,
                 'queued_at' => now(),
@@ -215,13 +217,13 @@ class RagIndexingCoordinator
                 'heartbeat_at' => null,
                 'lease_expires_at' => null,
                 'lease_token' => null,
-                'last_error' => null,
+                'last_error' => RagDispatchIntent::pending(),
                 'updated_at' => now(),
             ]);
 
             if ($updated === 1) {
                 $recovered++;
-                $this->dispatchRunAfterCommit($run);
+                $this->dispatchRunAfterCommit($run->refresh());
             }
         }
 
@@ -248,7 +250,7 @@ class RagIndexingCoordinator
                 ->where('entity_type', $entityType)->where('entity_id', (string) $entityId)->where('status', RagIndexRun::STATUS_QUEUED)->first();
             if ($pending instanceof RagIndexRun) {
                 if ($mode === RagIndexRun::MODE_ASYNC && $pending->mode === RagIndexRun::MODE_SCHEDULED) {
-                    $pending->update(['mode' => RagIndexRun::MODE_ASYNC]);
+                    $pending->update(['mode' => RagIndexRun::MODE_ASYNC, 'last_error' => RagDispatchIntent::pending(), 'queued_at' => now()]);
                     $this->dispatchRunAfterCommit($pending);
                 }
                 return $pending;
@@ -262,6 +264,7 @@ class RagIndexingCoordinator
                 'status' => RagIndexRun::STATUS_QUEUED,
                 'mode' => $mode,
                 'queued_at' => now(),
+                'last_error' => RagDispatchIntent::pending(),
             ]);
             $this->dispatchRunAfterCommit($run);
             return $run;
@@ -560,7 +563,7 @@ class RagIndexingCoordinator
         $query->where(function (Builder $queued) use ($cutoff, $retryMinutes, $recoverQueued): void {
             $retryCutoff = $cutoff->copy()->subMinutes($retryMinutes);
             $queued->where('status', RagIndexRun::STATUS_QUEUED)
-                ->when(! $recoverQueued, static fn (Builder $query): Builder => $query->whereRaw('1 = 0'))
+                ->when(! $recoverQueued, static function (Builder $query): void { RagDispatchIntent::scopePending($query); })
                 ->where(function (Builder $activity) use ($retryCutoff): void {
                 $activity->where('queued_at', '<=', $retryCutoff)->orWhere(function (Builder $legacy) use ($retryCutoff): void {
                     $legacy->whereNull('queued_at');
@@ -606,10 +609,13 @@ class RagIndexingCoordinator
 
     private function dispatchRunAfterCommit(RagIndexRun $run): void
     {
-        DB::afterCommit(function () use ($run): void {
+        $runId = $run->id;
+        $marker = $run->last_error;
+        DB::afterCommit(function () use ($runId, $marker): void {
             try {
-                $current = RagIndexRun::query()->find($run->id);
-                if (! $current instanceof RagIndexRun || $current->status !== RagIndexRun::STATUS_QUEUED) {
+                $current = RagIndexRun::query()->whereKey($runId)->where('last_error', $marker)
+                    ->where('status', RagIndexRun::STATUS_QUEUED)->first();
+                if (! $current instanceof RagIndexRun || ! RagDispatchIntent::isPending($marker)) {
                     return;
                 }
                 $dispatcher = $this->dispatcher ?? app(RagJobDispatcher::class);
@@ -618,13 +624,17 @@ class RagIndexingCoordinator
                 if ($current->source_type === 'file_document' && $current->entity_type === 'file' && $current->mode === RagIndexRun::MODE_SCHEDULED) {
                     $job->onQueue((string) config('ai-assistant.rag.queue', 'ai-rag'));
                 }
-                $dispatcher->dispatch($job, static function (Throwable $exception) use ($current): void {
-                    RagIndexRun::query()->whereKey($current->id)->where('status', RagIndexRun::STATUS_QUEUED)
-                        ->update(['last_error' => $exception::class, 'updated_at' => now()]);
+                $accepted = $dispatcher->dispatch($job, static function (Throwable $exception) use ($runId, $marker): void {
+                    RagIndexRun::query()->whereKey($runId)->where('status', RagIndexRun::STATUS_QUEUED)->where('last_error', $marker)
+                        ->update(['last_error' => RagDispatchIntent::failed((string) $marker, $exception), 'updated_at' => now()]);
                 });
+                if ($accepted) {
+                    RagIndexRun::query()->whereKey($runId)->where('status', RagIndexRun::STATUS_QUEUED)->where('last_error', $marker)
+                        ->update(['last_error' => null, 'updated_at' => now()]);
+                }
             } catch (Throwable $exception) {
                 try {
-                    Log::warning('ai_assistant.rag.dispatch_setup_failed', ['run_id' => $run->id, 'exception_class' => $exception::class]);
+                    Log::warning('ai_assistant.rag.dispatch_setup_failed', ['run_id' => $runId, 'exception_class' => $exception::class]);
                 } catch (Throwable) {
                 }
             }

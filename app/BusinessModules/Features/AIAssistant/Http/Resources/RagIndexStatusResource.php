@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Http\Resources;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagDispatchIntent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -105,7 +106,7 @@ class RagIndexStatusResource extends JsonResource
             'indexed_chunks' => $run->indexed_chunks,
             'source_count' => $run->source_count,
             'chunk_count' => $run->chunk_count,
-            'last_error' => $run->last_error,
+            'last_error' => RagDispatchIntent::publicError($run->last_error),
             'expected_sources' => $run->expected_sources,
             'processed_sources' => $run->processed_sources,
             'heartbeat_at' => $run->heartbeat_at?->toISOString(),

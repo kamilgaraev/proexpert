@@ -184,6 +184,7 @@
             <file>tests/Feature/AIAssistant/RagGlobalQueueTest.php</file>
             <file>tests/Feature/AIAssistant/RagLifecycleTest.php</file>
             <file>tests/Feature/AIAssistant/ShadowCreditPurchaseGuardTest.php</file>
+            <file>tests/Feature/AIAssistant/RagDispatchIntentRecoveryTest.php</file>
             <file>tests/Feature/AIAssistant/WorkforceRagMutationTest.php</file>
             <file>tests/Feature/Api/V1/Landing/CommercialCheckoutControllerTest.php</file>
             <file>tests/Feature/Billing/CommercialCheckoutServiceTest.php</file>

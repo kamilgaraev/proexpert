@@ -24,10 +24,12 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
 use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantRagTestSchema;
 
 final class CommercialRenewalServiceTest extends TestCase
 {
@@ -55,6 +57,7 @@ final class CommercialRenewalServiceTest extends TestCase
 
         config()->set('services.yookassa.mode', 'mock');
         $this->schema();
+        Queue::fake([\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class]);
         $this->gateway = new RenewalGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
         $this->processor = new RenewalWebhookProcessorFake;
@@ -725,7 +728,7 @@ final class CommercialRenewalServiceTest extends TestCase
 
     private function schema(): void
     {
-        foreach (['commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions', 'organization_commercial_accounts', 'organizations'] as $table) {
+        foreach (['ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs', 'commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions', 'organization_commercial_accounts', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('organizations', fn (Blueprint $t) => [$t->id(), $t->string('name'), $t->boolean('is_active'), $t->boolean('is_verified'), $t->timestamps(), $t->softDeletes()]);
@@ -847,6 +850,7 @@ final class CommercialRenewalServiceTest extends TestCase
             $t->foreignId('source_order_id')->nullable();
             $t->timestamps();
         });
+        AssistantRagTestSchema::create();
     }
 }
 

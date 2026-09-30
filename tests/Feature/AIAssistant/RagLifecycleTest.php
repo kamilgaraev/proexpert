@@ -13,6 +13,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagDispatchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagJobDispatcher;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Psr\Log\LoggerInterface;
@@ -57,7 +58,8 @@ final class RagLifecycleTest extends TestCase
         DB::commit();
         $this->assertSame(1, $attempts);
         $this->assertSame(RagIndexRun::STATUS_QUEUED, $run->fresh()->status);
-        $this->assertSame(\RuntimeException::class, $run->fresh()->last_error);
+        $this->assertSame(\RuntimeException::class, RagDispatchIntent::publicError($run->fresh()->last_error));
+        $this->assertTrue(RagDispatchIntent::isPending($run->fresh()->last_error));
         $this->travel(2)->minutes();
         $this->assertSame(1, $coordinator->recoverExpiredRuns());
         $this->assertSame(2, $attempts);

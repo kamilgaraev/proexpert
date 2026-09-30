@@ -19,9 +19,11 @@ use App\Services\Billing\CommercialRefundService;
 use DomainException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantRagTestSchema;
 use Tests\TestCase;
 
 final class CommercialRefundServiceTest extends TestCase
@@ -43,6 +45,7 @@ final class CommercialRefundServiceTest extends TestCase
         config()->set('services.yookassa.mode', 'yookassa_test');
         config()->set('services.yookassa.test_organization_ids', [42]);
         $this->createSchema();
+        Queue::fake([\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class]);
         $this->gateway = new RefundGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
     }
@@ -266,7 +269,7 @@ final class CommercialRefundServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'users', 'notifications', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'balance_transactions', 'organization_balances', 'organizations'] as $table) {
+        foreach (['activity_events', 'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'users', 'notifications', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'balance_transactions', 'organization_balances', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('users', function (Blueprint $table): void { $table->id(); $table->softDeletes(); });
@@ -384,6 +387,8 @@ final class CommercialRefundServiceTest extends TestCase
             $t->timestamps();
         });
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
+        AssistantRagTestSchema::create();
+        (require database_path('migrations/2026_05_08_000001_create_activity_events_table.php'))->up();
     }
 }
 
