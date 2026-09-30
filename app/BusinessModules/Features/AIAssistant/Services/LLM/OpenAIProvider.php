@@ -8,6 +8,8 @@ use App\Support\AI\LunaModelPolicy;
 use App\Support\AI\TokenCounter;
 use App\Support\AI\TokenBudgetService;
 use App\Services\Logging\LoggingService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantHttpRequestOptions;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\ClientInterface;
 use OpenAI;
@@ -127,6 +129,9 @@ final class OpenAIProvider implements LLMProviderInterface
             return $result;
 
         } catch (\Exception $e) {
+            if (app()->bound(AssistantRequestExecutionContext::class)) {
+                app(AssistantRequestExecutionContext::class)->assertCanContinue();
+            }
             $this->logging->technical('ai.openai.error', [
                 'model' => $model,
                 'error' => $e->getMessage(),
@@ -154,12 +159,16 @@ final class OpenAIProvider implements LLMProviderInterface
 
     private function makeClient(float $timeout): object
     {
+        $httpOptions = app()->bound(AssistantRequestExecutionContext::class)
+            ? AssistantHttpRequestOptions::forContext($timeout, app(AssistantRequestExecutionContext::class))
+            : [
+                'timeout' => $timeout,
+                'connect_timeout' => min(5.0, $timeout),
+            ];
+
         $factory = OpenAI::factory()
             ->withApiKey($this->apiKey)
-            ->withHttpClient($this->httpClient ?? new GuzzleClient([
-                'timeout' => $timeout,
-                'connect_timeout' => max(1.0, min(5.0, $timeout)),
-            ]));
+            ->withHttpClient($this->httpClient ?? new GuzzleClient($httpOptions));
 
         if (is_string($this->baseUri) && trim($this->baseUri) !== '') {
             $factory = $factory->withBaseUri($this->baseUri);

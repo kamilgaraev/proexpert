@@ -130,7 +130,9 @@ final class AssistantApiContractTest extends TestCase
         $this->assertSame(4000, mb_strlen($message));
         foreach (self::PREFIXES as $prefix) {
             $payload = $this->payload($message) + ['organization_id' => 999999];
-            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk()->assertJsonPath('success', true)->assertJsonStructure(['success', 'message', 'data' => ['quote_id', 'profile']]);
+            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk()->assertJsonPath('success', true)
+                ->assertJsonStructure(['success', 'message', 'data' => ['quote_id', 'profile', 'metadata' => ['processing_deadline_seconds']]])
+                ->assertJsonPath('data.metadata.processing_deadline_seconds', 30);
             $chat = $this->postJson($prefix.'/chat', $payload + ['quote_id' => $quote->json('data.quote_id'), 'async' => false]);
             $chat->assertStatus(202, $chat->getContent())->assertJsonPath('success', true)->assertJsonPath('data.request_id', $payload['request_id']);
             $stored = DB::table('ai_assistant_requests')->where('request_id', $payload['request_id'])->first();
@@ -142,6 +144,19 @@ final class AssistantApiContractTest extends TestCase
             $this->postJson($prefix.'/chat', $this->payload($message.'я') + ['quote_id' => (string) Str::uuid()])->assertUnprocessable()->assertJsonValidationErrors('message');
         }
         Queue::assertPushed(ExecuteAssistantChatJob::class, 3);
+    }
+
+    public function test_credit_quote_reports_bounded_processing_deadline_for_each_profile_and_prefix(): void
+    {
+        foreach (['short' => 30, 'normal' => 60, 'detailed' => 180] as $profile => $deadline) {
+            foreach (self::PREFIXES as $prefix) {
+                $payload = $this->payload();
+                $payload['profile'] = $profile;
+                $this->postJson($prefix.'/credits/quote', $payload)->assertOk()
+                    ->assertJsonPath('data.profile', $profile)
+                    ->assertJsonPath('data.metadata.processing_deadline_seconds', $deadline);
+            }
+        }
     }
 
     public function test_chat_always_queues_all_prefixes_and_replays_duplicate_submit_without_resolving_provider_or_tools(): void

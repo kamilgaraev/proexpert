@@ -189,7 +189,7 @@ final class AssistantDataAccessPolicy
                 try {
                     $native->assertReadable($user, $organizationId, $document);
                     return true;
-                } catch (\RuntimeException) { return false; }
+                } catch (\RuntimeException $exception) { $this->rethrowReadFailure($exception); return false; }
             }
             $file = $document->file_id === null ? null : File::query()->where('organization_id', $organizationId)->find($document->file_id);
             if ($file === null || $file->disk !== 's3' || $file->path !== $document->storage_path
@@ -209,7 +209,7 @@ final class AssistantDataAccessPolicy
             $operations = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class);
             if ($operations->isNativeFile($file)) {
                 try { $operations->assertFileReadable($user, $organizationId, $file); return true; }
-                catch (\RuntimeException) { return false; }
+                catch (\RuntimeException $exception) { $this->rethrowReadFailure($exception); return false; }
             }
             if (! $this->currentNativeFile($user, $organizationId, $file)) { return false; }
             $type = $this->entityTypeForModel((string) $file->fileable_type);
@@ -330,6 +330,11 @@ final class AssistantDataAccessPolicy
             fn (): array => $this->currentAllowedSourceTypes($user, $organizationId, $candidates));
     }
 
+    public function trustedSurface(): ?KnowledgeSurface
+    {
+        return $this->trustedSurface;
+    }
+
     private function currentAllowedSourceTypes(User $user, int $organizationId, ?array $candidates = null): array
     {
         if (! $this->belongsToOrganization($user, $organizationId)) {
@@ -352,6 +357,35 @@ final class AssistantDataAccessPolicy
     public function applyToSources(Builder $query, User $user, int $organizationId): Builder
     {
         return $this->applySourceIdentityScope($query, $user, $organizationId, false);
+    }
+
+    public function sourceIdentityQueries(Builder $query, User $user, int $organizationId, ?callable $checkpoint = null, bool $expectedProjection = false): \Generator
+    {
+        $table = $query->getModel()->getTable();
+        $candidates = (clone $query)->where($table.'.organization_id', $organizationId);
+        $checkpoint?->__invoke();
+        $identities = $candidates->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
+            ->select([$table.'.source_type', $table.'.entity_type'])->distinct()->get();
+        foreach ($identities as $identity) {
+            $checkpoint?->__invoke();
+            $branch = (clone $query)->where($table.'.source_type', $identity->source_type)->where($table.'.entity_type', $identity->entity_type);
+            if ($identity->source_type === 'file_document' && $identity->entity_type === 'assistant_document') {
+                $documents = AIAssistantDocument::query()->where('organization_id', $organizationId)
+                    ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
+                        (clone $branch)->where($table.'.organization_id', $organizationId)->select($table.'.entity_id'));
+                $checkpoint?->__invoke();
+                foreach ((clone $documents)->distinct()->pluck('parent_entity_type') as $parentType) {
+                    $checkpoint?->__invoke();
+                    $documentBranch = (clone $branch)->whereIn($table.'.entity_id', (clone $documents)
+                        ->where('parent_entity_type', $parentType)->selectRaw('CAST(ai_assistant_documents.id AS TEXT)'));
+                    yield $expectedProjection ? $this->applyToExpectedSources($documentBranch, $user, $organizationId)
+                        : $this->applyToSources($documentBranch, $user, $organizationId);
+                }
+            } else {
+                yield $expectedProjection ? $this->applyToExpectedSources($branch, $user, $organizationId)
+                    : $this->applyToSources($branch, $user, $organizationId);
+            }
+        }
     }
 
     public function applyToExpectedSources(Builder $query, User $user, int $organizationId): Builder
@@ -379,11 +413,11 @@ final class AssistantDataAccessPolicy
             \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($query, $table);
         }
         $sourceIdentities = [];
-        foreach (\Illuminate\Support\Facades\DB::table($table)->where('organization_id', $organizationId)
-            ->distinct()->get(['source_type', 'entity_type']) as $identity) {
+        foreach ($query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
+            ->select([$table.'.source_type', $table.'.entity_type'])->distinct()->get() as $identity) {
             $sourceIdentities[(string) $identity->entity_type][(string) $identity->source_type] = true;
         }
-        return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities): void {
+        return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities, $query): void {
             $scope->whereRaw('1 = 0');
             foreach ($this->entities() as $type => $definition) {
                 if (! isset($sourceIdentities[$type][$definition[0]])) { continue; }
@@ -398,7 +432,10 @@ final class AssistantDataAccessPolicy
                 }
             }
             if (isset($sourceIdentities['assistant_document']['file_document'])) {
-                $documents = $this->accessibleDocuments($user, $organizationId);
+                $documentCandidates = AIAssistantDocument::query()->where('organization_id', $organizationId)
+                    ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
+                        (clone $query)->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')->select($table.'.entity_id'));
+                $documents = $this->accessibleDocuments($user, $organizationId, $documentCandidates);
                 $scope->orWhere(function (Builder $branch) use ($documents, $table): void {
                     $branch->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')
                         ->whereIn($table.'.entity_id', $documents->select([])->selectRaw('CAST(ai_assistant_documents.id AS TEXT)'));
@@ -484,12 +521,12 @@ final class AssistantDataAccessPolicy
         });
     }
 
-    public function accessibleDocuments(User $user, int $organizationId): Builder
+    public function accessibleDocuments(User $user, int $organizationId, ?Builder $candidates = null): Builder
     {
         if ($this->aclCompiler === null) {
-            return $this->compileAcl($user, $organizationId, fn (): Builder => $this->accessibleDocuments($user, $organizationId)) ?? AIAssistantDocument::query()->whereRaw('1 = 0');
+            return $this->compileAcl($user, $organizationId, fn (): Builder => $this->accessibleDocuments($user, $organizationId, $candidates)) ?? AIAssistantDocument::query()->whereRaw('1 = 0');
         }
-        $query = AIAssistantDocument::query()->where('organization_id', $organizationId);
+        $query = ($candidates === null ? AIAssistantDocument::query() : clone $candidates)->where('organization_id', $organizationId);
         if (! $this->belongsToOrganization($user, $organizationId)) { return $query->whereRaw('1 = 0'); }
         if (! Schema::hasColumn('ai_assistant_documents', 'file_id')) {
             return $query->whereRaw('1 = 0');
@@ -497,11 +534,13 @@ final class AssistantDataAccessPolicy
         $documentTypes = (clone $query)->select('parent_entity_type')->distinct()->pluck('parent_entity_type')->all();
         return $query->where(function (Builder $parents) use ($user, $organizationId, $documentTypes): void {
             $parents->whereRaw('1 = 0');
-            $parents->orWhere(function (Builder $native) use ($user, $organizationId): void {
+            if (array_intersect($documentTypes, \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileMetadata::types()) !== []) {
+                $parents->orWhere(function (Builder $native) use ($user, $organizationId): void {
                 $operations = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class);
                 $operations->constrainDocuments($native);
                 $operations->applyDocumentScope($native, $user, $organizationId, $this);
-            });
+                });
+            }
             foreach ($this->entities() as $type => $definition) {
                 if (! in_array($type, $documentTypes, true)) { continue; }
                 $entities = $this->entityContentQuery($user, $organizationId, $type);
@@ -873,7 +912,13 @@ final class AssistantDataAccessPolicy
         }
         $conditions = [];
         $bindings = [];
+        $this->currentCheckpoint?->__invoke();
+        $candidateReferences = $query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])->selectRaw($refsColumn.' AS candidate_refs');
+        $referenceTypes = \Illuminate\Support\Facades\DB::query()->fromSub($candidateReferences, 'candidate_reports')
+            ->crossJoin(\Illuminate\Support\Facades\DB::raw("LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(candidate_reports.candidate_refs) = 'array' THEN candidate_reports.candidate_refs ELSE '[]'::jsonb END) AS ref"))
+            ->distinct()->selectRaw("ref->>'entity_type' AS entity_type")->pluck('entity_type')->all();
         foreach ($this->entities() as $type => $definition) {
+            if (! in_array($type, $referenceTypes, true)) { continue; }
             if ($type === 'project_pulse_report' || \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revision($type) !== null) {
                 continue;
             }
@@ -1069,8 +1114,19 @@ final class AssistantDataAccessPolicy
                 \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeFileRegistry::adapter($type)?->assertReadable($user, $organizationId, $file);
             }
             return true;
-        } catch (\RuntimeException) {
+        } catch (\RuntimeException $exception) {
+            $this->rethrowReadFailure($exception);
             return false;
+        }
+    }
+
+    private function rethrowReadFailure(\RuntimeException $exception): void
+    {
+        if ($exception instanceof \Illuminate\Database\QueryException
+            || $exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded
+            || $exception instanceof \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled
+            || $exception instanceof \App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded) {
+            throw $exception;
         }
     }
 }

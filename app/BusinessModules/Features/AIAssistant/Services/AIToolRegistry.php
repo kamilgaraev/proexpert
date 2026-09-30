@@ -90,16 +90,16 @@ class AIToolRegistry
         unset($schema['properties']['domain']['enum']);
         $schema['properties']['domain']['maxLength'] = 128;
         $schema['properties']['domain']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
-        $schema['properties']['domain']['description'] = 'Зарегистрированный domain из проверенной подсказки или assistant_domain_discover_capabilities. Сервер проверяет домен и права.';
+        $schema['properties']['domain']['description'] = 'domain каталога. Права проверяет сервер.';
         unset($schema['properties']['entity_type']['enum']);
         $schema['properties']['entity_type']['maxLength'] = 128;
         $schema['properties']['entity_type']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
-        $schema['properties']['entity_type']['description'] = 'Только зарегистрированный тип указанного domain. Используй проверенную подсказку каталога или assistant_domain_discover_capabilities; не придумывай типы.';
+        $schema['properties']['entity_type']['description'] = 'Тип domain из каталога или assistant_domain_discover_capabilities.';
         if (isset($schema['properties']['fields']['items'])) {
             unset($schema['properties']['fields']['items']['enum']);
             $schema['properties']['fields']['items']['maxLength'] = 128;
             $schema['properties']['fields']['items']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
-            $schema['properties']['fields']['description'] = 'Только разрешённые поля из проверенного каталога; null выбирает доступные поля по умолчанию. Сервер проверяет каждый тип и поле.';
+            $schema['properties']['fields']['description'] = 'Разрешённые поля каталога; null — доступные по умолчанию.';
         }
         return $schema;
     }

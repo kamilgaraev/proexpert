@@ -11,6 +11,16 @@ final class AssistantStructuredFactVerifier
         if (! AssistantFactIntentClassifier::isFactual($query)) {
             return ['text' => $text, 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => false, 'needs_clarification' => false];
         }
+        return $this->verifiedResults($query, $text, $toolResults);
+    }
+
+    public function confirmedResults(array $toolResults): array
+    {
+        return $this->verifiedResults(null, '', $toolResults);
+    }
+
+    private function verifiedResults(?string $query, string $text, array $toolResults): array
+    {
         $rows = [];
         $seen = [];
         $truncated = false;
@@ -55,8 +65,8 @@ final class AssistantStructuredFactVerifier
                 $rows[] = $row;
             }
         }
-        if ($rows === [] || ! $this->requestedFactsPresent($query, $rows)) {
-            if (AssistantFactIntentClassifier::isMoneyOnly($query)) {
+        if ($rows === [] || ($query !== null && !$this->requestedFactsPresent($query, $rows))) {
+            if ($query !== null && AssistantFactIntentClassifier::isMoneyOnly($query)) {
                 foreach ($toolResults as $result) {
                     $financial = is_array($result) ? ($result['financial_evidence'] ?? null) : null;
                     if (is_array($financial) && is_string($result['server_formatted_answer'] ?? null)

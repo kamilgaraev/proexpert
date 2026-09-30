@@ -137,7 +137,8 @@ final class AssistantProviderQuotaFailureTest extends TestCase
         $job = new ExecuteAssistantChatJob((int) $request->id);
         $this->assertSame(1, $job->tries);
         try {
-            $job->handle($this->lifecycle, $assistant, app(AssistantDataAccessPolicy::class));
+            app()->instance(AIAssistantService::class, $assistant);
+            $job->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
             $this->fail('Expected the provider SDK rate limit exception.');
         } catch (RateLimitException) {
             $request->refresh();
@@ -156,7 +157,7 @@ final class AssistantProviderQuotaFailureTest extends TestCase
         $debit = AICreditLedgerEntry::query()->where('type', 'consume')->sole();
         $this->assertSame(0, $debit->amount_minor);
         $status = $this->lifecycle->status($request->request_id, $this->actor, $this->organization->id, 'lk');
-        $this->assertSame(['request_id' => $request->request_id, 'conversation_id' => $conversation->id, 'status' => 'failed', 'stage' => 'failed', 'calls_used' => 1, 'max_calls' => $request->max_calls, 'error_code' => 'request_failed'], $status);
+        $this->assertSame(['request_id' => $request->request_id, 'conversation_id' => $conversation->id, 'status' => 'failed', 'stage' => 'failed', 'calls_used' => 1, 'max_calls' => $request->max_calls, 'progress' => [], 'error_code' => 'request_failed'], $status);
         $this->assertStringNotContainsString('credit_balance_exhausted', json_encode($status, JSON_THROW_ON_ERROR));
     }
 

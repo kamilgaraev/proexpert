@@ -23,15 +23,16 @@ final class RagCoverageService
 {
     public function __construct(private readonly RagSourceRegistry $registry, private readonly RagIndexer $indexer, private readonly ?AssistantDataAccessPolicy $access = null, private readonly ?RagExpectedSourceProjection $projection = null) {}
 
-    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null): array
+    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, ?array &$projectionProof = null): array
     {
+        $projectionProof = null;
         $guard = $checkDeadline ?? $checkpoint;
         if ($checkpoint !== null) { $checkpoint(); }
         $policy = $this->access ?? app(AssistantDataAccessPolicy::class);
         $enabledTypes = $this->registry->enabledSourceTypes();
         $allowedTypes = $policy->allowedSourceTypes($actor, $organizationId, $enabledTypes);
         if ($checkpoint !== null) { $checkpoint(); }
-        $sources = $policy->applyToSources(RagSource::query(), $actor, $organizationId)
+        $sources = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)
             ->whereIn('ai_rag_sources.source_type', $allowedTypes);
         $projects = $policy->entityQuery($actor, $organizationId, 'project');
         $sources->where(static function (Builder $scope) use ($projects): void {
@@ -40,16 +41,26 @@ final class RagCoverageService
                 $scope->orWhereIn('ai_rag_sources.project_id', $projects->select('projects.id'));
             }
         });
-        $scoped = $sources->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'])->toBase();
-        if ($checkpoint !== null) { $checkpoint(); }
-        $counts = DB::query()->fromSub($scoped, 'accessible_sources')
+        $counts = collect();
+        foreach ($policy->sourceIdentityQueries($sources, $actor, $organizationId, $checkpoint) as $accessible) {
+            $scoped = $accessible->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'])->toBase();
+            if ($checkpoint !== null) { $checkpoint(); }
+            $branchCounts = DB::query()->fromSub($scoped, 'accessible_sources')
             ->leftJoin('ai_rag_chunks as accessible_chunks', static function (JoinClause $join) use ($organizationId): void {
                 $join->on('accessible_chunks.source_id', '=', 'accessible_sources.id')
                     ->where('accessible_chunks.organization_id', $organizationId)
                     ->whereRaw('accessible_chunks.project_id IS NOT DISTINCT FROM accessible_sources.project_id');
             })->groupBy('accessible_sources.source_type')
             ->selectRaw('accessible_sources.source_type, COUNT(DISTINCT accessible_sources.id) AS stored_count, COUNT(accessible_chunks.id) AS chunk_count, COUNT(DISTINCT CASE WHEN accessible_chunks.embedding IS NOT NULL THEN accessible_sources.id END) AS indexed_count')
-            ->get()->keyBy('source_type');
+            ->get();
+            foreach ($branchCounts as $count) {
+                $previous = $counts->get($count->source_type);
+                if ($previous !== null) {
+                    foreach (['stored_count', 'chunk_count', 'indexed_count'] as $field) { $count->{$field} = (int) $count->{$field} + (int) $previous->{$field}; }
+                }
+                $counts->put($count->source_type, $count);
+            }
+        }
         $catalog = [];
         $stored = 0;
         $indexed = 0;
@@ -79,8 +90,11 @@ final class RagCoverageService
             $this->queueRefresh($organizationId, null, null, $key);
         }
         if (is_array($snapshot) && $this->usableProjection($snapshot, $enabledTypes)) {
+            $projectionProof = ['projection_generation' => $snapshot['projection_generation']];
             $projection = $this->projection ?? new RagExpectedSourceProjection($this->indexer);
-            $expectedCounts = $projection->actorCounts($organizationId, $actor, $policy, $allowedTypes, $snapshot['projection_generation'], $checkpoint);
+            $expectedProof = null;
+            $expectedCounts = $projection->actorCounts($organizationId, $actor, $policy, $allowedTypes, $snapshot['projection_generation'], $checkpoint, $expectedProof);
+            $projectionProof['expected'] = $expectedProof;
             if ($key === $this->key($organizationId, null, null)) {
                 $expected = 0;
                 $matched = 0;

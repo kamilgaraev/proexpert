@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantHttpRequestOptions;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\Support\AI\LunaModelPolicy;
 use App\Support\AI\TokenCounter;
 use App\Support\AI\TokenBudgetService;
@@ -107,6 +109,9 @@ final class TimewebProvider implements LLMProviderInterface
 
                 return $result;
             } catch (Throwable $exception) {
+                if (app()->bound(AssistantRequestExecutionContext::class)) {
+                    app(AssistantRequestExecutionContext::class)->assertCanContinue();
+                }
                 $lastException = $exception;
 
                 $this->logging->technical('ai.timeweb.model_failed', [
@@ -143,15 +148,17 @@ final class TimewebProvider implements LLMProviderInterface
 
     private function makeClient(float $timeout): object
     {
-        $connectTimeout = max(1.0, min(5.0, $timeout));
+        $httpOptions = app()->bound(AssistantRequestExecutionContext::class)
+            ? AssistantHttpRequestOptions::forContext($timeout, app(AssistantRequestExecutionContext::class))
+            : [
+                'timeout' => $timeout,
+                'connect_timeout' => min(5.0, $timeout),
+            ];
 
         return OpenAI::factory()
             ->withApiKey($this->apiKey)
             ->withBaseUri($this->baseUri)
-            ->withHttpClient($this->httpClient ?? new GuzzleClient([
-                'timeout' => $timeout,
-                'connect_timeout' => $connectTimeout,
-            ]))
+            ->withHttpClient($this->httpClient ?? new GuzzleClient($httpOptions))
             ->make();
     }
 

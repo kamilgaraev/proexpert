@@ -25,6 +25,7 @@ abstract class TestCase extends BaseTestCase
             \App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class,
             \App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class,
             \App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob::class,
+            \App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob::class,
             \App\Jobs\RegisterAssistantEntityFile::class,
             \App\Jobs\ScanAssistantDocuments::class,
             \App\Jobs\ProcessAssistantDocument::class,

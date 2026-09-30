@@ -59,7 +59,11 @@ final class AssistantTenderNativeCoverageTest extends TestCase
         $this->assertStringNotContainsString($file->stored_path, json_encode($result, JSON_THROW_ON_ERROR));
         $this->assertSame(0, File::query()->count());
         $this->assertSame(0, AIAssistantDocument::query()->count());
+        $documents = $this->app->make(AssistantDocumentCoverageService::class);
+        $proof = $documents->captureStatusProof($organization->id, $actor, array_keys($coverage['native_attachment_coverage']));
+        $this->assertTrue($documents->validateStatusProof($organization->id, $actor, $proof));
         $actor->assignedProjects()->detach($project->id);
+        $this->assertFalse($documents->validateStatusProof($organization->id, $actor, $proof));
         $revoked = $this->app->make(AssistantDocumentCoverageService::class)->coverage($organization->id, $actor);
         $this->assertSame(0, $revoked['document_coverage']['total']);
         $this->assertSame([], $revoked['native_attachment_coverage']);

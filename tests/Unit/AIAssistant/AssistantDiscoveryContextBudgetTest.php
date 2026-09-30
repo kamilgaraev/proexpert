@@ -62,11 +62,10 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $hints = $references['registered_domain_capabilities'];
         $this->assertSame('untrusted_reference_data', $references['kind']);
         $this->assertSame('checked_on_read', $hints['record_access']);
-        $this->assertCount(1, $hints['capabilities']);
-        $this->assertSame('project', $hints['capabilities'][0]['entity_type']);
-        $this->assertCount(16, $hints['capabilities'][0]['fields']);
-        $this->assertNotContains('secret_amount', $hints['capabilities'][0]['fields']);
-        $this->assertSame(16, $hints['capabilities'][0]['next_field_offset']);
+        $this->assertCount(1, $hints['domains']);
+        $this->assertSame('project', $hints['domains'][0]['primary_entity_type']);
+        $this->assertSame(1, $hints['domains'][0]['entity_type_count']);
+        $this->assertArrayNotHasKey('fields', $hints['domains'][0]);
         $this->assertStringNotContainsString('FORGED_CAPABILITY', $messages[0]['content']);
         $this->assertStringNotContainsString('FORGED_CAPABILITY', json_encode($hints, JSON_THROW_ON_ERROR));
         $this->assertStringNotContainsString('secret_amount', json_encode($hints, JSON_THROW_ON_ERROR));
@@ -79,11 +78,11 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $this->assertLessThanOrEqual(8192, $prepared['input_tokens']);
     }
 
-    public function test_current_domain_denial_omits_metadata_hints_entirely(): void
+    public function test_current_domain_denial_removes_that_domain_from_compact_catalog(): void
     {
         $messages = $this->service(false)->messages($this->plan());
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
-        $this->assertArrayNotHasKey('registered_domain_capabilities', $references);
+        $this->assertSame([], $references['registered_domain_capabilities']['domains']);
         $this->assertSame('Покажи проект', $messages[2]['content']);
     }
 
@@ -97,9 +96,12 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
         $this->assertArrayHasKey('registered_domain_capabilities', $references);
         $hints = $references['registered_domain_capabilities'];
-        $this->assertSame('projects', $hints['capabilities'][0]['domain']);
-        $this->assertSame('project', $hints['capabilities'][0]['entity_type']);
-        $this->assertLessThanOrEqual(16, count($hints['capabilities'][0]['fields']));
+        $this->assertSame('projects', $hints['domains'][0]['domain']);
+        $this->assertSame('project', $hints['domains'][0]['primary_entity_type']);
+        $this->assertNotContains('finance', array_column($hints['domains'], 'domain'));
+        foreach ($hints['domains'] as $domain) {
+            $this->assertArrayNotHasKey('fields', $domain);
+        }
         $counter = new TokenCounter;
         $this->assertLessThan(700, $counter->value($hints));
         $prepared = (new TokenBudgetService($counter))->prepare($messages, $tools, 'short');
@@ -145,6 +147,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $permissions = $this->createMock(AIPermissionChecker::class);
         $permissions->method('canUseAssistant')->willReturn(true);
         $permissions->method('canExecuteTool')->willReturn(true);
+        $permissions->method('canExposeTool')->willReturn(true);
         $context = $this->createMock(ContextBuilder::class);
         $context->method('buildSystemPrompt')->willReturn('Соблюдай текущие права и явный запрос пользователя.');
         $conversations = $this->createMock(ConversationManager::class);
@@ -166,7 +169,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
             $this->assertNull($projectScope);
         }
         $service = (new ReflectionClass(DiscoveryContextAssistantService::class))->newInstanceWithoutConstructor();
-        foreach (['toolRegistry' => $registry, 'permissionChecker' => $permissions, 'activeActor' => $actor, 'contextBuilder' => $context, 'conversationManager' => $conversations, 'memoryService' => null, 'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
+        foreach (['toolRegistry' => $registry, 'permissionChecker' => $permissions, 'activeActor' => $actor, 'dataAccess' => $policy, 'contextBuilder' => $context, 'conversationManager' => $conversations, 'memoryService' => null, 'logging' => $this->createMock(LoggingService::class), 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
             (new ReflectionProperty(AIAssistantService::class, $property))->setValue($service, $value);
         }
         return $service;

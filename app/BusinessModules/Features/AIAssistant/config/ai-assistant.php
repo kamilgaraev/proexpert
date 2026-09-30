@@ -110,6 +110,12 @@ return [
         'detailed' => ['input' => 32768, 'output' => 4096, 'calls' => 6],
     ],
 
+    'request_deadline_seconds' => [
+        'short' => min(60, max(15, (int) $configEnv('AI_ASSISTANT_SHORT_DEADLINE_SECONDS', 30))),
+        'normal' => min(120, max(30, (int) $configEnv('AI_ASSISTANT_NORMAL_DEADLINE_SECONDS', 60))),
+        'detailed' => min(300, max(60, (int) $configEnv('AI_ASSISTANT_DETAILED_DEADLINE_SECONDS', 180))),
+    ],
+
     'rag' => [
         'enabled' => true,
         'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'timeweb'),

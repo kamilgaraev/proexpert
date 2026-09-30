@@ -88,6 +88,24 @@ final class AssistantAclQueryCompilerTest extends TestCase
         }
     }
 
+    public function test_identity_branches_respect_candidate_filters_and_do_not_compile_absent_domains(): void
+    {
+        $source = $this->source($this->visible);
+        $this->source($this->hidden);
+        $report = $this->report([['entity_type' => 'project', 'entity_id' => (string) $this->visible->id]]);
+        RagSource::create(['organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'source_type' => 'project_pulse', 'entity_type' => 'project_pulse_report', 'entity_id' => (string) $report->id,
+            'title' => 'Report', 'checksum' => hash('sha256', 'report')]);
+        $branches = iterator_to_array($this->policy->sourceIdentityQueries(RagSource::query()->where('source_type', 'project'), $this->actor, $this->organization->id));
+        $this->assertCount(1, $branches);
+        $this->assertSame([$source->id], $branches[0]->pluck('id')->all());
+        $this->assertStringNotContainsString('project_pulse_reports', $branches[0]->toSql());
+        $query = $this->policy->entityQuery($this->actor, $this->organization->id, 'project_pulse_report');
+        $this->assertNotNull($query);
+        $this->assertStringNotContainsString('budget_periods', $query->toSql());
+        $this->assertSame([$report->id], $query->pluck('id')->all());
+    }
+
     public function test_materialized_reference_scope_requires_every_reference_and_current_project_membership(): void
     {
         $visibleRef = ['entity_type' => 'project', 'entity_id' => (string) $this->visible->id];

@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantHttpRequestOptions;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Exception\RequestException;
 use Illuminate\Support\Facades\Log;
@@ -35,6 +39,10 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
     private string $providerName;
 
+    private int $queryTimeoutSeconds;
+
+    private bool $hasInjectedClient;
+
     /**
      * @var array<string, mixed>
      */
@@ -64,11 +72,13 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $this->dimensions = $dimensions ?? $this->configInt('ai-assistant.rag.embedding_dimensions', 1536);
         $this->baseUri = $baseUri ?? $this->configString('ai-assistant.rag.embedding_base_uri');
         $this->providerName = $providerName ?? 'openai';
+        $this->queryTimeoutSeconds = max(1, min(10, $this->configInt('ai-assistant.rag.query_embedding_timeout', 6)));
+        $this->hasInjectedClient = $client !== null;
         $this->client = $client ?? $this->makeClient($this->apiKey, $this->baseUri);
         $this->queryClient = $client ?? $this->makeClient(
             $this->apiKey,
             $this->baseUri,
-            max(1, min(10, $this->configInt('ai-assistant.rag.query_embedding_timeout', 6)))
+            $this->queryTimeoutSeconds
         );
     }
 
@@ -76,7 +86,14 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     {
         $this->lastUsage = self::usageEvidence(null, $text);
         $this->usageAttempts = [];
-        $client = $purpose === self::PURPOSE_QUERY ? $this->queryClient : $this->client;
+        $executionContext = $purpose === self::PURPOSE_QUERY && app()->bound(AssistantRequestExecutionContext::class)
+            ? app(AssistantRequestExecutionContext::class)
+            : null;
+        $client = $purpose === self::PURPOSE_QUERY
+            ? ($executionContext !== null && ! $this->hasInjectedClient
+                ? $this->makeClient($this->apiKey, $this->baseUri, $this->queryTimeoutSeconds, $executionContext)
+                : $this->queryClient)
+            : $this->client;
 
         if (! is_object($client) || ! method_exists($client, 'embeddings')) {
             throw new RuntimeException($this->assistantMessage(
@@ -114,6 +131,12 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         try {
             $response = $this->createEmbeddingWithRetry($embeddings, $parameters, $text, $purpose === self::PURPOSE_QUERY ? 1 : self::RETRY_ATTEMPTS);
         } catch (Throwable $exception) {
+            if ($executionContext !== null) {
+                $executionContext->assertCanContinue();
+            }
+            if ($exception instanceof AssistantRequestCancelled || $exception instanceof AssistantRequestDeadlineExceeded) {
+                throw $exception;
+            }
             throw new RagEmbeddingUnavailableException($this->assistantMessage(
                 'ai_assistant.rag_embedding_unavailable',
                 'Сервис подготовки контекста временно недоступен.'
@@ -151,6 +174,9 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
                 return $response;
             } catch (Throwable $exception) {
+                if (app()->bound(AssistantRequestExecutionContext::class)) {
+                    app(AssistantRequestExecutionContext::class)->assertCanContinue();
+                }
                 $lastException = $exception;
                 $this->lastUsage = $this->usageFromException($exception, $text);
                 $this->usageAttempts[] = $this->lastUsage + ['usage_key' => $callKey.':attempt:'.$attempt, 'attempt' => $attempt, 'is_successful' => false,
@@ -267,18 +293,27 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         return self::usageEvidence(null, $text);
     }
 
-    private function makeClient(?string $apiKey, ?string $baseUri, int $timeout = 45): ?object
+    private function makeClient(
+        ?string $apiKey,
+        ?string $baseUri,
+        int $timeout = 45,
+        ?AssistantRequestExecutionContext $executionContext = null
+    ): ?object
     {
         if ($apiKey === null || trim($apiKey) === '') {
             return null;
         }
 
-        $factory = OpenAI::factory()
-            ->withApiKey($apiKey)
-            ->withHttpClient(new GuzzleClient([
+        $httpOptions = $executionContext !== null
+            ? AssistantHttpRequestOptions::forContext($timeout, $executionContext)
+            : [
                 'timeout' => $timeout,
                 'connect_timeout' => min(5, $timeout),
-            ]));
+            ];
+
+        $factory = OpenAI::factory()
+            ->withApiKey($apiKey)
+            ->withHttpClient(new GuzzleClient($httpOptions));
 
         if ($baseUri !== null && trim($baseUri) !== '') {
             $factory = $factory->withBaseUri($baseUri);

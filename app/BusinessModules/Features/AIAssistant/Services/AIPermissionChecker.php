@@ -13,9 +13,9 @@ class AIPermissionChecker
     private ?AuthorizationService $batchAuthorization = null;
 
     public function __construct(private readonly ?AuthorizationService $authorization = null) {}
-    private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
+    private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
     private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
-    private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot'];
+    private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'get_estimate_financial_snapshot'];
     private const TOOL_PERMISSION_MAP = [
         'generate_profitability_report' => ['reports.view', 'admin.reports.view'],
         'generate_work_completion_report' => ['reports.view', 'admin.reports.view'],
@@ -121,7 +121,7 @@ class AIPermissionChecker
         }, true);
     }
 
-    private function checkTool(User $user, string $toolName, array $params, int $organizationId): bool
+    private function checkTool(User $user, string $toolName, array $params, int $organizationId, bool $requireEntityAuthorization = true): bool
     {
         $toolName = $this->normalizeToolName($toolName);
         if (! app(AssistantDataAccessPolicy::class)->canReadDomain($user, $organizationId, 'assistant')) {
@@ -141,7 +141,7 @@ class AIPermissionChecker
                 return false;
             }
 
-            if ($toolName === 'resolve_estimate') {
+            if ($toolName === 'resolve_estimate' || ($toolName === 'get_estimate_answer' && ($params['estimate_id'] ?? null) === null)) {
                 return true;
             }
 
@@ -165,7 +165,7 @@ class AIPermissionChecker
             }
         }
         $idType = match ($toolName) { 'update_measurement_unit', 'delete_measurement_unit' => 'measurement_unit', default => null };
-        if ($idType !== null && (! isset($params['id']) || ! $policy->canReadEntity($user, $organizationId, $idType, (string) $params['id']))) { return false; }
+        if ($requireEntityAuthorization && $idType !== null && (! isset($params['id']) || ! $policy->canReadEntity($user, $organizationId, $idType, (string) $params['id']))) { return false; }
         if (isset($params['schedule_id'], $params['project_id'])) {
             $schedule = $policy->entityQuery($user, $organizationId, 'schedule');
             if ($schedule === null || ! $schedule->whereKey($params['schedule_id'])->where('project_id', $params['project_id'])->exists()) { return false; }
@@ -196,12 +196,37 @@ class AIPermissionChecker
             || $this->domainsForTool($toolName) !== [];
     }
 
+    public function canExposeTool(User $user, string $toolName, bool $fresh = true): bool
+    {
+        $toolName = $this->normalizeToolName($toolName);
+        $organizationId = (int) $user->current_organization_id;
+        $policy = app(AssistantDataAccessPolicy::class);
+        return $policy->withCurrentChecks($user, $organizationId, function (AuthorizationService $authorization) use ($user, $toolName, $organizationId, $policy): bool {
+            if (!$policy->canReadDomain($user, $organizationId, 'assistant')) {
+                return false;
+            }
+            if (in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true) || in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)) {
+                return true;
+            }
+            if (in_array($toolName, self::ESTIMATE_TOOLS, true)) {
+                return $policy->canReadDomain($user, $organizationId, 'estimates');
+            }
+            $previous = $this->batchAuthorization;
+            $this->batchAuthorization = $authorization;
+            try {
+                return $this->checkTool($user, $toolName, [], $organizationId, false);
+            } finally {
+                $this->batchAuthorization = $previous;
+            }
+        }, $fresh);
+    }
+
     private function domainsForTool(string $toolName): array
     {
         return match ($toolName) {
             'search_projects', 'send_project_notification' => ['projects'],
             'get_project_snapshot' => ['projects', 'contracts', 'finance'],
-            'search_warehouse' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
+            'search_warehouse', 'get_material_stock' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
             'search_materials' => ['materials'], 'search_users' => ['people'], 'search_contractors' => ['contractors'],
             'get_contract_snapshot', 'generate_contractor_settlements_report', 'generate_contract_payments_report' => ['contracts', 'finance'],
             'get_procurement_snapshot' => ['procurement', 'finance'],

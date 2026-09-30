@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestInProgre
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Models\Message;
+use App\BusinessModules\Features\AIAssistant\Events\AssistantRequestChanged;
 use App\Models\Credits\AICreditReservation;
 use App\Models\Credits\AICreditQuote;
 use App\Models\Organization;
@@ -34,6 +35,31 @@ final class AssistantRequestLifecycle
     public function startQueued(Organization $organization, User $actor, ?int $conversationId, array $payload, string $surface): array
     {
         return $this->start($organization, $actor, $conversationId, $payload, $surface, true);
+    }
+
+    public function createExecutionContext(AssistantRequest $request, User $actor): AssistantRequestExecutionContext
+    {
+        $budgetMilliseconds = self::deadlineSecondsForProfile($request->profile) * 1000;
+
+        return new AssistantRequestExecutionContext($this, $request, $actor, $budgetMilliseconds);
+    }
+
+    public static function deadlineSecondsForProfile(?string $profile): int
+    {
+        $bounds = [
+            'short' => [15, 60, 30],
+            'normal' => [30, 120, 60],
+            'detailed' => [60, 300, 180],
+        ];
+        $profile = isset($bounds[$profile]) ? $profile : 'normal';
+        [$minimum, $maximum, $default] = $bounds[$profile];
+
+        return min($maximum, max($minimum, (int) config('ai-assistant.request_deadline_seconds.'.$profile, $default)));
+    }
+
+    public function checkpoint(AssistantRequest $request, User $actor): void
+    {
+        $this->assertActive($request, $actor);
     }
 
     public function start(Organization $organization, User $actor, ?int $conversationId, array $payload, ?string $surface = null, bool $queued = false): array
@@ -119,6 +145,7 @@ final class AssistantRequestLifecycle
                 'heartbeat_at' => now(),
                 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES),
             ]);
+            $this->publishChangedAfterCommit($request);
 
             return ['request' => $request, 'response' => null, 'created' => true];
         }, 3);
@@ -157,6 +184,7 @@ final class AssistantRequestLifecycle
                 return null;
             }
             $request->forceFill(['started_at' => now(), 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
+            $this->publishChangedAfterCommit($request);
             return $request;
         }, 3);
     }
@@ -165,6 +193,7 @@ final class AssistantRequestLifecycle
     {
         $this->assertActive($request, $actor);
         $request->forceFill(['stage' => $stage, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
+        $this->publishChangedAfterCommit($request);
     }
 
     public function progress(AssistantRequest $request, User $actor, string $code, string $state): void
@@ -176,6 +205,7 @@ final class AssistantRequestLifecycle
             $response['progress'] = AssistantRequestProgress::append($response['progress'] ?? [], $code, $state);
             $current->forceFill(['response' => $response, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
             $request->setRawAttributes($current->getAttributes(), true);
+            $this->publishChangedAfterCommit($current);
         }, 3);
     }
 
@@ -194,6 +224,7 @@ final class AssistantRequestLifecycle
             $attempt = $current->calls_used + 1;
             $current->forceFill(['calls_used' => $attempt, 'stage' => 'generating', 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
             $request->setRawAttributes($current->getAttributes(), true);
+            $this->publishChangedAfterCommit($current);
             return $attempt;
         }, 3);
     }
@@ -231,6 +262,8 @@ final class AssistantRequestLifecycle
     {
         return DB::transaction(function () use ($request, $actor, $response, $useful, $onPublished): array {
             $current = AssistantRequest::query()->whereKey($request->id)->lockForUpdate()->firstOrFail();
+            User::query()->whereKey($actor->id)->lockForUpdate()->firstOrFail();
+            $actor->refresh();
             $this->assertActive($current, $actor);
             $this->assertResponseAccess($response, $actor, $current->organization_id);
             $reservation = $this->reservation($current);
@@ -258,6 +291,7 @@ final class AssistantRequestLifecycle
                 'charging_enabled' => (bool) config('ai-assistant-credits.enforce', false),
             ];
             $current->forceFill(['status' => 'completed', 'stage' => 'completed', 'response' => $response, 'completed_at' => now(), 'heartbeat_at' => now(), 'lease_expires_at' => now()])->save();
+            $this->publishChangedAfterCommit($current);
             if ($onPublished !== null) {
                 $onPublished();
             }
@@ -270,7 +304,8 @@ final class AssistantRequestLifecycle
         DB::transaction(function () use ($request, $errorCode): void {
             $current = AssistantRequest::query()->whereKey($request->id)->lockForUpdate()->first();
             if ($current !== null && $current->status === 'running') {
-                $this->terminate($current, $current->cancel_requested_at !== null ? 'cancelled' : 'failed', $errorCode);
+                $cancelled = $current->cancel_requested_at !== null || $errorCode === 'request_cancelled';
+                $this->terminate($current, $cancelled ? 'cancelled' : 'failed', $cancelled ? 'request_cancelled' : $errorCode);
             }
         }, 3);
     }
@@ -305,13 +340,14 @@ final class AssistantRequestLifecycle
             $request = AssistantRequest::query()->where('request_id', $requestId)->where('organization_id', $organizationId)->where('user_id', $actor->id)->lockForUpdate()->first();
             if ($request === null) {
                 $quote = $this->ownedQuote($requestId, $actor, $organizationId);
-                AssistantRequest::query()->create([
+                $request = AssistantRequest::query()->create([
                     'request_id' => $requestId, 'organization_id' => $organizationId, 'user_id' => $actor->id,
                     'request_hash' => $quote->request_hash, 'profile' => $quote->profile,
-                    'status' => 'cancelled', 'stage' => 'cancelled', 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0),
+                    'status' => 'cancelled', 'stage' => 'cancelled', 'surface' => $surface, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0),
                     'approved_max_minor' => $quote->max_units_minor, 'cancel_requested_at' => now(), 'completed_at' => now(),
                     'heartbeat_at' => now(), 'lease_expires_at' => now(),
                 ]);
+                $this->publishChangedAfterCommit($request);
                 return;
             }
             $this->assertActor($request, $actor);
@@ -319,13 +355,71 @@ final class AssistantRequestLifecycle
             if ($request->status === 'running' && $request->cancel_requested_at === null) {
                 if ($request->stage === 'queued' && $request->started_at === null) {
                     $request->forceFill(['cancel_requested_at' => now()])->save();
+                    $this->publishChangedAfterCommit($request);
                     $this->terminate($request, 'cancelled', 'request_cancelled');
                 } else {
                     $request->forceFill(['cancel_requested_at' => now()])->save();
+                    $this->publishChangedAfterCommit($request);
                 }
             }
         }, 3);
         return $this->status($requestId, $actor, $organizationId, $surface);
+    }
+
+    public function cancelOwned(string $requestId, User $actor, ?string $surface = null): array
+    {
+        $scope = AssistantRequest::query()->where('request_id', $requestId)->where('user_id', $actor->id)->first();
+        $quote = $scope === null
+            ? AICreditQuote::query()->where('request_key', $requestId)->where('user_id', $actor->id)->where('expires_at', '>', now())->orderByDesc('id')->first()
+            : null;
+        $organizationId = $scope?->organization_id ?? $quote?->organization_id;
+        if ($organizationId === null) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+
+        $request = DB::transaction(function () use ($requestId, $actor, $surface, $organizationId): AssistantRequest {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail();
+            $this->assertActiveOrganizationMembership($actor, (int) $organizationId);
+            $request = AssistantRequest::query()->where('request_id', $requestId)->where('organization_id', $organizationId)
+                ->where('user_id', $actor->id)->lockForUpdate()->first();
+            if ($request === null) {
+                $quote = AICreditQuote::query()->where('request_key', $requestId)->where('organization_id', $organizationId)
+                    ->where('user_id', $actor->id)->where('expires_at', '>', now())->orderByDesc('id')->firstOrFail();
+                $request = AssistantRequest::query()->create([
+                    'request_id' => $requestId, 'organization_id' => $organizationId, 'user_id' => $actor->id,
+                    'request_hash' => $quote->request_hash, 'profile' => $quote->profile,
+                    'status' => 'cancelled', 'stage' => 'cancelled', 'surface' => $surface, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0),
+                    'approved_max_minor' => $quote->max_units_minor, 'cancel_requested_at' => now(), 'completed_at' => now(),
+                    'heartbeat_at' => now(), 'lease_expires_at' => now(),
+                ]);
+                $this->publishChangedAfterCommit($request);
+
+                return $request;
+            }
+
+            $this->assertActiveOrganizationMembership($actor, (int) $request->organization_id);
+            $this->assertSurface($request, $surface);
+            if ($request->status === 'running' && $request->cancel_requested_at === null) {
+                if ($request->stage === 'queued' && $request->started_at === null) {
+                    $request->forceFill(['cancel_requested_at' => now()])->save();
+                    $this->publishChangedAfterCommit($request);
+                    $this->terminate($request, 'cancelled', 'request_cancelled');
+                } else {
+                    $request->forceFill(['cancel_requested_at' => now()])->save();
+                    $this->publishChangedAfterCommit($request);
+                }
+            }
+
+            return $request;
+        }, 3);
+
+        $request->refresh();
+
+        return [
+            'request_id' => $request->request_id,
+            'status' => $request->cancel_requested_at !== null && $request->status === 'running' ? 'cancel_requested' : $request->status,
+            'stage' => $request->stage,
+        ];
     }
 
     public function expireAbandoned(int $batch = 100): int
@@ -353,10 +447,16 @@ final class AssistantRequestLifecycle
     private function assertActive(AssistantRequest $request, User $actor): void
     {
         $request->refresh();
+        $actor->refresh();
+        if (!$actor->is_active || (int) $actor->current_organization_id !== $request->organization_id
+            || !$actor->belongsToOrganization($request->organization_id)) {
+            throw new AssistantRequestCancelled();
+        }
         $this->assertActor($request, $actor);
         if ($request->status !== 'running' || $request->cancel_requested_at !== null || $request->lease_expires_at->isPast()) {
             throw new AssistantRequestCancelled();
         }
+        $this->activeExecutionContext()?->assertWithinDeadline();
     }
 
     private function assertActor(AssistantRequest $request, User $actor): void
@@ -364,6 +464,14 @@ final class AssistantRequestLifecycle
         if ($request->user_id !== (int) $actor->id || !$actor->is_active || (int) $actor->current_organization_id !== $request->organization_id
             || !$actor->belongsToOrganization($request->organization_id) || !$this->permissions->canUseAssistant($actor, $request->organization_id)
             || ($request->conversation_id !== null && $this->conversations->findAccessibleConversation($request->conversation_id, $actor, $request->organization_id, true) === null)) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+    }
+
+    private function assertActiveOrganizationMembership(User $actor, int $organizationId): void
+    {
+        if (!User::query()->whereKey($actor->id)->where('is_active', true)->exists()
+            || !DB::table('organization_user')->where('organization_id', $organizationId)->where('user_id', $actor->id)->where('is_active', true)->exists()) {
             throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
         }
     }
@@ -419,5 +527,22 @@ final class AssistantRequestLifecycle
         Message::query()->where('conversation_id', $request->conversation_id)->where('role', 'assistant')
             ->where('metadata->request_id', $request->request_id)->where('metadata->request_state', 'pending')->delete();
         $request->forceFill(['status' => $status, 'stage' => $status, 'error_code' => $errorCode, 'completed_at' => now(), 'lease_expires_at' => now()])->save();
+        $this->publishChangedAfterCommit($request);
+    }
+
+    private function publishChangedAfterCommit(AssistantRequest $request): void
+    {
+        if (!in_array($request->surface, ['admin', 'lk'], true)) {
+            return;
+        }
+
+        event(new AssistantRequestChanged($request->request_id, $request->user_id, $request->organization_id, $request->surface));
+    }
+
+    private function activeExecutionContext(): ?AssistantRequestExecutionContext
+    {
+        return app()->bound(AssistantRequestExecutionContext::class)
+            ? app(AssistantRequestExecutionContext::class)
+            : null;
     }
 }

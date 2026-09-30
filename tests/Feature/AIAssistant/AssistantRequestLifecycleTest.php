@@ -8,6 +8,8 @@ use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantBudgetExceeded;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
 use PHPUnit\Framework\Attributes\DataProvider;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
+use App\BusinessModules\Features\AIAssistant\Events\AssistantRequestChanged;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestInProgress;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
@@ -21,6 +23,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -43,6 +46,7 @@ use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Tests\Support\IsolatedPostgresTestDatabase;
@@ -306,7 +310,8 @@ final class AssistantRequestLifecycleTest extends TestCase
         $orchestrator->expects($this->never())->method('plan');
         $service = $this->providerService($provider, null, $orchestrator);
         $service->failOnRagBuild = true;
-        (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, $service, app(AssistantDataAccessPolicy::class));
+        app()->instance(AIAssistantService::class, $service);
+        (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
 
         $this->assertSame('completed', $request->fresh()->status);
         $this->assertSame('greeting', $request->fresh()->response['message']['metadata']['response_kind']);
@@ -340,6 +345,121 @@ final class AssistantRequestLifecycleTest extends TestCase
         }
     }
 
+    public function test_request_deadline_includes_time_spent_in_queue(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        config()->set('ai-assistant.request_deadline_seconds.normal', 120);
+        $request->created_at = now()->subSeconds(121);
+        $context = $this->lifecycle->createExecutionContext($request, $this->actor);
+
+        $this->expectException(AssistantRequestDeadlineExceeded::class);
+        $context->remainingMilliseconds();
+    }
+
+    public function test_expired_worker_deadline_fails_and_refunds_before_queue_failure_hook(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $request->forceFill(['created_at' => now()->subSeconds(61)])->save();
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldNotReceive('executeStartedRequest');
+        app()->instance(AIAssistantService::class, $assistant);
+        $job = new ExecuteAssistantChatJob($request->id);
+
+        $job->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
+        $releaseCount = AICreditLedgerEntry::query()->where('type', 'release')->count();
+        $job->failed(null);
+
+        $this->assertSame('failed', $request->fresh()->status);
+        $this->assertSame('request_deadline_exceeded', $request->fresh()->error_code);
+        $this->assertSame($releaseCount, AICreditLedgerEntry::query()->where('type', 'release')->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_operation_budget_ends_database_read_before_request_deadline(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $request = $this->lifecycle->claimQueued($request->id);
+        $context = $this->lifecycle->createExecutionContext($request, $this->actor);
+        app()->instance(AssistantRequestExecutionContext::class, $context);
+        $context->activate();
+
+        try {
+            $this->expectException(AssistantRequestDeadlineExceeded::class);
+            $context->withOperationBudget(static function (): void {
+                usleep(10_000);
+            }, 1);
+        } finally {
+            $context->restoreDatabaseStatementTimeouts();
+            app()->forgetInstance(AssistantRequestExecutionContext::class);
+        }
+    }
+
+    public function test_cancellation_during_worker_execution_refunds_reservation(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldReceive('executeStartedRequest')->once()->andReturnUsing(function (AssistantRequest $activeRequest, User $actor): array {
+            $this->lifecycle->cancel($activeRequest->request_id, $actor, $this->organization->id);
+            $this->lifecycle->checkpoint($activeRequest, $actor);
+
+            return [];
+        });
+        app()->instance(AIAssistantService::class, $assistant);
+
+        (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
+
+        $this->assertSame('cancelled', $request->fresh()->status);
+        $this->assertSame('request_cancelled', $request->fresh()->error_code);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_owned_request_can_be_cancelled_after_organization_switch_without_exposing_old_response(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $otherOrganization = Organization::withoutEvents(fn () => Organization::query()->create(['name' => 'Новая организация']));
+        DB::table('organization_user')->insert(['organization_id' => $otherOrganization->id, 'user_id' => $this->actor->id, 'is_active' => true, 'is_owner' => false]);
+        $this->actor->forceFill(['current_organization_id' => $otherOrganization->id])->save();
+
+        $status = $this->lifecycle->cancelOwned($request->request_id, $this->actor, 'lk');
+
+        $this->assertSame(['request_id' => $request->request_id, 'status' => 'cancelled', 'stage' => 'cancelled'], $status);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        $this->assertSame(0, $this->credits->balance($otherOrganization)['reserved_minor']);
+        $this->assertSame('request_cancelled', $request->fresh()->error_code);
+        $this->assertNull($request->fresh()->response);
+    }
+
+    public function test_worker_stops_and_refunds_when_actor_switches_organization(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $otherOrganization = Organization::withoutEvents(fn () => Organization::query()->create(['name' => 'Новая организация']));
+        DB::table('organization_user')->insert(['organization_id' => $otherOrganization->id, 'user_id' => $this->actor->id, 'is_active' => true, 'is_owner' => false]);
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldReceive('executeStartedRequest')->once()->andReturnUsing(function (AssistantRequest $activeRequest, User $actor) use ($otherOrganization): array {
+            $actor->forceFill(['current_organization_id' => $otherOrganization->id])->save();
+            $this->lifecycle->checkpoint($activeRequest, $actor);
+
+            return [];
+        });
+        app()->instance(AIAssistantService::class, $assistant);
+
+        (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
+
+        $this->assertSame('cancelled', $request->fresh()->status);
+        $this->assertSame('request_cancelled', $request->fresh()->error_code);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_cancel_owned_denies_another_actor(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $other = $this->member('Другой автор');
+
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->cancelOwned($request->request_id, $other, 'lk'));
+        $this->assertSame('running', $request->fresh()->status);
+        $this->assertSame(9800, $this->credits->balance($this->organization)['available_minor']);
+    }
+
     public function test_duplicate_worker_job_executes_only_once(): void
     {
         $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
@@ -347,9 +467,12 @@ final class AssistantRequestLifecycleTest extends TestCase
         $assistant->shouldReceive('executeStartedRequest')->once()->andReturn([]);
         $job = new ExecuteAssistantChatJob($request->id);
         $policy = app(AssistantDataAccessPolicy::class);
-        $job->handle($this->lifecycle, $assistant, $policy);
-        $job->handle($this->lifecycle, $assistant, $policy);
+        app()->instance(AIAssistantService::class, $assistant);
+        $job->handle($this->lifecycle, $policy);
+        $job->handle($this->lifecycle, $policy);
         $this->assertNotNull($request->fresh()->started_at);
+        $this->lifecycle->stage($request, $this->actor, 'reading');
+        $this->assertSame('reading', $request->fresh()->stage);
     }
 
     public function test_sequential_jobs_use_their_own_trusted_surface_in_scoped_consumers(): void
@@ -367,9 +490,11 @@ final class AssistantRequestLifecycleTest extends TestCase
             $seenPolicies[] = $policy;
             return [];
         });
-        (new ExecuteAssistantChatJob($lk->id))->handle($this->lifecycle, $assistant, app(AssistantDataAccessPolicy::class));
+        app()->instance(AIAssistantService::class, $assistant);
+        (new ExecuteAssistantChatJob($lk->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
         app()->forgetScopedInstances();
-        (new ExecuteAssistantChatJob($admin->id))->handle($this->lifecycle, $assistant, app(AssistantDataAccessPolicy::class));
+        app()->instance(AIAssistantService::class, $assistant);
+        (new ExecuteAssistantChatJob($admin->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
         $this->assertNotSame($seenPolicies[0], $seenPolicies[1]);
     }
 
@@ -434,6 +559,76 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(1, AICreditProviderUsage::query()->count());
         $this->assertSame(10000, $this->credits->balance($this->organization)['available_minor']);
         $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_cancellation_after_provider_attempt_reservation_prevents_first_http_call(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $request = $this->lifecycle->claimQueued($request->id);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->never())->method('chat');
+        $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
+        $usage->method('canMakeRequest')->willReturn(true);
+        $usage->method('getUsageStats')->willReturn([]);
+        $usage->expects($this->never())->method('recordUsage');
+        $context = $this->lifecycle->createExecutionContext($request, $this->actor);
+        app()->instance(AssistantRequestExecutionContext::class, $context);
+        $context->activate();
+        Event::listen(AssistantRequestChanged::class, function (AssistantRequestChanged $event) use ($request): void {
+            if (($event->broadcastWith()['request_id'] ?? null) === $request->request_id
+                && $request->fresh()->calls_used > 0) {
+                $this->lifecycle->cancel($request->request_id, $this->actor, $this->organization->id, 'lk');
+            }
+        });
+
+        try {
+            $this->assertOperationThrows(AssistantRequestCancelled::class, fn () => $this->providerService($provider, usageOverride: $usage)
+                ->invokeProvider($request, $this->actor, [['role' => 'user', 'content' => 'Запрос']]));
+            $this->lifecycle->fail($request);
+        } finally {
+            Event::forget(AssistantRequestChanged::class);
+            $context->restoreDatabaseStatementTimeouts();
+            app()->forgetInstance(AssistantRequestExecutionContext::class);
+        }
+
+        $this->assertSame('cancelled', $request->fresh()->status);
+        $this->assertSame(1, $request->fresh()->calls_used);
+        $this->assertSame(0, AICreditProviderUsage::query()->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_late_provider_result_is_journaled_and_cancelled_request_refunds_once(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $request = $this->lifecycle->claimQueued($request->id);
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->expects($this->once())->method('chat')->willReturnCallback(function () use ($request): array {
+            $this->lifecycle->cancel($request->request_id, $this->actor, $this->organization->id, 'lk');
+
+            return ['content' => 'Ответ', 'input_tokens' => 100, 'output_tokens' => 10, 'provider' => 'test-fixture', 'model' => 'gpt-6-luna'];
+        });
+        $usage = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\UsageTracker::class);
+        $usage->method('canMakeRequest')->willReturn(true);
+        $usage->method('getUsageStats')->willReturn([]);
+        $usage->expects($this->once())->method('recordUsage');
+        $context = $this->lifecycle->createExecutionContext($request, $this->actor);
+        app()->instance(AssistantRequestExecutionContext::class, $context);
+        $context->activate();
+
+        try {
+            $this->assertOperationThrows(AssistantRequestCancelled::class, fn () => $this->providerService($provider, usageOverride: $usage)
+                ->invokeProvider($request, $this->actor, [['role' => 'user', 'content' => 'Запрос']]));
+            $context->withCleanupBudget(fn () => $this->lifecycle->fail($request, 'request_cancelled'));
+        } finally {
+            $context->restoreDatabaseStatementTimeouts();
+            app()->forgetInstance(AssistantRequestExecutionContext::class);
+        }
+
+        $this->assertSame('cancelled', $request->fresh()->status);
+        $this->assertSame(1, $request->fresh()->calls_used);
+        $this->assertSame(1, AICreditProviderUsage::query()->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+        $this->assertSame(10000, $this->credits->balance($this->organization)['available_minor']);
     }
 
     public function test_slow_rag_can_reach_first_provider_call_after_five_minutes(): void
@@ -1002,7 +1197,8 @@ final class AssistantRequestLifecycleTest extends TestCase
         $image->forceFill(['checksum' => str_repeat('f', 64)])->save();
         $provider = $this->createMock(LLMProviderInterface::class);
         $provider->expects($this->never())->method('chat');
-        $this->assertOperationThrows(AuthorizationException::class, fn () => (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, $this->providerService($provider), app(AssistantDataAccessPolicy::class)));
+        app()->instance(AIAssistantService::class, $this->providerService($provider));
+        $this->assertOperationThrows(AuthorizationException::class, fn () => (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class)));
         $this->assertSame('failed', $request->fresh()->status);
         $this->assertSame(0, AICreditProviderUsage::query()->count());
         $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
