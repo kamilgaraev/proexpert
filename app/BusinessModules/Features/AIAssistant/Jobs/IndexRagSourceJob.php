@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -54,6 +55,7 @@ class IndexRagSourceJob implements ShouldQueue
                 return;
             }
             $this->leaseToken = $run->lease_token;
+            app(AssistantNativeAttachmentPreparationQueue::class)->dispatchRunningRun($run);
         }
 
         $progress = $run instanceof RagIndexRun
@@ -73,7 +75,8 @@ class IndexRagSourceJob implements ShouldQueue
                 }
                 return;
             }
-            if ($this->sourceType === null || in_array($this->sourceType, ['operations_quality', 'operations_safety_medical', 'operations_warehouse', 'file_document'], true)) {
+            $prepareNativeAttachmentsInline = $this->shouldPrepareNativeAttachmentsInline();
+            if ($prepareNativeAttachmentsInline && ($this->sourceType === null || in_array($this->sourceType, ['operations_quality', 'operations_safety_medical', 'operations_warehouse', 'file_document'], true))) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer::class)->prepare(
                     $this->organizationId, $this->projectId, $this->entityType, $this->entityId,
                     $run instanceof RagIndexRun ? static function () use ($run, $coordinator): void {
@@ -83,7 +86,7 @@ class IndexRagSourceJob implements ShouldQueue
                     } : null,
                 );
             }
-            if ($this->sourceType === null || in_array($this->sourceType, ['procurement_business', 'crm_business', 'commercial_proposals_business', 'procurement', 'crm', 'commercial_processes'], true)) {
+            if ($prepareNativeAttachmentsInline && ($this->sourceType === null || in_array($this->sourceType, ['procurement_business', 'crm_business', 'commercial_proposals_business', 'procurement', 'crm', 'commercial_processes'], true))) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantSalesNativeFileIndexer::class)->prepare(
                     $this->organizationId, $this->projectId, $this->entityType, $this->entityId,
                     $run instanceof RagIndexRun ? static function () use ($run, $coordinator): void {
@@ -93,7 +96,7 @@ class IndexRagSourceJob implements ShouldQueue
                     } : null,
                 );
             }
-            if ($this->sourceType === null || in_array($this->sourceType, ['legal_business', 'executive_business'], true)) {
+            if ($prepareNativeAttachmentsInline && ($this->sourceType === null || in_array($this->sourceType, ['legal_business', 'executive_business'], true))) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileIndexer::class)->prepare(
                     $this->organizationId, $this->projectId, $this->entityType, $this->entityId,
                     $run instanceof RagIndexRun ? static function () use ($run, $coordinator): void {
@@ -103,8 +106,8 @@ class IndexRagSourceJob implements ShouldQueue
                     } : null,
                 );
             }
-            if (($this->sourceType === 'workforce_payroll' && $this->entityType === 'workforce_export_package_file')
-                || ($this->entityType === null && ($this->sourceType === null || $this->sourceType === 'workforce_payroll'))) {
+            if ($prepareNativeAttachmentsInline && (($this->sourceType === 'workforce_payroll' && $this->entityType === 'workforce_export_package_file')
+                || ($this->entityType === null && ($this->sourceType === null || $this->sourceType === 'workforce_payroll')))) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantWorkforceNativeFileIndexer::class)->prepare(
                     $this->organizationId, $this->projectId, $this->entityType === null ? null : $this->entityId,
                     $run instanceof RagIndexRun ? static function () use ($run, $coordinator): void {
@@ -154,6 +157,11 @@ class IndexRagSourceJob implements ShouldQueue
             'run_id' => $this->runId,
             'exception_class' => $throwable::class,
         ]);
+    }
+
+    private function shouldPrepareNativeAttachmentsInline(): bool
+    {
+        return app(AssistantNativeAttachmentPreparationQueue::class)->shouldPrepareInline($this->runId);
     }
 
     private function queueName(): string
