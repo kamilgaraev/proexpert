@@ -22,12 +22,23 @@ final class QueuedAssistantChatService
         $organization = Organization::query()->findOrFail($organizationId);
         $started = $this->requests->startQueued($organization, $actor, $conversationId, $payload, $surface);
         if ($started['created']) {
+            $dispatchStartedAt = hrtime(true);
             try {
                 ExecuteAssistantChatJob::dispatch((int) $started['request']->id)->afterCommit();
             } catch (Throwable $exception) {
+                AssistantRequestLifecycle::recordSubmitPhaseDuration(
+                    (string) $started['request']->request_id,
+                    'queue_dispatch_call',
+                    AssistantRequestLifecycle::elapsedMilliseconds($dispatchStartedAt),
+                );
                 $this->requests->fail($started['request'], 'queue_unavailable');
                 throw $exception;
             }
+            AssistantRequestLifecycle::recordSubmitPhaseDuration(
+                (string) $started['request']->request_id,
+                'queue_dispatch_call',
+                AssistantRequestLifecycle::elapsedMilliseconds($dispatchStartedAt),
+            );
         }
         return $started;
     }
