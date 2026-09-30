@@ -246,7 +246,7 @@ class RagIndexer
             });
     }
 
-    private function deleteIndexedEntity(
+    public function deleteIndexedEntity(
         int $organizationId,
         string $sourceType,
         string $entityType,

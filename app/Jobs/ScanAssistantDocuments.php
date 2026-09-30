@@ -40,7 +40,8 @@ final class ScanAssistantDocuments implements ShouldQueue, ShouldBeUnique
                     ->discover($this->organizationId, $settings->approved_by === null ? null : (int) $settings->approved_by);
                 $files = File::query()->where('organization_id', $this->organizationId)->where('disk', 's3')->where('id', '>', $settings->last_file_id)->orderBy('id')->limit(50)->get(['id']);
                 foreach ($files as $file) {
-                    RegisterAssistantEntityFile::dispatch((int) $file->id)->afterCommit();
+                    app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)
+                        ->queueFileRegistration($this->organizationId, (int) $file->id, true);
                 }
                 $settings->update(['last_file_id' => $files->last()?->id ?? $settings->last_file_id,
                     'scanned_count' => $settings->scanned_count + $files->count(), 'scan_completed_at' => $files->count() < 50 ? now() : null]);

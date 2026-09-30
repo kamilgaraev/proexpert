@@ -39,13 +39,7 @@ final class GlobalRagQueue
 
     public function queueAfterCommit(string $sourceType, string $entityType, string|int $entityId): void
     {
-        DB::afterCommit(function () use ($sourceType, $entityType, $entityId): void {
-            try {
-                $this->record($sourceType, $entityType, $entityId);
-            } catch (Throwable $exception) {
-                $this->warning('ai_assistant.rag.global_event_record_failed', null, $exception);
-            }
-        });
+        $this->record($sourceType, $entityType, $entityId);
     }
 
     public function record(string $sourceType, string $entityType, string|int $entityId, int $initialCursor = 0): RagGlobalIndexEvent

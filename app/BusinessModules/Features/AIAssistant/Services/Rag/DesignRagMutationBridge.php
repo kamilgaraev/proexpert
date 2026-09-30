@@ -66,9 +66,13 @@ final class DesignRagMutationBridge
 
     private function safely(callable $operation): void
     {
+        $transactional = DB::transactionLevel() > 0;
         try {
             DB::transaction($operation);
         } catch (Throwable $exception) {
+            if ($transactional) {
+                throw $exception;
+            }
             try {
                 Log::warning('ai_assistant.rag.design_bulk_queue_failed', ['exception_class' => $exception::class]);
             } catch (Throwable) {

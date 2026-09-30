@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantSalesBusinessMetadata;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -46,9 +47,13 @@ final class SalesRagMutationBridge
 
     private static function safely(callable $operation): void
     {
+        $transactional = DB::transactionLevel() > 0;
         try {
             $operation();
         } catch (Throwable $exception) {
+            if ($transactional) {
+                throw $exception;
+            }
             try {
                 Log::warning('ai_assistant.rag.sales_queue_failed', ['exception_class' => $exception::class]);
             } catch (Throwable) {

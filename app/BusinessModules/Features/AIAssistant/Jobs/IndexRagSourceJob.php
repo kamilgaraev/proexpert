@@ -65,6 +65,14 @@ class IndexRagSourceJob implements ShouldQueue
             : null;
 
         try {
+            if ($this->sourceType === 'file_document' && $this->entityType === 'file') {
+                (new \App\Jobs\RegisterAssistantEntityFile((int) $this->entityId, $this->organizationId))
+                    ->handle(app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService::class));
+                if ($this->runId !== null) {
+                    $coordinator->markSucceeded($this->runId, 0, $run?->lease_token);
+                }
+                return;
+            }
             if ($this->sourceType === null || in_array($this->sourceType, ['operations_quality', 'operations_safety_medical', 'operations_warehouse', 'file_document'], true)) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer::class)->prepare(
                     $this->organizationId, $this->projectId, $this->entityType, $this->entityId,

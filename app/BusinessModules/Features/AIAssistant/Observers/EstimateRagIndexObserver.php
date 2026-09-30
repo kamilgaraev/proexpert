@@ -9,10 +9,9 @@ use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
 use App\Models\EstimateSection;
-use Illuminate\Contracts\Events\ShouldHandleEventsAfterCommit;
 use Illuminate\Database\Eloquent\Model;
 
-final class EstimateRagIndexObserver implements ShouldHandleEventsAfterCommit
+final class EstimateRagIndexObserver
 {
     public function saved(Model $model): void
     {
@@ -30,6 +29,21 @@ final class EstimateRagIndexObserver implements ShouldHandleEventsAfterCommit
     }
 
     private function queue(Model $model): void
+    {
+        $transactional = \Illuminate\Support\Facades\DB::transactionLevel() > 0;
+        try {
+            $this->queueEntity($model);
+        } catch (\Throwable $exception) {
+            if ($transactional) {
+                throw $exception;
+            }
+            \Illuminate\Support\Facades\Log::warning('ai_assistant.rag.estimate_queue_failed', [
+                'model' => $model::class, 'entity_id' => (string) $model->getKey(), 'exception_class' => $exception::class,
+            ]);
+        }
+    }
+
+    private function queueEntity(Model $model): void
     {
         if (app(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class)->paused()) {
             return;

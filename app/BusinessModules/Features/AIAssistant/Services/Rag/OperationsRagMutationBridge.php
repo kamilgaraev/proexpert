@@ -26,9 +26,13 @@ final class OperationsRagMutationBridge
             if ($record['table'] !== $table) {
                 continue;
             }
+            $transactional = DB::transactionLevel() > 0;
             try {
                 DB::transaction(static fn () => app(RagIndexingCoordinator::class)->queueEntity($organizationId, null, $record['source'], $type, $id));
             } catch (Throwable $exception) {
+                if ($transactional) {
+                    throw $exception;
+                }
                 try {
                     Log::warning('assistant.operations.index_pending_failed', ['organization_id' => $organizationId, 'entity_type' => $type, 'exception_class' => $exception::class]);
                 } catch (Throwable) {

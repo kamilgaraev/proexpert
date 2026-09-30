@@ -98,36 +98,38 @@ final class AssistantDocumentService
             $projectId = AssistantNativeFileRegistry::adapter($parentType)?->projectId($file);
         }
 
-        $document = AIAssistantDocument::query()->firstOrCreate(
-            ['file_id' => $file->id, 'checksum' => hash('sha256', $content)],
-            ['organization_id' => $file->organization_id, 'project_id' => $projectId, 'parent_entity_type' => $parentType,
-                'parent_entity_id' => (string) $file->fileable_id, 'storage_path' => $file->path,
-                'filename' => $file->original_name ?: $file->name, 'mime_type' => $file->mime_type,
-                'size_bytes' => strlen($content), 'status' => AIAssistantDocument::STATUS_QUEUED, 'coverage_status' => 'pending'],
-        );
-        foreach (AIAssistantDocument::query()->where('file_id', $file->id)->where('checksum', '!=', $document->checksum)->get() as $obsolete) {
-            $this->failOcr((int) $obsolete->id);
-            $obsolete->delete();
-        }
-        if ($document->wasRecentlyCreated) {
-            $reusable = AIAssistantDocument::query()->where('organization_id', $document->organization_id)
-                ->where('parent_entity_type', $document->parent_entity_type)->where('parent_entity_id', $document->parent_entity_id)
-                ->where('checksum', $document->checksum)->where('status', AIAssistantDocument::STATUS_READY)->where('id', '!=', $document->id)->first();
-            if ($reusable !== null) {
-                DB::transaction(function () use ($document, $reusable): void {
-                    foreach (AIAssistantDocumentUnit::query()->where('document_id', $reusable->id)->orderBy('id')->get() as $unit) {
-                        AIAssistantDocumentUnit::query()->create(['document_id' => $document->id, 'unit_type' => $unit->unit_type,
-                            'unit_index' => $unit->unit_index, 'text' => $unit->text, 'provenance' => $unit->provenance,
-                            'checksum' => $unit->checksum, 'confidence' => $unit->confidence]);
-                    }
-                    $document->update(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => $reusable->coverage_status,
-                        'extracted_text' => $reusable->extracted_text, 'processed_at' => now(),
-                        'metadata' => array_merge($document->metadata ?? [], ['page_count' => $reusable->metadata['page_count'] ?? 1, 'reused_from_document_id' => $reusable->id])]);
-                });
+        return DB::transaction(function () use ($file, $content, $projectId, $parentType): AIAssistantDocument {
+            $document = AIAssistantDocument::query()->firstOrCreate(
+                ['file_id' => $file->id, 'checksum' => hash('sha256', $content)],
+                ['organization_id' => $file->organization_id, 'project_id' => $projectId, 'parent_entity_type' => $parentType,
+                    'parent_entity_id' => (string) $file->fileable_id, 'storage_path' => $file->path,
+                    'filename' => $file->original_name ?: $file->name, 'mime_type' => $file->mime_type,
+                    'size_bytes' => strlen($content), 'status' => AIAssistantDocument::STATUS_QUEUED, 'coverage_status' => 'pending'],
+            );
+            foreach (AIAssistantDocument::query()->where('file_id', $file->id)->where('checksum', '!=', $document->checksum)->get() as $obsolete) {
+                $this->failOcr((int) $obsolete->id);
+                $obsolete->delete();
             }
-        }
+            if ($document->wasRecentlyCreated) {
+                $reusable = AIAssistantDocument::query()->where('organization_id', $document->organization_id)
+                    ->where('parent_entity_type', $document->parent_entity_type)->where('parent_entity_id', $document->parent_entity_id)
+                    ->where('checksum', $document->checksum)->where('status', AIAssistantDocument::STATUS_READY)->where('id', '!=', $document->id)->first();
+                if ($reusable !== null) {
+                    DB::transaction(function () use ($document, $reusable): void {
+                        foreach (AIAssistantDocumentUnit::query()->where('document_id', $reusable->id)->orderBy('id')->get() as $unit) {
+                            AIAssistantDocumentUnit::query()->create(['document_id' => $document->id, 'unit_type' => $unit->unit_type,
+                                'unit_index' => $unit->unit_index, 'text' => $unit->text, 'provenance' => $unit->provenance,
+                                'checksum' => $unit->checksum, 'confidence' => $unit->confidence]);
+                        }
+                        $document->update(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => $reusable->coverage_status,
+                            'extracted_text' => $reusable->extracted_text, 'processed_at' => now(),
+                            'metadata' => array_merge($document->metadata ?? [], ['page_count' => $reusable->metadata['page_count'] ?? 1, 'reused_from_document_id' => $reusable->id])]);
+                    });
+                }
+            }
 
-        return $document;
+            return $document;
+        });
     }
 
     public function process(int $documentId): AIAssistantDocument

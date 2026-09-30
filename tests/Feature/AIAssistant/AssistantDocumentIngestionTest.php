@@ -326,7 +326,10 @@ final class AssistantDocumentIngestionTest extends TestCase
         $this->file('two.txt', 'two');
         (new ScanAssistantDocuments($this->organization->id))->handle();
         (new ScanAssistantDocuments($this->organization->id))->handle();
-        Queue::assertPushed(RegisterAssistantEntityFile::class, 2);
+        Queue::assertPushed(\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class,
+            fn ($job): bool => $job->sourceType === 'file_document' && $job->entityType === 'file');
+        self::assertSame(2, \App\BusinessModules\Features\AIAssistant\Models\RagIndexRun::query()
+            ->where('organization_id', $this->organization->id)->where('entity_type', 'file')->count());
         $settings = AssistantDocumentSettings::query()->where('organization_id', $this->organization->id)->firstOrFail();
         self::assertSame(2, $settings->scanned_count);
         self::assertNotNull($settings->scan_completed_at);

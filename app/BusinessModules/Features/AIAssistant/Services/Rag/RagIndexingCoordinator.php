@@ -230,12 +230,27 @@ class RagIndexingCoordinator
 
     public function queueEntity(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId): RagIndexRun
     {
-        return DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityId): RagIndexRun {
+        return $this->queueEntityRun($organizationId, $projectId, $sourceType, $entityType, $entityId, RagIndexRun::MODE_ASYNC);
+    }
+
+    public function queueFileRegistration(int $organizationId, int $fileId, bool $archive = false): RagIndexRun
+    {
+        return $this->queueEntityRun($organizationId, null, 'file_document', 'file', $fileId,
+            $archive ? RagIndexRun::MODE_SCHEDULED : RagIndexRun::MODE_ASYNC);
+    }
+
+    private function queueEntityRun(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId, string $mode): RagIndexRun
+    {
+        return DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityId, $mode): RagIndexRun {
             Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
             $this->invalidateCoverageAfterCommit($organizationId);
             $pending = RagIndexRun::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
                 ->where('entity_type', $entityType)->where('entity_id', (string) $entityId)->where('status', RagIndexRun::STATUS_QUEUED)->first();
             if ($pending instanceof RagIndexRun) {
+                if ($mode === RagIndexRun::MODE_ASYNC && $pending->mode === RagIndexRun::MODE_SCHEDULED) {
+                    $pending->update(['mode' => RagIndexRun::MODE_ASYNC]);
+                    $this->dispatchRunAfterCommit($pending);
+                }
                 return $pending;
             }
             $run = RagIndexRun::query()->create([
@@ -245,7 +260,7 @@ class RagIndexingCoordinator
                 'entity_type' => $entityType,
                 'entity_id' => (string) $entityId,
                 'status' => RagIndexRun::STATUS_QUEUED,
-                'mode' => RagIndexRun::MODE_ASYNC,
+                'mode' => $mode,
                 'queued_at' => now(),
             ]);
             $this->dispatchRunAfterCommit($run);
@@ -598,8 +613,12 @@ class RagIndexingCoordinator
                     return;
                 }
                 $dispatcher = $this->dispatcher ?? app(RagJobDispatcher::class);
-                $dispatcher->dispatch(new IndexRagSourceJob($current->organization_id, $current->project_id, $current->source_type,
-                    $current->id, $current->entity_type, $current->entity_id), static function (Throwable $exception) use ($current): void {
+                $job = new IndexRagSourceJob($current->organization_id, $current->project_id, $current->source_type,
+                    $current->id, $current->entity_type, $current->entity_id);
+                if ($current->source_type === 'file_document' && $current->entity_type === 'file' && $current->mode === RagIndexRun::MODE_SCHEDULED) {
+                    $job->onQueue((string) config('ai-assistant.rag.queue', 'ai-rag'));
+                }
+                $dispatcher->dispatch($job, static function (Throwable $exception) use ($current): void {
                     RagIndexRun::query()->whereKey($current->id)->where('status', RagIndexRun::STATUS_QUEUED)
                         ->update(['last_error' => $exception::class, 'updated_at' => now()]);
                 });

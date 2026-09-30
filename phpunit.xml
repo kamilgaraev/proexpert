@@ -126,6 +126,9 @@
         <testsuite name="AIAssistantFullRelease">
             <file>tests/Feature/AIAssistant/AssistantAclQueryCompilerTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantAuthorizationBatchTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantProviderQuotaFailureTest.php</file>
+            <file>tests/Feature/AIAssistant/RagProducerDurabilityTest.php</file>
+            <file>tests/Feature/AIAssistant/RagFileProducerDurabilityTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantLegacyFinancialReadTest.php</file>
             <file>tests/Feature/AIAssistant/AICreditConcurrencyTest.php</file>
             <file>tests/Feature/AIAssistant/AICreditEconomicsMonitorTest.php</file>
@@ -191,6 +194,10 @@
             <file>tests/Unit/AIAssistant/AIUsageTrackerTest.php</file>
             <file>tests/Unit/AIAssistant/TokenBudgetImagesTest.php</file>
             <file>tests/Unit/AIAssistant/TokenBudgetServiceTest.php</file>
+            <file>tests/Unit/AIAssistant/AIAssistantServiceBudgetTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantFinancialClaimVerifierTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantStructuredFactSafetyTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantFinancialAnswerSafetyTest.php</file>
             <file>tests/Unit/AIAssistant/TokenCounterCacheDirectoryTest.php</file>
             <file>tests/Unit/AIAssistant/AssistantExtendedDomainRegistryTest.php</file>
             <file>tests/Unit/AIAssistant/AssistantRagObserverIsolationTest.php</file>

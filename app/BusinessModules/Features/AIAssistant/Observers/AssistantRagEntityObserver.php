@@ -7,11 +7,10 @@ namespace App\BusinessModules\Features\AIAssistant\Observers;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\GlobalRagQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
-use Illuminate\Contracts\Events\ShouldHandleEventsAfterCommit;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 
-final class AssistantRagEntityObserver implements ShouldHandleEventsAfterCommit
+final class AssistantRagEntityObserver
 {
     public static function definitions(): array
     {
@@ -126,9 +125,13 @@ final class AssistantRagEntityObserver implements ShouldHandleEventsAfterCommit
 
     private function queue(Model $model): void
     {
+        $transactional = \Illuminate\Support\Facades\DB::transactionLevel() > 0;
         try {
             $this->queueEntity($model);
         } catch (\Throwable $exception) {
+            if ($transactional) {
+                throw $exception;
+            }
             \Illuminate\Support\Facades\Log::warning('ai_assistant.rag.entity_queue_failed', ['model' => $model::class,
                 'entity_id' => (string) $model->getKey(), 'exception_class' => $exception::class]);
         }
@@ -146,6 +149,9 @@ final class AssistantRagEntityObserver implements ShouldHandleEventsAfterCommit
         [$sourceType, $entityType] = $definition;
         if (in_array(\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { return; }
         $entityId = $model->getKey();
+        if ($entityType === 'estimate_template' && ($model->getAttribute('is_public') || $model->getRawOriginal('is_public'))) {
+            app(GlobalRagQueue::class)->queueAfterCommit('estimate_reference', $entityType, $entityId);
+        }
         $globalTypes = \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('globalCatalogEntities')
             + \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('organizationNullableCatalogs')
             + \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('publicCatalogEntities')

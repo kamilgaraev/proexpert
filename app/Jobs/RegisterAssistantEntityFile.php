@@ -20,12 +20,12 @@ final class RegisterAssistantEntityFile implements ShouldQueue
     public int $tries = 3;
     public int $timeout = 60;
 
-    public function __construct(public readonly int $fileId) {}
+    public function __construct(public readonly int $fileId, public readonly ?int $organizationId = null) {}
 
     public function handle(AssistantDocumentService $documents): void
     {
         Cache::lock('assistant-file:'.$this->fileId, 180)->block(5, function () use ($documents): void {
-            $file = File::query()->find($this->fileId);
+            $file = File::query()->when($this->organizationId !== null, fn ($query) => $query->where('organization_id', $this->organizationId))->find($this->fileId);
             if ($file === null) {
                 return;
             }

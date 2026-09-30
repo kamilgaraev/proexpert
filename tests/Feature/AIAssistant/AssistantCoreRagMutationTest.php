@@ -82,24 +82,27 @@ final class AssistantCoreRagMutationTest extends TestCase
         Queue::assertNotPushed(IndexRagSourceJob::class);
     }
 
-    public function test_actual_postgres_queue_error_rolls_back_its_savepoint_and_business_change_remains_committable(): void
+    public function test_actual_postgres_queue_error_rolls_back_business_change_and_intent(): void
     {
         [$fixture, $document, $old] = $this->fixture();
         Queue::fake([IndexRagSourceJob::class]);
         $coordinator = new CoreMutationSqlFailureCoordinator(app(RagIndexer::class), app(RagJobDispatcher::class));
         $coordinator->failScheduleId = (string) $old->id;
         $this->app->instance(RagIndexingCoordinator::class, $coordinator);
-        DB::beginTransaction();
-        $replacement = app(PaymentScheduleService::class)->replacePendingSchedule($document, $this->installments(), $fixture->owner);
+        try {
+            DB::transaction(fn () => app(PaymentScheduleService::class)->replacePendingSchedule($document, $this->installments(), $fixture->owner));
+            self::fail('RAG persistence failure must roll back the business transaction');
+        } catch (QueryException $exception) {
+            self::assertSame('22012', $exception->errorInfo[0] ?? null);
+        }
         self::assertGreaterThan(0, $coordinator->failures);
         self::assertSame('22012', $coordinator->sqlState);
-        self::assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
-        DB::commit();
-        $this->assertDatabaseHas('immutable_audit_events', ['organization_id' => $fixture->organization->id,
+        self::assertTrue(PaymentSchedule::query()->whereKey($old->id)->exists());
+        self::assertSame(1, PaymentSchedule::query()->where('payment_document_id', $document->id)->count());
+        $this->assertDatabaseMissing('immutable_audit_events', ['organization_id' => $fixture->organization->id,
             'subject_id' => (string) $document->id, 'event_type' => 'payments.rescheduled']);
-        self::assertFalse(PaymentSchedule::query()->whereKey($old->id)->exists());
-        self::assertSame(2, PaymentSchedule::query()->whereIn('id', array_column($replacement, 'id'))->count());
-        self::assertSame(0, $this->scheduleRuns($fixture->organization->id)->where('entity_id', (string) $old->id)->count());
+        self::assertSame(0, $this->scheduleRuns($fixture->organization->id)->count());
+        Queue::assertNotPushed(IndexRagSourceJob::class);
         self::assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
     }
 

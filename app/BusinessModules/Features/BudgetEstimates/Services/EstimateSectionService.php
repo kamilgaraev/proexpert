@@ -21,20 +21,22 @@ class EstimateSectionService
     {
         // Проверка лимита разделов
         $this->checkSectionsLimit($data['estimate_id']);
-        
+
         if (!isset($data['sort_order'])) {
             $data['sort_order'] = $this->repository->getNextSortOrder(
                 $data['estimate_id'],
                 $data['parent_section_id'] ?? null
             );
         }
-        
-        $section = $this->repository->create($data);
-        $this->invalidateEstimateStructure((int) $section->estimate_id);
 
-        return $section;
+        return DB::transaction(function () use ($data) {
+            $section = $this->repository->create($data);
+            $this->invalidateEstimateStructure((int) $section->estimate_id);
+
+            return $section;
+        });
     }
-    
+
     /**
      * Проверить лимит разделов в смете
      */
@@ -53,10 +55,12 @@ class EstimateSectionService
 
     public function updateSection(EstimateSection $section, array $data): EstimateSection
     {
-        $this->repository->update($section, $data);
-        $this->invalidateEstimateStructure((int) $section->estimate_id);
-        
-        return $section->fresh();
+        return DB::transaction(function () use ($section, $data) {
+            $this->repository->update($section, $data);
+            $this->invalidateEstimateStructure((int) $section->estimate_id);
+
+            return $section->fresh();
+        });
     }
 
     public function deleteSection(EstimateSection $section, bool $cascade = false): bool

@@ -52,7 +52,7 @@ final class RagGlobalQueueTest extends TestCase
         $this->failDispatch = true;
         DB::beginTransaction();
         $this->global->queueAfterCommit('knowledge', 'knowledge_article', self::ENTITY_ID);
-        $this->assertSame(0, $this->eventQuery()->count());
+        $this->assertSame(1, $this->eventQuery()->count());
         $this->assertSame([], $this->jobs);
         DB::commit();
         $event = $this->eventQuery()->firstOrFail();
