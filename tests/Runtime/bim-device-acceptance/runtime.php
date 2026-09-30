@@ -6,8 +6,11 @@ namespace Tests\Runtime\BimDeviceAcceptance;
 
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Bootstrap\RegisterProviders;
+use Illuminate\Foundation\PackageManifest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\ServiceProvider;
@@ -72,6 +75,19 @@ function application(array $data, Request $request, array &$bootstrapProfile = [
     $app->loadEnvironmentFrom('.env.bim-device-acceptance-does-not-exist');
     $app->useStoragePath($data['runtime_directory'].'/storage');
     $app->instance('request', $request);
+    $servicesCache = $data['runtime_directory'].'/services.php';
+    putenv('APP_SERVICES_CACHE='.$servicesCache);
+    $_ENV['APP_SERVICES_CACHE'] = $servicesCache;
+    $_SERVER['APP_SERVICES_CACHE'] = $servicesCache;
+    $app->addAbsoluteCachePathPrefix($data['runtime_directory']);
+    $app->instance(PackageManifest::class, new class(new Filesystem, $app->basePath(), $data['runtime_directory'].'/packages.php') extends PackageManifest {
+        public function providers()
+        {
+            return array_values(array_filter(parent::providers(), static fn (string $provider): bool =>
+                ! str_starts_with($provider, 'Filament\\') && ! str_starts_with($provider, 'Livewire\\')));
+        }
+    });
+    RegisterProviders::merge([], __DIR__.'/acceptance-providers.php');
     $bootstrapProfile = ['application_setup_ms' => round((hrtime(true) - $profileStarted) / 1000000, 2),
         'stages_ms' => [], 'providers_ms' => [], 'db_query_count' => 0, 'db_ms' => 0.0, 'provider_db_ms' => []];
     $stageStarted = [];
