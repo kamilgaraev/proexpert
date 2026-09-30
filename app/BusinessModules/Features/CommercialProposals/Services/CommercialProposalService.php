@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\CommercialProposals\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\SalesRagMutationBridge;
 use App\BusinessModules\Features\CommercialProposals\Enums\CommercialProposalStatus;
 use App\BusinessModules\Features\CommercialProposals\Exceptions\CommercialProposalWorkflowException;
 use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
@@ -1081,6 +1082,8 @@ final class CommercialProposalService
      */
     private function replaceVersionRows(CommercialProposal $proposal, CommercialProposalVersion $version, array $sections): void
     {
+        SalesRagMutationBridge::changedRows(CommercialProposalLineItem::class, $version->lineItems()->getQuery(), (int) $proposal->organization_id, $proposal->project_id);
+        SalesRagMutationBridge::changedRows(CommercialProposalSection::class, $version->sections()->getQuery(), (int) $proposal->organization_id, $proposal->project_id);
         $version->lineItems()->delete();
         $version->sections()->delete();
 

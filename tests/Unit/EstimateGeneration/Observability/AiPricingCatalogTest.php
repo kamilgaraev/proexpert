@@ -81,4 +81,48 @@ final class AiPricingCatalogTest extends TestCase
         self::assertSame('4.71798000', $cost->amount);
         self::assertSame('RUB', $cost->currency);
     }
+
+    #[Test]
+    public function current_luna_catalog_preserves_historical_rates_and_selects_the_release_price_without_mutating_captured_snapshots(): void
+    {
+        $previousContainer = \Illuminate\Container\Container::getInstance();
+        $root = dirname(__DIR__, 4);
+        try {
+            new \Illuminate\Foundation\Application($root);
+            $configuration = require $root.'/config/estimate-generation.php';
+        } finally {
+            \Illuminate\Container\Container::setInstance($previousContainer);
+        }
+        $catalog = new AiPricingCatalog($configuration['ai_pricing_catalog']);
+        $operations = ['vision', 'ocr', 'rerank', 'project_synthesis', 'estimate_composition', 'estimate_audit', 'completeness_review'];
+        self::assertEqualsCanonicalizing($operations, array_keys($configuration['ai_pricing_catalog']));
+        foreach ($operations as $operation) {
+            $before = $catalog->resolve($operation, 'timeweb', 'openai/gpt-6-luna', new DateTimeImmutable('2026-09-28T23:59:59+00:00'));
+            $captured = $before->toArray();
+            $current = $catalog->resolve($operation, 'timeweb', 'openai/gpt-6-luna', new DateTimeImmutable('2026-09-29T00:00:00+00:00'));
+            self::assertSame('timeweb-ai-gateway-2026-09-26', $before->version, $operation);
+            self::assertSame('2026-09-26T00:00:00+00:00', $before->effectiveAt);
+            self::assertSame('timeweb-ai-gateway-2026-09-29-v2', $current->version, $operation);
+            self::assertSame('2026-09-29T00:00:00+00:00', $current->effectiveAt);
+            foreach (['input_per_million' => ['14', '13.5'], 'cached_input_per_million' => ['14', '13.5'],
+                'output_per_million' => ['68', '67.5'], 'reasoning_per_million' => ['68', '67.5']] as $field => [$historicalRate, $releaseRate]) {
+                self::assertSame($historicalRate, $captured[$field], $operation.'.'.$field);
+                self::assertSame($releaseRate, $current->toArray()[$field], $operation.'.'.$field);
+            }
+            foreach ([$before, $current] as $snapshot) {
+                self::assertSame('included_in_output', $snapshot->toArray()['reasoning_mode']);
+                self::assertSame('RUB', $snapshot->currency);
+                self::assertSame('contract', $snapshot->source);
+                self::assertSame('0', $snapshot->toArray()['image_unit']);
+                self::assertSame('0', $snapshot->toArray()['page_unit']);
+            }
+            $calculator = new AiCostCalculator;
+            self::assertSame('81.00000000', $calculator->calculate(1_000_000, 500_000, 1_000_000, 250_000, 1, 1, $current->toArray())->amount);
+            self::assertSame($captured, $before->toArray());
+            $storedHistorical = AiPriceSnapshot::fromArray($captured);
+            self::assertSame($captured, $storedHistorical->toArray());
+            self::assertSame('82.00000000', $calculator->calculate(1_000_000, 500_000, 1_000_000, 250_000, 1, 1, $storedHistorical->toArray())->amount);
+            self::assertSame($captured, $catalog->resolve($operation, 'timeweb', 'openai/gpt-6-luna', new DateTimeImmutable('2026-09-28T23:59:59+00:00'))->toArray());
+        }
+    }
 }

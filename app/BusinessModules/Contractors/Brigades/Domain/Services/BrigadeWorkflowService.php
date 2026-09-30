@@ -108,21 +108,36 @@ class BrigadeWorkflowService
 
     public function syncSpecializations(BrigadeProfile $brigade, array $specializations): void
     {
-        $ids = collect($specializations)
-            ->filter(fn (mixed $value): bool => is_string($value) && trim($value) !== '')
-            ->map(function (string $name): int {
-                $normalized = trim($name);
-                $model = BrigadeSpecialization::firstOrCreate(
-                    ['slug' => Str::slug($normalized)],
-                    ['name' => $normalized]
-                );
+        DB::transaction(function () use ($brigade, $specializations): void {
+            $ids = collect($specializations)
+                ->filter(fn (mixed $value): bool => is_string($value) && trim($value) !== '')
+                ->map(function (string $name): int {
+                    $normalized = trim($name);
+                    $model = BrigadeSpecialization::firstOrCreate(
+                        ['slug' => Str::slug($normalized)],
+                        ['name' => $normalized]
+                    );
 
-                return $model->id;
-            })
-            ->values()
-            ->all();
+                    return $model->id;
+                })
+                ->values()
+                ->all();
 
-        $brigade->specializations()->sync($ids);
+            $indexingPaused = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class)->paused();
+            $queue = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\GlobalRagQueue::class);
+            if (!$indexingPaused) {
+                foreach (DB::table('brigade_profile_specialization')->where('brigade_id', $brigade->id)->select('id')->lazyById(50) as $pivot) {
+                    $queue->queueAfterCommit('brigades', 'brigade_specialization_link', (int) $pivot->id);
+                }
+            }
+            $brigade->specializations()->sync($ids);
+            if (!$indexingPaused) {
+                foreach (DB::table('brigade_profile_specialization')->where('brigade_id', $brigade->id)->select('id')->lazyById(50) as $pivot) {
+                    $queue->queueAfterCommit('brigades', 'brigade_specialization_link', (int) $pivot->id);
+                }
+                $queue->queueAfterCommit('brigades', 'brigade_profile', (int) $brigade->id);
+            }
+        });
     }
 
     public function createAssignmentFromInvitation(BrigadeInvitation $invitation): BrigadeProjectAssignment

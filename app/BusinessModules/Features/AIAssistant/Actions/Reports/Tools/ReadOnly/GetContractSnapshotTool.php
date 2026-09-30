@@ -39,13 +39,16 @@ class GetContractSnapshotTool extends AbstractReadOnlyTool
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        unset($user);
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
 
         if (!$this->hasTable('contracts')) {
             return $this->tableUnavailable('contracts', 'contracts');
         }
 
-        $query = $this->withoutDeleted($this->orgTable('contracts', $organization), 'contracts')
+        $query = $this->withoutDeleted($this->actorTable($user, 'contracts', $organization), 'contracts')
             ->leftJoin('contractors', 'contracts.contractor_id', '=', 'contractors.id')
             ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id');
 
@@ -98,7 +101,7 @@ class GetContractSnapshotTool extends AbstractReadOnlyTool
             ->limit($this->limit($arguments))
             ->get();
 
-        $items = $contracts->map(fn (object $contract): array => $this->contractSnapshot($contract, $organization))->all();
+        $items = $contracts->map(fn (object $contract): array => $this->contractSnapshot($contract, $organization, $user))->all();
 
         return [
             'status' => 'success',
@@ -114,7 +117,7 @@ class GetContractSnapshotTool extends AbstractReadOnlyTool
         ];
     }
 
-    private function contractSnapshot(object $contract, Organization $organization): array
+    private function contractSnapshot(object $contract, Organization $organization, User $user): array
     {
         $contractId = (int) $contract->id;
 
@@ -139,11 +142,11 @@ class GetContractSnapshotTool extends AbstractReadOnlyTool
                 'id' => $contract->project_id,
                 'name' => $contract->project_name,
             ],
-            'financial' => $this->financialSummary($organization, $contractId),
+            'financial' => $this->financialSummary($organization, $contractId, $user),
         ];
     }
 
-    private function financialSummary(Organization $organization, int $contractId): array
+    private function financialSummary(Organization $organization, int $contractId, User $user): array
     {
         $actsAmount = 0.0;
         $actsCount = 0;
@@ -160,7 +163,7 @@ class GetContractSnapshotTool extends AbstractReadOnlyTool
         $paymentsCount = 0;
 
         if ($this->hasTable('payment_documents')) {
-            $payments = $this->withoutDeleted($this->orgTable('payment_documents', $organization), 'payment_documents')
+            $payments = $this->withoutDeleted($this->actorTable($user, 'payment_documents', $organization), 'payment_documents')
                 ->where('payment_documents.invoiceable_type', 'App\\Models\\Contract')
                 ->where('payment_documents.invoiceable_id', $contractId);
             $paymentsAmount = round((float) (clone $payments)->sum('amount'), 2);

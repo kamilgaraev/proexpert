@@ -239,7 +239,15 @@ class Module extends Model
      */
     public function toPublicArray(): array
     {
-        return [
+        $limits = $this->limits;
+        $pricingConfig = $this->pricing_config;
+        if ($this->slug === 'ai-assistant' && is_array($limits)) {
+            unset($limits['max_ai_requests_per_month']);
+        }
+        if ($this->slug === 'ai-assistant' && is_array($pricingConfig)) {
+            unset($pricingConfig['legacy_ai_request_allowance']);
+        }
+        $public = [
             'id' => $this->id,
             'name' => $this->name,
             'slug' => $this->slug,
@@ -248,12 +256,12 @@ class Module extends Model
             'billing_model' => $this->billing_model,
             'category' => $this->category,
             'description' => $this->description,
-            'pricing_config' => $this->pricing_config,
+            'pricing_config' => $pricingConfig,
             'features' => $this->features,
             'permissions' => $this->permissions,
             'dependencies' => $this->dependencies,
             'conflicts' => $this->conflicts,
-            'limits' => $this->limits,
+            'limits' => $limits,
             'icon' => $this->icon,
             'display_order' => $this->display_order,
             'is_active' => $this->is_active,
@@ -263,6 +271,14 @@ class Module extends Model
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
+        if ($this->slug === 'ai-assistant') {
+            $public['assistant_billing'] = [
+                'contract_version' => 2,
+                'limiting_resource' => 'organization_ai_credits',
+                'included_units_per_paid_period' => 5000,
+            ];
+        }
+        return $public;
     }
 
     /**

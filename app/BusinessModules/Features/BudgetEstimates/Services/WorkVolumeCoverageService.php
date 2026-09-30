@@ -191,6 +191,10 @@ final class WorkVolumeCoverageService
             foreach (array_chunk($normalized, 500) as $chunk) {
                 WorkVolumeStatementCoverage::query()->insert($chunk);
             }
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                WorkVolumeStatementCoverage::class, WorkVolumeStatementCoverage::query()
+                    ->where('statement_id', $locked->id)->where('coverage_revision', $revision),
+                (int) $locked->organization_id, (int) $locked->project_id);
             return $this->revisionResult($locked, $revision);
         });
     }

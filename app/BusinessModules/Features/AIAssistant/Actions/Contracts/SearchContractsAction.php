@@ -1,18 +1,25 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Contracts;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Support\Facades\DB;
 
 class SearchContractsAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?User $actor = null): array
     {
+        if ($actor === null || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'contracts') || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'finance')) return [];
         $query = DB::table('contracts')
             ->join('contractors', 'contracts.contractor_id', '=', 'contractors.id')
             ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
             ->where('contracts.organization_id', $organizationId)
-            ->whereNull('contracts.deleted_at');
+            ->whereNull('contracts.deleted_at')
+            ->whereIn('contracts.id', app(AssistantDataAccessPolicy::class)->entityQuery($actor, $organizationId, 'contract')->select('contracts.id'));
 
         if (isset($params['status'])) {
             $query->where('contracts.status', $params['status']);
@@ -117,5 +124,4 @@ class SearchContractsAction
         ];
     }
 }
-
 

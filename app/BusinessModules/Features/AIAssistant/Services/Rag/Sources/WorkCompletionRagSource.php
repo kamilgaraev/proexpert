@@ -30,7 +30,7 @@ final class WorkCompletionRagSource implements RagSourceCollectorInterface
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id');
 
-        foreach ($query->cursor() as $work) {
+        foreach ($query->reorder()->lazyById(100) as $work) {
             yield $this->chunk($work);
         }
     }

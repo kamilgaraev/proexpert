@@ -6,8 +6,8 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Models\AIUsageRecord;
 use App\BusinessModules\Features\AIAssistant\Models\AIUsageStats;
-use App\Models\Module;
 use App\Models\User;
+use App\Support\AI\LunaModelPolicy;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -17,33 +17,27 @@ class UsageTracker
 {
     public function canMakeRequest(int $organizationId): bool
     {
-        $module = Module::where('slug', 'ai-assistant')->first();
-
-        if (! $module) {
-            return false;
-        }
-
-        $limit = $module->limits['max_ai_requests_per_month'] ?? 5000;
-        $used = $this->getMonthlyUsage($organizationId);
-
-        return $used < $limit;
+        if (! (bool) config('ai-assistant-credits.enforce', false)) { return true; }
+        $organization = \App\Models\Organization::query()->find($organizationId);
+        return $organization !== null && app(\App\Services\Credits\AICreditService::class)->balance($organization)['available_minor'] >= 50;
     }
 
-    public function getMonthlyUsage(int $organizationId): int
+    public function getMonthlyUsage(int $organizationId, bool $fresh = false): int
     {
         $year = now()->year;
         $month = now()->month;
 
         $cacheKey = "ai_usage:{$organizationId}:{$year}:{$month}";
 
-        return (int) Cache::remember($cacheKey, 600, function () use ($organizationId, $year, $month): int {
+        $read = function () use ($organizationId, $year, $month): int {
             $stats = AIUsageStats::where('organization_id', $organizationId)
                 ->where('year', $year)
                 ->where('month', $month)
                 ->first();
 
             return $stats ? (int) $stats->requests_count : 0;
-        });
+        };
+        return $fresh ? $read() : (int) Cache::remember($cacheKey, 600, $read);
     }
 
     public function trackRequest(int $organizationId, User $user, int $tokens, float $costRub): void
@@ -60,8 +54,6 @@ class UsageTracker
 
     public function getUsageStats(int $organizationId): array
     {
-        $module = Module::where('slug', 'ai-assistant')->first();
-        $limit = (int) ($module?->limits['max_ai_requests_per_month'] ?? 5000);
         $used = $this->getMonthlyUsage($organizationId);
 
         $year = now()->year;
@@ -73,10 +65,13 @@ class UsageTracker
             ->first();
 
         return [
-            'monthly_limit' => $limit,
+            'billing_contract_version' => 2,
+            'limiting_resource' => 'organization_ai_credits',
+            'usage_kind' => 'statistics',
+            'monthly_limit' => null,
             'used' => $used,
-            'remaining' => max(0, $limit - $used),
-            'percentage_used' => $limit > 0 ? round(($used / $limit) * 100, 1) : 0,
+            'remaining' => null,
+            'percentage_used' => null,
             'tokens_used' => $stats ? $stats->tokens_used : 0,
             'cost_rub' => $stats ? (float) $stats->cost_rub : 0,
         ];
@@ -98,7 +93,16 @@ class UsageTracker
     ): ?AIUsageRecord {
         $totalTokens = $totalTokens ?? ($inputTokens + $outputTokens);
 
-        if ($totalTokens <= 0 && $inputTokens <= 0 && $outputTokens <= 0) {
+        $usageUnavailable = ($metadata['provider_usage_available'] ?? true) === false;
+        if (array_key_exists('provider_usage_available', $metadata)) {
+            $metadata['cost_available'] = !$usageUnavailable;
+            $metadata['cost_is_estimate'] = false;
+        }
+        if ($usageUnavailable) {
+            $inputTokens = $outputTokens = $totalTokens = 0;
+        }
+        $failedAttemptReceipt = isset($metadata['usage_key']) && $metadata['usage_key'] !== '' && ($metadata['is_successful'] ?? null) === false;
+        if (!$usageUnavailable && $totalTokens <= 0 && $inputTokens <= 0 && $outputTokens <= 0 && ! $failedAttemptReceipt) {
             return null;
         }
 
@@ -107,7 +111,7 @@ class UsageTracker
                 return null;
             }
 
-            $cost = $this->calculateCostBreakdown(
+            $cost = $usageUnavailable ? ['input' => 0.0, 'output' => 0.0, 'total' => 0.0] : $this->calculateCostBreakdown(
                 $totalTokens,
                 $model,
                 $inputTokens,
@@ -180,6 +184,14 @@ class UsageTracker
         ?int $outputTokens = null,
         ?string $providerName = null
     ): array {
+        if (preg_match('/(?:^|\/)gpt-6-luna(?:-|$)/i', $model) === 1) {
+            $inputTokens ??= (int) ($totalTokens * 0.75);
+            $outputTokens ??= $totalTokens - $inputTokens;
+            $pricing = $this->detectProvider($model, $providerName) === 'timeweb'
+                ? $this->timewebPricing($model) : ['input' => 13.5, 'output' => 67.5];
+            return $this->costBreakdown(max(0, $inputTokens) * $pricing['input'] / 1_000_000, max(0, $outputTokens) * $pricing['output'] / 1_000_000);
+        }
+
         // Определяем провайдера по названию модели
         $provider = $this->detectProvider($model, $providerName);
 
@@ -213,10 +225,9 @@ class UsageTracker
 
         // OpenAI и другие провайдеры
         $pricing = match ($provider) {
-            'openai' => [
-                'input' => 0.15,   // GPT-4o-mini: $0.15 за 1M input
-                'output' => 0.60,  // GPT-4o-mini: $0.60 за 1M output
-            ],
+            'openai' => preg_match('/^(?:openai\/)?gpt-6-luna(?:-|$)/', $model) === 1
+                ? ['input' => 0.10, 'output' => 0.50]
+                : ['input' => 0.15, 'output' => 0.60],
             default => [
                 'input' => 0.15,
                 'output' => 0.60,
@@ -303,10 +314,17 @@ class UsageTracker
      */
     protected function timewebPricing(string $model): array
     {
+        if ($model === (string) config('ai-assistant.rag.embedding_model', 'openai/text-embedding-3-large')) {
+            $price = config('ai-assistant.rag.embedding_input_price_per_million', 45.0);
+            if (is_numeric($price) && (float) $price >= 0) { return ['input' => (float) $price, 'output' => 0.0]; }
+        }
         $inputOverride = config('ai-assistant.llm.timeweb.input_price_per_million');
         $outputOverride = config('ai-assistant.llm.timeweb.output_price_per_million');
 
-        if (is_numeric($inputOverride) && is_numeric($outputOverride)) {
+        if ((LunaModelPolicy::isLuna($model, 'openai') || LunaModelPolicy::isLuna($model, 'timeweb'))
+            && is_numeric($inputOverride) && is_numeric($outputOverride)
+            && is_finite((float) $inputOverride) && is_finite((float) $outputOverride)
+            && (float) $inputOverride >= 0 && (float) $outputOverride >= 0) {
             return [
                 'input' => (float) $inputOverride,
                 'output' => (float) $outputOverride,
@@ -316,6 +334,7 @@ class UsageTracker
         $normalized = strtolower(str_replace(['_', ' ', '/', ':'], '-', $model));
 
         $pricing = [
+            'gpt-6-luna' => ['input' => 13.5, 'output' => 67.5],
             'qwen3.5-flash' => ['input' => 14.0, 'output' => 52.0],
             'gemini-3.1-flash-lite' => ['input' => 34.0, 'output' => 203.0],
             'gemini-3-flash-preview' => ['input' => 68.0, 'output' => 405.0],

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\AssetManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Core\AssetManagement\DTO\AssetPlacementData;
 use App\BusinessModules\Core\AssetManagement\DTO\CreateOrganizationAssetData;
 use App\BusinessModules\Core\AssetManagement\Enums\AssetAccountingMode;
@@ -611,6 +613,7 @@ final readonly class LegacyAssetMapper
         if ($legacyNeedsUpdate) {
             DB::table('machinery_assets')->where('id', $legacy->id)->update(['current_project_id' => $projectId]);
             $legacy->current_project_id = $projectId;
+            app(OperationsRagMutationBridge::class)->changed('machinery_assets', $organizationId, (int) $legacy->id);
         }
         if ($canonicalNeedsUpdate) {
             $fromWarehouseId = $canonical->current_warehouse_id;
@@ -621,7 +624,7 @@ final readonly class LegacyAssetMapper
                 'current_project_id' => $projectId,
                 'responsible_user_id' => null,
             ]);
-            DB::table('asset_custody_events')->insert([
+            $custodyEventId = DB::table('asset_custody_events')->insertGetId([
                 'organization_id' => $organizationId,
                 'organization_asset_id' => $canonical->id,
                 'actor_user_id' => null,
@@ -636,6 +639,9 @@ final readonly class LegacyAssetMapper
                 'occurred_at' => now(),
                 'created_at' => now(),
             ]);
+        }
+        if ($canonicalNeedsUpdate) {
+            app(OperationsRagMutationBridge::class)->changed('asset_custody_events', $organizationId, (int) $custodyEventId);
         }
         $report['placements_reconciled']++;
 
@@ -658,6 +664,10 @@ final readonly class LegacyAssetMapper
             DB::table('machinery_assignments')
                 ->where('id', $normalization['id'])
                 ->update(['planned_end_at' => $normalization['planned_end_at']]);
+            $organizationId = DB::table('machinery_assignments')->where('id', $normalization['id'])->value('organization_id');
+            if ($organizationId !== null) {
+                app(OperationsRagMutationBridge::class)->changed('machinery_assignments', (int) $organizationId, $normalization['id']);
+            }
             $report['assignment_periods_normalized']++;
         }
     }

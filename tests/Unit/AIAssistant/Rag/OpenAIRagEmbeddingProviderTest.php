@@ -42,6 +42,9 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
             'input_tokens' => 14,
             'output_tokens' => 0,
             'total_tokens' => 14,
+            'usage_source' => 'provider_response',
+            'provider_usage_available' => true,
+            'estimated_input_tokens' => null,
         ], $provider->lastUsage());
         $this->assertSame([
             'model' => 'text-embedding-3-small',
@@ -126,6 +129,28 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
 
         $this->assertSame([0.7, 0.8, 0.9], $provider->embed('project context'));
         $this->assertSame(2, $client->embeddings->attempts);
+    }
+
+    public function test_query_embedding_does_not_retry_past_request_budget(): void
+    {
+        $client = new FakeOpenAIEmbeddingClient(
+            [0.7, 0.8, 0.9],
+            [new RuntimeException('Operation timed out after 6000 milliseconds')]
+        );
+        $provider = new OpenAIRagEmbeddingProvider(
+            client: $client,
+            apiKey: 'test-key',
+            model: 'text-embedding-3-small',
+            dimensions: 3
+        );
+
+        $this->expectException(RagEmbeddingUnavailableException::class);
+
+        try {
+            $provider->embed('project context', RagEmbeddingProviderInterface::PURPOSE_QUERY);
+        } finally {
+            $this->assertSame(1, $client->embeddings->attempts);
+        }
     }
 }
 

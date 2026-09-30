@@ -51,7 +51,14 @@ final class RagPromptContextBuilder
             'excerpt' => $result->excerpt,
             'score' => round($result->similarity, 4),
             'updated_at' => $result->updatedAt?->format(DateTimeInterface::ATOM),
+            'fetched_at' => now()->toISOString(),
+            'source_id' => $result->metadata['source_id'] ?? null,
+            'source_version' => $result->metadata['source_version'] ?? null,
+            'checksum' => $result->metadata['checksum'] ?? null,
+            'assistant_public_schema_revision' => $result->metadata['assistant_public_schema_revision'] ?? null,
+            'content_scope' => 'unstructured',
             'navigation_target' => self::navigationTarget($result),
+            'navigation' => self::navigationTarget($result) !== null ? ['url' => self::navigationTarget($result)['route']] : null,
         ], $results));
     }
 
@@ -60,26 +67,7 @@ final class RagPromptContextBuilder
      */
     private function prompt(array $sources): string
     {
-        $lines = [
-            'МОСТ context:',
-            'Answer guidance:',
-            '- Отвечай на русском и опирайся только на источники ниже.',
-            '- Если запрос о проблемах, рисках, заявках или внимании, дай компактный рабочий список в формате: Проблема — что не так — что сделать.',
-            '- Если пользователь просит сравнить договоры, сметы, работы и платежи, дай текстовый анализ расхождений и рисков по найденным источникам, без генерации файла.',
-            '- Если запрос только или явно именно про справочники, нормативы, каталоги или расценки, не подменяй их проектными сметами; если вопрос одновременно про сметы и нормативы, используй оба типа источников и отдельно отметь, если справочников нет.',
-            '- Не называй проект или ситуацию критической без явной метки critical/urgent/high или прямого критического факта в источниках; при косвенных признаках пиши мягче: "есть признаки проблемы".',
-        ];
-
-        foreach ($sources as $index => $source) {
-            $lines[] = sprintf(
-                '[%d] %s: %s',
-                $index + 1,
-                (string) ($source['title'] ?? ''),
-                (string) ($source['excerpt'] ?? '')
-            );
-        }
-
-        return implode("\n", $lines);
+        return json_encode(['kind' => 'untrusted_search_results', 'sources' => $sources], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
     /**
@@ -98,11 +86,9 @@ final class RagPromptContextBuilder
                 ? "/projects/{$result->projectId}/schedules/{$entityId}"
                 : ($result->projectId !== null ? "/projects/{$result->projectId}/schedules" : '/schedules'),
             'contract' => $entityId !== null ? "/contracts/{$entityId}" : null,
-            'estimate' => $entityId !== null && $result->projectId !== null
-                ? "/projects/{$result->projectId}/estimates/{$entityId}"
-                : ($result->projectId !== null ? "/projects/{$result->projectId}/estimates" : null),
-            'estimate_section' => $estimateId !== null && $result->projectId !== null
-                ? "/projects/{$result->projectId}/estimates/{$estimateId}"
+            'estimate' => $entityId !== null ? "/estimates/{$entityId}" : null,
+            'estimate_section', 'estimate_item', 'estimate_resource', 'estimate_item_resource' => $estimateId !== null
+                ? "/estimates/{$estimateId}"
                 : ($result->projectId !== null ? "/projects/{$result->projectId}/estimates" : null),
             'estimate_template' => '/templates/library',
             'estimate_library_item' => '/libraries',

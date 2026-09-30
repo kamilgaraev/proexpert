@@ -399,15 +399,16 @@ class UserInvitationService
         $this->logging->technical('user_invitation.cleanup.started');
 
         try {
-            $expiredCount = UserInvitation::where('status', InvitationStatus::PENDING)
-                ->where('expires_at', '<', now())
-                ->count();
+            $expiredCount = DB::transaction(function (): int {
+                $expired = UserInvitation::query()->where('status', InvitationStatus::PENDING)->where('expires_at', '<', now());
+                $count = (clone $expired)->count();
+                if ($count > 0) {
+                    app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(UserInvitation::class, $expired);
+                    $expired->update(['status' => InvitationStatus::EXPIRED]);
+                }
 
-            if ($expiredCount > 0) {
-                UserInvitation::where('status', InvitationStatus::PENDING)
-                    ->where('expires_at', '<', now())
-                    ->update(['status' => InvitationStatus::EXPIRED]);
-            }
+                return $count;
+            });
 
             $duration = (microtime(true) - $startTime) * 1000;
 

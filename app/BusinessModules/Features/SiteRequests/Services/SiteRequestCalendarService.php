@@ -2,6 +2,8 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestCalendarEvent;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
@@ -143,6 +145,19 @@ class SiteRequestCalendarService
             && $request->hasCalendarEvent();
     }
 
+    private function deleteCalendarRows(int $requestId, ?SiteRequestCalendarEvent $snapshot = null): void
+    {
+        DB::transaction(static function () use ($requestId, $snapshot): void {
+            if ($snapshot instanceof SiteRequestCalendarEvent && $snapshot->id !== null) {
+                app(OperationsRagMutationBridge::class)->changed('site_request_calendar_events', $snapshot->organization_id, $snapshot->id);
+            }
+            foreach (SiteRequestCalendarEvent::query()->where('site_request_id', $requestId)->select(['id', 'organization_id'])->lazyById(50) as $row) {
+                app(OperationsRagMutationBridge::class)->changed('site_request_calendar_events', $row->organization_id, $row->id);
+            }
+            SiteRequestCalendarEvent::query()->where('site_request_id', $requestId)->delete();
+        });
+    }
+
     private function deleteCalendarEventLocked(
         int $requestId,
         ?SiteRequest $request,
@@ -156,9 +171,7 @@ class SiteRequestCalendarService
             $this->deleteScheduleManagementEvent($calendarEvent);
         }
 
-        DB::transaction(static fn () => SiteRequestCalendarEvent::query()
-            ->where('site_request_id', $requestId)
-            ->delete());
+        $this->deleteCalendarRows($requestId, $calendarEvent);
 
         Log::info('site_request.calendar_event.deleted', [
             'request_id' => $requestId,
@@ -473,9 +486,7 @@ class SiteRequestCalendarService
                 || !$currentCalendarEvent instanceof SiteRequestCalendarEvent
             ) {
                 $scheduleService->deleteEvent($scheduleEvent);
-                DB::transaction(static fn () => SiteRequestCalendarEvent::query()
-                    ->where('site_request_id', $request->id)
-                    ->delete());
+                $this->deleteCalendarRows($request->id);
 
                 Log::info('site_request.schedule_management.stale_create_discarded', [
                     'request_id' => $request->id,
@@ -485,10 +496,16 @@ class SiteRequestCalendarService
                 return null;
             }
 
-            $persisted = SiteRequestCalendarEvent::query()
-                ->whereKey($currentCalendarEvent->id)
-                ->whereNull('schedule_event_id')
-                ->update(['schedule_event_id' => $scheduleEvent->id]);
+            $persisted = DB::transaction(static function () use ($currentCalendarEvent, $scheduleEvent): int {
+                $persisted = SiteRequestCalendarEvent::query()
+                    ->whereKey($currentCalendarEvent->id)
+                    ->whereNull('schedule_event_id')
+                    ->update(['schedule_event_id' => $scheduleEvent->id]);
+                if ($persisted === 1) {
+                    app(OperationsRagMutationBridge::class)->changed('site_request_calendar_events', $currentCalendarEvent->organization_id, $currentCalendarEvent->id);
+                }
+                return $persisted;
+            });
 
             if ($persisted !== 1) {
                 $scheduleService->deleteEvent($scheduleEvent);

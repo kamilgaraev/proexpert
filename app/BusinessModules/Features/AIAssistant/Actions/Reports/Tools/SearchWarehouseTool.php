@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
@@ -35,12 +37,16 @@ class SearchWarehouseTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
         $query = $arguments['query'] ?? '';
 
         // В этом проекте склады хранятся в organization_warehouses
-        $warehouses = DB::table('organization_warehouses')
-            ->where('organization_id', $organization->id)
+        $warehouses = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->entityQuery($user, (int) $organization->id, 'warehouse')
             ->where('name', 'ilike', "%{$query}%")
+            ->limit(max(1, min(30, (int) ($arguments['limit'] ?? 10))))
             ->get();
 
         if ($warehouses->isEmpty()) {

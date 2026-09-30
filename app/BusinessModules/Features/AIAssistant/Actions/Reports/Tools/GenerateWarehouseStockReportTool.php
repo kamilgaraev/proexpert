@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
@@ -43,6 +45,10 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
         if (! $user instanceof User) {
             return ['status' => 'error', 'message' => trans_message('errors.unauthenticated')];
         }
@@ -58,6 +64,7 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
         $request = Request::create('/api/v1/admin/reports/warehouse-stock', 'GET', $requestData);
         $request->setUserResolver(fn () => $user);
         $request->attributes->set('current_organization_id', $organization->id);
+        $request->attributes->set('assistant_actor_scope', true);
 
         try {
             /** @var \Symfony\Component\HttpFoundation\StreamedResponse $response */
@@ -68,7 +75,7 @@ class GenerateWarehouseStockReportTool implements AIToolInterface
             $content = ob_get_clean();
 
             $filename = 'warehouse_stock_report_'.time().'.pdf';
-            $stored = $this->reportStorage->storePdf((string) $content, $filename, $organization, $user);
+            $stored = $this->reportStorage->storePdf((string) $content, $filename, $organization, $user, app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class)->scopeDomainReferences($user, (int) $organization->id, ['warehouse', 'finance'], null), ['warehouse', 'finance']);
 
             return [
                 'status' => 'success',

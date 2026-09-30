@@ -222,6 +222,10 @@ final class PersonalFileService
             throw new InvalidArgumentException('personal_file_not_readable');
         }
 
+        $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
+        if ($file->directory === 'reports/assistant' || $access->isAssistantReportPath($file->storage_key)) {
+            $access->urlForPath($file->storage_key, request()->user());
+        }
         return $this->files->readCurrent($file->storage_key);
     }
 
@@ -267,6 +271,11 @@ final class PersonalFileService
 
         if ($withDownloadUrl && ! $file->is_folder && is_string($file->storage_key)) {
             try {
+                $access = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
+                if ($file->directory === 'reports/assistant' || $access->isAssistantReportPath($file->storage_key)) {
+                    $payload['download_url'] = $access->urlForPath($file->storage_key, request()->user());
+                    return $payload;
+                }
                 $payload['download_url'] = $this->files->temporaryDownloadUrl(
                     $file->storage_key,
                     (int) config('filesystems.s3.download_ttl_seconds', self::DOWNLOAD_TTL_SECONDS),

@@ -17,8 +17,10 @@ class MessageResource extends JsonResource
             'id' => $this->id,
             'role' => $this->role,
             'content' => $this->content,
+            'attachments' => $this->metadata['attachments'] ?? [],
             'tokens_used' => $this->tokens_used,
             'metadata' => $this->metadata,
+            'source_refs' => $this->metadata['source_refs'] ?? [],
             'created_at' => $this->created_at?->toISOString(),
         ];
     }

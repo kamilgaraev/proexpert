@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Materials;
 
 use Illuminate\Support\Facades\DB;
@@ -7,8 +9,12 @@ use Carbon\Carbon;
 
 class ForecastMaterialNeedsAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?\App\Models\User $actor = null): array
     {
+        $policy = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class);
+        if ($actor === null || ! $policy->canReadDomain($actor, $organizationId, 'warehouse') || ! $policy->canReadDomain($actor, $organizationId, 'materials') || ! $policy->canReadDomain($actor, $organizationId, 'projects')) {
+            return [];
+        }
         $forecastDays = $params['forecast_days'] ?? 30;
         $historicalDays = 90;
         
@@ -19,6 +25,8 @@ class ForecastMaterialNeedsAction
             ->join('projects', 'material_write_offs.project_id', '=', 'projects.id')
             ->leftJoin('measurement_units', 'materials.measurement_unit_id', '=', 'measurement_units.id')
             ->where('projects.organization_id', $organizationId)
+            ->where('materials.organization_id', $organizationId)
+            ->whereIn('projects.id', $policy->entityQuery($actor, $organizationId, 'project')->select('projects.id'))
             ->where('material_write_offs.write_off_date', '>=', $startDate)
             ->whereNull('materials.deleted_at')
             ->whereNull('material_write_offs.deleted_at')

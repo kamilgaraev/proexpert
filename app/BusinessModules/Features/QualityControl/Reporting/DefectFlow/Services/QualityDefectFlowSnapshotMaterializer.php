@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -215,6 +217,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
                     $snapshot->output_hash = (string) DB::table('quality_defect_flow_snapshots')
                         ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
+                    app(OperationsRagMutationBridge::class)->snapshot('quality_defect_flow_snapshots', 'quality_defect_flow_rows', $organizationId, $snapshot->id);
                     if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
                         $this->seals->create(
                             'quality_defect_flow',

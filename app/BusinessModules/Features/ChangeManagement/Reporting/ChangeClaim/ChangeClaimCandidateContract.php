@@ -22,7 +22,7 @@ final readonly class ChangeClaimCandidateContract
 
     public const FORMULA_HASH = '54cdf7e2799a088e466b26b95c507a9b5626e04272596aa775b83ab7979736e4';
 
-    public const SOURCE_HASH = 'ac833c12470847d747d75e28f5ca6f6f8d1916a1290049b2201ab1ce4f55ba5e';
+    public const SOURCE_HASH = 'c68786ed756d15b2c5feb8de33287ed82403826bd910d16d7ce4b3f5f26efcd9';
 
     public function definition(): ReportDefinition
     {

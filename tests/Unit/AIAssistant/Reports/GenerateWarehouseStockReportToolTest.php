@@ -16,11 +16,12 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class GenerateWarehouseStockReportToolTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantReportUnitAccess { tearDown as private accessTearDown; }
     protected function tearDown(): void
     {
         Mockery::close();
 
-        parent::tearDown();
+        $this->accessTearDown();
     }
 
     public function test_requests_stock_report_without_asset_type_restriction(): void
@@ -31,6 +32,7 @@ final class GenerateWarehouseStockReportToolTest extends TestCase
         $user = new User;
         $user->id = 12;
         $user->current_organization_id = 77;
+        $this->grantReportUnitPermissions($user, ['ai_assistant.chat', 'reports.view', 'warehouse.view', 'finance.view', 'projects.view', 'payments.invoice.view']);
         $reportService = Mockery::mock(ReportService::class);
 
         $reportService
@@ -54,6 +56,8 @@ final class GenerateWarehouseStockReportToolTest extends TestCase
                 Mockery::pattern('/^warehouse_stock_report_\d+\.pdf$/'),
                 $organization,
                 $user,
+                [['entity_type' => 'warehouse', 'entity_id' => '1'], ['entity_type' => 'payment_document', 'entity_id' => '1']],
+                ['warehouse', 'finance'],
             )
             ->andReturn([
                 'pdf_url' => 'https://storage.example.test/report.pdf',
@@ -66,7 +70,7 @@ final class GenerateWarehouseStockReportToolTest extends TestCase
 
         $result = (new GenerateWarehouseStockReportTool($reportService, $reportStorage))->execute([], $user, $organization);
 
-        $this->assertSame('success', $result['status']);
+        $this->assertSame('success', $result['status'], $result['message'] ?? '');
         $this->assertSame('https://storage.example.test/report.pdf', $result['pdf_url']);
     }
 }

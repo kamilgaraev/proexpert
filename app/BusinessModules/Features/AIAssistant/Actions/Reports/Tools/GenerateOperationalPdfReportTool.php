@@ -44,6 +44,10 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
         return [
             'type' => 'object',
             'properties' => [
+                'query' => [
+                    'type' => 'string',
+                    'maxLength' => 4000,
+                ],
                 'report_type' => [
                     'type' => 'string',
                     'description' => 'Тип отчета: projects_summary, procurement_requests, purchase_orders, supplier_proposals, site_requests, estimates_summary, quality_defects, safety_incidents, machinery_utilization или workforce_attendance.',
@@ -71,6 +75,10 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
         if (! $user instanceof User) {
             return [
                 'status' => 'error',
@@ -111,7 +119,7 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
             ]);
 
             $filename = $reportType.'_report_'.time().'.pdf';
-            $stored = $this->reportStorage->storePdf($pdf->output(), $filename, $organization, $user);
+            $stored = $this->reportStorage->storePdf($pdf->output(), $filename, $organization, $user, array_merge($report['source_refs'] ?? [], $report['sources'] ?? []), $report['required_domains'] ?? ['reports']);
 
             return [
                 'status' => 'success',

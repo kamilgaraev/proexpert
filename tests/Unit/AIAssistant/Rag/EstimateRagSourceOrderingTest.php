@@ -33,6 +33,35 @@ class EstimateRagSourceOrderingTest extends TestCase
         );
     }
 
+    public function test_estimate_chunk_contains_all_positions(): void
+    {
+        $estimate = $this->estimateWithItemsInUnstableOrder();
+        $items = $estimate->items;
+
+        for ($index = 1; $index <= 9; $index++) {
+            $item = new EstimateItem([
+                'estimate_id' => 101,
+                'estimate_section_id' => 501,
+                'position_number' => 'X-'.$index,
+                'name' => 'Position '.$index,
+                'normative_rate_code' => 'RATE-'.$index,
+                'quantity' => 1,
+                'current_total_amount' => $index,
+            ]);
+            $item->setAttribute('id', 800 + $index);
+            $item->setRelation('measurementUnit', new MeasurementUnit(['id' => 40, 'name' => 'm3']));
+            $items->push($item);
+        }
+
+        $source = new EstimateRagSource();
+        $method = new ReflectionMethod($source, 'chunk');
+        $method->setAccessible(true);
+        $chunk = $method->invoke($source, $estimate);
+
+        $this->assertInstanceOf(RagChunkData::class, $chunk);
+        $this->assertStringContainsString('Position 9', $chunk->content);
+    }
+
     private function estimateWithItemsInUnstableOrder(): Estimate
     {
         $estimate = new Estimate([

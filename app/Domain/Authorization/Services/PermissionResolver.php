@@ -25,6 +25,7 @@ class PermissionResolver
     protected LoggingService $logging;
 
     private ?Repository $readCache = null;
+    private bool $currentChecks = false;
 
     public function __construct(
         RoleScanner $roleScanner,
@@ -34,6 +35,19 @@ class PermissionResolver
         $this->roleScanner = $roleScanner;
         $this->moduleChecker = $moduleChecker;
         $this->logging = $logging;
+    }
+
+    public function forCurrentChecks(): self
+    {
+        $scope = clone $this;
+        $scope->currentChecks = true;
+        $scope->readCache = null;
+        return $scope;
+    }
+
+    private function rememberCurrent(string $key, int $ttl, Closure $read): mixed
+    {
+        return $this->currentChecks ? $read() : Cache::remember($key, $ttl, $read);
     }
 
     public function forReadScope(Repository $readCache): self
@@ -73,7 +87,7 @@ class PermissionResolver
             $startTime = microtime(true);
 
             $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context);
-            $cachedResult = Cache::get($cacheKey);
+            $cachedResult = $this->currentChecks ? null : Cache::get($cacheKey);
 
             if ($cachedResult !== null) {
                 return $cachedResult;
@@ -105,7 +119,7 @@ class PermissionResolver
             $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
 
             if ($hasSystemPerm) {
-                Cache::put($cacheKey, true, 300);
+                if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
 
                 if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.system', [
@@ -122,7 +136,7 @@ class PermissionResolver
             $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
 
             if ($hasModulePerm) {
-                Cache::put($cacheKey, true, 300);
+                if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
 
                 if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.module', [
@@ -137,7 +151,7 @@ class PermissionResolver
                 return true;
             }
 
-            Cache::put($cacheKey, false, 300);
+            if (! $this->currentChecks) { Cache::put($cacheKey, false, 300); }
 
             if (! str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('permission.denied.complete', [
@@ -236,7 +250,13 @@ class PermissionResolver
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
             $cacheKey = 'module_active_'.self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
-            $isActive = $this->rememberRead($cacheKey, fn () => Cache::remember($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+            $isActive = $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+                if ($this->currentChecks) {
+                    $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
+                        fn (): array => app(\App\Services\Entitlements\OrganizationEntitlementService::class)->getEffectiveModules($organizationId)->pluck('slug')->all());
+
+                    return in_array($moduleToCheck, $activeModules, true);
+                }
                 if ($this->readCache !== null) {
                     $activeModules = $this->rememberRead(
                         'active_modules_'.$organizationId,
@@ -324,7 +344,7 @@ class PermissionResolver
         $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
         $cacheKey = 'system_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
-        return $this->rememberRead($cacheKey, fn () => Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
+        return $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 600, function () use ($assignment, $organizationId) {
             $perms = [];
             $interfaceAccess = [];
 
@@ -352,7 +372,7 @@ class PermissionResolver
         $roleRevision = $this->rememberRead('authorization_roles_revision', fn () => Cache::get('authorization_roles_revision', 0));
         $cacheKey = 'module_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
-        return $this->rememberRead($cacheKey, fn () => Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
+        return $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 600, function () use ($assignment, $organizationId) {
             // 1. Пробуем из файлов
             $perms = $this->roleScanner->getModulePermissions($assignment->role_slug);
 
@@ -434,6 +454,13 @@ class PermissionResolver
         string $action,
         string $requestedPermission
     ): bool {
+        if ($requestedModule === 'finance' && !array_key_exists('finance', $modulePermissions)) {
+            $canonicalPermissions = $modulePermissions['payments'] ?? [];
+            $modulePermissions['finance'] = is_array($canonicalPermissions)
+                ? array_values(array_filter($canonicalPermissions, static fn (mixed $permission): bool => is_string($permission) && str_starts_with($permission, 'finance.')))
+                : [];
+        }
+
         $modulePermissionKey = $this->resolveModulePermissionKey($modulePermissions, $module, $requestedModule);
 
         $this->logging->technical('permission.module.check_permissions', [
@@ -527,6 +554,10 @@ class PermissionResolver
      */
     protected function resolveModulePermissionKey(array $modulePermissions, string $module, string $requestedModule): ?string
     {
+        if ($requestedModule === 'finance') {
+            return isset($modulePermissions['finance']) && is_array($modulePermissions['finance']) ? 'finance' : null;
+        }
+
         foreach ($this->modulePermissionKeyVariants($module, $requestedModule) as $moduleKey) {
             if (isset($modulePermissions[$moduleKey]) && is_array($modulePermissions[$moduleKey])) {
                 return $moduleKey;
@@ -587,8 +618,9 @@ class PermissionResolver
     {
         $cacheKey = "custom_role_{$roleSlug}_".($organizationId ?? 'global');
 
-        return Cache::remember($cacheKey, 300, function () use ($roleSlug, $organizationId) {
+        return $this->rememberCurrent($cacheKey, 300, function () use ($roleSlug, $organizationId) {
             $query = OrganizationCustomRole::where('slug', $roleSlug);
+            if ($this->currentChecks) { $query->where('is_active', true); }
 
             if ($organizationId) {
                 $query->where('organization_id', $organizationId);

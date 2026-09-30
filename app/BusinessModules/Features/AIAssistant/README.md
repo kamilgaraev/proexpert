@@ -1,382 +1,76 @@
-# AI Assistant Module
+# ИИ-помощник МОСТ
 
-Модуль умного ассистента на базе Timeweb Cloud AI для анализа проектов, генерации отчетов и автоматизации задач.
+Модуль `AIAssistant` предоставляет чат с данными организации, зарегистрированные инструменты, отчёты, поиск RAG, документы и историю диалогов. Доступ к данным и действиям проверяет backend; текст модели сам по себе не даёт полномочий.
 
-## Возможности
+## Состояние выпуска
 
-- Чат-интерфейс через REST API и WebSocket
-- Интеграция с существующими данными (проекты, контракты, материалы)
-- Умный контекст на основе запросов пользователя
-- Лимиты на уровне организации
-- История диалогов
-- Трекинг использования и расходов
-- Timeweb Cloud AI используется как основной LLM- и embedding-провайдер
+Результаты Unit, PHP, pure и PostgreSQL-проверок собраны в [release checklist](../../../../docs/ai-assistant-release-checklist.md). Часть regression-прогона была прервана до итогового отчёта; отдельные подтверждённые тесты прошли, но partial markers не считаются полным PASS. Мобильный клиент прошёл CI и подготовил подписанный artifact, публикации в store не было. Реальные сценарии Luna и readiness approval отсутствуют; полный AI-релиз не включён.
 
-## Поддерживаемые LLM провайдеры
+Production продолжает работать на внешнем baseline без AI-релиза. AI-конфигурация и activation flags не применены; миграции, конверсия кредитов, очистка и платные списания не включались. Резервные копии подтверждены, но не заменяют release gates. Не считать локальные тесты, inventory checks или raw transport probes подтверждением выпуска. Актуальные условия — в [чеклисте выпуска](../../../../docs/ai-assistant-release-checklist.md).
 
-### Timeweb Cloud AI
+## Модель и конфигурация
 
-- OpenAI-совместимый API
-- Отдельные профили моделей для обычных, быстрых, JSON- и сложных запросов
-- Единый ключ для LLM и возможность отдельного ключа для RAG embeddings
+Новые генеративные вызовы помощника используют GPT-6 Luna через Timeweb Cloud AI или совместимый OpenAI endpoint. В профилях разрешена только `openai/gpt-6-luna`; при ошибке модель не переключается на Gemini. RAG embeddings используют отдельные провайдер и модель. Исторические записи сохраняют модель и тариф исходного вызова.
 
-### DeepSeek (самый дешевый) 💰
-- ✅ Очень дешево: ~₽28-42 за 1M токенов
-- ✅ Отличное качество
-- ❌ Сложности с оплатой из России
-- Model: `deepseek-chat`
-
-### OpenAI (международный)
-- Требует VPN из России
-- GPT-4o-mini: ~$0.15 за 1M токенов
-- Отличное качество на английском
-
-## Установка
-
-### 1. Выбор провайдера
-
-#### Timeweb Cloud AI
+Пример переменных Timeweb:
 
 ```env
 AI_ASSISTANT_ENABLED=true
 LLM_PROVIDER=timeweb
 TIMEWEB_AI_API_KEY=
 TIMEWEB_AI_BASE_URI=https://api.timeweb.ai/v1
-TIMEWEB_AI_MODEL=gemini/gemini-3.1-flash-lite
+TIMEWEB_AI_MODEL=openai/gpt-6-luna
+TIMEWEB_AI_ASSISTANT_MODELS=openai/gpt-6-luna
+TIMEWEB_AI_JSON_MODELS=openai/gpt-6-luna
+TIMEWEB_AI_FAST_MODELS=openai/gpt-6-luna
+TIMEWEB_AI_PREMIUM_MODELS=openai/gpt-6-luna
 AI_RAG_EMBEDDING_PROVIDER=timeweb
 AI_RAG_EMBEDDING_MODEL=openai/text-embedding-3-large
 AI_RAG_EMBEDDING_BASE_URI=https://api.timeweb.ai/v1
 AI_RAG_EMBEDDING_API_KEY=
 ```
 
-### 2. Запуск миграций
-
-```bash
-php artisan migrate
-```
-
-### 3. Активация модуля
-
-Модуль уже зарегистрирован в `bootstrap/providers.php`.
-
-## API Endpoints
-
-### POST /api/v1/ai-assistant/chat
-
-Отправка сообщения AI-ассистенту.
-
-**Request:**
-```json
-{
-  "message": "Какие проекты в зоне риска?",
-  "conversation_id": 123  // опционально
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "conversation_id": 123,
-    "message": {
-      "id": 456,
-      "role": "assistant",
-      "content": "Обнаружено 2 проекта в зоне риска...",
-      "created_at": "2025-10-10T12:00:00.000000Z"
-    },
-    "tokens_used": 1250,
-    "usage": {
-      "monthly_limit": 5000,
-      "used": 142,
-      "remaining": 4858,
-      "percentage_used": 2.8
-    }
-  }
-}
-```
-
-### GET /api/v1/ai-assistant/conversations
-
-Получить список диалогов пользователя.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": 123,
-      "title": "Какие проекты в зоне риска?...",
-      "created_at": "2025-10-10T12:00:00.000000Z",
-      "updated_at": "2025-10-10T12:05:00.000000Z"
-    }
-  ]
-}
-```
-
-### GET /api/v1/ai-assistant/conversations/{id}
-
-Получить историю конкретного диалога.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "conversation": {
-      "id": 123,
-      "title": "Какие проекты в зоне риска?...",
-      "created_at": "2025-10-10T12:00:00.000000Z"
-    },
-    "messages": [
-      {
-        "id": 1,
-        "role": "user",
-        "content": "Какие проекты в зоне риска?",
-        "created_at": "2025-10-10T12:00:00.000000Z"
-      },
-      {
-        "id": 2,
-        "role": "assistant",
-        "content": "Обнаружено 2 проекта...",
-        "tokens_used": 1250,
-        "created_at": "2025-10-10T12:00:05.000000Z"
-      }
-    ]
-  }
-}
-```
-
-### DELETE /api/v1/ai-assistant/conversations/{id}
-
-Удалить диалог.
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Conversation deleted"
-}
-```
-
-### GET /api/v1/ai-assistant/usage
-
-Получить статистику использования для организации.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "monthly_limit": 5000,
-    "used": 142,
-    "remaining": 4858,
-    "percentage_used": 2.8,
-    "tokens_used": 178500,
-    "cost_rub": 14.25
-  }
-}
-```
-
-## Использование на фронтенде (React)
-
-### Простой запрос
-
-```javascript
-const response = await fetch('/api/v1/ai-assistant/chat', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  },
-  body: JSON.stringify({
-    message: 'Какие проекты в зоне риска?'
-  })
-});
-
-const data = await response.json();
-const assistantMessage = data.data.message.content;
-```
-
-### С продолжением диалога
-
-```javascript
-// Первый запрос
-const response1 = await fetch('/api/v1/ai-assistant/chat', {
-  method: 'POST',
-  headers: { /* ... */ },
-  body: JSON.stringify({
-    message: 'Покажи бюджет проектов'
-  })
-});
-
-const { conversation_id } = await response1.json().data;
-
-// Следующий запрос в том же диалоге
-const response2 = await fetch('/api/v1/ai-assistant/chat', {
-  method: 'POST',
-  headers: { /* ... */ },
-  body: JSON.stringify({
-    message: 'А какие из них в зоне риска?',
-    conversation_id: conversation_id
-  })
-});
-```
-
-## Архитектура
-
-### Основные компоненты
-
-```
-AIAssistantService
-├── LLMProvider (OpenAI)
-├── ConversationManager (История)
-├── ContextBuilder (Контекст из БД)
-├── IntentRecognizer (Распознавание намерений)
-├── UsageTracker (Лимиты и статистика)
-└── Actions
-    ├── Projects (GetProjectStatus, GetProjectBudget, AnalyzeProjectRisks)
-    ├── Contracts (SearchContracts, GetContractDetails)
-    └── Materials (CheckMaterialStock, ForecastMaterialNeeds)
-```
-
-### Интеграция с существующими сервисами
-
-Модуль использует готовые сервисы из `AdvancedDashboard`:
-- `ProjectsStatusWidgetProvider`
-- `ProjectsBudgetWidgetProvider`
-- `ProjectsRisksWidgetProvider`
-- `MaterialsLowStockWidgetProvider`
-- `MaterialsForecastWidgetProvider`
-- И другие...
-
-## Лимиты и биллинг
-
-- Модуль: **₽3,990/мес** (подписка)
-- Лимит по умолчанию: **5,000 запросов/месяц**
-- Лимиты считаются на уровне организации
-- Себестоимость: ~₽100/месяц при полном использовании лимита
-
-## Мониторинг
-
-Все запросы логируются через `LoggingService`:
-
-```php
-// Business logs
-'ai.assistant.request'
-'ai.assistant.success'
-
-// Technical logs
-'ai.openai.request'
-'ai.openai.success'
-'ai.openai.error'
-```
-
-## Примеры запросов
-
-AI-ассистент понимает следующие типы запросов:
-
-**Статус проектов:**
-- "Какие проекты сейчас активны?"
-- "Покажи текущие проекты"
-- "Что происходит с проектами?"
-
-**Бюджет:**
-- "Сколько потрачено по проектам?"
-- "Какой бюджет осталось?"
-- "Покажи расходы"
-
-**Риски:**
-- "Какие проекты в зоне риска?"
-- "Есть ли проблемы?"
-- "Что может сорваться?"
-
-**Контракты:**
-- "Покажи контракт №45/2025"
-- "Найди договоры со СтройИнвест"
-
-**Материалы:**
-- "Какие материалы заканчиваются?"
-- "Хватит ли цемента?"
-- "Что нужно закупить?"
-
-## Разработка
-
-### Добавление нового Action
-
-1. Создайте класс в `Actions/`
-2. Реализуйте метод `execute()`
-3. Используйте существующие сервисы и провайдеры
-4. Обновите `IntentRecognizer` при необходимости
-
-Пример:
-
-```php
-namespace App\BusinessModules\Features\AIAssistant\Actions\Custom;
-
-class CustomAction
-{
-    public function execute(int $organizationId, ?array $params = []): array
-    {
-        // Ваша логика
-        return [
-            'data' => $result
-        ];
-    }
-}
-```
-
-## Безопасность
-
-- Все endpoints защищены `auth:api` middleware
-- Проверка принадлежности диалогов пользователю
-- Лимиты на уровне организации
-- Валидация всех входных данных
-
-## Производительность
-
-- Кеширование контекста организации (5 мин)
-- Кеширование статистики использования (10 мин)
-- Асинхронная обработка через очереди (опционально)
-- Оптимизация токенов в контексте
-- RAG-индекс обновляется по расписанию для организаций без свежего успешного прогона
-
-### RAG-индексация
-
-Расписание задается в `routes/console.php`: команда `ai-assistant:rag-backfill --all --stale` каждый час ставит в очередь только организации, у которых нет активного прогона и нет свежего успешного индекса.
-
-Настройки:
-- `AI_RAG_SCHEDULED_LIMIT` — лимит организаций за один запуск расписания
-- `AI_RAG_STALE_AFTER_HOURS` — сколько часов успешный индекс считается свежим
-
-## Troubleshooting
-
-### "OpenAI API key not configured"
-
-Проверьте `.env`:
-```env
-OPENAI_API_KEY=sk-...
-```
-
-### "AI_LIMIT_EXCEEDED"
-
-Организация исчерпала месячный лимит. Можно:
-1. Увеличить лимит в конфигурации модуля
-2. Дождаться начала следующего месяца
-3. Обновить подписку
-
-### Медленные ответы
-
-1. Проверьте размер контекста
-2. Уменьшите `max_tokens` в конфиге
-3. Используйте кеширование частых запросов
-
-## Roadmap
-
-- [ ] WebSocket real-time ответы
-- [ ] Telegram бот интеграция
-- [x] RAG система для рабочих данных
-- [ ] Function calling для действий
-- [ ] Голосовой ввод
-- [ ] Проактивные уведомления
+Чат Luna передаёт `max_completion_tokens` и `reasoning_effort=none`; автоматического model fallback нет. OCR, RAG embeddings, генерация смет и другие AI-маршруты имеют отдельные настройки и должны проверяться своим release checklist.
+
+## API
+
+Общие маршруты доступны под тремя префиксами:
+
+- `/api/v1/ai-assistant` — ЛК, middleware `auth:api` и `organization.context`;
+- `/api/v1/admin/ai-assistant` — админка, стандартный `AdminRouteStack`;
+- `/api/v1/mobile/ai-assistant` — мобильный клиент, JWT и контекст организации.
+
+Каждая группа включает чат, preview/execute действий, статус и отмену запроса, диалоги и участников, память, баланс/историю/quote/purchase кредитов, регистрацию и OCR документов, статус RAG, usage и защищённую выдачу отчётов. Маршруты администратора для переиндексации и Project Pulse имеют отдельные permissions. Источник истины для методов, параметров и middleware — `routes.php`; старые примеры ответа с `monthly_limit` и числом запросов устарели.
+
+## Бюджет и тариф
+
+`TokenBudgetService::prepare(messages, tools, profile, snapshotLimits)` учитывает инструкции, полный текущий запрос, историю, схемы функций и результаты инструментов. История сокращается группами сообщений и вызовов. Полный текущий запрос не обрезается до старого лимита в 500 символов. Профиль закрепляется на время оценки и запроса; превышение бюджета или неполный ответ не должны незаметно расширять профиль либо запускать незавершённые действия.
+
+| Профиль | Вход | Выход | Максимум вызовов |
+| --- | ---: | ---: | ---: |
+| short | 8 192 | 1 024 | 2 |
+| normal | 16 384 | 2 048 | 4 |
+| detailed | 32 768 | 4 096 | 6 |
+| ocr | 32 768 | 4 096 | 6 |
+
+Локальный `o200k_base` tokenizer не документирован как точный для Luna. `token_calibration` сверяет локальный подсчёт с фактическим `usage.prompt_tokens`; измерения нужны до включения списаний.
+
+Тарифный контракт имеет `price_version=2`, отдельно от версии оценщика готовности (`EVALUATOR_VERSION=5`) и формата traces (`SCHEMA_VERSION=2`). Конфигурация Luna задаёт 13,5 ₽ за миллион входных и 67,5 ₽ за миллион выходных токенов; embeddings тарифицируются отдельно. Пакеты и единицы определены в `config/ai-assistant-credits.php`. Текущий `enforce=false`: конфигурация тарифа не означает, что реальные списания включены.
+
+До фактической выручки используется согласованная проекция `prelaunch_projection`: 3 990 ₽ распределения за 5 000 включённых единиц (0,798 ₽ за единицу), `assistant_revenue_minor=0` и реальные измеренные расходы провайдера. Проекцию нельзя выдавать за полученную выручку. Фактическая оплаченная выручка после выпуска учитывается отдельно.
+
+## Доступ и данные
+
+Организация и пользователь берутся из серверного контекста. Чтения проектов, финансовых полей, документов, RAG-источников и истории требуют текущих прав. Изменение данных требует разрешённого действия, проверки намерения, preview и подтверждения там, где оно требуется. Отзыв исходного доступа должен блокировать последующее чтение сохранённых ссылок и ответов.
+
+Пять legacy-действий чтения финансовых данных проверяют текущую организацию, entity scope и ACL до SQL-агрегатов. Суммы используют десятичную арифметику; договорные акты читаются из канонического источника, а валюты не смешиваются. Недоступная область или отсутствующая база возвращает `null`, не фиктивный ноль. Эта арифметика сохраняет точность значений выше предела двоичной точности `2^53`.
+
+Каталог инструментов учитывает явно выбранную смету и маршрут проекта. Текущая компактная wire-схема занимает 6 154 токена вместо 6 835; серверная проверка каталога и allowlist остаётся строгой. Pure-проверка сохраняет полный вопрос длиной 4 000 символов. Реальный Luna QA по этим сценариям ещё не проведён.
+
+RAG индексирует зарегистрированные источники, а не всю базу автоматически. Статус покрытия, ошибки, частичный разбор и свежесть следует показывать отдельно. Для UPD XML применяется потоковый `XMLReader`; DOCTYPE/ENTITY запрещены, внешняя сеть и подстановка сущностей отключены, размеры, число узлов и глубина ограничены. Неполный разбор остаётся видимым как partial.
+
+## Разработка и выпуск
+
+Модуль регистрируется через `bootstrap/providers.php`; маршруты и миграции расположены в каталоге функции. PostgreSQL-проверки запускаются только в разрешённом тестовом окружении. Перед полным выпуском нужны актуальный DB preflight, проверка backup/rollback и полный набор миграций. После переключения следует проверить каждый активный PHP-сервис и реальные provider usage/cost traces.
+
+Оценщик `v5` допускает readiness только для полного фактического прогона: минимум 200 разных входов и ID сценариев, 200 успешных проверенных вызовов Luna и все обязательные assertions. Приватные синтетические бизнес-данные допустимы как вход для настоящего вызова; synthetic/fabricated usage или traces, mock-ответы, отказы, ошибки и дубликаты не считаются успехами. Launch approval связывает source implementation fingerprint и price policy; точный source SHA подписывается как provenance, но не сравнивается с произвольным текущим Git HEAD. Launch approval не истекает через семь дней; seven-day TTL относится к отдельному time-bound approval и свежести периода. Raw transport probes и unit tests не заменяют real scenario journal. Полный критерий и открытые блокеры записаны в [чеклисте выпуска](../../../../docs/ai-assistant-release-checklist.md); список исправлений аудита — в [карте реализации](../../../../docs/ai-assistant-audit-remediation.md).

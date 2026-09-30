@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 
 class AssistantAccessContextResolver
@@ -31,18 +32,20 @@ class AssistantAccessContextResolver
 
     public function resolve(User $user, int $organizationId): array
     {
+        $authorization = $this->authorizationService->forCurrentChecks();
+        $context = AuthorizationContext::findOrganizationContext($organizationId);
         $flatPermissions = array_values(array_unique(array_filter(
-            $user->getPermissions(),
+            $context !== null ? $authorization->getUserPermissions($user, $context) : [],
             static fn (mixed $permission): bool => is_string($permission) && trim($permission) !== ''
         )));
 
-        $structuredPermissions = $this->authorizationService->getUserPermissionsStructured($user);
+        $structuredPermissions = $context !== null ? $authorization->getUserPermissionsStructured($user, $context) : [];
         $normalizedStructuredPermissions = is_array($structuredPermissions) ? $structuredPermissions : [];
         $isReadOnly = !$this->hasMutationPermission($flatPermissions, $normalizedStructuredPermissions);
 
         return [
             'organization_id' => $organizationId,
-            'can_use_assistant' => $user->belongsToOrganization($organizationId),
+            'can_use_assistant' => app(AIPermissionChecker::class)->canUseAssistant($user, $organizationId),
             'permissions_flat' => $flatPermissions,
             'permissions_structured' => $normalizedStructuredPermissions,
             'available_modules' => $this->resolveModules($flatPermissions, $normalizedStructuredPermissions),

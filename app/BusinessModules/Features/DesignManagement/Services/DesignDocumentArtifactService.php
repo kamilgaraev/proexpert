@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\DesignRagMutationBridge;
+
 use App\BusinessModules\Features\DesignManagement\Enums\DesignArtifactTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDocumentSectionStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignVersionStatusEnum;
@@ -113,6 +115,7 @@ final class DesignDocumentArtifactService
         $this->assertPackageAcceptsDocumentChanges($package);
 
         DB::transaction(function () use ($version, $artifact, $package, $sheets, $userId): void {
+            app(DesignRagMutationBridge::class)->changedRows(DesignDocumentSheet::class, DesignDocumentSheet::query()->where('version_id', $version->id));
             DesignDocumentSheet::query()
                 ->where('version_id', $version->id)
                 ->delete();
@@ -140,6 +143,7 @@ final class DesignDocumentArtifactService
                 'sheet_count' => count($sheets),
                 'updated_by' => $userId,
             ]);
+            app(DesignRagMutationBridge::class)->changedRows(DesignDocumentSheet::class, DesignDocumentSheet::query()->where('version_id', $version->id));
         });
 
         return $version->fresh(['artifact.section', 'sheets']);

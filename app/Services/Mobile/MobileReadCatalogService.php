@@ -162,7 +162,10 @@ final class MobileReadCatalogService
             $organization = OrganizationContext::getOrganization() ?? Organization::query()->find($file->organization_id ?? $organizationId);
             if ($organization !== null) {
                 $disk = $this->files->disk($organization);
-                if ($disk->exists((string) $file->path)) {
+                $assistantReports = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class);
+                if ($assistantReports->isAssistantReportPath((string) $file->path)) {
+                    $payload['download_url'] = $assistantReports->urlForPath((string) $file->path, request()->user());
+                } elseif ($disk->exists((string) $file->path)) {
                     $payload['download_url'] = $disk->temporaryUrl((string) $file->path, now()->addHours(1));
                 }
             }

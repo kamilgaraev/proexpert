@@ -18,24 +18,72 @@ use App\Models\OrganizationBalance;
 use App\Services\Billing\CommercialRefundService;
 use DomainException;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
+use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantRagTestSchema;
 use Tests\TestCase;
 
 final class CommercialRefundServiceTest extends TestCase
 {
     private RefundGatewayFake $gateway;
+    private ?string $connectionName = null;
+    private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$this->connectionName);
+        config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
+        DB::purge($this->connectionName);
+        DB::connection($this->connectionName);
         config()->set('services.yookassa.mode', 'yookassa_test');
         config()->set('services.yookassa.test_organization_ids', [42]);
         $this->createSchema();
+        Queue::fake([\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class]);
         $this->gateway = new RefundGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
+            DB::purge($this->connectionName);
+            config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
+            DB::connection($this->connectionName);
+        }
+        parent::tearDown();
+    }
+
+    public function test_balance_pack_refunds_revoke_units_proportionally_once(): void
+    {
+        [$order, $payment] = $this->paidOrder('balance');
+        $order->forceFill(['kind' => 'ai_credits', 'amount_minor' => 100000, 'amount' => '1000.00', 'selected_resource_addons' => [
+            ['slug' => 'ai-credits-1000', 'units_minor' => 100000, 'amount_minor' => 100000],
+        ]])->save();
+        $payment->forceFill(['amount_minor' => 100000])->save();
+        OrganizationBalance::query()->create(['organization_id' => 42, 'balance' => 0, 'currency' => 'RUB']);
+        app(\App\Services\Credits\AICreditCommercialService::class)->settlePaidOrder($order);
+        $service = app(CommercialRefundService::class);
+
+        $first = $service->create($order->public_id, 30000, 'RUB', 'Частичный возврат пакета', 'pack-refund-partial');
+        $again = $service->create($order->public_id, 30000, 'RUB', 'Частичный возврат пакета', 'pack-refund-partial');
+        $this->assertSame($first->id, $again->id);
+        $this->assertDatabaseHas('ai_credit_lots', ['source' => 'purchase', 'remaining_minor' => 70000]);
+        $this->assertSame(30000, OrganizationBalance::query()->sole()->balance);
+        $this->assertDatabaseCount('ai_credit_ledger_entries', 2);
+
+        $service->create($order->public_id, null, 'RUB', 'Остаток возврата пакета', 'pack-refund-remainder');
+        $this->assertDatabaseHas('ai_credit_lots', ['source' => 'purchase', 'remaining_minor' => 0]);
+        $this->assertDatabaseHas('ai_credit_wallets', ['organization_id' => 42, 'balance_minor' => 0]);
+        $this->assertSame(100000, OrganizationBalance::query()->sole()->balance);
+        $this->assertDatabaseCount('ai_credit_ledger_entries', 3);
+        $this->assertSame('refunded', $order->fresh()->status->value);
     }
 
     public function test_partial_refund_is_idempotent_and_does_not_change_entitlement_or_order(): void
@@ -221,9 +269,10 @@ final class CommercialRefundServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['notifications', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'balance_transactions', 'organization_balances', 'organizations'] as $table) {
+        foreach (['activity_events', 'ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'users', 'notifications', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'balance_transactions', 'organization_balances', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
+        Schema::create('users', function (Blueprint $table): void { $table->id(); $table->softDeletes(); });
         Schema::create('organizations', function (Blueprint $t): void {
             $t->id();
             $t->string('name');
@@ -270,6 +319,7 @@ final class CommercialRefundServiceTest extends TestCase
             $t->unsignedInteger('quote_version');
             $t->json('selected_package_slugs');
             $t->json('current_package_slugs');
+            $t->json('selected_resource_addons')->nullable();
             $t->unsignedBigInteger('amount_minor');
             $t->decimal('amount', 14, 2);
             $t->char('currency', 3);
@@ -336,6 +386,9 @@ final class CommercialRefundServiceTest extends TestCase
             $t->timestamp('read_at')->nullable();
             $t->timestamps();
         });
+        (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
+        AssistantRagTestSchema::create();
+        (require database_path('migrations/2026_05_08_000001_create_activity_events_table.php'))->up();
     }
 }
 

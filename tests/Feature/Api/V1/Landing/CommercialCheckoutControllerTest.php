@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Landing;
 
+use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
@@ -21,9 +22,13 @@ use App\Models\User;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
+use Tests\Support\AssistantRagTestSchema;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 class CommercialCheckoutControllerTest extends TestCase
 {
@@ -33,16 +38,28 @@ class CommercialCheckoutControllerTest extends TestCase
 
     private ControllerCheckoutGatewayFake $gateway;
 
+    private ?string $connectionName = null;
+
+    private ?array $originalConnectionConfiguration = null;
+
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
 
+        $this->connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$this->connectionName);
+        config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
+        DB::purge($this->connectionName);
+        DB::connection($this->connectionName);
+
         config()->set('services.yookassa.mode', 'mock');
         config()->set('auth_tokens.sessions.enabled', false);
 
         $this->createSchema();
+        AssistantRagTestSchema::create();
+        Queue::fake([IndexRagSourceJob::class]);
         $this->organization = Organization::withoutEvents(fn (): Organization => Organization::create([
             'name' => 'Checkout API organization',
             'is_active' => true,
@@ -72,6 +89,17 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 1);
         $this->assertDatabaseCount('commercial_payments', 1);
         $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
+    protected function tearDown(): void
+    {
+        CarbonImmutable::setTestNow();
+        if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
+            DB::purge($this->connectionName);
+            config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
+            DB::connection($this->connectionName);
+        }
+        parent::tearDown();
     }
 
     public function test_checkout_requires_token(): void
@@ -1046,7 +1074,7 @@ class CommercialCheckoutControllerTest extends TestCase
     {
         foreach ([
             'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions',
-            'organization_commercial_accounts', 'organization_module_activations', 'modules',
+            'organization_commercial_accounts', 'organization_module_activations', 'modules', 'projects',
             'role_conditions', 'user_role_assignments',
             'organization_custom_roles', 'authorization_contexts', 'organization_user', 'user_auth_sessions', 'users', 'organizations',
         ] as $table) {
@@ -1062,6 +1090,9 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->foreignId('parent_organization_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+        Schema::create('projects', function (Blueprint $table): void {
+            $table->id();
         });
         Schema::create('organization_user', function (Blueprint $table): void {
             $table->id();
@@ -1249,6 +1280,7 @@ class CommercialCheckoutControllerTest extends TestCase
         Schema::create('commercial_orders', function (Blueprint $table): void {
             $table->id();
             $table->uuid('public_id')->unique();
+            $table->jsonb('assistant_revenue_allocation')->nullable();
             $table->foreignId('organization_id');
             $table->foreignId('commercial_account_id');
             $table->foreignId('user_id');
@@ -1349,6 +1381,7 @@ SQL);
             $table->timestamps();
         });
     }
+
 }
 
 class ControllerCheckoutGatewayFake implements PaymentGatewayInterface

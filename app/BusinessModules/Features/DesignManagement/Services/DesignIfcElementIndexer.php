@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\DesignManagement\Services;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\DesignRagMutationBridge;
 use Illuminate\Support\Facades\DB;
 
 final class DesignIfcElementIndexer
@@ -64,10 +65,14 @@ final class DesignIfcElementIndexer
 
     private function upsert(array $rows): void
     {
-        DB::table('design_ifc_model_elements')->upsert(
-            $rows,
-            ['version_id', 'express_id'],
-            ['derivative_id', 'global_id', 'category', 'name', 'properties', 'classifications', 'updated_at'],
-        );
+        DB::transaction(function () use ($rows): void {
+            app(DesignRagMutationBridge::class)->ifcRows($rows);
+            DB::table('design_ifc_model_elements')->upsert(
+                $rows,
+                ['version_id', 'express_id'],
+                ['derivative_id', 'global_id', 'category', 'name', 'properties', 'classifications', 'updated_at'],
+            );
+            app(DesignRagMutationBridge::class)->ifcRows($rows);
+        });
     }
 }

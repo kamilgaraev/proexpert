@@ -27,9 +27,13 @@ use App\Services\Billing\CommercialRefundService;
 use App\Services\Billing\CommercialWebhookService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
+use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\Support\AssistantRagTestSchema;
 use Tests\TestCase;
 
 class CommercialWebhookServiceTest extends TestCase
@@ -45,13 +49,21 @@ class CommercialWebhookServiceTest extends TestCase
     private CommercialOrder $order;
 
     private CommercialPayment $payment;
+    private ?string $connectionName = null;
+    private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->connectionName = DB::getDefaultConnection();
+        $this->originalConnectionConfiguration = config('database.connections.'.$this->connectionName);
+        config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
+        DB::purge($this->connectionName);
+        DB::connection($this->connectionName);
         $this->createSchema();
+        Queue::fake([\App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class]);
         config()->set('services.yookassa.mode', 'yookassa_test');
         $this->gateway = new AuthoritativeGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
@@ -84,6 +96,91 @@ class CommercialWebhookServiceTest extends TestCase
             'provider_idempotency_key' => '22222222-2222-4222-8222-222222222222',
             'payment_method_saved' => false, 'refunded_amount_minor' => 0,
         ]);
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
+            DB::purge($this->connectionName);
+            config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
+            DB::connection($this->connectionName);
+        }
+        parent::tearDown();
+    }
+
+    public function test_verified_credit_payment_grants_pack_once_without_changing_subscription(): void
+    {
+        $this->order->forceFill([
+            'kind' => 'ai_credits', 'quote_version' => (int) config('ai-assistant-credits.price_version'),
+            'selected_package_slugs' => [], 'selected_resource_addons' => [
+                ['slug' => 'ai-credits-5000', 'units_minor' => 500000, 'amount_minor' => 450000],
+            ],
+            'amount_minor' => 450000, 'amount' => '4500.00', 'auto_renew_consent' => false,
+        ])->save();
+        $this->payment->forceFill(['amount_minor' => 450000])->save();
+        $this->gateway->payment = $this->paymentResult(amountMinor: 450000);
+        $service = app(CommercialWebhookService::class);
+
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertSame('duplicate', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertDatabaseHas('ai_credit_lots', ['source' => 'purchase', 'original_minor' => 500000, 'remaining_minor' => 500000, 'expires_at' => null]);
+        $this->assertDatabaseCount('ai_credit_lots', 1);
+        $this->assertDatabaseCount('ai_credit_ledger_entries', 1);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        $this->assertSame('free', $this->account->fresh()->status->value);
+        $this->assertSame('paid', $this->order->fresh()->status->value);
+    }
+
+    public function test_credit_refund_before_payment_success_is_reconciled_once_and_later_delta_is_applied(): void
+    {
+        $this->configureCreditPack();
+        $service = app(CommercialWebhookService::class);
+        $this->gateway->refund = $this->refundResult('refund-before-payment', 135000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 135000, amountMinor: 450000);
+
+        $this->assertSame('partial_refund', $service->process($this->notification('refund.succeeded', 'refund-before-payment', 'succeeded'), '185.71.76.1'));
+        $this->assertDatabaseCount('ai_credit_lots', 0);
+        $this->assertSame(135000, (int) $this->payment->fresh()->refunded_amount_minor);
+
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 0, amountMinor: 450000);
+        $paymentNotification = $this->notification('payment.succeeded', 'payment-id', 'succeeded');
+        $this->assertSame('processed', $service->process($paymentNotification, '185.71.76.1'));
+        $this->assertSame('duplicate', $service->process($paymentNotification, '185.71.76.1'));
+        $this->assertSame(135000, (int) $this->payment->fresh()->refunded_amount_minor);
+        $this->assertDatabaseHas('ai_credit_lots', ['source' => 'purchase', 'original_minor' => 500000, 'remaining_minor' => 350000]);
+        $this->assertDatabaseHas('ai_credit_wallets', ['organization_id' => $this->organization->id, 'balance_minor' => 350000]);
+        $this->assertDatabaseCount('ai_credit_ledger_entries', 2);
+
+        $this->gateway->refund = $this->refundResult('refund-later-delta', 90000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 225000, amountMinor: 450000);
+        $this->assertSame('partial_refund', $service->process($this->notification('refund.succeeded', 'refund-later-delta', 'succeeded'), '185.71.76.1'));
+        $this->assertDatabaseHas('ai_credit_lots', ['source' => 'purchase', 'original_minor' => 500000, 'remaining_minor' => 250000]);
+        $this->assertDatabaseHas('ai_credit_wallets', ['organization_id' => $this->organization->id, 'balance_minor' => 250000]);
+        $this->assertDatabaseCount('ai_credit_ledger_entries', 3);
+    }
+
+    #[DataProvider('creditRefundSnapshotProvider')]
+    public function test_credit_payment_success_reconciles_authoritative_refund_without_refund_webhook(int $refundedAmountMinor, int $remainingMinor, string $orderStatus): void
+    {
+        $this->configureCreditPack();
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: $refundedAmountMinor, amountMinor: 450000);
+        $service = app(CommercialWebhookService::class);
+
+        $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertDatabaseHas('ai_credit_lots', ['source' => 'purchase', 'original_minor' => 500000, 'remaining_minor' => $remainingMinor]);
+        $this->assertDatabaseHas('ai_credit_wallets', ['organization_id' => $this->organization->id, 'balance_minor' => $remainingMinor]);
+        $this->assertSame($refundedAmountMinor, (int) $this->payment->fresh()->refunded_amount_minor);
+        $this->assertSame($orderStatus, $this->order->fresh()->status->value);
+        $this->assertDatabaseCount('ai_credit_ledger_entries', 2);
+        $this->assertDatabaseCount('commercial_refunds', 0);
+    }
+
+    public static function creditRefundSnapshotProvider(): array
+    {
+        return [
+            'partial' => [135000, 350000, 'paid'],
+            'full' => [450000, 0, 'refunded'],
+        ];
     }
 
     public function test_verified_success_activates_trial_once_and_saves_method_only_with_consent(): void
@@ -922,6 +1019,18 @@ class CommercialWebhookServiceTest extends TestCase
         ]);
     }
 
+    private function configureCreditPack(): void
+    {
+        $this->order->forceFill([
+            'kind' => 'ai_credits', 'quote_version' => (int) config('ai-assistant-credits.price_version'),
+            'selected_package_slugs' => [], 'selected_resource_addons' => [
+                ['slug' => 'ai-credits-5000', 'units_minor' => 500000, 'amount_minor' => 450000],
+            ],
+            'amount_minor' => 450000, 'amount' => '4500.00', 'auto_renew_consent' => false,
+        ])->save();
+        $this->payment->forceFill(['amount_minor' => 450000])->save();
+    }
+
     private function paymentResult(
         string $status = 'succeeded',
         bool $paid = true,
@@ -1002,9 +1111,17 @@ class CommercialWebhookServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'users', 'organizations'] as $table) {
+        foreach (['ai_rag_expected_sources', 'ai_rag_chunks', 'ai_rag_sources', 'ai_rag_index_runs', 'ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
+        Schema::create('modules', function (Blueprint $table): void {
+            $table->id();
+            $table->string('slug')->unique();
+            $table->boolean('is_active')->default(true);
+            $table->boolean('can_deactivate')->default(true);
+            $table->boolean('is_system_module')->default(false);
+            $table->integer('display_order')->default(0);
+        });
         Schema::create('organizations', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
@@ -1055,6 +1172,7 @@ class CommercialWebhookServiceTest extends TestCase
             $table->unsignedInteger('quote_version');
             $table->json('selected_package_slugs');
             $table->json('current_package_slugs');
+            $table->json('selected_resource_addons')->nullable();
             $table->unsignedBigInteger('amount_minor');
             $table->decimal('amount', 14, 2);
             $table->string('currency', 3);
@@ -1178,6 +1296,8 @@ class CommercialWebhookServiceTest extends TestCase
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });
+        (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
+        AssistantRagTestSchema::create();
     }
 }
 

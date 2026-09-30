@@ -4,6 +4,8 @@
          bootstrap="tests/bootstrap.php"
          colors="true"
          cacheDirectory=".phpunit.cache/postgres"
+         stopOnError="true"
+         stopOnFailure="true"
 >
     <testsuites>
         <testsuite name="ConstructionAccounting">
@@ -121,6 +123,91 @@
             <directory>tests/Unit/DesignManagement</directory>
             <file>tests/Unit/Authorization/PermissionTranslatorTest.php</file>
         </testsuite>
+        <testsuite name="AIAssistantFullRelease">
+            <file>tests/Feature/AIAssistant/AssistantAclQueryCompilerTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantAuthorizationBatchTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantProviderQuotaFailureTest.php</file>
+            <file>tests/Feature/AIAssistant/RagProducerDurabilityTest.php</file>
+            <file>tests/Feature/AIAssistant/RagFileProducerDurabilityTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegacyFinancialReadTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditConcurrencyTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditEconomicsMonitorTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditWalletTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantActionConfirmationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantActionEntityBindingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantActionRowLockTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantApiContractTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantConversationPrivacyTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantChatAttachmentTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantCoreBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantCoreRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDataAccessRegressionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDesignAdditionalTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDesignDomainTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDomainFieldSelectionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDomainToolsTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantFinanceTenderSourceSchemaTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantFinancialEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegacyLiveEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegacyMeasurementContextTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalBusinessMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalBusinessTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLiveProjectFinanceSourceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantMissingUsageBillingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOperationsBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOperationsNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOrganizationReportingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantPolicyReferenceCycleTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantPublishedReportFinancialEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRealAuthorizationTest.php</file>
+            <file>tests/Feature/Authorization/AuthorizationCurrentReadScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/PaymentDocumentEstimateSplitRepairMigrationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantEstimateStructuredBridgeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRagSourceIdentityScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRevenueAllocationStorageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSourceReferencePrivacyTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantTenderNativeCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantUsageBillingContractTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantVideoMonitoringTest.php</file>
+            <file>tests/Feature/AIAssistant/DesignRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/OperationsRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/ProviderAttemptCostAuditTest.php</file>
+            <file>tests/Feature/AIAssistant/RagActorCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/RagEmbeddingCompatibilityTest.php</file>
+            <file>tests/Feature/AIAssistant/RagGlobalQueueTest.php</file>
+            <file>tests/Feature/AIAssistant/RagLifecycleTest.php</file>
+            <file>tests/Feature/AIAssistant/ShadowCreditPurchaseGuardTest.php</file>
+            <file>tests/Feature/AIAssistant/RagDispatchIntentRecoveryTest.php</file>
+            <file>tests/Feature/AIAssistant/WorkforceRagMutationTest.php</file>
+            <file>tests/Feature/Api/V1/Landing/CommercialCheckoutControllerTest.php</file>
+            <file>tests/Feature/Billing/CommercialCheckoutServiceTest.php</file>
+            <file>tests/Feature/Billing/CommercialRefundServiceTest.php</file>
+            <file>tests/Feature/Billing/CommercialRenewalServiceTest.php</file>
+            <file>tests/Feature/Billing/CommercialWebhookServiceTest.php</file>
+            <file>tests/Feature/Console/AIAssistantRagBackfillCommandTest.php</file>
+            <file>tests/Unit/AIAssistant/AIUsageTrackerTest.php</file>
+            <file>tests/Unit/AIAssistant/TokenBudgetImagesTest.php</file>
+            <file>tests/Unit/AIAssistant/TokenBudgetServiceTest.php</file>
+            <file>tests/Unit/AIAssistant/AIAssistantServiceBudgetTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantFinancialClaimVerifierTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantStructuredFactSafetyTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantFinancialAnswerSafetyTest.php</file>
+            <file>tests/Unit/AIAssistant/TokenCounterCacheDirectoryTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantExtendedDomainRegistryTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantRagObserverIsolationTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/OpenAIRagEmbeddingProviderTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagIndexerTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagRetrieverTest.php</file>
+            <file>tests/Unit/AIAssistant/Reports/AssistantReportFileServiceTest.php</file>
+            <file>tests/Unit/Billing/CommercialQuotaServiceTest.php</file>
+        </testsuite>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>
@@ -164,6 +251,109 @@
             <file>tests/Unit/BasicWarehouse/WarehouseCustodyLineageTest.php</file>
             <file>tests/Unit/ConstructionJournal/JournalWarehouseContractTest.php</file>
         </testsuite>
+        <testsuite name="AIAssistantUpgrade">
+            <file>tests/Feature/AIAssistant/AssistantRealAuthorizationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantConversationPrivacyTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDataAccessRegressionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantActionConfirmationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantActionEntityBindingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantFinancialEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDomainToolsTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegacyLiveEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/RagLifecycleTest.php</file>
+            <file>tests/Feature/AIAssistant/RagGlobalQueueTest.php</file>
+            <file>tests/Feature/AIAssistant/RagActorCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
+            <file>tests/Feature/Console/AIAssistantRagBackfillCommandTest.php</file>
+            <file>tests/Unit/AIAssistant/Reports/AssistantReportFileServiceTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantRuntimeRegressions">
+            <file>tests/Feature/Authorization/AuthorizationCurrentReadScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/PaymentDocumentEstimateSplitRepairMigrationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantEstimateStructuredBridgeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRagSourceIdentityScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantRequests">
+            <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantApiContractTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantBilling">
+            <file>tests/Feature/AIAssistant/AssistantUsageBillingContractTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditWalletTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditConcurrencyTest.php</file>
+            <file>tests/Feature/Billing/CommercialCheckoutServiceTest.php</file>
+            <file>tests/Feature/Billing/CommercialWebhookServiceTest.php</file>
+            <file>tests/Feature/Billing/CommercialRefundServiceTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantQuotaTransition">
+            <file>tests/Feature/AIAssistant/AICreditWalletTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantUsageBillingContractTest.php</file>
+            <file>tests/Unit/Billing/CommercialQuotaServiceTest.php</file>
+            <file>tests/Feature/AIAssistant/ShadowCreditPurchaseGuardTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantUsageCalibration">
+            <file>tests/Unit/AIAssistant/AIUsageTrackerTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/OpenAIRagEmbeddingProviderTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagRetrieverTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagIndexerTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantReleaseContracts">
+            <file>tests/Feature/AIAssistant/AICreditWalletTest.php</file>
+            <file>tests/Feature/AIAssistant/ShadowCreditPurchaseGuardTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRequestLifecycleTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegacyMeasurementContextTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
+            <file>tests/Feature/Billing/CommercialCheckoutServiceTest.php</file>
+            <file>tests/Unit/AIAssistant/AIUsageTrackerTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantExtendedCoverage">
+            <file>tests/Feature/AIAssistant/AssistantPolicyReferenceCycleTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDesignDomainTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDesignAdditionalTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantVideoMonitoringTest.php</file>
+            <file>tests/Feature/AIAssistant/RagEmbeddingCompatibilityTest.php</file>
+            <file>tests/Feature/AIAssistant/WorkforceRagMutationTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagRetrieverTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantTenderNativeCoverageTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantExtendedDomainRegistryTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantRagObserverIsolationTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantCostAudit">
+            <file>tests/Feature/AIAssistant/ProviderAttemptCostAuditTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantMissingUsageBillingTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditEconomicsMonitorTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRevenueAllocationStorageTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantBusinessCoverage">
+            <file>tests/Feature/AIAssistant/AssistantPolicyReferenceCycleTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantCoreBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantCoreRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/OperationsRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/DesignRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesRagMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDomainFieldSelectionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantFinanceTenderSourceSchemaTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantPublishedReportFinancialEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLiveProjectFinanceSourceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegacyFinancialReadTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSourceReferencePrivacyTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOperationsBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOperationsNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalBusinessTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalBusinessMutationTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOrganizationReportingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantActionRowLockTest.php</file>
+        </testsuite>
+        <testsuite name="AIAssistantCommercialAllocation">
+            <file>tests/Feature/Billing/CommercialCheckoutServiceTest.php</file>
+            <file>tests/Feature/Billing/CommercialRenewalServiceTest.php</file>
+            <file>tests/Feature/Api/V1/Landing/CommercialCheckoutControllerTest.php</file>
+        </testsuite>
     </testsuites>
     <source>
         <include>
@@ -173,6 +363,7 @@
     <php>
         <ini name="memory_limit" value="1G"/>
         <env name="APP_ENV" value="testing" force="true"/>
+        <env name="APP_KEY" value="base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" force="true"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
         <env name="AUTH_SESSIONS_ENABLED" value="true" force="true"/>
         <env name="AUTH_SESSIONS_NOTIFY_NEW_DEVICE" value="false" force="true"/>

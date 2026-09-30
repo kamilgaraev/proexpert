@@ -40,15 +40,14 @@ final readonly class LegalWorkflowRecoveryService
         if (trim($reason) === '') {
             throw new DomainException('legal_workflow_reconciliation_reason_required');
         }
-        $this->instances()
-            ->whereKey($instance->id)
-            ->where('organization_id', (int) $instance->organization_id)
-            ->update([
-                'reconciliation_required_at' => now(),
-                'reconciliation_reason' => trim($reason),
-                'reconciliation_last_error' => null,
-                'updated_at' => now(),
+        $this->connection->transaction(function () use ($instance,$reason): void {
+            $changed = $this->instances()->whereKey($instance->id)->where('organization_id',(int)$instance->organization_id)->update([
+                'reconciliation_required_at'=>now(),'reconciliation_reason'=>trim($reason),'reconciliation_last_error'=>null,'updated_at'=>now(),
             ]);
+            if ($changed > 0) {
+                app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->queue(LegalWorkflowInstance::class,(int)$instance->organization_id,null,$instance->id);
+            }
+        });
     }
 
     /** @return Collection<int, LegalWorkflowInstance> */
@@ -157,15 +156,15 @@ final readonly class LegalWorkflowRecoveryService
                 return $instance->refresh()->load('steps', 'decisions');
             }, 3);
         } catch (Throwable $exception) {
-            $this->instances()
-                ->whereKey($instanceId)
-                ->where('organization_id', $organizationId)
-                ->whereNotNull('reconciliation_required_at')
-                ->update([
-                    'reconciliation_attempts' => $this->connection->raw('CASE WHEN reconciliation_attempts < 100 THEN reconciliation_attempts + 1 ELSE 100 END'),
-                    'reconciliation_last_error' => mb_substr($exception->getMessage(), 0, 2000),
-                    'updated_at' => now(),
+            $this->connection->transaction(function () use ($instanceId,$organizationId,$exception): void {
+                $changed = $this->instances()->whereKey($instanceId)->where('organization_id',$organizationId)->whereNotNull('reconciliation_required_at')->update([
+                    'reconciliation_attempts'=>$this->connection->raw('CASE WHEN reconciliation_attempts < 100 THEN reconciliation_attempts + 1 ELSE 100 END'),
+                    'reconciliation_last_error'=>mb_substr($exception->getMessage(),0,2000),'updated_at'=>now(),
                 ]);
+                if ($changed > 0) {
+                    app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->queue(LegalWorkflowInstance::class,$organizationId,null,$instanceId);
+                }
+            });
             throw $exception;
         }
     }

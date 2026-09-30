@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Features\BasicWarehouse\Models\AssetCategory;
 use Illuminate\Support\Facades\DB;
 
@@ -17,16 +19,23 @@ final class AssetCategoryService
         }
 
         $key = mb_strtolower($name, 'UTF-8');
-        DB::table('asset_categories')->insertOrIgnore([
-            'organization_id' => $organizationId,
-            'name' => $name,
-            'normalized_name' => $key,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        return DB::transaction(static function () use ($organizationId, $name, $key): string {
+            $inserted = DB::table('asset_categories')->insertOrIgnore([
+                'organization_id' => $organizationId,
+                'name' => $name,
+                'normalized_name' => $key,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
 
-        return AssetCategory::query()->where('organization_id', $organizationId)
-            ->where('normalized_name', $key)->firstOrFail()->name;
+            $category = AssetCategory::query()->where('organization_id', $organizationId)
+                ->where('normalized_name', $key)->firstOrFail();
+            if ($inserted > 0) {
+                app(OperationsRagMutationBridge::class)->changed('asset_categories', $organizationId, $category->id);
+            }
+
+            return $category->name;
+        });
     }
 
     public function search(int $organizationId, string $search): array

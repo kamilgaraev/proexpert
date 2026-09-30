@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
@@ -92,6 +93,8 @@ final class WorkforceProService
                 );
             }
 
+            app(WorkforceRagMutationBridge::class)->changed($table, $organizationId, (int) $record->id);
+
             return $this->decorateRecord($table, $organizationId, $record);
         });
     }
@@ -123,6 +126,8 @@ final class WorkforceProService
                     (string) $record->workforce_capacity_revision,
                 );
             }
+
+            app(WorkforceRagMutationBridge::class)->changed($table, $organizationId, (int) $record->id);
 
             return $this->decorateRecord($table, $organizationId, $record);
         });
@@ -338,6 +343,8 @@ final class WorkforceProService
                 $absenceTypeId = $absenceType->id;
             }
 
+            app(WorkforceRagMutationBridge::class)->changed('workforce_absence_types', $organizationId, (int) $absenceTypeId);
+
             unset($payload['absence_type_code'], $payload['absence_type_name']);
 
             return $this->store('workforce_absences', $organizationId, array_merge($payload, [
@@ -506,6 +513,7 @@ final class WorkforceProService
                 throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
             }
 
+            app(WorkforceRagMutationBridge::class)->changedRows('workforce_payroll_source_rows', $organizationId, DB::table('workforce_payroll_source_rows')->where('payroll_period_id', $periodId));
             DB::table('workforce_payroll_source_rows')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 
             ProductionLaborTimesheetEntry::query()
@@ -563,6 +571,7 @@ final class WorkforceProService
                     'source_hash' => null,
                     'updated_at' => now(),
                 ]);
+            app(WorkforceRagMutationBridge::class)->payrollPeriod($organizationId, $periodId);
         });
 
         $summary = DB::table('workforce_payroll_source_rows')
@@ -589,6 +598,7 @@ final class WorkforceProService
                 throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
             }
 
+            app(WorkforceRagMutationBridge::class)->changedRows('workforce_payroll_validation_issues', $organizationId, DB::table('workforce_payroll_validation_issues')->where('payroll_period_id', $periodId));
             DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 
             $employeeIds = DB::table('workforce_payroll_source_rows')
@@ -829,6 +839,8 @@ final class WorkforceProService
                     'updated_at' => now(),
                 ]);
 
+            app(WorkforceRagMutationBridge::class)->payrollPeriod($organizationId, $periodId);
+
             return [
                 'payroll_period_id' => $periodId,
                 'status' => $status,
@@ -1024,6 +1036,7 @@ final class WorkforceProService
                 ]);
             } else {
                 $statementId = (int) $statement->id;
+                app(WorkforceRagMutationBridge::class)->changedRows('workforce_payroll_statement_rows', $organizationId, DB::table('workforce_payroll_statement_rows')->where('payroll_statement_id', $statementId));
                 DB::table('workforce_payroll_statement_rows')
                     ->where('organization_id', $organizationId)
                     ->where('payroll_statement_id', $statementId)
@@ -1065,6 +1078,8 @@ final class WorkforceProService
                     'gross_amount' => round($grossAmount, 2),
                     'updated_at' => now(),
                 ]);
+
+            app(WorkforceRagMutationBridge::class)->payrollPeriod($organizationId, $periodId);
 
             return $statementId;
         });

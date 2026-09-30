@@ -7,6 +7,10 @@ namespace App\BusinessModules\Features\AIAssistant\Services\ProjectPulse;
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class ProjectPulseService
@@ -21,7 +25,8 @@ class ProjectPulseService
 
     public function current(ProjectPulseContext $context): ?array
     {
-        $existing = ProjectPulseReport::query()
+        $actor = $this->actor($context->organizationId, $context->userId, $context->projectId);
+        $existing = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $context->organizationId, 'project_pulse_report')
             ->forOrganization($context->organizationId)
             ->forProject($context->projectId)
             ->whereDate('report_date', $context->date->toDateString())
@@ -34,7 +39,29 @@ class ProjectPulseService
 
     public function generate(ProjectPulseContext $context): array
     {
+        $actor = $this->actor($context->organizationId, $context->userId, $context->projectId);
         $facts = $this->factCollector->collect($context);
+        $policy = app(AssistantDataAccessPolicy::class);
+        $domains = ['reports', 'projects'];
+        foreach (['contracts', 'finance', 'warehouse', 'people', 'procurement', 'schedule', 'documents', 'quality', 'safety', 'change_management', 'handover_acceptance', 'machinery', 'production_labor', 'site_requests'] as $domain) {
+            if ($policy->canReadDomain($actor, $context->organizationId, $domain)) {
+                $domains[] = $domain;
+            }
+        }
+        $refs = app(AssistantReportAccessService::class)->scopeReferences($actor, $context->organizationId, $context->projectId);
+        $referenceForFact = static function ($fact): ?array {
+            $ref = $fact->relatedEntity;
+            if (! is_array($ref) || ! isset($ref['type'], $ref['id'])) { return null; }
+            $type = match ($ref['type']) { 'contract_performance_act' => 'performance_act', 'warehouse_allocation' => 'warehouse_project_allocation', 'project_schedule_task' => 'schedule_task', default => $ref['type'] };
+            return ['entity_type' => $type, 'entity_id' => (string) $ref['id']];
+        };
+        $facts = $facts->filter(static function ($fact) use ($referenceForFact, $policy, $actor, $context): bool {
+            $ref = $referenceForFact($fact);
+            return $ref !== null && $policy->canReadReference($actor, $context->organizationId, $ref);
+        })->values();
+        foreach ($facts as $fact) {
+            $refs[] = $referenceForFact($fact);
+        }
         $categories = $this->ruleEngine->categories($facts);
         $groups = $this->ruleEngine->groups($facts);
         $nextActions = $this->ruleEngine->nextActions($facts);
@@ -67,6 +94,8 @@ class ProjectPulseService
             'finance' => $this->factCollector->finance($context),
             'activity' => $this->ruleEngine->activity($facts),
             'recommendations' => $synthesis['recommendations'],
+            'source_refs' => $refs,
+            'required_domains' => $domains,
             'raw_facts' => $facts->map->toArray()->values()->all(),
             'created_by_user_id' => $context->userId,
             'generated_at' => now(),
@@ -75,9 +104,10 @@ class ProjectPulseService
         return $this->formatter->format($report);
     }
 
-    public function list(int $organizationId, array $filters): LengthAwarePaginator
+    public function list(int $organizationId, array $filters, ?User $actor = null): LengthAwarePaginator
     {
-        $paginator = ProjectPulseReport::query()
+        $actor = $this->actor($organizationId, $actor?->id);
+        $paginator = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $organizationId, 'project_pulse_report')
             ->forOrganization($organizationId)
             ->with('project')
             ->when(isset($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
@@ -104,23 +134,24 @@ class ProjectPulseService
         return $paginator;
     }
 
-    public function get(int $organizationId, ProjectPulseReport $report): array
+    public function get(int $organizationId, ProjectPulseReport $report, ?User $actor = null): array
     {
-        $scopedReport = $this->findForOrganization($organizationId, $report);
+        $scopedReport = $this->findForOrganization($organizationId, $report, $actor);
 
         return $this->formatter->format($scopedReport);
     }
 
-    public function delete(int $organizationId, ProjectPulseReport $report): void
+    public function delete(int $organizationId, ProjectPulseReport $report, ?User $actor = null): void
     {
-        $scopedReport = $this->findForOrganization($organizationId, $report);
+        $scopedReport = $this->findForOrganization($organizationId, $report, $actor);
 
         $scopedReport->delete();
     }
 
-    private function findForOrganization(int $organizationId, ProjectPulseReport $report): ProjectPulseReport
+    private function findForOrganization(int $organizationId, ProjectPulseReport $report, ?User $actor): ProjectPulseReport
     {
-        $scopedReport = ProjectPulseReport::query()
+        $actor = $this->actor($organizationId, $actor?->id);
+        $scopedReport = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $organizationId, 'project_pulse_report')
             ->forOrganization($organizationId)
             ->whereKey($report->getKey())
             ->first();
@@ -131,4 +162,15 @@ class ProjectPulseService
 
         return $scopedReport;
     }
+    private function actor(int $organizationId, ?int $userId, ?int $projectId = null): User
+    {
+        $actor = $userId === null ? null : User::find($userId);
+        $policy = app(AssistantDataAccessPolicy::class);
+        if ($actor === null || ! $policy->canReadDomain($actor, $organizationId, 'reports') || ! $policy->canReadDomain($actor, $organizationId, 'finance')
+            || ($projectId !== null && ! $policy->canReadEntity($actor, $organizationId, 'project', $projectId))) {
+            throw new AccessDeniedHttpException();
+        }
+        return $actor;
+    }
+
 }

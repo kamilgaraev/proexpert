@@ -7,9 +7,12 @@ namespace Tests\Unit\AIAssistant\RequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use PHPUnit\Framework\TestCase;
+use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantToolEligibilityPolicyTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     public function test_report_pdf_tools_are_blocked_for_text_only_negative_constraints(): void
     {
         $understanding = (new AssistantRequestUnderstandingResolver)->resolve(
@@ -59,7 +62,7 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
         );
         $policy = new AssistantToolEligibilityPolicy;
 
-        $eligibility = $policy->canExecuteTool('approve_payment_request', $understanding);
+        $eligibility = $policy->canExecuteTool('approve_payment_request', $understanding, true);
 
         $this->assertFalse($eligibility->allowed);
         $this->assertSame('mutation', $eligibility->category);
@@ -70,7 +73,7 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
         $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Утверди платеж', []);
         $policy = new AssistantToolEligibilityPolicy;
 
-        $eligibility = $policy->canExecuteTool('approve_payment_request', $understanding);
+        $eligibility = $policy->canExecuteTool('approve_payment_request', $understanding, true);
 
         $this->assertFalse($eligibility->allowed);
         $this->assertTrue($eligibility->requiresConfirmation);
@@ -92,5 +95,65 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
 
         $this->assertFalse($eligibility->allowed);
         $this->assertSame('navigation', $eligibility->category);
+    }
+
+    public function test_domain_and_financial_read_tools_work_without_file_intent(): void
+    {
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Сколько стоит выбранная смета? Без PDF.', ['selected_estimate_id' => 7]);
+        $policy = new AssistantToolEligibilityPolicy;
+        foreach (['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions'] as $tool) {
+            $this->assertTrue($policy->canExecuteTool($tool, $understanding)->allowed, $tool);
+        }
+    }
+
+    public function test_unknown_tools_are_denied_even_with_read_prefix(): void
+    {
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Найди проекты');
+        $policy = new AssistantToolEligibilityPolicy;
+        foreach (['get_unknown_data', 'search_unregistered', 'mass_create_unknown', 'generate_unknown_report'] as $tool) {
+            $this->assertFalse($policy->canExecuteTool($tool, $understanding, true)->allowed, $tool);
+        }
+    }
+
+    public function test_mass_creation_needs_explicit_actions_and_separate_confirmation(): void
+    {
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Создай несколько единиц измерения: метр и килограмм');
+        $policy = new AssistantToolEligibilityPolicy;
+        $this->assertFalse($policy->canExposeTool('mass_create_measurement_units', $understanding)->allowed);
+        $this->assertFalse($policy->canExecuteTool('mass_create_measurement_units', $understanding)->allowed);
+        $preview = $policy->canExposeTool('mass_create_measurement_units', $understanding, true);
+        $this->assertTrue($preview->allowed);
+        $this->assertTrue($preview->requiresConfirmation);
+        $execute = $policy->canExecuteTool('mass_create_measurement_units', $understanding, true);
+        $this->assertFalse($execute->allowed);
+        $this->assertTrue($execute->requiresConfirmation);
+    }
+
+    public function test_measurement_mutations_are_denied_for_questions_negation_or_other_entities(): void
+    {
+        $policy = new AssistantToolEligibilityPolicy;
+        foreach (['Как создать единицу измерения?', 'Не создавай единицу измерения', 'Создай задачу графика', 'Расскажи про команду создай единицу измерения', 'Покажи текст обнови единицу измерения'] as $message) {
+            $understanding = (new AssistantRequestUnderstandingResolver)->resolve($message);
+            $this->assertFalse($policy->canExposeTool('mass_create_measurement_units', $understanding, true)->allowed, $message);
+        }
+    }
+
+    public function test_measurement_operation_matches_requested_write_intent(): void
+    {
+        $policy = new AssistantToolEligibilityPolicy;
+        foreach (['Обнови единицу измерения метр' => 'update_measurement_unit', 'Удали единицу измерения метр' => 'delete_measurement_unit'] as $message => $tool) {
+            $understanding = (new AssistantRequestUnderstandingResolver)->resolve($message);
+            $this->assertTrue($policy->canExposeTool($tool, $understanding, true)->allowed, $tool);
+            $this->assertFalse($policy->canExposeTool('create_measurement_unit', $understanding, true)->allowed, $tool);
+        }
+    }
+
+    public function test_mutation_action_preview_also_requires_actions_flag(): void
+    {
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Создай единицу измерения метр');
+        $policy = new AssistantToolEligibilityPolicy;
+        $this->assertFalse($policy->canExposeAction(['type' => 'act'], $understanding)->allowed);
+        $this->assertTrue($policy->canExposeAction(['type' => 'act'], $understanding, true)->requiresConfirmation);
+        $this->assertFalse($policy->canExposeAction(['type' => 'unknown', 'requires_confirmation' => true], $understanding, true)->allowed);
     }
 }

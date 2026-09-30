@@ -72,7 +72,7 @@ final class EffectiveSettingsResolverTest extends TestCase
 
             public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
             {
-                return $this->pinVision($correlationId, $organizationId, $sessionId, null, 'openai/gpt-5.6-luna');
+                return $this->pinVision($correlationId, $organizationId, $sessionId, null, 'openai/gpt-6-luna');
             }
 
             public function pinVision(
@@ -98,26 +98,15 @@ final class EffectiveSettingsResolverTest extends TestCase
         $operationC = '33333333-3333-5333-8333-333333333333';
 
         self::assertSame(
-            'openai/gpt-5.6-luna',
-            (new EffectiveSettingsResolver($store, 'openai/gpt-5.6-luna'))
+            'openai/gpt-6-luna',
+            (new EffectiveSettingsResolver($store, 'openai/gpt-6-luna'))
                 ->visionModelForOperation($operationA, 17, 91),
         );
         $changedEnvironment = new EffectiveSettingsResolver($store, 'gemini/gemini-3.1-flash');
-        self::assertSame(
-            'openai/gpt-5.6-luna',
-            $changedEnvironment->visionModelForOperation($operationA, 17, 91),
-        );
-        self::assertSame(
-            'gemini/gemini-3.1-flash',
-            $changedEnvironment->visionModelForOperation($operationB, 17, 91),
-        );
-        self::assertSame(
-            'gemini/gemini-3.5-flash',
-            (new EffectiveSettingsResolver($store))
-                ->visionModelForOperation($operationC, 17, 91),
-        );
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('estimate_generation_vision_replan_required');
+        $changedEnvironment->visionModelForOperation($operationA, 17, 91);
     }
-
     /** @return array<string, mixed> */
     private function record(string $scope): array
     {

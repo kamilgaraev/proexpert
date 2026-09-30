@@ -26,19 +26,19 @@ final class EstimateReferenceRagSource implements RagSourceCollectorInterface
 
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
-        foreach ($this->templates($organizationId)->cursor() as $template) {
+        foreach ($this->templates($organizationId)->reorder()->lazyById(100) as $template) {
             yield $this->templateChunk($template, $organizationId);
         }
 
-        foreach ($this->libraryItems($organizationId)->cursor() as $item) {
+        foreach ($this->libraryItems($organizationId)->reorder()->lazyById(100) as $item) {
             yield $this->libraryItemChunk($item, $organizationId);
         }
 
-        foreach ($this->catalogItems($organizationId)->cursor() as $item) {
+        foreach ($this->catalogItems($organizationId)->reorder()->lazyById(100) as $item) {
             yield $this->catalogItemChunk($item);
         }
 
-        foreach ($this->usedNormativeRates($organizationId, $projectId)->cursor() as $rate) {
+        foreach ($this->usedNormativeRates($organizationId, $projectId)->reorder()->lazyById(100) as $rate) {
             yield $this->normativeRateChunk($rate, $organizationId);
         }
     }

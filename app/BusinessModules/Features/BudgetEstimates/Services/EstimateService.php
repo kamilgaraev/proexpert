@@ -213,7 +213,7 @@ class EstimateService
             'user_id' => Auth::id(),
         ]);
         
-        $result = $this->repository->delete($estimate);
+        $result = DB::transaction(fn () => $this->repository->delete($estimate));
         
         if ($result) {
             Log::info('estimate.deleted', [

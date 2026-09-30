@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\DTO\PayrollReadinessPeriodIdentity;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Enums\PayrollReadinessReason;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadiness\Services\PayrollReadinessOwnerSnapshotRecorder;
@@ -51,6 +52,8 @@ final class WorkforceCorporateService
                 'updated_at' => now(),
             ]));
 
+            app(WorkforceRagMutationBridge::class)->changed('workforce_accounting_mappings', $organizationId, $id);
+
             return $this->decorateAccountingMapping($organizationId, DB::table('workforce_accounting_mappings')->where('organization_id', $organizationId)->where('id', $id)->first());
         });
     }
@@ -67,6 +70,8 @@ final class WorkforceCorporateService
                 ->where('organization_id', $organizationId)
                 ->where('id', $mappingId)
                 ->update(array_merge($this->normalizeMappingPayload($payload + ['scope_type' => $merged['scope_type']]), ['updated_at' => now()]));
+
+            app(WorkforceRagMutationBridge::class)->changed('workforce_accounting_mappings', $organizationId, $mappingId);
 
             return $this->decorateAccountingMapping($organizationId, DB::table('workforce_accounting_mappings')->where('organization_id', $organizationId)->where('id', $mappingId)->first());
         });
@@ -173,6 +178,8 @@ final class WorkforceCorporateService
                 $lockedAt,
                 $sourceHash,
             );
+
+            app(WorkforceRagMutationBridge::class)->payrollPeriod($organizationId, $periodId);
 
             return (array) $lockedPeriod;
         });
@@ -367,6 +374,9 @@ final class WorkforceCorporateService
 
                 DB::table('workforce_export_package_files')->insert($fileRows);
 
+                app(WorkforceRagMutationBridge::class)->changed('workforce_export_packages', $organizationId, $packageId);
+                app(WorkforceRagMutationBridge::class)->changedRows('workforce_export_package_files', $organizationId, DB::table('workforce_export_package_files')->where('export_package_id', $packageId));
+
                 return ['package_id' => $packageId, 'files_adopted' => true];
             });
         } catch (Throwable $exception) {
@@ -415,6 +425,7 @@ final class WorkforceCorporateService
                 ->where('organization_id', $organizationId)
                 ->where('id', $packageId)
                 ->update($payload);
+            app(WorkforceRagMutationBridge::class)->changed('workforce_export_packages', $organizationId, $packageId);
 
             return $this->showExportPackage($organizationId, $packageId);
         });
@@ -569,6 +580,7 @@ final class WorkforceCorporateService
 
     private function refreshAccountingIssues(int $organizationId, int $periodId): void
     {
+        app(WorkforceRagMutationBridge::class)->changedRows('workforce_payroll_validation_issues', $organizationId, DB::table('workforce_payroll_validation_issues')->where('payroll_period_id', $periodId)->where('issue_code', 'missing_accounting_mapping'));
         DB::table('workforce_payroll_validation_issues')
             ->where('organization_id', $organizationId)
             ->where('payroll_period_id', $periodId)
@@ -650,6 +662,7 @@ final class WorkforceCorporateService
                     DB::table('workforce_payroll_validation_issues')->insert($issues);
                 }
             });
+        app(WorkforceRagMutationBridge::class)->payrollPeriod($organizationId, $periodId);
     }
 
     private function resolveMappingFromLookup(object $row, ?object $assignment, array $mappingLookup): ?object

@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use BackedEnum;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use JsonException;
@@ -23,17 +24,28 @@ class RagIndexer
         private readonly ?UsageTracker $usageTracker = null
     ) {}
 
-    public function indexChunk(RagChunkData $chunk): void
+    public function indexChunk(RagChunkData $chunk, ?DateTimeInterface $reconciledAt = null, ?callable $guard = null): void
     {
+        if ($guard !== null) {
+            $guard();
+        }
         $checksum = $this->checksum($chunk);
         $existing = RagSource::query()
             ->where('organization_id', $chunk->organizationId)
+            ->where('identity_project_id', $chunk->projectId ?? 0)
+            ->where('identity_part_key', $this->partKey($chunk))
             ->where('source_type', $chunk->sourceType)
             ->where('entity_type', $chunk->entityType)
             ->where('entity_id', (string) $chunk->entityId)
             ->first();
 
-        if ($existing instanceof RagSource && $existing->checksum === $checksum) {
+        if ($existing instanceof RagSource && $this->matchesSource($existing, $chunk)) {
+            $values = $existing->checksum === $checksum ? [] : ['checksum' => $checksum];
+            if ($reconciledAt instanceof DateTimeInterface) {
+                $values['last_reconciled_at'] = $reconciledAt;
+            }
+            if ($values !== []) $existing->forceFill($values)->save();
+
             return;
         }
 
@@ -44,20 +56,27 @@ class RagIndexer
 
         $embeddedChunks = $this->embedContentChunks($chunk, $contentChunks);
 
-        DB::transaction(function () use ($chunk, $checksum, $embeddedChunks): void {
+        DB::transaction(function () use ($chunk, $checksum, $embeddedChunks, $reconciledAt, $guard): void {
+            if ($guard !== null) {
+                $guard();
+            }
             $source = RagSource::query()->updateOrCreate(
                 [
                     'organization_id' => $chunk->organizationId,
+                    'identity_project_id' => $chunk->projectId ?? 0,
+                    'identity_part_key' => $this->partKey($chunk),
                     'source_type' => $chunk->sourceType,
                     'entity_type' => $chunk->entityType,
                     'entity_id' => (string) $chunk->entityId,
                 ],
                 [
                     'project_id' => $chunk->projectId,
+                    'source_version' => $this->sourceVersion($chunk),
                     'title' => $this->sourceTitle($chunk->title),
                     'checksum' => $checksum,
                     'metadata' => $chunk->metadata,
                     'indexed_at' => now(),
+                    'last_reconciled_at' => $reconciledAt,
                 ]
             );
 
@@ -85,7 +104,7 @@ class RagIndexer
         });
     }
 
-    public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null): int
+    public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?callable $progress = null): int
     {
         $collectors = $sourceType === null
             ? $this->sourceRegistry->enabledCollectors()
@@ -93,14 +112,18 @@ class RagIndexer
         $indexed = 0;
 
         foreach ($collectors as $collector) {
+            $reconciledAt = now();
             foreach ($collector->collectForOrganization($organizationId, $projectId) as $chunk) {
-                $this->indexChunk($chunk);
+                if ($progress !== null) {
+                    $progress($indexed);
+                }
+                $this->indexChunk($chunk, $reconciledAt, $progress === null ? null : static fn () => $progress($indexed));
                 $indexed++;
             }
-
-            if ($collector instanceof RagSourcePrunerInterface) {
-                $collector->pruneForOrganization($organizationId, $projectId);
+            if ($progress !== null) {
+                $progress($indexed);
             }
+            $this->pruneReconciledScope($organizationId, $projectId, $collector->sourceType(), $reconciledAt, $progress === null ? null : static fn () => $progress($indexed));
         }
 
         return $indexed;
@@ -110,7 +133,8 @@ class RagIndexer
         int $organizationId,
         ?string $sourceType,
         string $entityType,
-        string|int $entityId
+        string|int $entityId,
+        ?callable $progress = null
     ): int {
         if ($sourceType === null) {
             return 0;
@@ -123,43 +147,133 @@ class RagIndexer
 
         $indexed = 0;
         $collected = false;
+        $reconciledAt = now();
+        if ($progress !== null) {
+            $progress(0);
+        }
 
         foreach ($collector->collectEntity($organizationId, $entityType, $entityId) as $chunk) {
+            if ($progress !== null) {
+                $progress($indexed);
+            }
             $collected = true;
-            $this->indexChunk($chunk);
+            $this->indexChunk($chunk, $reconciledAt, $progress === null ? null : static fn () => $progress($indexed));
             $indexed++;
         }
 
-        if (! $collected && $collector instanceof RagSourcePrunerInterface) {
-            $this->deleteIndexedEntity($organizationId, $sourceType, $entityType, $entityId);
+        if (! $collected) {
+            if ($progress !== null) {
+                $progress(0);
+            }
+            $guard = $progress === null ? null : static fn () => $progress(0);
+            $this->deleteIndexedEntity($organizationId, $sourceType, $entityType, $entityId, $guard);
+            if ($sourceType === 'estimate' && $entityType === 'estimate') {
+                $this->deleteChildSources($organizationId, $sourceType, 'estimate_id', $entityId, $guard);
+            }
+            if ($sourceType === 'estimate' && $entityType === 'estimate_item') {
+                $this->deleteChildSources($organizationId, $sourceType, 'estimate_item_id', $entityId, $guard);
+            }
+        }
+
+        if ($collected && (($sourceType === 'estimate' && $entityType === 'estimate') || $sourceType === 'file_document')) {
+            if ($progress !== null) {
+                $progress($indexed);
+            }
+            RagSource::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
+                ->where(function ($query) use ($sourceType, $entityType, $entityId): void {
+                    $query->where(function ($identity) use ($entityType, $entityId): void {
+                        $identity->where('entity_type', $entityType)->where('entity_id', (string) $entityId);
+                    });
+                    if ($sourceType === 'estimate') {
+                        $query->orWhere('metadata->estimate_id', (int) $entityId);
+                    }
+                })
+                ->where(function ($query) use ($reconciledAt): void {
+                    $query->whereNull('last_reconciled_at')->orWhere('last_reconciled_at', '<', $reconciledAt);
+                })->lazyById(100)->each(static function (RagSource $source) use ($progress, $indexed, $reconciledAt): void {
+                    DB::transaction(static function () use ($source, $progress, $indexed, $reconciledAt): void {
+                        if ($progress !== null) {
+                            $progress($indexed);
+                        }
+                        $current = RagSource::query()->whereKey($source->id)->where(static function ($query) use ($reconciledAt): void {
+                            $query->whereNull('last_reconciled_at')->orWhere('last_reconciled_at', '<', $reconciledAt);
+                        })->lockForUpdate()->first();
+                        if ($current !== null) {
+                            $current->chunks()->delete();
+                            $current->delete();
+                        }
+                    });
+                });
         }
 
         return $indexed;
     }
 
-    private function deleteIndexedEntity(
+    private function deleteChildSources(int $organizationId, string $sourceType, string $parentField, string|int $parentId, ?callable $guard = null): void
+    {
+        $this->deleteSources(RagSource::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
+            ->where('metadata->'.$parentField, (int) $parentId), $guard);
+    }
+
+    private function pruneReconciledScope(
+        int $organizationId,
+        ?int $projectId,
+        string $sourceType,
+        DateTimeInterface $reconciledAt,
+        ?callable $guard = null
+    ): void {
+        RagSource::query()
+            ->where('organization_id', $organizationId)
+            ->where('source_type', $sourceType)
+            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
+            ->where(function ($query) use ($reconciledAt): void {
+                $query->whereNull('last_reconciled_at')->orWhere('last_reconciled_at', '<', $reconciledAt);
+            })
+            ->lazyById(100)
+            ->each(static function (RagSource $source) use ($guard, $reconciledAt): void {
+                DB::transaction(static function () use ($source, $guard, $reconciledAt): void {
+                    if ($guard !== null) {
+                        $guard();
+                    }
+                    $current = RagSource::query()->whereKey($source->id)->where(static function ($query) use ($reconciledAt): void {
+                        $query->whereNull('last_reconciled_at')->orWhere('last_reconciled_at', '<', $reconciledAt);
+                    })->lockForUpdate()->first();
+                    if ($current !== null) {
+                        $current->chunks()->delete();
+                        $current->delete();
+                    }
+                });
+            });
+    }
+
+    public function deleteIndexedEntity(
         int $organizationId,
         string $sourceType,
         string $entityType,
-        string|int $entityId
+        string|int $entityId,
+        ?callable $guard = null
     ): void {
-        $sources = RagSource::query()
+        $this->deleteSources(RagSource::query()
             ->where('organization_id', $organizationId)
             ->where('source_type', $sourceType)
             ->where('entity_type', $entityType)
-            ->where('entity_id', (string) $entityId)
-            ->get();
+            ->where('entity_id', (string) $entityId), $guard);
+    }
 
-        if ($sources->isEmpty()) {
-            return;
+    private function deleteSources(Builder $query, ?callable $guard): void
+    {
+        foreach ($query->lazyById(100) as $source) {
+            DB::transaction(static function () use ($source, $guard): void {
+                if ($guard !== null) {
+                    $guard();
+                }
+                $current = RagSource::query()->whereKey($source->id)->lockForUpdate()->first();
+                if ($current !== null) {
+                    $current->chunks()->delete();
+                    $current->delete();
+                }
+            });
         }
-
-        DB::transaction(static function () use ($sources): void {
-            foreach ($sources as $source) {
-                $source->chunks()->delete();
-                $source->delete();
-            }
-        });
     }
 
     /**
@@ -176,15 +290,69 @@ class RagIndexer
         return [$sourceType => $collector];
     }
 
-    private function checksum(RagChunkData $chunk): string
+    private function checksum(RagChunkData $chunk, bool $includeEmbedding = true): string
     {
         $payload = [
             'title' => $this->normalizeText($chunk->title),
             'content' => $this->normalizeText($chunk->content),
             'metadata' => $this->normalizeValue($chunk->metadata),
+            'updated_at' => $this->sourceVersion($chunk),
         ];
+        if ($includeEmbedding) $payload['embedding'] = ['provider' => $this->embeddingProvider->provider(),
+            'model' => $this->embeddingProvider->model(), 'dimensions' => $this->embeddingProvider->dimensions()];
 
         return hash('sha256', $this->json($payload));
+    }
+
+    public function matchesSource(RagSource $source, RagChunkData $chunk): bool
+    {
+        return in_array($source->checksum, [$this->checksum($chunk), $this->checksum($chunk, false)], true)
+            && $this->compatibleSourceEmbeddings($source);
+    }
+
+    private function compatibleSourceEmbeddings(RagSource $source): bool
+    {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            $counts = $source->chunks()->selectRaw('COUNT(*) AS total, SUM(CASE WHEN embedding IS NOT NULL AND embedding_provider = ? AND embedding_model = ? AND vector_dims(embedding) = ? THEN 1 ELSE 0 END) AS compatible',
+                [$this->embeddingProvider->provider(), $this->embeddingProvider->model(), $this->embeddingProvider->dimensions()])->first();
+
+            return $counts !== null && (int) $counts->getAttribute('total') > 0
+                && (int) $counts->getAttribute('total') === (int) $counts->getAttribute('compatible');
+        }
+        $chunks = $source->chunks()->get(['embedding_provider', 'embedding_model', 'embedding']);
+        if ($chunks->isEmpty()) return false;
+        foreach ($chunks as $storedChunk) {
+            $vector = json_decode((string) $storedChunk->getAttribute('embedding'), true);
+            if ($storedChunk->embedding_provider !== $this->embeddingProvider->provider()
+                || $storedChunk->embedding_model !== $this->embeddingProvider->model()
+                || ! is_array($vector) || count($vector) !== $this->embeddingProvider->dimensions()) return false;
+        }
+
+        return true;
+    }
+
+    public function coverageIdentity(RagChunkData $chunk): array
+    {
+        return [
+            'organization_id' => $chunk->organizationId,
+            'project_id' => $chunk->projectId,
+            'identity_project_id' => $chunk->projectId ?? 0,
+            'identity_part_key' => $this->partKey($chunk),
+            'source_type' => $chunk->sourceType,
+            'entity_type' => $chunk->entityType,
+            'entity_id' => (string) $chunk->entityId,
+            'checksum' => $this->checksum($chunk),
+        ];
+    }
+
+    private function partKey(RagChunkData $chunk): string
+    {
+        return isset($chunk->metadata['unit_id']) ? (string) $chunk->metadata['unit_id'] : '';
+    }
+
+    private function sourceVersion(RagChunkData $chunk): ?string
+    {
+        return $chunk->updatedAt?->format(DateTimeInterface::ATOM);
     }
 
     private function normalizeText(string $value): string
@@ -216,6 +384,7 @@ class RagIndexer
                     RagEmbeddingProviderInterface::PURPOSE_DOCUMENT
                 );
             } catch (Throwable $throwable) {
+                $this->recordEmbeddingUsage($chunk, $content, $index, false);
                 Log::warning('ai_assistant.rag.embedding_failed', [
                     'organization_id' => $chunk->organizationId,
                     'project_id' => $chunk->projectId,
@@ -240,31 +409,42 @@ class RagIndexer
         return $embeddedChunks;
     }
 
-    private function recordEmbeddingUsage(RagChunkData $chunk, string $content, int $chunkIndex): void
+    private function recordEmbeddingUsage(RagChunkData $chunk, string $content, int $chunkIndex, bool $successful = true): void
     {
         try {
             $usage = $this->embeddingUsage($content);
             $tracker = $this->usageTracker ?? app(UsageTracker::class);
-
-            $tracker->recordUsage(
-                $chunk->organizationId,
-                null,
-                $this->embeddingProvider->provider(),
-                $this->embeddingProvider->model(),
-                'rag_index',
-                $usage['input_tokens'],
-                $usage['output_tokens'],
-                $usage['total_tokens'],
-                [
-                    'purpose' => RagEmbeddingProviderInterface::PURPOSE_DOCUMENT,
-                    'project_id' => $chunk->projectId,
-                    'source_type' => $chunk->sourceType,
-                    'entity_type' => $chunk->entityType,
-                    'entity_id' => (string) $chunk->entityId,
-                    'chunk_index' => $chunkIndex,
-                    'text_chars' => mb_strlen($content, 'UTF-8'),
-                ]
-            );
+            $attempts = method_exists($this->embeddingProvider, 'usageAttempts') ? $this->embeddingProvider->usageAttempts() : [];
+            if (! is_array($attempts) || $attempts === []) $attempts = [$usage + ['is_successful' => $successful, 'usage_key' => 'embedding:'.bin2hex(random_bytes(16))]];
+            foreach ($attempts as $attempt) {
+                $usage = OpenAIRagEmbeddingProvider::usageEvidence($attempt, $content);
+                $tracker->recordUsage(
+                    $chunk->organizationId,
+                    null,
+                    $this->embeddingProvider->provider(),
+                    $this->embeddingProvider->model(),
+                    'rag_index',
+                    $usage['input_tokens'],
+                    $usage['output_tokens'],
+                    $usage['total_tokens'],
+                    [
+                        'purpose' => RagEmbeddingProviderInterface::PURPOSE_DOCUMENT,
+                        'project_id' => $chunk->projectId,
+                        'source_type' => $chunk->sourceType,
+                        'entity_type' => $chunk->entityType,
+                        'entity_id' => (string) $chunk->entityId,
+                        'chunk_index' => $chunkIndex,
+                        'text_chars' => mb_strlen($content, 'UTF-8'),
+                        'usage_source' => $usage['usage_source'],
+                        'provider_usage_available' => $usage['provider_usage_available'],
+                        'estimated_input_tokens' => $usage['estimated_input_tokens'],
+                        'pricing_estimate' => false,
+                        'usage_key' => $attempt['usage_key'] ?? null,
+                        'attempt' => $attempt['attempt'] ?? 1,
+                        'is_successful' => $attempt['is_successful'] ?? $successful,
+                    ]
+                );
+            }
         } catch (Throwable $throwable) {
             Log::warning('ai_assistant.rag.usage_record_failed', [
                 'organization_id' => $chunk->organizationId,
@@ -278,7 +458,7 @@ class RagIndexer
     }
 
     /**
-     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     * @return array<string, mixed>
      */
     private function embeddingUsage(string $content): array
     {
@@ -289,29 +469,13 @@ class RagIndexer
                 $usage = $provider->lastUsage();
 
                 if (is_array($usage)) {
-                    $inputTokens = max(0, (int) ($usage['input_tokens'] ?? 0));
-                    $outputTokens = max(0, (int) ($usage['output_tokens'] ?? 0));
-                    $totalTokens = max(0, (int) ($usage['total_tokens'] ?? 0));
-
-                    if ($inputTokens > 0 || $totalTokens > 0) {
-                        return [
-                            'input_tokens' => $inputTokens > 0 ? $inputTokens : $totalTokens,
-                            'output_tokens' => $outputTokens,
-                            'total_tokens' => $totalTokens > 0 ? $totalTokens : $inputTokens + $outputTokens,
-                        ];
-                    }
+                    return OpenAIRagEmbeddingProvider::usageEvidence($usage, $content);
                 }
             } catch (Throwable) {
             }
         }
 
-        $inputTokens = max(1, (int) ceil(mb_strlen($content, 'UTF-8') / 4));
-
-        return [
-            'input_tokens' => $inputTokens,
-            'output_tokens' => 0,
-            'total_tokens' => $inputTokens,
-        ];
+        return OpenAIRagEmbeddingProvider::usageEvidence(null, $content);
     }
 
     /**

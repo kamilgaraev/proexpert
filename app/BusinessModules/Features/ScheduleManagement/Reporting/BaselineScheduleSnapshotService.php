@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -534,6 +536,7 @@ final readonly class BaselineScheduleSnapshotService
                 if ($rowBatch !== []) {
                     DB::table('baseline_schedule_variance_rows')->insert($rowBatch);
                 }
+                app(OperationsRagMutationBridge::class)->snapshot('baseline_schedule_variance_snapshots', 'baseline_schedule_variance_rows', $scope->organizationId, $snapshotId);
 
                 return $this->reference($scope, $query, $snapshot);
             });

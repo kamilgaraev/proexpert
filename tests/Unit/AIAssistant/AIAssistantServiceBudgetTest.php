@@ -30,6 +30,16 @@ use PHPUnit\Framework\TestCase;
 
 class AIAssistantServiceBudgetTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $application = new \Illuminate\Foundation\Application(dirname(__DIR__, 3));
+        $application->instance('config', new \Illuminate\Config\Repository(['app' => ['locale' => 'ru', 'fallback_locale' => 'ru'], 'ai-assistant-credits' => require dirname(__DIR__, 3).'/config/ai-assistant-credits.php']));
+        $application->instance('translator', new \Illuminate\Translation\Translator(new \Illuminate\Translation\FileLoader(new \Illuminate\Filesystem\Filesystem, dirname(__DIR__, 3).'/lang'), 'ru'));
+        $application->instance('log', new \Psr\Log\NullLogger);
+        \Illuminate\Support\Facades\Facade::setFacadeApplication($application);
+    }
+
     public function test_generic_summary_request_skips_tool_definitions(): void
     {
         $toolRegistry = new AIToolRegistry;
@@ -180,7 +190,7 @@ class AIAssistantServiceBudgetTest extends TestCase
 
             public function getParametersSchema(): array
             {
-                return ['type' => 'object'];
+                return ['type' => 'object', 'properties' => ['report_type' => ['type' => 'string']], 'required' => ['report_type'], 'additionalProperties' => false];
             }
 
             public function execute(array $arguments, ?User $user, Organization $organization): array|string
@@ -226,6 +236,23 @@ class AIAssistantServiceBudgetTest extends TestCase
         $registry->registerTool($tool);
 
         $this->assertSame($tool, $registry->getTool('update_task_status'));
+    }
+
+    public function test_tool_exception_uses_safe_translation_without_internal_message(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('search_projects');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
+        $tool->expects($this->once())->method('execute')->willThrowException(new \RuntimeException('secret database connection amount=999999'));
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['function' => ['name' => 'search_projects', 'arguments' => '{}']], [], $failures);
+        $safe = trans_message('ai_assistant.tool_execute_failed');
+        $this->assertSame(['error' => $safe], $result);
+        $this->assertSame([$safe], $failures);
+        $this->assertStringNotContainsString('secret database', json_encode([$result, $failures], JSON_THROW_ON_ERROR));
     }
 
     public function test_follow_up_payload_keeps_previous_schedule_report_intent(): void
@@ -479,14 +506,14 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame(56, $context['sources'][0]['project_id']);
     }
 
-    public function test_prepare_messages_for_provider_preserves_latest_user_message_and_reduces_budget(): void
+    public function test_provider_budget_preserves_mandatory_instruction_and_full_query(): void
     {
         $service = $this->makeService(new AIToolRegistry);
 
         $messages = [
             [
                 'role' => 'system',
-                'content' => str_repeat('system-context ', 900),
+                'content' => str_repeat('system-context ', 500),
             ],
             [
                 'role' => 'assistant',
@@ -502,18 +529,29 @@ class AIAssistantServiceBudgetTest extends TestCase
             ],
             [
                 'role' => 'user',
-                'content' => 'Найди аптечку на объекте Дом 300м Царево',
+                'content' => str_repeat('я', 4000),
             ],
         ];
 
-        $preparedMessages = $service->exposePrepareMessagesForProvider($messages);
-        $estimatedTokens = $service->exposeEstimateProviderInputTokens($preparedMessages, []);
+        [$preparedMessages, $options] = $service->exposePrepareProviderPayload($messages, ['budget_profile' => 'normal']);
 
         $this->assertNotEmpty($preparedMessages);
         $this->assertSame('system', $preparedMessages[0]['role']);
-        $this->assertLessThanOrEqual(12000, $estimatedTokens);
+        $this->assertLessThanOrEqual(16384, $options['estimated_input_tokens']);
+        $this->assertSame(2048, $options['max_completion_tokens']);
+        $this->assertSame($messages[0]['content'], $preparedMessages[0]['content']);
         $this->assertSame('user', $preparedMessages[array_key_last($preparedMessages)]['role']);
-        $this->assertStringContainsString('Найди аптечку', $preparedMessages[array_key_last($preparedMessages)]['content']);
+        $this->assertSame(str_repeat('я', 4000), $preparedMessages[array_key_last($preparedMessages)]['content']);
+    }
+
+    public function test_mandatory_context_overflow_fails_without_hidden_fallback_or_truncation(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $query = str_repeat('я', 4000);
+        $messages = [['role' => 'system', 'content' => str_repeat('я', 40000)], ['role' => 'user', 'content' => $query]];
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('ai_token_budget_exhausted');
+        $service->exposePrepareProviderPayload($messages, ['budget_profile' => 'short']);
     }
 
     public function test_untrusted_report_markdown_link_is_rendered_as_text(): void
@@ -701,7 +739,39 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame([], $context['metadata']['sources']);
     }
 
-    private function makeService(AIToolRegistry $toolRegistry): TestableAIAssistantService
+    public function test_standalone_greeting_skips_rag_search_but_contextual_greeting_does_not(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $user = new User;
+        $user->id = 7;
+        $user->current_organization_id = 15;
+
+        $context = $service->exposeBuildRagContext('Привет', 15, $user, [], [
+            'conversation_id' => null,
+            'context' => [
+                'source_module' => 'ai-assistant',
+                'entity_refs' => [['type' => 'project', 'id' => 56, 'label' => 'Текущий проект']],
+                'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+            ],
+        ]);
+        $this->assertFalse($service->ragQueryResolved);
+        $this->assertFalse($context['metadata']['used']);
+
+        $service->exposeBuildRagContext('Привет', 15, $user, [], [
+            'conversation_id' => 24,
+            'context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'project', 'id' => 56]], 'ui_state' => []],
+        ]);
+        $this->assertTrue($service->ragQueryResolved);
+
+        $service->ragQueryResolved = false;
+        $service->exposeBuildRagContext('Привет', 15, $user, [], [
+            'conversation_id' => null,
+            'context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'material', 'id' => 56]], 'ui_state' => []],
+        ]);
+        $this->assertTrue($service->ragQueryResolved);
+    }
+
+    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false): TestableAIAssistantService
     {
         $llmProvider = $this->createMock(LLMProviderInterface::class);
         $conversationManager = $this->createMock(ConversationManager::class);
@@ -710,6 +780,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $usageTracker = $this->createMock(UsageTracker::class);
         $logging = $this->createMock(LoggingService::class);
         $permissionChecker = $this->createMock(AIPermissionChecker::class);
+        $permissionChecker->method('canExecuteTool')->willReturn($canExecute);
         $accessContextResolver = $this->createMock(AssistantAccessContextResolver::class);
         $taskOrchestrator = $this->createMock(AssistantTaskOrchestrator::class);
 
@@ -727,7 +798,10 @@ class AIAssistantServiceBudgetTest extends TestCase
             new AssistantAgentStateStore,
             new AssistantAgentPlanner(new AssistantCapabilityCatalog, new AssistantPeriodResolver),
             new AssistantAgentExecutor($toolRegistry, $permissionChecker, new AssistantArtifactNormalizer),
-            new AssistantResponseVerifier
+            new AssistantResponseVerifier,
+            tokenBudget: new \App\Support\AI\TokenBudgetService(new \App\Support\AI\TokenCounter(new class {
+                public function encode(string $text): array { return array_fill(0, mb_strlen($text), 1); }
+            }))
         );
     }
 
@@ -771,6 +845,20 @@ class AIAssistantServiceBudgetTest extends TestCase
 
 class TestableAIAssistantService extends AIAssistantService
 {
+    public bool $ragQueryResolved = false;
+
+    protected function resolveRagSearchQuery(string $query, array $requestPayload): string
+    {
+        $this->ragQueryResolved = true;
+
+        return parent::resolveRagSearchQuery($query, $requestPayload);
+    }
+
+    public function exposePrepareProviderPayload(array $messages, array $options): array
+    {
+        return $this->prepareProviderPayload($messages, $options, 15, new User);
+    }
+
     public function exposeResolveToolDefinitions(array $taskPlan): array
     {
         return $this->resolveToolDefinitions($taskPlan);

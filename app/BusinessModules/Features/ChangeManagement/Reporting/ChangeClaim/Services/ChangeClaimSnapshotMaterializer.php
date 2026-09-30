@@ -353,6 +353,7 @@ final readonly class ChangeClaimSnapshotMaterializer
                 }
             }
 
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->queue(ChangeClaimSnapshot::class,(int)$scope->organizationId,null,(string)$snapshot->id);
             return (string) $snapshot->id;
         });
 

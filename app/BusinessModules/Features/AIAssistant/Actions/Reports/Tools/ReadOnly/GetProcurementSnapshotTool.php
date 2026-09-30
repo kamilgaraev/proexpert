@@ -37,14 +37,17 @@ class GetProcurementSnapshotTool extends AbstractReadOnlyTool
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        unset($user);
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
 
         if (!$this->hasTable('purchase_requests')) {
             return $this->tableUnavailable('procurement', 'purchase_requests');
         }
 
-        $requests = $this->buildRequests($arguments, $organization);
-        $orders = $this->buildOrders($arguments, $organization);
+        $requests = $this->buildRequests($arguments, $organization, $user);
+        $orders = $this->buildOrders($arguments, $organization, $user);
 
         return [
             'status' => 'success',
@@ -62,9 +65,9 @@ class GetProcurementSnapshotTool extends AbstractReadOnlyTool
         ];
     }
 
-    private function buildRequests(array $arguments, Organization $organization): array
+    private function buildRequests(array $arguments, Organization $organization, User $user): array
     {
-        $query = $this->withoutDeleted($this->orgTable('purchase_requests', $organization), 'purchase_requests');
+        $query = $this->withoutDeleted($this->actorTable($user, 'purchase_requests', $organization), 'purchase_requests');
         $projectId = $this->intArg($arguments, 'project_id');
         $requestId = $this->intArg($arguments, 'purchase_request_id');
         $status = $this->stringArg($arguments, 'status');
@@ -73,6 +76,12 @@ class GetProcurementSnapshotTool extends AbstractReadOnlyTool
         $hasSiteRequests = $this->hasTable('site_requests');
 
         if ($hasSiteRequests) {
+            $sites = $this->withoutDeleted($this->actorTable($user, 'site_requests', $organization), 'site_requests')
+                ->select('site_requests.id');
+            $query->where(function (\Illuminate\Database\Query\Builder $linked) use ($sites): void {
+                $linked->whereNull('purchase_requests.site_request_id')
+                    ->orWhereIn('purchase_requests.site_request_id', $sites);
+            });
             $query->leftJoin('site_requests', 'purchase_requests.site_request_id', '=', 'site_requests.id');
         }
 
@@ -132,16 +141,44 @@ class GetProcurementSnapshotTool extends AbstractReadOnlyTool
             ->all();
     }
 
-    private function buildOrders(array $arguments, Organization $organization): array
+    private function buildOrders(array $arguments, Organization $organization, User $user): array
     {
         if (!$this->hasTable('purchase_orders')) {
             return [];
         }
 
-        $query = $this->withoutDeleted($this->orgTable('purchase_orders', $organization), 'purchase_orders');
+        $query = $this->withoutDeleted($this->actorTable($user, 'purchase_orders', $organization), 'purchase_orders');
+        $projectId = $this->intArg($arguments, 'project_id');
         $requestId = $this->intArg($arguments, 'purchase_request_id');
         $status = $this->stringArg($arguments, 'status');
         $search = $this->stringArg($arguments, 'query');
+
+        if ($projectId !== null) {
+            $requests = null;
+            $contracts = null;
+            if ($this->hasTable('site_requests')) {
+                $sites = $this->withoutDeleted($this->actorTable($user, 'site_requests', $organization), 'site_requests')
+                    ->where('site_requests.project_id', $projectId)->select('site_requests.id');
+                $requests = $this->withoutDeleted($this->actorTable($user, 'purchase_requests', $organization), 'purchase_requests')
+                    ->whereIn('purchase_requests.site_request_id', $sites)->select('purchase_requests.id');
+            }
+            if ($this->hasTable('contracts')) {
+                $contracts = $this->withoutDeleted($this->actorTable($user, 'contracts', $organization), 'contracts')
+                    ->where('contracts.project_id', $projectId)->select('contracts.id');
+            }
+            if ($requests === null && $contracts === null) {
+                return [];
+            }
+            $query->where(function (\Illuminate\Database\Query\Builder $linked) use ($requests, $contracts): void {
+                $linked->whereRaw('1 = 0');
+                if ($requests !== null) {
+                    $linked->orWhereIn('purchase_orders.purchase_request_id', $requests);
+                }
+                if ($contracts !== null) {
+                    $linked->orWhereIn('purchase_orders.contract_id', $contracts);
+                }
+            });
+        }
 
         if ($requestId !== null) {
             $query->where('purchase_orders.purchase_request_id', $requestId);

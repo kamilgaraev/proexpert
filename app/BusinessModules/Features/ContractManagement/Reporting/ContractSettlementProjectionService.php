@@ -239,6 +239,14 @@ final readonly class ContractSettlementProjectionService
                     ));
                 }
             }
+            $bridge = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class);
+            $bridge->changedRows(ContractSettlementSourceFact::class, ContractSettlementSourceFact::query()
+                ->where('organization_id', $scope->organizationId)->where('scope_hash', $scopeHash)
+                ->where('query_hash', $query->queryHash->value), $scope->organizationId);
+            $bridge->queue(ContractSettlementExposureSnapshot::class, $scope->organizationId, null, (string) $snapshot->id);
+            $bridge->changedRows(\App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureRecord::class,
+                \App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureRecord::query()->where('snapshot_id', $snapshot->id),
+                $scope->organizationId);
 
             return $snapshot;
         });

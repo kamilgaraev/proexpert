@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
@@ -61,6 +63,10 @@ class GenerateTimeTrackingReportTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
         if (! $user instanceof User) {
             return ['status' => 'error', 'message' => trans_message('errors.unauthenticated')];
         }
@@ -84,6 +90,7 @@ class GenerateTimeTrackingReportTool implements AIToolInterface
         $request = Request::create('/api/v1/admin/reports/time-tracking', 'GET', $requestData);
         $request->setUserResolver(fn () => $user);
         $request->attributes->set('current_organization_id', $organization->id);
+        $request->attributes->set('assistant_actor_scope', true);
 
         try {
             // getTimeTrackingReport иногда возвращает $this->pdfExporter->download, а иногда streamDownload,
@@ -102,7 +109,7 @@ class GenerateTimeTrackingReportTool implements AIToolInterface
             }
 
             $filename = 'time_tracking_report_'.time().'.pdf';
-            $stored = $this->reportStorage->storePdf((string) $content, $filename, $organization, $user);
+            $stored = $this->reportStorage->storePdf((string) $content, $filename, $organization, $user, app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class)->scopeDomainReferences($user, (int) $organization->id, ['time_tracking', 'finance'], isset($arguments['project_id']) ? (int) $arguments['project_id'] : null), ['time_tracking', 'finance']);
 
             return [
                 'status' => 'success',

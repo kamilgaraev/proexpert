@@ -40,7 +40,7 @@ final class PerformanceActRagSource implements RagSourceCollectorInterface
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id');
 
-        foreach ($query->cursor() as $act) {
+        foreach ($query->reorder()->lazyById(100) as $act) {
             yield $this->chunk($act, $organizationId);
         }
     }

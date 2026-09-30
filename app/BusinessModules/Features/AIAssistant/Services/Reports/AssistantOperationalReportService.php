@@ -219,6 +219,9 @@ final class AssistantOperationalReportService
      */
     public function build(string $reportType, Organization $organization, ?User $user, array $filters = []): array
     {
+        if ($user === null || ! app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->canReadDomain($user, (int) $organization->id, 'reports')) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
         $definition = $this->definitions()[$reportType] ?? null;
         if (! is_array($definition)) {
             throw new InvalidArgumentException('Unknown operational report type.');
@@ -231,13 +234,24 @@ final class AssistantOperationalReportService
         $summaryCards = [];
         $totalRecords = 0;
         $totalAmount = 0.0;
+        $requiredDomains = ['reports'];
+        $sourceRefs = [];
 
         foreach (($definition['sections'] ?? []) as $sectionConfig) {
             if (! is_array($sectionConfig)) {
                 continue;
             }
 
-            $section = $this->buildSection($sectionConfig, (int) $organization->id, $dateFrom, $dateTo, $projectId);
+            $policy = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class);
+            $entityType = $policy->entityTypeForTable((string) ($sectionConfig['table'] ?? ''));
+            $domain = $entityType === null ? null : $policy->domainForEntity($entityType);
+            if ($domain !== null && $policy->canReadDomain($user, (int) $organization->id, $domain)) {
+                $requiredDomains[] = $domain;
+            }
+            $section = $this->buildSection($sectionConfig, (int) $organization->id, $dateFrom, $dateTo, $projectId, $user);
+            array_push($sourceRefs, ...($section['_source_refs'] ?? []));
+            unset($section['_source_refs']);
+            if (($section['amount_label'] ?? null) !== null) { $requiredDomains[] = 'finance'; }
             $sections[] = $section;
             $totalRecords += (int) ($section['total'] ?? 0);
             $totalAmount += (float) ($section['amount_total'] ?? 0);
@@ -264,6 +278,8 @@ final class AssistantOperationalReportService
         ]);
 
         return [
+            'source_refs' => $sourceRefs,
+            'required_domains' => array_values(array_unique($requiredDomains)),
             'report_type' => $reportType,
             'title' => (string) $definition['title'],
             'description' => (string) $definition['description'],
@@ -291,7 +307,7 @@ final class AssistantOperationalReportService
      * @param  array<string, mixed>  $config
      * @return array<string, mixed>
      */
-    private function buildSection(array $config, int $organizationId, ?string $dateFrom, ?string $dateTo, ?int $projectId): array
+    private function buildSection(array $config, int $organizationId, ?string $dateFrom, ?string $dateTo, ?int $projectId, ?User $user): array
     {
         $table = (string) ($config['table'] ?? '');
         $title = (string) ($config['title'] ?? $table);
@@ -305,7 +321,7 @@ final class AssistantOperationalReportService
             return $this->emptySection($title);
         }
 
-        $query = DB::table($table)->where($organizationColumn, $organizationId);
+        $query = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->scopeTable(DB::table($table)->where($organizationColumn, $organizationId), $user, $organizationId, $table);
         $dateColumn = $this->firstExistingColumn($table, ['created_at', 'date', 'occurred_at', 'received_at', 'shift_date', 'scanned_at', 'started_at']);
         $projectColumn = $this->queryPolicy->projectColumn(
             $table,
@@ -321,6 +337,10 @@ final class AssistantOperationalReportService
         }
 
         $statusColumn = $this->firstExistingColumn($table, ['status', 'state']);
+        if (! app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->canReadDomain($user, $organizationId, 'finance')) {
+            $config['amountColumns'] = [];
+            $config['columns'] = array_diff_key($config['columns'] ?? [], array_flip(['amount', 'total_amount', 'budget', 'contract_value', 'estimated_cost', 'cost', 'loss_amount', 'price']));
+        }
         $amountColumn = $this->firstExistingColumn($table, is_array($config['amountColumns'] ?? null) ? $config['amountColumns'] : []);
         $columns = $this->existingColumns($table, is_array($config['columns'] ?? null) ? $config['columns'] : []);
         $orderColumn = $dateColumn ?? $this->firstExistingColumn($table, ['id']);
@@ -328,6 +348,7 @@ final class AssistantOperationalReportService
         $amountTotal = $amountColumn !== null ? (float) (clone $query)->sum($amountColumn) : 0.0;
 
         return [
+            '_source_refs' => (clone $query)->pluck($table.'.id')->map(static fn (mixed $id): array => ['entity_type' => app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->entityTypeForTable($table), 'entity_id' => (string) $id])->all(),
             'title' => $title,
             'total' => $total,
             'amount_total' => $amountTotal,

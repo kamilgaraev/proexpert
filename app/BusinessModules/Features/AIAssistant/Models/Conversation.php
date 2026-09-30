@@ -27,15 +27,21 @@ class Conversation extends Model
 {
     protected $table = 'ai_conversations';
 
+    protected $attributes = ['context_version' => 1];
+
     protected $fillable = [
         'organization_id',
         'user_id',
         'title',
         'context',
+        'last_activity_at',
+        'context_version',
     ];
 
     protected $casts = [
         'context' => 'array',
+        'last_activity_at' => 'datetime',
+        'context_version' => 'integer',
     ];
 
     public function organization(): BelongsTo
@@ -51,6 +57,16 @@ class Conversation extends Model
     public function messages(): HasMany
     {
         return $this->hasMany(Message::class);
+    }
+
+    public function participants(): HasMany
+    {
+        return $this->hasMany(ConversationParticipant::class);
+    }
+
+    public function summary(): HasOne
+    {
+        return $this->hasOne(ConversationSummary::class);
     }
 
     public function lastMessage(): HasOne
@@ -70,10 +86,10 @@ class Conversation extends Model
 
     public function generateTitle(): void
     {
-        if (!$this->title) {
+        if (! $this->title) {
             $firstMessage = $this->messages()->where('role', 'user')->first();
             if ($firstMessage) {
-                $this->title = mb_substr($firstMessage->content, 0, 50) . '...';
+                $this->title = mb_substr($firstMessage->content, 0, 50).'...';
                 $this->save();
             }
         }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -433,6 +435,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 if ($rowBatch !== []) {
                     DB::table('lookahead_reporting_rows')->insert($rowBatch);
                 }
+                app(OperationsRagMutationBridge::class)->snapshot('lookahead_reporting_snapshots', 'lookahead_reporting_rows', $scope->organizationId, $snapshotId);
 
                 return $this->reference($scope, $query, $snapshot);
             });

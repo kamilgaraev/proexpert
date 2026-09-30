@@ -42,7 +42,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
             ))
             ->orderBy('id');
 
-        foreach ($query->cursor() as $request) {
+        foreach ($query->reorder()->lazyById(100) as $request) {
             yield $this->chunk($request);
         }
 
@@ -416,7 +416,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 static fn ($siteRequestQuery) => $siteRequestQuery->where('project_id', $projectId)
             ))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function supplierProposals(int $organizationId, ?int $projectId): iterable
@@ -445,7 +445,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 });
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function proposalDecisions(int $organizationId, ?int $projectId): iterable
@@ -463,7 +463,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 static fn ($siteRequestQuery) => $siteRequestQuery->where('project_id', $projectId)
             ))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function purchaseOrders(int $organizationId, ?int $projectId): iterable
@@ -485,7 +485,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 static fn ($siteRequestQuery) => $siteRequestQuery->where('project_id', $projectId)
             ))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function purchaseReceipts(int $organizationId, ?int $projectId): iterable
@@ -504,7 +504,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 static fn ($siteRequestQuery) => $siteRequestQuery->where('project_id', $projectId)
             ))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function procurementApprovals(int $organizationId, ?int $projectId): iterable
@@ -523,7 +523,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 $this->whereProcurementSubjectMatchesProject($query, 'approvable', $projectId);
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function procurementAuditEvents(int $organizationId, ?int $projectId): iterable
@@ -541,7 +541,7 @@ final class ProcurementRagSource implements RagSourceCollectorInterface
                 $this->whereProcurementSubjectMatchesProject($query, 'subject', $projectId);
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleSupplierRequest(int $organizationId, string|int $entityId): array

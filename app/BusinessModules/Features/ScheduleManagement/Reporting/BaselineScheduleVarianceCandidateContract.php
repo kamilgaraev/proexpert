@@ -23,7 +23,7 @@ final readonly class BaselineScheduleVarianceCandidateContract
 
     public const FORMULA_HASH = 'c8c3b6d05e673a04d91ea3778d2b7c1a760cce39ab1ff00fbd184bb67d3b4d1a';
 
-    public const SOURCE_HASH = '41f6e0b39d2ae0fbb17ce1b5ebe3414544aad99fb59a06e79070bd059a8e4565';
+    public const SOURCE_HASH = 'ac34ad199a3bb451087fb36217507968095f2bbbc7b066e8faa0e2c4d45599b4';
 
     public function filters(): array
     {

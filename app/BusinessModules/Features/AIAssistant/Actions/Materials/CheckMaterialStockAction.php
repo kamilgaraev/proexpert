@@ -1,16 +1,23 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Materials;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 class CheckMaterialStockAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?User $actor = null): array
     {
+        if ($actor === null || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'warehouse')) return [];
         // Переключено на warehouse_balances вместо material_balances
         $materials = DB::table('materials')
-            ->leftJoin('warehouse_balances', 'materials.id', '=', 'warehouse_balances.material_id')
+            ->leftJoin('warehouse_balances', function ($join) use ($organizationId): void {
+                $join->on('materials.id', '=', 'warehouse_balances.material_id')->where('warehouse_balances.organization_id', $organizationId);
+            })
             ->leftJoin('organization_warehouses', function($join) use ($organizationId) {
                 $join->on('warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
                      ->where('organization_warehouses.organization_id', '=', $organizationId);
@@ -94,4 +101,3 @@ class CheckMaterialStockAction
         ];
     }
 }
-

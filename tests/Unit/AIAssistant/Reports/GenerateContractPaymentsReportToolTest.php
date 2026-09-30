@@ -17,12 +17,13 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class GenerateContractPaymentsReportToolTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantReportUnitAccess { tearDown as private accessTearDown; }
     protected function tearDown(): void
     {
         Carbon::setTestNow();
         Mockery::close();
 
-        parent::tearDown();
+        $this->accessTearDown();
     }
 
     public function test_requests_contract_payments_report_with_open_project_start_period(): void
@@ -35,6 +36,7 @@ final class GenerateContractPaymentsReportToolTest extends TestCase
         $user = new User;
         $user->id = 12;
         $user->current_organization_id = 77;
+        $this->grantReportUnitPermissions($user, ['ai_assistant.chat', 'reports.view', 'contracts.view', 'finance.view', 'payments.invoice.view', 'projects.view']);
         $reportService = Mockery::mock(ReportService::class);
 
         $reportService
@@ -60,6 +62,8 @@ final class GenerateContractPaymentsReportToolTest extends TestCase
                 Mockery::pattern('/^contract_payments_report_\d+\.pdf$/'),
                 $organization,
                 $user,
+                [['entity_type' => 'contract', 'entity_id' => '1'], ['entity_type' => 'payment_document', 'entity_id' => '1']],
+                ['contracts', 'finance'],
             )
             ->andReturn([
                 'pdf_url' => 'https://storage.example.test/contract-payments.pdf',
@@ -76,7 +80,7 @@ final class GenerateContractPaymentsReportToolTest extends TestCase
             'project_id' => 56,
         ], $user, $organization);
 
-        $this->assertSame('success', $result['status']);
+        $this->assertSame('success', $result['status'], $result['message'] ?? '');
         $this->assertSame('https://storage.example.test/contract-payments.pdf', $result['pdf_url']);
         $this->assertSame('org-77/personal-files/user-12/report.pdf', $result['storage_path']);
         $this->assertNull($result['expires_at']);

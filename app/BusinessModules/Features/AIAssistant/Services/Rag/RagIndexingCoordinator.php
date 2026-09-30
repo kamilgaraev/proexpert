@@ -16,13 +16,15 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
 
 class RagIndexingCoordinator
 {
     public function __construct(
-        private readonly RagIndexer $indexer
+        private readonly RagIndexer $indexer,
+        private readonly ?RagJobDispatcher $dispatcher = null
     ) {}
 
     /**
@@ -182,11 +184,111 @@ class RagIndexingCoordinator
             'status' => RagIndexRun::STATUS_QUEUED,
             'mode' => $mode,
             'queued_at' => now(),
+            'last_error' => RagDispatchIntent::pending(),
         ]);
 
-        dispatch(new IndexRagSourceJob($organizationId, $projectId, $sourceType, $run->id));
+        $this->invalidateCoverageAfterCommit($organizationId);
+        $this->dispatchRunAfterCommit($run);
 
         return $run;
+    }
+
+    public function recoverExpiredRuns(): int
+    {
+        $cutoff = now();
+        $recoverQueued = RagQueueBacklog::isEmpty();
+        $runs = RagIndexRun::query()
+            ->whereIn('status', [RagIndexRun::STATUS_QUEUED, RagIndexRun::STATUS_RUNNING])
+            ->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
+                $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued);
+            })
+            ->orderBy('id')
+            ->limit(25)
+            ->get();
+        $recovered = 0;
+
+        foreach ($runs as $run) {
+            $updated = RagIndexRun::query()->whereKey($run->id)->where('updated_at', $run->updated_at)->where('status', $run->status)
+                ->where('last_error', $run->last_error)->where('lease_token', $run->lease_token)
+                ->where(function (Builder $query) use ($cutoff, $recoverQueued): void { $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued); })->update([
+                'status' => RagIndexRun::STATUS_QUEUED,
+                'queued_at' => now(),
+                'started_at' => null,
+                'heartbeat_at' => null,
+                'lease_expires_at' => null,
+                'lease_token' => null,
+                'last_error' => RagDispatchIntent::pending(),
+                'updated_at' => now(),
+            ]);
+
+            if ($updated === 1) {
+                $recovered++;
+                $this->dispatchRunAfterCommit($run->refresh());
+            }
+        }
+
+        return $recovered;
+    }
+
+    public function queueEntity(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId): RagIndexRun
+    {
+        return $this->queueEntityRun($organizationId, $projectId, $sourceType, $entityType, $entityId, RagIndexRun::MODE_ASYNC);
+    }
+
+    public function queueFileRegistration(int $organizationId, int $fileId, bool $archive = false): RagIndexRun
+    {
+        return $this->queueEntityRun($organizationId, null, 'file_document', 'file', $fileId,
+            $archive ? RagIndexRun::MODE_SCHEDULED : RagIndexRun::MODE_ASYNC);
+    }
+
+    private function queueEntityRun(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId, string $mode): RagIndexRun
+    {
+        return DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityId, $mode): RagIndexRun {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            $this->invalidateCoverageAfterCommit($organizationId);
+            $pending = RagIndexRun::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
+                ->where('entity_type', $entityType)->where('entity_id', (string) $entityId)->where('status', RagIndexRun::STATUS_QUEUED)->first();
+            if ($pending instanceof RagIndexRun) {
+                if ($mode === RagIndexRun::MODE_ASYNC && $pending->mode === RagIndexRun::MODE_SCHEDULED) {
+                    $pending->update(['mode' => RagIndexRun::MODE_ASYNC, 'last_error' => RagDispatchIntent::pending(), 'queued_at' => now()]);
+                    $this->dispatchRunAfterCommit($pending);
+                }
+                return $pending;
+            }
+            $run = RagIndexRun::query()->create([
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'source_type' => $sourceType,
+                'entity_type' => $entityType,
+                'entity_id' => (string) $entityId,
+                'status' => RagIndexRun::STATUS_QUEUED,
+                'mode' => $mode,
+                'queued_at' => now(),
+                'last_error' => RagDispatchIntent::pending(),
+            ]);
+            $this->dispatchRunAfterCommit($run);
+            return $run;
+        });
+    }
+    public function heartbeat(int $runId, ?string $leaseToken = null, ?int $processed = null): bool
+    {
+        return RagIndexRun::query()
+            ->whereKey($runId)
+            ->where('status', RagIndexRun::STATUS_RUNNING)
+            ->where('lease_expires_at', '>', now())
+            ->when($leaseToken !== null, static fn (Builder $query): Builder => $query->where('lease_token', $leaseToken))
+            ->update([
+                'heartbeat_at' => now(),
+                'lease_expires_at' => now()->addMinutes($this->leaseMinutes()),
+                'updated_at' => now(),
+                ...($processed === null ? [] : ['processed_sources' => $processed]),
+            ]) === 1;
+    }
+
+    public function releaseForRetry(int $runId, string $leaseToken, Throwable $exception): void
+    {
+        RagIndexRun::query()->whereKey($runId)->where('lease_token', $leaseToken)->where('status', RagIndexRun::STATUS_RUNNING)
+            ->update(['status' => RagIndexRun::STATUS_QUEUED, 'lease_expires_at' => null, 'last_error' => $exception::class, 'updated_at' => now()]);
     }
 
     public function shouldSplitOrganizationSourceByProjects(string $sourceType): bool
@@ -252,14 +354,7 @@ class RagIndexingCoordinator
         $queued = 0;
 
         foreach ($this->estimateIdsForProject($organizationId, $projectId) as $estimateId) {
-            dispatch(new IndexRagSourceJob(
-                $organizationId,
-                $projectId,
-                'estimate',
-                null,
-                'estimate',
-                $estimateId
-            ));
+            $this->queueEntity($organizationId, $projectId, 'estimate', 'estimate', $estimateId);
             $queued++;
         }
 
@@ -279,18 +374,25 @@ class RagIndexingCoordinator
             'organization_id' => $organizationId,
             'project_id' => $projectId,
             'source_type' => $sourceType,
-            'status' => RagIndexRun::STATUS_RUNNING,
+            'status' => RagIndexRun::STATUS_QUEUED,
             'mode' => RagIndexRun::MODE_SYNC,
             'queued_at' => now(),
-            'started_at' => now(),
         ]);
+        $this->invalidateCoverageAfterCommit($organizationId);
+        $run = $this->markRunning($run->id) ?? $run;
+        $leaseToken = $run->lease_token;
+        $progress = function (int $processed) use ($run, $leaseToken): void {
+            if (! $this->heartbeat($run->id, $leaseToken, $processed)) {
+                throw new \RuntimeException('RAG indexing lease lost');
+            }
+        };
 
         try {
-            $indexed = $this->indexer->indexOrganization($organizationId, $projectId, $sourceType);
+            $indexed = $this->indexer->indexOrganization($organizationId, $projectId, $sourceType, $progress);
 
-            return $this->markSucceeded($run->id, $indexed) ?? $run->refresh();
+            return $this->markSucceeded($run->id, $indexed, $leaseToken) ?? $run->refresh();
         } catch (Throwable $throwable) {
-            $this->markFailed($run->id, $throwable);
+            $this->markFailed($run->id, $throwable, $leaseToken);
 
             throw $throwable;
         }
@@ -312,19 +414,39 @@ class RagIndexingCoordinator
             return null;
         }
 
-        $run->forceFill([
+        $claimed = RagIndexRun::query()
+            ->whereKey($run->id)
+            ->where(static function (Builder $query): void {
+                $query->where('status', RagIndexRun::STATUS_QUEUED)
+                    ->orWhere(function (Builder $query): void {
+                        $query->where('status', RagIndexRun::STATUS_RUNNING)
+                            ->where('lease_expires_at', '<=', now());
+                    });
+            })
+            ->update([
             'status' => RagIndexRun::STATUS_RUNNING,
             'started_at' => $run->started_at ?? now(),
+            'heartbeat_at' => now(),
+            'lease_expires_at' => now()->addMinutes($this->leaseMinutes()),
+            'lease_token' => (string) Str::uuid(),
             'last_error' => null,
-        ])->save();
+            'updated_at' => now(),
+        ]);
+        if ($claimed !== 1) {
+            return null;
+        }
 
-        return $run;
+        return $run->refresh();
     }
 
-    public function markSucceeded(int $runId, int $indexedChunks): ?RagIndexRun
+    public function markSucceeded(int $runId, int $indexedChunks, ?string $leaseToken = null): ?RagIndexRun
     {
         $run = $this->findRun($runId);
         if (! $run instanceof RagIndexRun) {
+            return null;
+        }
+
+        if ($leaseToken !== null && $run->lease_token !== $leaseToken) {
             return null;
         }
 
@@ -332,7 +454,7 @@ class RagIndexingCoordinator
         $startedAt = $run->started_at instanceof Carbon ? $run->started_at : $finishedAt;
         $counts = $this->countsForScope($run->organization_id, $run->project_id, $run->source_type);
 
-        $run->forceFill([
+        $attributes = [
             'status' => RagIndexRun::STATUS_SUCCEEDED,
             'started_at' => $startedAt,
             'finished_at' => $finishedAt,
@@ -340,31 +462,55 @@ class RagIndexingCoordinator
             'indexed_chunks' => $indexedChunks,
             'source_count' => $counts['source_count'],
             'chunk_count' => $counts['chunk_count'],
+            'processed_sources' => $indexedChunks,
+            'expected_sources' => $indexedChunks,
+            'scan_completed_at' => $run->entity_type === null ? $finishedAt : null,
+            'heartbeat_at' => $finishedAt,
+            'lease_expires_at' => null,
             'last_error' => null,
-        ])->save();
+        ];
+        $updated = RagIndexRun::query()->whereKey($runId)
+            ->when($leaseToken !== null, static fn (Builder $query): Builder => $query->where('lease_token', $leaseToken))
+            ->update($attributes);
+        if ($updated !== 1) {
+            return null;
+        }
 
-        return $run;
+        $this->invalidateCoverageAfterCommit($run->organization_id);
+        return $run->refresh();
     }
 
-    public function markFailed(int $runId, Throwable $throwable): ?RagIndexRun
+    public function markFailed(int $runId, Throwable $throwable, ?string $leaseToken = null): ?RagIndexRun
     {
         $run = $this->findRun($runId);
         if (! $run instanceof RagIndexRun) {
             return null;
         }
 
+        if ($leaseToken !== null && $run->lease_token !== $leaseToken) {
+            return null;
+        }
+
         $finishedAt = now();
         $startedAt = $run->started_at instanceof Carbon ? $run->started_at : $finishedAt;
 
-        $run->forceFill([
+        $attributes = [
             'status' => RagIndexRun::STATUS_FAILED,
             'started_at' => $startedAt,
             'finished_at' => $finishedAt,
             'duration_ms' => (int) max(0, $startedAt->diffInMilliseconds($finishedAt)),
             'last_error' => Str::limit($throwable->getMessage(), 2000, ''),
-        ])->save();
+            'lease_expires_at' => null,
+        ];
+        $updated = RagIndexRun::query()->whereKey($runId)
+            ->when($leaseToken !== null, static fn (Builder $query): Builder => $query->where('lease_token', $leaseToken))
+            ->update($attributes);
+        if ($updated !== 1) {
+            return null;
+        }
 
-        return $run;
+        $this->invalidateCoverageAfterCommit($run->organization_id);
+        return $run->refresh();
     }
 
     /**
@@ -404,6 +550,95 @@ class RagIndexingCoordinator
         }
 
         return $run;
+    }
+
+    private function leaseMinutes(): int
+    {
+        return max(1, (int) config('ai-assistant.rag.lease_minutes', 15));
+    }
+
+    private function applyRecoveryEligibility(Builder $query, Carbon $cutoff, bool $recoverQueued): void
+    {
+        $retryMinutes = max(1, min(4, (int) config('ai-assistant.rag.queued_retry_minutes', 2)));
+        $query->where(function (Builder $queued) use ($cutoff, $retryMinutes, $recoverQueued): void {
+            $retryCutoff = $cutoff->copy()->subMinutes($retryMinutes);
+            $queued->where('status', RagIndexRun::STATUS_QUEUED)
+                ->when(! $recoverQueued, static function (Builder $query): void { RagDispatchIntent::scopePending($query); })
+                ->where(function (Builder $activity) use ($retryCutoff): void {
+                $activity->where('queued_at', '<=', $retryCutoff)->orWhere(function (Builder $legacy) use ($retryCutoff): void {
+                    $legacy->whereNull('queued_at');
+                    $this->applyLegacyActivityCutoff($legacy, $retryCutoff);
+                });
+            });
+        })->orWhere(function (Builder $running) use ($cutoff): void {
+            $running->where('status', RagIndexRun::STATUS_RUNNING)->where(function (Builder $lease) use ($cutoff): void {
+                $lease->where('lease_expires_at', '<=', $cutoff)->orWhere(function (Builder $legacy) use ($cutoff): void {
+                    $legacy->whereNull('lease_expires_at');
+                    $this->applyLegacyActivityCutoff($legacy, $cutoff->copy()->subMinutes($this->leaseMinutes()));
+                });
+            });
+        });
+    }
+
+    private function applyLegacyActivityCutoff(Builder $query, Carbon $cutoff): void
+    {
+        $timestamps = ['heartbeat_at', 'started_at', 'updated_at', 'created_at', 'queued_at'];
+        $query->where(static function (Builder $known) use ($timestamps): void {
+            foreach ($timestamps as $timestamp) {
+                $known->orWhereNotNull($timestamp);
+            }
+        });
+        foreach ($timestamps as $timestamp) {
+            $query->where(static fn (Builder $activity): Builder => $activity->whereNull($timestamp)->orWhere($timestamp, '<=', $cutoff));
+        }
+    }
+
+    private function invalidateCoverageAfterCommit(int $organizationId): void
+    {
+        DB::afterCommit(static function () use ($organizationId): void {
+            try {
+                RagCoverageService::invalidate($organizationId);
+            } catch (Throwable $exception) {
+                try {
+                    Log::warning('ai_assistant.rag.coverage_invalidation_failed', ['organization_id' => $organizationId, 'exception_class' => $exception::class]);
+                } catch (Throwable) {
+                }
+            }
+        });
+    }
+
+    private function dispatchRunAfterCommit(RagIndexRun $run): void
+    {
+        $runId = $run->id;
+        $marker = $run->last_error;
+        DB::afterCommit(function () use ($runId, $marker): void {
+            try {
+                $current = RagIndexRun::query()->whereKey($runId)->where('last_error', $marker)
+                    ->where('status', RagIndexRun::STATUS_QUEUED)->first();
+                if (! $current instanceof RagIndexRun || ! RagDispatchIntent::isPending($marker)) {
+                    return;
+                }
+                $dispatcher = $this->dispatcher ?? app(RagJobDispatcher::class);
+                $job = new IndexRagSourceJob($current->organization_id, $current->project_id, $current->source_type,
+                    $current->id, $current->entity_type, $current->entity_id);
+                if ($current->source_type === 'file_document' && $current->entity_type === 'file' && $current->mode === RagIndexRun::MODE_SCHEDULED) {
+                    $job->onQueue((string) config('ai-assistant.rag.queue', 'ai-rag'));
+                }
+                $accepted = $dispatcher->dispatch($job, static function (Throwable $exception) use ($runId, $marker): void {
+                    RagIndexRun::query()->whereKey($runId)->where('status', RagIndexRun::STATUS_QUEUED)->where('last_error', $marker)
+                        ->update(['last_error' => RagDispatchIntent::failed((string) $marker, $exception), 'updated_at' => now()]);
+                });
+                if ($accepted) {
+                    RagIndexRun::query()->whereKey($runId)->where('status', RagIndexRun::STATUS_QUEUED)->where('last_error', $marker)
+                        ->update(['last_error' => null, 'updated_at' => now()]);
+                }
+            } catch (Throwable $exception) {
+                try {
+                    Log::warning('ai_assistant.rag.dispatch_setup_failed', ['run_id' => $runId, 'exception_class' => $exception::class]);
+                } catch (Throwable) {
+                }
+            }
+        });
     }
 
     /**
@@ -509,6 +744,7 @@ class RagIndexingCoordinator
         ?int $projectId,
         ?string $sourceType
     ): void {
+        $query->whereNull("{$runTable}.entity_type");
         if ($projectId === null) {
             $query->whereNull("{$runTable}.project_id");
         } else {
@@ -530,6 +766,7 @@ class RagIndexingCoordinator
     ): bool {
         return RagIndexRun::query()
             ->where('organization_id', $organizationId)
+            ->whereNull('entity_type')
             ->where('status', RagIndexRun::STATUS_FAILED)
             ->where('queued_at', '>', $failedCutoff->toDateTimeString())
             ->when(
@@ -579,6 +816,7 @@ class RagIndexingCoordinator
     {
         return RagIndexRun::query()
             ->where('organization_id', $organizationId)
+            ->whereNull('entity_type')
             ->whereIn('status', [
                 RagIndexRun::STATUS_QUEUED,
                 RagIndexRun::STATUS_RUNNING,
@@ -629,6 +867,7 @@ class RagIndexingCoordinator
         ?int $projectId,
         ?string $sourceType
     ): void {
+        $query->whereNull("{$runTable}.entity_type");
         if ($projectId === null) {
             $query->whereNull("{$runTable}.project_id");
         } else {
@@ -652,6 +891,7 @@ class RagIndexingCoordinator
 
     private function applyActiveEloquentRunScope(Builder $query, ?int $projectId, ?string $sourceType): void
     {
+        $query->whereNull('entity_type');
         if ($projectId === null) {
             $query->whereNull('project_id');
         } else {

@@ -4,520 +4,238 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Http\Controllers;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestInProgress;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantBudgetExceeded;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
+use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantActionExecuteRequest;
+use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantActionPreviewRequest;
+use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantChatRequest;
+use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantPaginationRequest;
+use App\BusinessModules\Features\AIAssistant\Http\Requests\StoreAssistantConversationRequest;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\MessageResource;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
-use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantActionProposalService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\QueuedAssistantChatService;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
-use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Http\Responses\LandingResponse;
 use App\Http\Responses\MobileResponse;
-use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use DomainException;
 use RuntimeException;
 use Throwable;
+use App\Services\Credits\AICreditsNotReadyException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
-class AIAssistantController extends Controller
+final class AIAssistantController extends AbstractAssistantApiController
 {
     public function __construct(
-        private readonly AIAssistantService $aiAssistant,
-        private readonly AssistantActionService $assistantActionService,
-        private readonly ConversationManager $conversationManager,
-        private readonly UsageTracker $usageTracker,
-        private readonly AIPermissionChecker $permissionChecker
-    ) {
-    }
+        private readonly AssistantActionService $actions,
+        private readonly AssistantActionProposalService $proposals,
+        private readonly AssistantRequestLifecycle $requests,
+        private readonly QueuedAssistantChatService $queuedChats,
+        private readonly ConversationManager $conversations,
+        private readonly UsageTracker $usage,
+        private readonly AIPermissionChecker $permissions,
+    ) {}
 
-    public function chat(Request $request): JsonResponse
+    public function chat(AssistantChatRequest $request): JsonResponse
     {
-        $request->validate([
-            'message' => 'required|string|max:4000',
-            'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
-            'goal' => 'nullable|string|max:120',
-            'desired_mode' => 'nullable|string|max:120',
-            'allow_actions' => 'nullable|boolean',
-            'context' => 'nullable|array',
-            'context.source_module' => 'nullable|string|max:120',
-            'context.source_route' => 'nullable|string|max:255',
-            'context.entity_refs' => 'nullable|array',
-            'context.entity_refs.*.type' => 'nullable|string|max:80',
-            'context.entity_refs.*.label' => 'nullable|string|max:255',
-            'context.period' => 'nullable',
-            'context.filters' => 'nullable|array',
-            'context.ui_state' => 'nullable|array',
-        ]);
-
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
-        }
-
-        try {
-            if (!$this->usageTracker->canMakeRequest($organizationId)) {
-                return $this->errorResponse(
-                    $request,
-                    $this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'),
-                    429,
-                    ['usage' => $this->usageTracker->getUsageStats($organizationId)]
+        return $this->respond($request, function () use ($request): JsonResponse {
+            $payload = $request->validated();
+            $asynchronous = (bool) ($payload['async'] ?? false);
+            unset($payload['async']);
+            if ($asynchronous) {
+                $surface = $this->surface($request);
+                $started = $this->queuedChats->submit(
+                    $this->organizationId($request),
+                    $this->actor($request),
+                    isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
+                    $payload,
+                    $surface,
                 );
+                if (is_array($started['response'])) {
+                    return $this->success($request, $started['response']);
+                }
+                $assistantRequest = $started['request'];
+                return $this->success($request, [
+                    'request_id' => $assistantRequest->request_id,
+                    'conversation_id' => $assistantRequest->conversation_id,
+                    'status' => 'running',
+                    'stage' => $assistantRequest->stage,
+                ], 202);
             }
-
-            $conversationId = $request->integer('conversation_id') ?: null;
-            if ($conversationId !== null && !$this->findConversationForRequest($request, $conversationId, $user, $organizationId)) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
-            }
-
-            $result = $this->aiAssistant->ask(
-                $request->string('message')->toString(),
-                $organizationId,
-                $user,
-                $conversationId,
-                [
-                    'goal' => $request->input('goal'),
-                    'context' => $request->input('context', []),
-                    'desired_mode' => $request->input('desired_mode'),
-                    'allow_actions' => $request->boolean('allow_actions', false),
-                ]
+            $result = app(AIAssistantService::class)->ask(
+                $payload['message'],
+                $this->organizationId($request),
+                $this->actor($request),
+                isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
+                $payload,
+                $this->surface($request),
             );
-
-            return $this->successResponse($request, $result);
-        } catch (AuthorizationException $exception) {
-            Log::warning('AI assistant access denied', [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $exception->getMessage(), 403);
-        } catch (RuntimeException $exception) {
-            Log::warning('AI assistant request rejected', [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $exception->getMessage(), 422);
-        } catch (Throwable $exception) {
-            Log::error('AI assistant request failed', [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.request_failed', 'Не удалось выполнить запрос к AI-ассистенту.'), 500);
-        }
+            return $this->success($request, $result);
+        });
     }
 
-    public function conversations(Request $request): JsonResponse
+    public function conversations(AssistantPaginationRequest $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
-        }
-
-        try {
-            $conversations = $this->isAdminRequest($request)
-                ? $this->conversationManager->getConversationsByOrganization($organizationId, 20)
-                : $this->conversationManager->getConversationsByUserInOrganization($user, $organizationId, 20);
-
-            return $this->successResponse($request, ConversationResource::collection($conversations));
-        } catch (Throwable $exception) {
-            Log::error('Failed to load AI assistant conversations', [
-                'user_id' => $user->id,
-                'organization_id' => $user->current_organization_id,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.load_conversations_failed', 'Не удалось загрузить список диалогов.'), 500);
-        }
+        return $this->respond($request, function () use ($request): JsonResponse {
+            $this->assertAssistant($request);
+            $page = $this->conversations->queryVisibleConversations($this->actor($request), $this->organizationId($request))
+                ->paginate($request->integer('per_page', 30), ['*'], 'page', $request->integer('page', 1));
+            return $this->success($request, ConversationResource::collection($page->getCollection()), 200, $this->pagination($page));
+        });
     }
 
-    public function conversation(Request $request, int $conversation): JsonResponse
+    public function createConversation(StoreAssistantConversationRequest $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
-        }
+        return $this->respond($request, function () use ($request): JsonResponse {
+            $this->assertAssistant($request);
+            $conversation = $this->conversations->createConversation($this->organizationId($request), $this->actor($request), $request->validated('title'));
+            $conversation->load('participants');
+            return $this->success($request, new ConversationResource($conversation), 201);
+        });
+    }
 
-        try {
-            $conversationModel = $this->findConversationForRequest($request, $conversation, $user, $organizationId);
-            if (!$conversationModel) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
-            }
+    public function conversation(AssistantPaginationRequest $request, int $conversation): JsonResponse
+    {
+        return $this->respond($request, function () use ($request, $conversation): JsonResponse {
+            $model = $this->accessibleConversation($request, $conversation);
+            $page = $this->conversations->getHistoryPage($model, $this->actor($request), $request->integer('per_page', 30), $request->integer('page', 1));
+            return $this->success($request, [
+                'conversation' => new ConversationResource($model),
+                'messages' => MessageResource::collection($page->getCollection()),
+            ], 200, $this->pagination($page));
+        });
+    }
 
-            $messages = $this->conversationManager->getHistory($conversationModel, 50);
-
-            return $this->successResponse($request, [
-                'conversation' => new ConversationResource($conversationModel),
-                'messages' => MessageResource::collection($messages),
-            ]);
-        } catch (Throwable $exception) {
-            Log::error('Failed to load AI assistant conversation', [
-                'conversation_id' => $conversation,
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.load_conversation_failed', 'Не удалось загрузить диалог.'), 500);
-        }
+    public function history(AssistantPaginationRequest $request, int $conversation): JsonResponse
+    {
+        return $this->respond($request, function () use ($request, $conversation): JsonResponse {
+            $page = $this->conversations->getHistoryPage($this->accessibleConversation($request, $conversation), $this->actor($request), $request->integer('per_page', 30), $request->integer('page', 1));
+            return $this->success($request, MessageResource::collection($page->getCollection()), 200, $this->pagination($page));
+        });
     }
 
     public function deleteConversation(Request $request, int $conversation): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
-        }
+        return $this->respond($request, function () use ($request, $conversation): JsonResponse {
+            $this->conversations->deleteConversation($this->accessibleConversation($request, $conversation), $this->actor($request));
+            return $this->success($request);
+        });
+    }
 
-        try {
-            $conversationModel = $this->findConversationForRequest($request, $conversation, $user, $organizationId);
-            if (!$conversationModel) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
-            }
+    public function previewAction(AssistantActionPreviewRequest $request): JsonResponse
+    {
+        return $this->respond($request, function () use ($request): JsonResponse {
+            $conversation = $this->accessibleConversation($request, $request->integer('conversation_id'), true);
+            $proposal = $this->proposals->resolve($conversation, $this->actor($request), $request->validated('action'));
+            return $this->success($request, $this->actions->preview($proposal, $this->organizationId($request), $this->actor($request), $conversation));
+        });
+    }
 
-            $conversationModel->delete();
+    public function executeAction(AssistantActionExecuteRequest $request): JsonResponse
+    {
+        return $this->respond($request, function () use ($request): JsonResponse {
+            $conversation = $this->accessibleConversation($request, $request->integer('conversation_id'), true);
+            $payload = $request->validated('action');
+            $payload['confirmed'] = $request->boolean('action.confirmed');
+            $result = $this->actions->execute($payload, $this->organizationId($request), $this->actor($request), $conversation);
+            $this->conversations->touchActivity($conversation);
+            return $this->success($request, $result);
+        });
+    }
 
-            return $this->successResponse($request, null, $this->assistantMessage('ai_assistant.conversation_deleted', 'Диалог удален.'));
-        } catch (Throwable $exception) {
-            Log::error('Failed to delete AI assistant conversation', [
-                'conversation_id' => $conversation,
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
+    public function requestStatus(Request $request, string $requestId): JsonResponse
+    {
+        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->status($requestId, $this->actor($request), $this->organizationId($request), $this->surface($request))));
+    }
 
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.delete_conversation_failed', 'Не удалось удалить диалог.'), 500);
-        }
+    public function cancelRequest(Request $request, string $requestId): JsonResponse
+    {
+        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->cancel($requestId, $this->actor($request), $this->organizationId($request), $this->surface($request))));
     }
 
     public function usage(Request $request): JsonResponse
     {
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
+        return $this->respond($request, function () use ($request): JsonResponse {
+            $this->assertAssistant($request);
+            return $this->success($request, $this->usage->getUsageStats($this->organizationId($request)));
+        });
+    }
+
+    private function accessibleConversation(Request $request, int $id, bool $write = false): Conversation
+    {
+        $this->assertAssistant($request);
+        $conversation = $this->conversations->findAccessibleConversation($id, $this->actor($request), $this->organizationId($request), $write);
+        if ($conversation === null) {
+            throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found'));
         }
+        $conversation->load('participants');
+        return $conversation;
+    }
 
+    private function surface(Request $request): string
+    {
+        return $request->is('api/v1/admin/*') ? 'admin' : ($request->is('api/v1/mobile/*') ? 'mobile' : 'lk');
+    }
+
+    private function assertAssistant(Request $request): void
+    {
+        if (!$this->permissions->canUseAssistant($this->actor($request), $this->organizationId($request))) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+    }
+
+    private function pagination(LengthAwarePaginator $page): array
+    {
+        return ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'per_page' => $page->perPage(), 'total' => $page->total()];
+    }
+
+    private function respond(Request $request, callable $action): JsonResponse
+    {
         try {
-            $stats = $this->usageTracker->getUsageStats($organizationId);
-
-            return $this->successResponse($request, $stats);
+            return $action();
+        } catch (AssistantRequestInProgress) {
+            return $this->reject($request, trans_message('ai_assistant.request_in_progress'), 409);
+        } catch (AssistantRequestCancelled) {
+            return $this->reject($request, trans_message('ai_assistant.request_cancelled'), 409);
+        } catch (AssistantBudgetExceeded) {
+            return $this->reject($request, trans_message('ai_assistant.approved_budget_exceeded'), 409);
+        } catch (AssistantResponseIncomplete $exception) {
+            return $this->reject($request, trans_message($exception->messageKey()), 409);
+        } catch (AICreditsNotReadyException) {
+            return $this->reject($request, trans_message('ai_assistant.credits_not_ready'), 503);
+        } catch (AuthenticationException) {
+            return $this->reject($request, trans_message('errors.unauthorized'), 401);
+        } catch (AuthorizationException|AccessDeniedHttpException) {
+            return $this->reject($request, trans_message('ai_assistant.access_denied'), 403);
+        } catch (ModelNotFoundException) {
+            return $this->reject($request, trans_message('ai_assistant.conversation_not_found'), 404);
+        } catch (RuntimeException|DomainException) {
+            return $this->reject($request, trans_message('ai_assistant.request_invalid'), 422);
         } catch (Throwable $exception) {
-            Log::error('Failed to load AI assistant usage', [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.usage_failed', 'Не удалось получить статистику использования AI-ассистента.'), 500);
+            Log::error('ai.assistant.request_failed', ['exception_class' => $exception::class, 'user_id' => $request->user()?->id]);
+            return $this->reject($request, trans_message('ai_assistant.request_failed'), 500);
         }
     }
 
-    public function previewAction(Request $request): JsonResponse
+    private function reject(Request $request, string $message, int $status): JsonResponse
     {
-        $request->validate([
-            'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
-            'action' => 'required|array',
-            'action.id' => 'nullable|string|max:120',
-            'action.type' => 'required|string|max:60',
-            'action.label' => 'required|string|max:255',
-            'action.allowed' => 'nullable|boolean',
-            'action.reason_if_disabled' => 'nullable|string|max:1000',
-            'action.requires_confirmation' => 'nullable|boolean',
-            'action.action_class' => 'nullable|string|max:60',
-            'action.tool_name' => 'nullable|string|max:120',
-            'action.arguments' => 'nullable|array',
-            'action.required_permissions' => 'nullable|array',
-            'action.target' => 'nullable|array',
-            'action.target.route' => 'nullable|string|max:255',
-            'action.target.anchor' => 'nullable|string|max:255',
-            'action.target.state' => 'nullable|array',
-        ]);
-
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
-        }
-
-        try {
-            $conversationId = $request->integer('conversation_id') ?: null;
-            if ($conversationId !== null && !$this->findConversationForRequest($request, $conversationId, $user, $organizationId)) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
-            }
-
-            $result = $this->assistantActionService->preview(
-                $request->input('action', []),
-                $organizationId,
-                $user
-            );
-            $previewToken = $this->makeActionPreviewToken(
-                is_array($result['action'] ?? null) ? $result['action'] : [],
-                $organizationId,
-                (int) $user->id
-            );
-            $result['preview_token'] = $previewToken;
-
-            return $this->successResponse($request, $result);
-        } catch (AuthorizationException $exception) {
-            return $this->errorResponse($request, $exception->getMessage(), 403);
-        } catch (RuntimeException $exception) {
-            return $this->errorResponse($request, $exception->getMessage(), 422);
-        } catch (Throwable $exception) {
-            Log::error('AI assistant action preview failed', [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.action_preview_failed', 'Не удалось подготовить действие ассистента.'), 500);
-        }
-    }
-
-    public function executeAction(Request $request): JsonResponse
-    {
-        $request->validate([
-            'conversation_id' => 'nullable|integer|exists:ai_conversations,id',
-            'confirmed' => 'required|accepted',
-            'preview_token' => 'required|string|max:128',
-            'action' => 'required|array',
-            'action.id' => 'nullable|string|max:120',
-            'action.type' => 'required|string|max:60',
-            'action.label' => 'required|string|max:255',
-            'action.allowed' => 'nullable|boolean',
-            'action.reason_if_disabled' => 'nullable|string|max:1000',
-            'action.requires_confirmation' => 'nullable|boolean',
-            'action.action_class' => 'nullable|string|max:60',
-            'action.tool_name' => 'nullable|string|max:120',
-            'action.arguments' => 'nullable|array',
-            'action.required_permissions' => 'nullable|array',
-            'action.target' => 'nullable|array',
-            'action.target.route' => 'nullable|string|max:255',
-            'action.target.anchor' => 'nullable|string|max:255',
-            'action.target.state' => 'nullable|array',
-        ]);
-
-        $user = $request->user();
-        $organizationId = $this->resolveOrganizationId($request, $user);
-        if (!$user instanceof User || !$organizationId) {
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.unauthorized', 'Пользователь не авторизован.'), 401);
-        }
-
-        try {
-            $conversationId = $request->integer('conversation_id') ?: null;
-            $conversation = null;
-            if ($conversationId !== null) {
-                $conversation = $this->findConversationForRequest($request, $conversationId, $user, $organizationId);
-                if (!$conversation) {
-                    return $this->errorResponse($request, $this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'), 403);
-                }
-            }
-
-            $action = $request->input('action', []);
-            if (!is_array($action) || !$this->isValidActionPreviewToken(
-                (string) $request->input('preview_token', ''),
-                $action,
-                $organizationId,
-                (int) $user->id
-            )) {
-                return $this->errorResponse($request, $this->assistantMessage('ai_assistant.action_preview_required', 'Сначала подтвердите предварительный просмотр действия.'), 422);
-            }
-
-            $result = $this->assistantActionService->execute(
-                array_merge($action, [
-                    'confirmed' => $request->boolean('confirmed', false),
-                ]),
-                $organizationId,
-                $user,
-                $conversation
-            );
-
-            if (isset($result['message_resource'])) {
-                $result['message'] = (new MessageResource($result['message_resource']))->toArray($request);
-                unset($result['message_resource']);
-            }
-
-            return $this->successResponse($request, $result);
-        } catch (AuthorizationException $exception) {
-            return $this->errorResponse($request, $exception->getMessage(), 403);
-        } catch (RuntimeException $exception) {
-            return $this->errorResponse($request, $exception->getMessage(), 422);
-        } catch (Throwable $exception) {
-            Log::error('AI assistant action execution failed', [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'message' => $exception->getMessage(),
-            ]);
-
-            return $this->errorResponse($request, $this->assistantMessage('ai_assistant.action_execute_failed', 'Не удалось выполнить действие ассистента.'), 500);
-        }
-    }
-
-    private function authorizeConversation(Request $request, Conversation $conversation, User $user): void
-    {
-        $organizationId = $this->resolveOrganizationId($request, $user);
-
-        if ($this->isAdminRequest($request)) {
-            if ((int) $conversation->organization_id !== $organizationId) {
-                throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
-            }
-
-            return;
-        }
-
-        if (!$this->permissionChecker->canAccessConversation($user, $conversation, $organizationId)) {
-            throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
-        }
-    }
-
-    private function makeActionPreviewToken(array $action, int $organizationId, int $userId): string
-    {
-        return hash_hmac('sha256', $this->actionPreviewPayload($action, $organizationId, $userId), $this->actionPreviewSecret());
-    }
-
-    private function isValidActionPreviewToken(string $token, array $action, int $organizationId, int $userId): bool
-    {
-        if ($token === '') {
-            return false;
-        }
-
-        return hash_equals($this->makeActionPreviewToken($action, $organizationId, $userId), $token);
-    }
-
-    private function actionPreviewPayload(array $action, int $organizationId, int $userId): string
-    {
-        return json_encode([
-            'organization_id' => $organizationId,
-            'user_id' => $userId,
-            'action' => $this->normalizePreviewTokenValue($action),
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '';
-    }
-
-    private function normalizePreviewTokenValue(mixed $value): mixed
-    {
-        if (!is_array($value)) {
-            return $value;
-        }
-
-        $normalized = [];
-        foreach ($value as $key => $item) {
-            $normalized[$key] = $this->normalizePreviewTokenValue($item);
-        }
-
-        if (!array_is_list($normalized)) {
-            ksort($normalized);
-        }
-
-        return $normalized;
-    }
-
-    private function actionPreviewSecret(): string
-    {
-        $key = (string) config('app.key');
-        if ($key === '') {
-            throw new RuntimeException('AI assistant preview signing key is not configured.');
-        }
-
-        return $key;
-    }
-
-    private function findConversationForRequest(Request $request, int $conversationId, User $user, int $organizationId): ?Conversation
-    {
-        if ($this->isAdminRequest($request)) {
-            return $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
-        }
-
-        return $this->conversationManager->findUserConversation($conversationId, $user, $organizationId);
-    }
-
-    private function resolveOrganizationId(Request $request, mixed $user): int
-    {
-        $requestOrganizationId = (int) $request->attributes->get('current_organization_id', 0);
-        if ($requestOrganizationId > 0) {
-            return $requestOrganizationId;
-        }
-
-        if ($user instanceof User) {
-            return (int) ($user->current_organization_id ?? 0);
-        }
-
-        return 0;
-    }
-
-    private function assistantMessage(string $key, string $fallback, array $replace = []): string
-    {
-        try {
-            $translated = trans_message($key, $replace, 'ru');
-        } catch (Throwable) {
-            return $fallback;
-        }
-
-        if (!is_string($translated)) {
-            return $fallback;
-        }
-
-        $translated = trim($translated);
-
-        if ($translated === '' || $translated === $key) {
-            return $fallback;
-        }
-
-        return $translated;
-    }
-
-    private function successResponse(Request $request, mixed $data = null, ?string $message = null, int $code = 200): JsonResponse
-    {
-        if ($this->isAdminRequest($request)) {
-            return AdminResponse::success($data, $message, $code);
-        }
-
-        if ($this->isMobileRequest($request)) {
-            return MobileResponse::success($data, $message, $code);
-        }
-
-        return LandingResponse::success($data, $message, $code);
-    }
-
-    private function errorResponse(Request $request, string $message, int $code = 400, mixed $errors = null): JsonResponse
-    {
-        if ($this->isAdminRequest($request)) {
-            return AdminResponse::error($message, $code, $errors);
-        }
-
-        if ($this->isMobileRequest($request)) {
-            return MobileResponse::error($message, $code, $errors);
-        }
-
-        return LandingResponse::error($message, $code, $errors);
-    }
-
-    private function isAdminRequest(Request $request): bool
-    {
-        $routeName = (string) optional($request->route())->getName();
-        $path = trim($request->path(), '/');
-
-        return str_starts_with($routeName, 'admin.ai-assistant.')
-            || str_contains($path, 'admin/ai-assistant');
-    }
-
-    private function isMobileRequest(Request $request): bool
-    {
-        $routeName = (string) optional($request->route())->getName();
-        $path = trim($request->path(), '/');
-
-        return str_starts_with($routeName, 'mobile.ai-assistant.')
-            || str_contains($path, 'mobile/ai-assistant');
+        $response = $request->is('api/v1/admin/*') ? AdminResponse::class : ($request->is('api/v1/mobile/*') ? MobileResponse::class : LandingResponse::class);
+        return $response::error($message, $status);
     }
 }

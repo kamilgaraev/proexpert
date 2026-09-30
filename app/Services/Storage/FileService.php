@@ -131,6 +131,28 @@ class FileService
         return $stream;
     }
 
+    public function readCurrentBounded(string $key, int $timeoutSeconds, int $maximumBytes): mixed
+    {
+        $this->assertOrganizationPath($key);
+        if ($timeoutSeconds < 1 || $timeoutSeconds > 60 || $maximumBytes < 1 || $maximumBytes > 25_000_001) {
+            throw new \InvalidArgumentException('storage_read_limits_invalid');
+        }
+        $object = $this->s3Client()->getObject([
+            'Bucket' => $this->reportBucket(), 'Key' => $key, 'Range' => 'bytes=0-'.($maximumBytes - 1),
+            '@http' => ['connect_timeout' => min(5, $timeoutSeconds), 'timeout' => $timeoutSeconds],
+        ]);
+        $body = $object['Body'] ?? null;
+        if (! $body instanceof \Psr\Http\Message\StreamInterface) {
+            throw new \RuntimeException('storage_object_read_failed');
+        }
+        $stream = $body->detach();
+        if (! is_resource($stream)) {
+            throw new \RuntimeException('storage_object_read_failed');
+        }
+
+        return $stream;
+    }
+
     /** @return array<int, string> */
     public function listCurrent(string $prefix): array
     {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Capacity\Services\WorkforceCapacityOwnerMutationBridge;
 use App\Models\Organization;
@@ -98,6 +99,17 @@ final class WorkforceEmployeeService
                 'employment_status' => 'dismissed',
                 'dismissal_date' => $date,
             ]);
+
+            $changedAssignments = DB::table('workforce_employee_assignments')
+                ->where('organization_id', $organizationId)->where('employee_id', $employee->id)->where('status', 'active')
+                ->where(function ($scope) use ($date): void {
+                    $scope->whereDate('valid_from', '>', $date)->orWhere(function ($active) use ($date): void {
+                        $active->whereDate('valid_from', '<=', $date)->where(function ($end) use ($date): void {
+                            $end->whereNull('valid_to')->orWhereDate('valid_to', '>', $date);
+                        });
+                    });
+                });
+            app(WorkforceRagMutationBridge::class)->changedRows('workforce_employee_assignments', $organizationId, $changedAssignments);
 
             DB::table('workforce_employee_assignments')
                 ->where('organization_id', $organizationId)

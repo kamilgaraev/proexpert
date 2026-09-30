@@ -2,12 +2,19 @@
 
 namespace App\BusinessModules\Features\AIAssistant\Actions\Projects;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Support\Facades\DB;
 
 class SearchProjectsAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?User $actor = null): array
     {
+        if ($actor === null || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'projects')
+            || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'finance')) {
+            return [];
+        }
         $query = DB::table('projects')
             ->leftJoin('completed_works', function($join) {
                 $join->on('projects.id', '=', 'completed_works.project_id')
@@ -15,7 +22,9 @@ class SearchProjectsAction
                      ->whereNull('completed_works.deleted_at');
             })
             ->where('projects.organization_id', $organizationId)
-            ->whereNull('projects.deleted_at');
+            ->whereNull('projects.deleted_at')
+            ->whereIn('projects.id', app(UserProjectAccessService::class)
+                ->queryAccessibleProjects($actor, $organizationId)->select('projects.id'));
 
         if (isset($params['status'])) {
             $query->where('projects.status', $params['status']);
@@ -100,4 +109,3 @@ class SearchProjectsAction
         ];
     }
 }
-
