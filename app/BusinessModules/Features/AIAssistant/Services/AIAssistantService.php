@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDo
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantBudgetExceeded;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
@@ -981,6 +982,13 @@ class AIAssistantService
         }
     }
 
+    private function progress(?string $code, string $state): void
+    {
+        if ($code !== null && $this->activeRequest !== null && $this->activeActor !== null) {
+            $this->requestLifecycle?->progress($this->activeRequest, $this->activeActor, $code, $state);
+        }
+    }
+
     private function isUsefulAnswer(array $result): bool
     {
         $metadata = $result['message']['metadata'] ?? [];
@@ -1114,6 +1122,10 @@ class AIAssistantService
         }
         $this->stage('tools');
         $answer = $this->financialAnswers->answer($query, $organizationId, $user, $pinnedId, $selection);
+        if (($answer['resolution']['status'] ?? null) === 'resolved' && is_array($answer['financial_evidence'] ?? null)
+            && ($answer['source_refs'] ?? []) !== []) {
+            $this->progress('estimates', 'completed');
+        }
         if (($answer['resolution']['status'] ?? null) === 'forbidden') {
             $this->recordRequestOutcome('access_denied');
         }
@@ -1350,6 +1362,8 @@ class AIAssistantService
                 return ['error' => $message];
             }
 
+            $progressCode = AssistantRequestProgress::toolCode($toolName, $args);
+            $this->progress($progressCode, 'started');
             $toolResult = $tool->execute($args, $user, $organization);
             if (is_array($toolResult) && in_array($toolResult['status'] ?? null, ['access_denied', 'forbidden'], true)) {
                 $this->recordRequestOutcome('access_denied');
@@ -1368,6 +1382,9 @@ class AIAssistantService
                 if ($liveReads !== []) {
                     $toolResult['live_entity_reads'] = $liveReads;
                 }
+            }
+            if (AssistantRequestProgress::toolCompleted($toolResult)) {
+                $this->progress($progressCode, 'completed');
             }
             if ($toolName === 'resolve_estimate') {
                 $this->estimateResolutionAttempted = true;
@@ -1395,6 +1412,9 @@ class AIAssistantService
 
             return $toolResult;
         } catch (Throwable $exception) {
+            if ($exception instanceof AssistantRequestCancelled) {
+                throw $exception;
+            }
             $this->recordRequestOutcome($exception instanceof AuthorizationException
                 || $exception instanceof \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException ? 'access_denied' : 'service_error');
             $message = trans_message('ai_assistant.tool_execute_failed');
@@ -2042,6 +2062,9 @@ class AIAssistantService
 
         try {
             $ragSearchQuery = $this->resolveRagSearchQuery($query, $requestPayload);
+            if ($this->ragRetriever instanceof RagRetriever) {
+                $this->progress('rag_search', 'started');
+            }
             $results = $this->ragRetriever instanceof RagRetriever
                 ? $this->ragRetriever->search(
                     $ragSearchQuery,
@@ -2050,6 +2073,9 @@ class AIAssistantService
                     $this->buildRagRequestContext($taskPlan, $requestPayload)
                 )
                 : [];
+            if ($this->ragRetriever instanceof RagRetriever) {
+                $this->progress('rag_search', 'completed');
+            }
 
             $context = $this->ragPromptContextBuilder->build($query, $results);
             if ($ragSearchQuery !== $query && is_array($context['metadata'] ?? null)) {
@@ -2058,6 +2084,9 @@ class AIAssistantService
 
             return $context;
         } catch (Throwable $exception) {
+            if ($exception instanceof AssistantRequestCancelled || $exception instanceof AuthorizationException) {
+                throw $exception;
+            }
             $this->logging->technical('ai.rag.context_failed', [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,

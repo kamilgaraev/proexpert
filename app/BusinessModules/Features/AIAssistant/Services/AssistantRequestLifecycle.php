@@ -71,7 +71,9 @@ final class AssistantRequestLifecycle
                 }
                 if ($existing->status === 'completed' && is_array($existing->response)) {
                     $this->assertResponseAccess($existing->response, $actor, (int) $organization->id);
-                    return ['request' => $existing, 'response' => $existing->response, 'created' => false];
+                    $response = $existing->response;
+                    $response['progress'] = AssistantRequestProgress::sanitize($response['progress'] ?? []);
+                    return ['request' => $existing, 'response' => $response, 'created' => false];
                 }
                 if ($existing->status === 'running' && $existing->cancel_requested_at === null && $existing->lease_expires_at->isFuture()) {
                     if ($queued && $surface !== null && $existing->surface === $surface && is_array($existing->payload)) {
@@ -165,6 +167,18 @@ final class AssistantRequestLifecycle
         $request->forceFill(['stage' => $stage, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
     }
 
+    public function progress(AssistantRequest $request, User $actor, string $code, string $state): void
+    {
+        DB::transaction(function () use ($request, $actor, $code, $state): void {
+            $current = AssistantRequest::query()->whereKey($request->id)->lockForUpdate()->firstOrFail();
+            $this->assertActive($current, $actor);
+            $response = is_array($current->response) ? $current->response : [];
+            $response['progress'] = AssistantRequestProgress::append($response['progress'] ?? [], $code, $state);
+            $current->forceFill(['response' => $response, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES)])->save();
+            $request->setRawAttributes($current->getAttributes(), true);
+        }, 3);
+    }
+
     public function beforeProviderCall(AssistantRequest $request, User $actor, int $inputTokens, int $outputTokens): int
     {
         return DB::transaction(function () use ($request, $actor, $inputTokens, $outputTokens): int {
@@ -235,6 +249,7 @@ final class AssistantRequestLifecycle
             $response['request_id'] = $current->request_id;
             $response['conversation_id'] = $current->conversation_id;
             $response['status'] = 'completed';
+            $response['progress'] = AssistantRequestProgress::sanitize($current->response['progress'] ?? []);
             $response['credit_usage'] = [
                 'charged_minor' => $charged,
                 'projected_charge_minor' => $projected,
@@ -264,14 +279,18 @@ final class AssistantRequestLifecycle
     {
         if (!AssistantRequest::query()->where('request_id', $requestId)->where('organization_id', $organizationId)->where('user_id', $actor->id)->exists()) {
             $quote = $this->ownedQuote($requestId, $actor, $organizationId);
-            return ['request_id' => $requestId, 'conversation_id' => null, 'status' => 'queued', 'stage' => 'queued', 'calls_used' => 0, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0)];
+            return ['request_id' => $requestId, 'conversation_id' => null, 'status' => 'queued', 'stage' => 'queued', 'calls_used' => 0, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0), 'progress' => []];
         }
         $request = $this->ownedRequest($requestId, $actor, $organizationId);
         $this->assertSurface($request, $surface);
-        $status = ['request_id' => $request->request_id, 'conversation_id' => $request->conversation_id, 'status' => $request->cancel_requested_at !== null && $request->status === 'running' ? 'cancel_requested' : $request->status, 'stage' => $request->stage, 'calls_used' => $request->calls_used, 'max_calls' => $request->max_calls];
-        if ($request->status === 'completed' && $surface !== null && $request->surface === $surface && is_array($request->response)) {
+        if ($request->status === 'completed' && is_array($request->response)) {
             $this->assertResponseAccess($request->response, $actor, $organizationId);
+        }
+        $status = ['request_id' => $request->request_id, 'conversation_id' => $request->conversation_id, 'status' => $request->cancel_requested_at !== null && $request->status === 'running' ? 'cancel_requested' : $request->status, 'stage' => $request->stage, 'calls_used' => $request->calls_used, 'max_calls' => $request->max_calls];
+        $status['progress'] = AssistantRequestProgress::sanitize($request->response['progress'] ?? []);
+        if ($request->status === 'completed' && $surface !== null && $request->surface === $surface && is_array($request->response)) {
             $status['response'] = $request->response;
+            $status['response']['progress'] = $status['progress'];
         }
         if (in_array($request->status, ['failed', 'cancelled'], true)) {
             $status['error_code'] = $request->error_code;

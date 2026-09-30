@@ -88,23 +88,31 @@ final class AssistantDataAccessPolicy
     private ?AuthorizationService $batchAuthorization = null;
     private ?array $batchIdentity = null;
     private array $batchDecisions = [];
+    private ?\Closure $currentCheckpoint = null;
 
-    public function withCurrentChecks(User $actor, int $organizationId, callable $operation, bool $fresh = false): mixed
+    public function withCurrentChecks(User $actor, int $organizationId, callable $operation, bool $fresh = false, ?callable $checkpoint = null): mixed
     {
         $identity = [(int) $actor->id, $organizationId];
         if (! $fresh && $this->batchIdentity === $identity) {
-            return $operation($this->batchAuthorization);
+            $previousCheckpoint = $this->currentCheckpoint;
+            if ($checkpoint !== null) { $this->currentCheckpoint = \Closure::fromCallable($checkpoint); }
+            try {
+                return $operation($this->batchAuthorization);
+            } finally {
+                $this->currentCheckpoint = $previousCheckpoint;
+            }
         }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_authorization_batch_during_query_compilation'); }
         $authorization = $this->authorization->forCurrentChecks(true);
-        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions];
+        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->currentCheckpoint];
         $this->batchIdentity = $identity;
         $this->batchAuthorization = $authorization;
         $this->batchDecisions = [];
+        if ($checkpoint !== null) { $this->currentCheckpoint = \Closure::fromCallable($checkpoint); }
         try {
             return $operation($this->batchAuthorization);
         } finally {
-            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions] = $previous;
+            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->currentCheckpoint] = $previous;
             if ($this->batchIdentity !== null) {
                 $this->batchAuthorization = $this->authorization->forCurrentChecks(true);
                 $this->batchDecisions = [];
@@ -120,6 +128,7 @@ final class AssistantDataAccessPolicy
 
     private function rememberCurrent(User $actor, int $organizationId, string $key, callable $resolve): mixed
     {
+        $this->currentCheckpoint?->__invoke();
         if ($this->batchIdentity === [(int) $actor->id, $organizationId]) {
             if (! array_key_exists($key, $this->batchDecisions)) { $this->batchDecisions[$key] = $resolve(); }
             return $this->batchDecisions[$key];
@@ -314,21 +323,23 @@ final class AssistantDataAccessPolicy
         return false;
     }
 
-    public function allowedSourceTypes(User $user, int $organizationId): array
+    public function allowedSourceTypes(User $user, int $organizationId, ?array $candidates = null): array
     {
-        if ($this->aclCompiler !== null) { return $this->currentAllowedSourceTypes($user, $organizationId); }
+        if ($this->aclCompiler !== null) { return $this->currentAllowedSourceTypes($user, $organizationId, $candidates); }
         return $this->withCurrentChecks($user, $organizationId,
-            fn (): array => $this->currentAllowedSourceTypes($user, $organizationId), true);
+            fn (): array => $this->currentAllowedSourceTypes($user, $organizationId, $candidates));
     }
 
-    private function currentAllowedSourceTypes(User $user, int $organizationId): array
+    private function currentAllowedSourceTypes(User $user, int $organizationId, ?array $candidates = null): array
     {
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return [];
         }
-        $types = ['file_document'];
+        $types = $candidates === null || in_array('file_document', $candidates, true) ? ['file_document'] : [];
         $domainDecisions = [];
         foreach ($this->entities() as $definition) {
+            $this->currentCheckpoint?->__invoke();
+            if ($candidates !== null && ! in_array($definition[0], $candidates, true)) { continue; }
             $domain = $definition[2];
             $domainDecisions[$domain] ??= $this->canReadDomain($user, $organizationId, $domain);
             if ($domainDecisions[$domain] && $this->canReadIndexedType($user, $organizationId, $definition[0])) {
@@ -537,6 +548,7 @@ final class AssistantDataAccessPolicy
 
     public function entityQuery(User $user, int $organizationId, string $type): ?Builder
     {
+        $this->currentCheckpoint?->__invoke();
         if ($this->aclCompiler === null) {
             return $this->compileAcl($user, $organizationId, fn (): ?Builder => $this->entityQuery($user, $organizationId, $type));
         }
@@ -574,6 +586,7 @@ final class AssistantDataAccessPolicy
 
     private function compileAcl(User $user, int $organizationId, callable $callback): ?Builder
     {
+        $this->currentCheckpoint?->__invoke();
         $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId);
         $this->aclCompiler = $compiler;
         $this->compiledAuthorization = $this->batchAuthorization ?? $this->authorization->forCurrentChecks(true);
@@ -601,6 +614,7 @@ final class AssistantDataAccessPolicy
 
     private function schemaColumns(string $table): array
     {
+        $this->currentCheckpoint?->__invoke();
         if (isset($this->columns[$table])) { return $this->columns[$table]; }
         $load = static fn (): array => Schema::getColumnListing($table);
         $columns = $this->aclCompiler === null ? $load() : $this->aclCompiler->remember('schema:'.$table, $load);

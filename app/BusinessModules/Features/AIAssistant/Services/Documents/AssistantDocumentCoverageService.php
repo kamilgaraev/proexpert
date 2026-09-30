@@ -6,8 +6,10 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Documents;
 
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded;
 use App\Models\User;
 use Illuminate\Database\Query\JoinClause;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -17,8 +19,9 @@ final class AssistantDocumentCoverageService
 {
     public function __construct(private readonly AssistantDataAccessPolicy $policy, private readonly AssistantDocumentService $documents) {}
 
-    public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null): array
+    public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null): array
     {
+        $guard = $checkDeadline ?? $checkpoint;
         if (! $this->policy->belongsToOrganization($actor, $organizationId)) throw new AccessDeniedHttpException;
         if ($checkpoint !== null) { $checkpoint(); }
         $canManage = $this->canManageSettings($organizationId, $actor);
@@ -77,10 +80,12 @@ final class AssistantDocumentCoverageService
         if ($checkpoint !== null) { $checkpoint(); }
         $result = $aggregate->first();
         $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
+        $nativeCandidates = $this->nativeCandidateTypes($organizationId, $actor, $checkpoint, $guard);
         $nativeCoverage = [];
         $nativeMetadataCount = 0;
         foreach (\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('attachmentCoverageDefinitions') as $type => $definition) {
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($guard !== null) { $guard(); }
+            if ($type === 'tender_file' && ! isset($nativeCandidates[$type])) { continue; }
             $native = $this->policy->entityQuery($actor, $organizationId, $type);
             if ($native === null) { continue; }
             if ($checkpoint !== null) { $checkpoint(); }
@@ -95,7 +100,8 @@ final class AssistantDocumentCoverageService
         $unmappedNativeCount = 0;
         $nativeMappedCount = 0;
         foreach (AssistantSalesNativeFileMetadata::definitions() + AssistantOperationsNativeFileMetadata::definitions() as $type => $definition) {
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($guard !== null) { $guard(); }
+            if (! isset($nativeCandidates[$type])) { continue; }
             $isOperations = isset(AssistantOperationsNativeFileMetadata::definitions()[$type]);
             if ($isOperations) {
                 $expected = $operations->sourceQueryForActor($actor, $organizationId, $type);
@@ -162,11 +168,13 @@ final class AssistantDocumentCoverageService
                 'manual_ingestion_available' => $missing > 0];
         }
         foreach (['design_artifact_version', ...AssistantNativeFileMetadata::types(), ...AssistantLegalNativeFileMetadata::types()] as $type) {
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($guard !== null) { $guard(); }
+            if (! isset($nativeCandidates[$type])) { continue; }
             $native = $this->policy->entityContentQuery($actor, $organizationId, $type);
             if ($native === null) { continue; }
             $model = $native->getModel();
             $table = $model->getTable();
+            $native = $model->newQuery()->whereIn($model->getQualifiedKeyName(), $native->select($model->getQualifiedKeyName()));
             if ($type === 'design_artifact_version') { $native->whereNotNull($table.'.source_file_path'); }
             if (isset(AssistantLegalNativeFileMetadata::definitions()[$type])) {
                 $native->whereNotNull($table.'.'.AssistantLegalNativeFileMetadata::definitions()[$type]['path']);
@@ -214,8 +222,40 @@ final class AssistantDocumentCoverageService
             $this->documents->assertOwner($actor, $organizationId);
             return true;
         } catch (RuntimeException $exception) {
-            if ($exception instanceof QueryException) { throw $exception; }
+            if ($exception instanceof QueryException || $exception instanceof RagStatusBudgetExceeded) { throw $exception; }
             return false;
         }
+    }
+
+    private function nativeCandidateTypes(int $organizationId, User $actor, ?callable $checkpoint, ?callable $guard): array
+    {
+        $queries = [
+            'tender_file' => DB::table('tender_files as native_source')
+                ->join('tenders as native_parent', 'native_parent.id', '=', 'native_source.tender_id')
+                ->where('native_parent.organization_id', $organizationId),
+            'design_artifact_version' => DB::table('design_artifact_versions')->where('organization_id', $organizationId)->whereNotNull('source_file_path'),
+            AssistantNativeFileMetadata::ENTITY_TYPE => DB::table('workforce_export_package_files')->where('organization_id', $organizationId),
+        ];
+        foreach (AssistantLegalNativeFileMetadata::definitions() as $type => $definition) {
+            $queries[$type] = DB::table($definition['table'])->where('organization_id', $organizationId)->whereNotNull($definition['path']);
+        }
+        foreach (AssistantSalesNativeFileMetadata::definitions() as $type => $definition) {
+            $queries[$type] = AssistantSalesNativeFileMetadata::sourceQuery($type, $organizationId);
+        }
+        foreach (AssistantOperationsNativeFileMetadata::definitions() as $type => $definition) {
+            $queries[$type] = AssistantOperationsNativeFileMetadata::sourceQuery($type, $organizationId);
+        }
+        $union = null;
+        foreach ($queries as $type => $query) {
+            if ($guard !== null) { $guard(); }
+            $domain = $this->policy->domainForEntity($type);
+            if ($domain !== null && ! $this->policy->canReadDomain($actor, $organizationId, $domain)) { continue; }
+            $branch = DB::query()->selectRaw('? AS type', [$type])->whereExists($query->selectRaw('1'));
+            $union = $union instanceof QueryBuilder ? $union->unionAll($branch) : $branch;
+        }
+        if (! $union instanceof QueryBuilder) { return []; }
+        if ($checkpoint !== null) { $checkpoint(); }
+
+        return array_fill_keys($union->pluck('type')->all(), true);
     }
 }

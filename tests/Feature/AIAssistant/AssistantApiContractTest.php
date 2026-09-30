@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider;
-use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
@@ -124,37 +123,60 @@ final class AssistantApiContractTest extends TestCase
 
     public function test_all_prefixes_preserve_full_4000_character_quote_and_chat_payload(): void
     {
-        $message = str_repeat('я', 3994).' бетон';
-        $this->assertSame(4000, mb_strlen($message));
-        $service = $this->mock(AIAssistantService::class);
-        $service->shouldReceive('ask')->times(3)->withArgs(fn (string $query, int $organizationId, User $actor, ?int $conversationId, array $payload, ?string $surface): bool => $query === $message && $payload['message'] === $message && ! isset($payload['organization_id']) && $organizationId === $this->organization->id && $actor->id === $this->actor->id && $conversationId === null && $surface === (request()->is('api/v1/admin/*') ? 'admin' : (request()->is('api/v1/mobile/*') ? 'mobile' : 'lk')))->andReturn(['message' => ['content' => 'Точный ответ'], 'validation_status' => 'verified']);
-        foreach (self::PREFIXES as $prefix) {
-            $payload = $this->payload($message) + ['organization_id' => 999999];
-            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk()->assertJsonPath('success', true)->assertJsonStructure(['success', 'message', 'data' => ['quote_id', 'profile']]);
-            $this->postJson($prefix.'/chat', $payload + ['quote_id' => $quote->json('data.quote_id')])->assertOk()->assertJsonPath('success', true)->assertJsonPath('data.message.content', 'Точный ответ');
-            $this->postJson($prefix.'/credits/quote', $this->payload($message.'я'))->assertUnprocessable()->assertJsonValidationErrors('message');
-            $this->postJson($prefix.'/chat', $this->payload($message.'я') + ['quote_id' => (string) Str::uuid()])->assertUnprocessable()->assertJsonValidationErrors('message');
-        }
-    }
-
-    public function test_async_chat_uses_all_three_response_wrappers_without_running_provider_in_http(): void
-    {
         Queue::fake([ExecuteAssistantChatJob::class]);
         $service = $this->mock(AIAssistantService::class);
         $service->shouldNotReceive('ask');
-        $service->shouldNotReceive('executeStartedRequest');
+        $message = str_repeat('я', 3994).' бетон';
+        $this->assertSame(4000, mb_strlen($message));
         foreach (self::PREFIXES as $prefix) {
-            $payload = $this->payload();
-            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk();
-            $body = $payload + ['quote_id' => $quote->json('data.quote_id'), 'async' => true];
-            $created = $this->postJson($prefix.'/chat', $body)->assertStatus(202)->assertJsonPath('success', true)
-                ->assertJsonPath('data.request_id', $payload['request_id'])->assertJsonPath('data.status', 'running')
-                ->assertJsonPath('data.stage', 'queued');
-            $this->assertNull($created->json('data.conversation_id'));
-            $this->postJson($prefix.'/chat', $body)->assertStatus(202)->assertJsonPath('data.request_id', $payload['request_id']);
-            $this->getJson($prefix.'/requests/'.$payload['request_id'])->assertOk()->assertJsonPath('data.status', 'running');
+            $payload = $this->payload($message) + ['organization_id' => 999999];
+            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk()->assertJsonPath('success', true)->assertJsonStructure(['success', 'message', 'data' => ['quote_id', 'profile']]);
+            $chat = $this->postJson($prefix.'/chat', $payload + ['quote_id' => $quote->json('data.quote_id'), 'async' => false]);
+            $chat->assertStatus(202, $chat->getContent())->assertJsonPath('success', true)->assertJsonPath('data.request_id', $payload['request_id']);
+            $stored = DB::table('ai_assistant_requests')->where('request_id', $payload['request_id'])->first();
+            $this->assertNotNull($stored);
+            $storedPayload = json_decode($stored->payload, true, flags: JSON_THROW_ON_ERROR);
+            $this->assertSame($message, $storedPayload['message']);
+            $this->assertArrayNotHasKey('organization_id', $storedPayload);
+            $this->postJson($prefix.'/credits/quote', $this->payload($message.'я'))->assertUnprocessable()->assertJsonValidationErrors('message');
+            $this->postJson($prefix.'/chat', $this->payload($message.'я') + ['quote_id' => (string) Str::uuid()])->assertUnprocessable()->assertJsonValidationErrors('message');
         }
         Queue::assertPushed(ExecuteAssistantChatJob::class, 3);
+    }
+
+    public function test_chat_always_queues_all_prefixes_and_replays_duplicate_submit_without_resolving_provider_or_tools(): void
+    {
+        Queue::fake([ExecuteAssistantChatJob::class]);
+        $conversation = app(ConversationManager::class)->createConversation($this->organization->id, $this->actor, 'История для API');
+        $resolutions = ['provider' => 0, 'tools' => 0];
+        $this->app->bind(AIAssistantService::class, function () use (&$resolutions): never {
+            $resolutions['provider']++;
+            throw new \LogicException('Provider service must not be resolved by the HTTP chat request.');
+        });
+        $this->app->bind(AIToolRegistry::class, function () use (&$resolutions): never {
+            $resolutions['tools']++;
+            throw new \LogicException('Tool registry must not be resolved by chat, status, or history requests.');
+        });
+
+        foreach (self::PREFIXES as $prefix) {
+            foreach ([null, false, true] as $async) {
+                $payload = $this->payload();
+                $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk();
+                $body = $payload + ['quote_id' => $quote->json('data.quote_id')];
+                if ($async !== null) {
+                    $body['async'] = $async;
+                }
+                $created = $this->postJson($prefix.'/chat', $body)->assertStatus(202)->assertJsonPath('success', true)
+                    ->assertJsonPath('data.request_id', $payload['request_id'])->assertJsonPath('data.status', 'running')
+                    ->assertJsonPath('data.stage', 'queued');
+                $this->assertNull($created->json('data.conversation_id'));
+                $this->postJson($prefix.'/chat', $body)->assertStatus(202)->assertJsonPath('data.request_id', $payload['request_id']);
+                $this->getJson($prefix.'/requests/'.$payload['request_id'])->assertOk()->assertJsonPath('data.status', 'running');
+                $this->getJson($prefix.'/conversations/'.$conversation->id.'/history')->assertOk()->assertJsonPath('success', true);
+            }
+        }
+        Queue::assertPushed(ExecuteAssistantChatJob::class, 9);
+        $this->assertSame(['provider' => 0, 'tools' => 0], $resolutions);
     }
 
     public function test_guarded_current_organization_module_and_permission_for_quote_and_chat(): void
@@ -174,17 +196,20 @@ final class AssistantApiContractTest extends TestCase
         }
     }
 
-    public function test_incomplete_output_returns_clear_409_without_partial_content_on_all_prefixes(): void
+    public function test_chat_returns_queued_response_on_all_prefixes_before_worker_output_exists(): void
     {
+        Queue::fake([ExecuteAssistantChatJob::class]);
         $service = $this->mock(AIAssistantService::class);
-        $service->shouldReceive('ask')->times(3)->andThrow(new AssistantResponseIncomplete([
-            'incomplete_reason' => 'max_output_tokens', 'content' => 'Секретный обрезанный ответ', 'input_tokens' => 80, 'output_tokens' => 128,
-        ]));
+        $service->shouldNotReceive('ask');
         foreach (self::PREFIXES as $prefix) {
-            $response = $this->postJson($prefix.'/chat', $this->payload() + ['quote_id' => (string) Str::uuid()]);
-            $response->assertStatus(409)->assertJsonPath('success', false)->assertJsonPath('message', trans_message('ai_assistant.output_limit_exceeded'));
-            $this->assertStringNotContainsString('Секретный', $response->getContent());
+            $payload = $this->payload();
+            $quote = $this->postJson($prefix.'/credits/quote', $payload)->assertOk();
+            $payload['quote_id'] = $quote->json('data.quote_id');
+            $response = $this->postJson($prefix.'/chat', $payload);
+            $response->assertStatus(202)->assertJsonPath('success', true)
+                ->assertJsonPath('data.request_id', $payload['request_id'])->assertJsonPath('data.stage', 'queued');
         }
+        Queue::assertPushed(ExecuteAssistantChatJob::class, 3);
     }
 
     public function test_numeric_conversation_ids_private_visibility_and_pagination_envelopes(): void
