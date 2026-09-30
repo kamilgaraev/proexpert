@@ -133,6 +133,56 @@ final class RagEmbeddingCompatibilityTest extends TestCase
         self::assertSame((string) $project->id, (string) $results[0]->entityId);
     }
 
+    public function test_generic_semantic_search_keeps_organization_sources_when_file_corpus_is_absent(): void
+    {
+        [$fixture, $project] = $this->scope();
+        $contractor = \App\Models\Contractor::withoutEvents(fn () => \App\Models\Contractor::create([
+            'organization_id' => $fixture->organization->id, 'name' => 'Organization supplier', 'contractor_type' => 'manual',
+        ]));
+        $provider = new CompatibilityEmbeddingProvider('current', 'fixture-model', 256);
+        $this->indexer($provider)->indexChunk(new RagChunkData($fixture->organization->id, null,
+            AssistantDataAccessPolicy::entityDefinitions()['contractor'][0], 'contractor', $contractor->id, 'Organization supplier', 'Unrelated lexical words'));
+        $retriever = new RagRetriever($provider, app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
+        $results = $retriever->search('needle semantic', $fixture->organization->id, $fixture->owner, ['project_id' => $project->id]);
+        self::assertCount(1, $results);
+        self::assertSame('contractor', $results[0]->entityType);
+        self::assertSame((string) $contractor->id, $results[0]->entityId);
+    }
+
+    public function test_search_diagnostics_distinguish_embedding_failure_from_genuine_empty_results(): void
+    {
+        \Illuminate\Support\Facades\Cache::flush();
+        [$fixture, $project] = $this->scope();
+        $this->indexer(new CompatibilityEmbeddingProvider('current', 'fixture-model', 256))->indexChunk($this->chunk($project, 'legacyunique text'));
+        $failed = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'failed-model', 256, true),
+            app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
+        $partial = $failed->searchWithDiagnostics('legacyunique', $fixture->organization->id, $fixture->owner);
+        self::assertCount(1, $partial['results']);
+        self::assertSame(['status' => 'partial', 'error_code' => 'rag_query_embedding_unavailable',
+            'semantic_available' => false, 'lexical_used' => true], $partial['diagnostics']);
+        $unavailable = $failed->searchWithDiagnostics('absentunique', $fixture->organization->id, $fixture->owner);
+        self::assertSame([], $unavailable['results']);
+        self::assertSame(['status' => 'unavailable', 'error_code' => 'rag_query_embedding_unavailable',
+            'semantic_available' => false, 'lexical_used' => true], $unavailable['diagnostics']);
+        config()->set('ai-assistant.rag.min_similarity', 2.0);
+        $healthy = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'fixture-model', 256),
+            app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
+        $empty = $healthy->searchWithDiagnostics('absentunique', $fixture->organization->id, $fixture->owner);
+        self::assertSame([], $empty['results']);
+        self::assertSame(['status' => 'available', 'error_code' => null, 'semantic_available' => true, 'lexical_used' => true], $empty['diagnostics']);
+        foreach ([new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled,
+            new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded,
+            new \App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded,
+            new \Illuminate\Database\QueryException('pgsql', 'fixture', [], new RuntimeException('fixture_sql_timeout'))] as $failure) {
+            $technical = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'technical-model', 256, $failure),
+                app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
+            $caught = null;
+            try { $technical->searchWithDiagnostics('legacyunique', $fixture->organization->id, $fixture->owner); }
+            catch (\Throwable $exception) { $caught = $exception; }
+            self::assertSame($failure, $caught);
+        }
+    }
+
     private function scope(): array
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
@@ -171,10 +221,11 @@ final class CompatibilityEmbeddingProvider implements RagEmbeddingProviderInterf
 {
     public int $calls = 0;
 
-    public function __construct(private readonly string $providerName, private readonly string $modelName, private readonly int $vectorDimensions, private readonly bool $fail = false) {}
+    public function __construct(private readonly string $providerName, private readonly string $modelName, private readonly int $vectorDimensions, private readonly bool|\Throwable $fail = false) {}
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
+        if ($this->fail instanceof \Throwable) throw $this->fail;
         if ($this->fail) throw new RuntimeException('synthetic_embedding_failure');
         $this->calls++;
 

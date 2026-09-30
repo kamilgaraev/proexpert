@@ -91,6 +91,29 @@ final class RagActorCoverageTest extends TestCase
         $this->assertNotContains('payments.invoice.view', $this->permissionChecks);
     }
 
+    public function test_projection_proof_and_counts_use_the_same_visible_rows_and_generation(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $hidden = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $this->index($organization->id, $visible);
+        $this->index($organization->id, $hidden);
+        $this->coverage->refreshCoverage($organization->id);
+        $proof = null;
+        $status = $this->coverage->coverageForActor($organization->id, $actor, projectionProof: $proof);
+        $this->assertNotNull($proof);
+        $this->assertCount($status['expected_source_count'], $proof['expected']);
+        $this->assertCount(1, $proof['expected']);
+        $row = RagExpectedSource::query()->where('organization_id', $organization->id)->where('generation', $proof['projection_generation'])
+            ->where('entity_id', (string) $visible->id)->firstOrFail();
+        $this->assertSame((string) $visible->id, $proof['expected'][$row->id][2]);
+        $this->assertSame($row->checksum, $proof['expected'][$row->id][6]);
+        $row->update(['checksum' => hash('sha256', 'changed projection row')]);
+        $status = $this->coverage->coverageForActor($organization->id, $actor, projectionProof: $proof);
+        $this->assertSame(1, $status['pending_source_count']);
+        $this->assertSame(0, $status['indexed_source_count']);
+        $this->assertSame($row->checksum, $proof['expected'][$row->id][6]);
+    }
+
     public function test_revoked_assignment_and_permission_are_applied_before_current_counts(): void
     {
         [$organization, $actor, $visible] = $this->scope();

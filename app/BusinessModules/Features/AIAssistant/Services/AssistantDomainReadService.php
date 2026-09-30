@@ -24,12 +24,6 @@ final class AssistantDomainReadService
 
     public function execute(string $operation, array $arguments, User $actor, int $organizationId): array
     {
-        return $this->access->withCurrentChecks($actor, $organizationId,
-            fn (): array => $this->executeCurrent($operation, $arguments, $actor, $organizationId), true);
-    }
-
-    private function executeCurrent(string $operation, array $arguments, User $actor, int $organizationId): array
-    {
         $definition = $this->catalog->definition((string) ($arguments['domain'] ?? ''));
         if ($definition === null || ! $this->catalog->supports($definition->domain, $operation)) {
             throw ValidationException::withMessages(['domain' => ['unsupported_domain']]);
@@ -43,6 +37,13 @@ final class AssistantDomainReadService
             || ! isset(AssistantExtendedDomainRegistry::values('parentProjectionDefinitions')[$entityType][$projection]))) {
             throw ValidationException::withMessages(['projection' => ['unsupported_parent_projection']]);
         }
+
+        return $this->access->withCurrentChecks($actor, $organizationId,
+            fn (): array => $this->executeCurrent($operation, $arguments, $actor, $organizationId, $definition, $entityType, $projection), true);
+    }
+
+    private function executeCurrent(string $operation, array $arguments, User $actor, int $organizationId, AssistantDomainDefinition $definition, string $entityType, ?string $projection): array
+    {
         $policyDomain = match ($definition->domain) { 'works' => 'projects', 'acts' => 'contracts', default => $definition->domain };
         if (! $this->access->canReadDomain($actor, $organizationId, $policyDomain)) {
             throw new AccessDeniedHttpException();

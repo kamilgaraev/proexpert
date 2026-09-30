@@ -151,7 +151,7 @@ final class AIAssistantController extends AbstractAssistantApiController
 
     public function cancelRequest(Request $request, string $requestId): JsonResponse
     {
-        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->cancel($requestId, $this->actor($request), $this->organizationId($request), $this->surface($request))));
+        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->cancelOwned($requestId, $this->actor($request), $this->surface($request))));
     }
 
     public function usage(Request $request): JsonResponse

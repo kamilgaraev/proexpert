@@ -57,8 +57,10 @@ final class AssistantRequestProgress
             };
         }
         return match ($toolName) {
+            'search_assistant_documents' => 'rag_search',
+            'get_estimate_answer' => 'estimates',
             'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions' => 'estimates',
-            'search_warehouse' => 'warehouse',
+            'search_warehouse', 'get_material_stock' => 'warehouse',
             'search_projects', 'get_project_snapshot' => 'projects',
             'get_contract_snapshot' => 'contracts',
             'get_procurement_snapshot' => 'procurement',

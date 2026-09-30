@@ -86,6 +86,7 @@ final class AssistantDataAccessRegressionTest extends TestCase
         $this->index($organization->id, $private->id, 'project', (string) $private->id, 'Скрытая стройка', [1.0, 0.0]);
         $this->index($organization->id, $visible->id, 'project', (string) $visible->id, 'Доступная стройка', [0.9, 0.1]);
         foreach ([false, true] as $failEmbedding) {
+            \Illuminate\Support\Facades\Cache::flush();
             $provider = new class($failEmbedding) implements RagEmbeddingProviderInterface {
                 public function __construct(private bool $fail) {}
                 public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
@@ -101,6 +102,127 @@ final class AssistantDataAccessRegressionTest extends TestCase
             $this->assertCount(1, $results);
             $this->assertSame('Доступная стройка', $results[0]->title);
         }
+    }
+
+    public function test_query_embedding_cache_uses_fingerprint_but_never_caches_access(): void
+    {
+        [$organization, $actor, $visible] = $this->fixtures();
+        $this->index($organization->id, $visible->id, 'project', (string) $visible->id, 'Доступная стройка', [1.0, 0.0]);
+        $provider = new class implements RagEmbeddingProviderInterface {
+            public int $calls = 0;
+            public string $modelName = 'test';
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array { $this->calls++; return RagTestEmbedding::fromLeadingValues([1.0, 0.0]); }
+            public function provider(): string { return 'test'; }
+            public function model(): string { return $this->modelName; }
+            public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
+        };
+        $retriever = new RagRetriever($provider, new UserProjectAccessService, $this->policy);
+        $sql = [];
+        DB::listen(function ($query) use (&$sql): void { $sql[] = $query->sql; });
+        $this->assertCount(1, $retriever->search('стройка cache', $organization->id, $actor));
+        $this->assertCount(1, $retriever->search('стройка cache', $organization->id, $actor));
+        $this->assertSame(1, $provider->calls);
+        foreach ($sql as $statement) {
+            if (str_starts_with($statement, 'WITH compatible_chunks')) { $this->assertStringNotContainsString('assistant_acl_', $statement); }
+        }
+        $provider->modelName = 'another-model';
+        $this->assertCount(1, $retriever->search('стройка cache', $organization->id, $actor));
+        $this->assertSame(2, $provider->calls);
+        $this->permissions = false;
+        $this->assertSame([], $retriever->search('стройка cache', $organization->id, $actor));
+        $this->assertSame(2, $provider->calls);
+    }
+
+    public function test_project_access_revoked_during_embedding_is_checked_before_ranking(): void
+    {
+        [$organization, $actor, $visible] = $this->fixtures();
+        $this->index($organization->id, $visible->id, 'project', (string) $visible->id, 'Доступная стройка', [1.0, 0.0]);
+        $provider = new class($actor, $visible) implements RagEmbeddingProviderInterface {
+            public function __construct(private User $actor, private Project $project) {}
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array {
+                $this->actor->assignedProjects()->updateExistingPivot($this->project->id, ['is_active' => false]);
+                return RagTestEmbedding::fromLeadingValues([1.0, 0.0]);
+            }
+            public function provider(): string { return 'test'; }
+            public function model(): string { return 'test'; }
+            public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
+        };
+        $this->assertSame([], (new RagRetriever($provider, new UserProjectAccessService, $this->policy))->search('стройка revoke', $organization->id, $actor));
+    }
+
+    public function test_read_wrapper_bounds_database_phases_without_embedding_wait(): void
+    {
+        [$organization, $actor, $visible] = $this->fixtures();
+        $this->index($organization->id, $visible->id, 'project', (string) $visible->id, 'Доступная стройка', [1.0, 0.0]);
+        $insideRead = false;
+        $provider = new class(function () use (&$insideRead): bool { return $insideRead; }) implements RagEmbeddingProviderInterface {
+            public bool $embeddedDuringRead = false;
+            public function __construct(private \Closure $insideRead) {}
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array { $this->embeddedDuringRead = ($this->insideRead)(); return RagTestEmbedding::fromLeadingValues([1.0, 0.0]); }
+            public function provider(): string { return 'test'; }
+            public function model(): string { return 'test'; }
+            public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
+        };
+        $reads = 0;
+        $wrapper = function (callable $read) use (&$insideRead, &$reads): mixed {
+            $reads++;
+            $insideRead = true;
+            try { return $read(); } finally { $insideRead = false; }
+        };
+        $retriever = new RagRetriever($provider, new UserProjectAccessService, $this->policy);
+        $results = $retriever->search('стройка wrapped', $organization->id, $actor, [], static fn () => null, $wrapper);
+        $this->assertCount(1, $results);
+        $this->assertFalse($provider->embeddedDuringRead);
+        $this->assertGreaterThanOrEqual(3, $reads);
+        $this->assertFalse($insideRead);
+    }
+
+    public function test_wide_index_candidates_keep_ranking_sql_small_and_scope_every_stored_identity(): void
+    {
+        [$organization, $actor, $visible] = $this->fixtures();
+        $this->index($organization->id, $visible->id, 'project', (string) $visible->id, 'Бетон needlewide', [1.0, 0.0]);
+        $definitions = array_slice(AssistantDataAccessPolicy::entityDefinitions(), 0, 99, true);
+        foreach ($definitions as $type => $definition) {
+            $source = RagSource::create(['organization_id' => $organization->id, 'project_id' => $visible->id,
+                'source_type' => $definition[0], 'entity_type' => $type, 'entity_id' => '990000000', 'title' => 'Unrelated legacy source',
+                'checksum' => hash('sha256', $type), 'indexed_at' => now()]);
+            DB::table('ai_rag_chunks')->insert(['source_id' => $source->id, 'organization_id' => $organization->id, 'project_id' => $visible->id,
+                'chunk_index' => 0, 'content' => 'Unrelated legacy source', 'content_hash' => hash('sha256', $type),
+                'embedding_provider' => 'obsolete', 'embedding_model' => 'legacy', 'embedding' => '['.implode(',', RagTestEmbedding::fromLeadingValues([0.0, 1.0])).']',
+                'created_at' => now(), 'updated_at' => now()]);
+        }
+        $this->assertCount(99, $definitions);
+        $provider = new class implements RagEmbeddingProviderInterface {
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array { return RagTestEmbedding::fromLeadingValues([1.0, 0.0]); }
+            public function provider(): string { return 'test'; }
+            public function model(): string { return 'test'; }
+            public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
+        };
+        $phase = 'search';
+        $metrics = [];
+        DB::listen(function ($query) use (&$metrics, &$phase): void {
+            $metrics[$phase]['queries'] = ($metrics[$phase]['queries'] ?? 0) + 1;
+            $metrics[$phase]['sql_ms'] = ($metrics[$phase]['sql_ms'] ?? 0) + $query->time;
+            $metrics[$phase]['max_sql_bytes'] = max($metrics[$phase]['max_sql_bytes'] ?? 0, strlen($query->sql));
+            if (str_starts_with($query->sql, 'WITH compatible_chunks')) { $this->assertStringNotContainsString('assistant_acl_', $query->sql); }
+        });
+        $started = hrtime(true);
+        $results = (new RagRetriever($provider, new UserProjectAccessService, $this->policy))->search('needlewide', $organization->id, $actor);
+        $metrics[$phase]['elapsed_ms'] = round((hrtime(true) - $started) / 1_000_000, 2);
+        $this->assertCount(1, $results);
+        $this->assertSame((string) $visible->id, $results[0]->entityId);
+        $phase = 'stored_identity_acl';
+        $started = hrtime(true);
+        $visibleIds = $this->policy->withCurrentChecks($actor, $organization->id, function () use ($actor, $organization): array {
+            $ids = [];
+            foreach ($this->policy->sourceIdentityQueries(RagSource::query(), $actor, $organization->id) as $branch) {
+                array_push($ids, ...$branch->pluck('id')->all());
+            }
+            return $ids;
+        }, fresh: true);
+        $metrics[$phase]['elapsed_ms'] = round((hrtime(true) - $started) / 1_000_000, 2);
+        $this->assertCount(1, $visibleIds);
+        fwrite(STDERR, 'RAG wide fixture '.json_encode($metrics, JSON_THROW_ON_ERROR).PHP_EOL);
     }
 
     public function test_report_download_rechecks_each_current_reader_and_revoked_project_access(): void
@@ -138,13 +260,24 @@ final class AssistantDataAccessRegressionTest extends TestCase
             'storage_path' => $file->path, 'filename' => 'source.pdf', 'mime_type' => 'application/pdf',
             'checksum' => hash('sha256', 'source'), 'size_bytes' => 1, 'status' => 'ready']);
         $ref = ['source_type' => 'file_document', 'entity_type' => 'assistant_document', 'entity_id' => $document->id];
+        RagSource::create($ref + ['organization_id' => $organization->id, 'project_id' => $visible->id,
+            'title' => 'Source document', 'checksum' => hash('sha256', 'source document')]);
+        $visibleSources = function () use ($actor, $organization): array {
+            $ids = [];
+            foreach ($this->policy->sourceIdentityQueries(RagSource::query(), $actor, $organization->id) as $branch) { array_push($ids, ...$branch->pluck('id')->all()); }
+            return $ids;
+        };
+        $this->assertCount(1, $visibleSources());
         $this->assertTrue($this->policy->canReadSource($actor, $organization->id, $ref));
         $file->update(['fileable_id' => $private->id]);
+        $this->assertSame([], $visibleSources());
         $this->assertFalse($this->policy->canReadSource($actor, $organization->id, $ref));
         $file->update(['fileable_id' => $visible->id, 'path' => 'org-'.$organization->id.'/replaced.pdf']);
+        $this->assertSame([], $visibleSources());
         $this->assertFalse($this->policy->canReadSource($actor, $organization->id, $ref));
         $file->update(['path' => $document->storage_path]);
         $file->delete();
+        $this->assertSame([], $visibleSources());
         $this->assertFalse($this->policy->canReadSource($actor, $organization->id, $ref));
     }
 

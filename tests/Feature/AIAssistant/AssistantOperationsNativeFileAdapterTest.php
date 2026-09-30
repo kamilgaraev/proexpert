@@ -68,6 +68,25 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         self::assertSame(0, $query->count());
     }
 
+    public function test_native_document_sql_timeout_is_not_converted_to_missing_access(): void
+    {
+        [$fixture, $actor, $project] = $this->fixture('safety-management', 'safety-management.view');
+        [$exam] = $this->medical($fixture, $actor, $project);
+        $document = $this->adapter()->map($actor, $fixture->organization->id, 'safety_medical_exam', $exam->id);
+        $failOnce = true;
+        DB::connection()->beforeExecuting(function (string $sql, array $bindings, $connection) use (&$failOnce): void {
+            if ($failOnce && str_contains($sql, 'safety_medical_exams')) {
+                $failOnce = false;
+                throw new \Illuminate\Database\QueryException($connection->getName(), $sql, $bindings, new \PDOException('fixture_read_timeout'));
+            }
+        });
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectExceptionMessage('fixture_read_timeout');
+        app(AssistantDataAccessPolicy::class)->canReadSource($actor, $fixture->organization->id, [
+            'source_type' => 'file_document', 'entity_type' => 'assistant_document', 'entity_id' => $document->id,
+        ]);
+    }
+
     public function test_medical_reverse_parent_and_current_private_employee_projects_filter_before_limit_and_detached_history_never_falls_through(): void
     {
         [$fixture, $actor, $visible] = $this->fixture('safety-management', 'safety-management.view');

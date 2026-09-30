@@ -48,6 +48,51 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
             fn (): array => $this->executeCurrent($arguments, $user, $organization), true);
     }
 
+    public function compactForActor(User $actor, int $organizationId): array
+    {
+        return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId): array {
+            if (!$this->access->canReadDomain($actor, $organizationId, 'assistant')) {
+                throw new AccessDeniedHttpException;
+            }
+            return $this->compact(
+                fn (string $domain): bool => $this->access->canReadDomain($actor, $organizationId, $domain),
+                fn (string $permission): bool => $this->access->canCurrentPermission($actor, $organizationId, $permission),
+            );
+        }, true);
+    }
+
+    public function compact(callable $domainAllowed, callable $permissionAllowed): array
+    {
+        $rows = [];
+        $domainDecisions = [];
+        foreach ($this->catalog->all() as $definition) {
+            $domain = match ($definition->domain) { 'works' => 'projects', 'acts' => 'contracts', default => $definition->domain };
+            $domainDecisions[$domain] ??= $domainAllowed($domain);
+            if (!$domainDecisions[$domain]) {
+                continue;
+            }
+            foreach ($definition->permissions as $permission) {
+                if (!$permissionAllowed($permission)) {
+                    continue 2;
+                }
+            }
+            $allowedTypes = [];
+            foreach ($definition->entityTypes as $type) {
+                foreach ((array) ($definition->entityPermissions[$type] ?? []) as $permission) {
+                    if (!$permissionAllowed($permission)) {
+                        continue 2;
+                    }
+                }
+                $allowedTypes[] = $type;
+            }
+            if ($allowedTypes !== []) {
+                $rows[] = ['domain' => $definition->domain, 'primary_entity_type' => $allowedTypes[0],
+                    'entity_type_count' => count($allowedTypes), 'operations' => $definition->operations];
+            }
+        }
+        return ['domains' => $rows, 'details_tool' => $this->getName(), 'record_access' => 'checked_on_read'];
+    }
+
     private function executeCurrent(array $arguments, User $user, Organization $organization): array
     {
         if (! $this->access->canReadDomain($user, (int) $organization->id, 'assistant')) {

@@ -227,6 +227,156 @@ final class AssistantDocumentCoverageService
         }
     }
 
+    /** @return array<string, mixed> */
+    public function captureStatusProof(int $organizationId, User $actor, array $nativeTypes = [], int $maxIdentities = 10000, ?callable $checkpoint = null): array
+    {
+        $remaining = max(0, $maxIdentities);
+        $checkpoint?->__invoke();
+        $fileRows = $this->coverageFiles($actor, $organizationId)
+            ->select(['files.id', 'files.path', 'files.fileable_type', 'files.fileable_id', 'files.disk', 'files.updated_at'])
+            ->limit($remaining + 1)->get();
+        $complete = $fileRows->count() <= $remaining;
+        $fileRows = $fileRows->take($remaining);
+        $remaining -= $fileRows->count();
+
+        $checkpoint?->__invoke();
+        $documentRows = $this->policy->accessibleDocuments($actor, $organizationId)
+            ->select(['ai_assistant_documents.id', 'ai_assistant_documents.file_id', 'ai_assistant_documents.storage_path',
+                'ai_assistant_documents.parent_entity_type', 'ai_assistant_documents.parent_entity_id', 'ai_assistant_documents.updated_at'])
+            ->limit($remaining + 1)->get();
+        $complete = $complete && $documentRows->count() <= $remaining;
+        $documentRows = $documentRows->take($remaining);
+        $remaining -= $documentRows->count();
+
+        $entityIds = [];
+        $contentIds = [];
+        foreach (array_values(array_unique($nativeTypes)) as $type) {
+            $checkpoint?->__invoke();
+            $entity = $this->policy->entityQuery($actor, $organizationId, $type);
+            if ($entity !== null) {
+                $model = $entity->getModel();
+                $ids = (clone $entity)->limit($remaining + 1)->pluck($model->getQualifiedKeyName())->map(static fn ($id): string => (string) $id)->all();
+                $complete = $complete && count($ids) <= $remaining;
+                $entityIds[$type] = array_slice($ids, 0, $remaining);
+                $remaining -= count($entityIds[$type]);
+            }
+            $checkpoint?->__invoke();
+            $content = $this->policy->entityContentQuery($actor, $organizationId, $type);
+            if ($content !== null) {
+                $model = $content->getModel();
+                $ids = (clone $content)->limit($remaining + 1)->pluck($model->getQualifiedKeyName())->map(static fn ($id): string => (string) $id)->all();
+                $complete = $complete && count($ids) <= $remaining;
+                $contentIds[$type] = array_slice($ids, 0, $remaining);
+                $remaining -= count($contentIds[$type]);
+            }
+        }
+
+        return [
+            '_complete' => $complete,
+            'files' => $fileRows->mapWithKeys(static fn ($file): array => [(string) $file->id => [
+                (string) $file->path, (string) $file->fileable_type, (string) $file->fileable_id,
+                (string) $file->disk, (string) $file->updated_at,
+            ]])->all(),
+            'documents' => $documentRows->mapWithKeys(static fn ($document): array => [(string) $document->id => [
+                (string) $document->file_id, (string) $document->storage_path, (string) $document->parent_entity_type,
+                (string) $document->parent_entity_id, (string) $document->updated_at,
+            ]])->all(),
+            'entities' => $entityIds,
+            'content_entities' => $contentIds,
+        ];
+    }
+
+    public function validateStatusProof(int $organizationId, User $actor, array $proof, ?callable $checkpoint = null): bool
+    {
+        $expectedFiles = $proof['files'] ?? null;
+        $expectedDocuments = $proof['documents'] ?? null;
+        if (! is_array($expectedFiles) || ! is_array($expectedDocuments)
+            || ! $this->matchesFileProof($organizationId, $actor, $expectedFiles, $checkpoint)
+            || ! $this->matchesDocumentProof($organizationId, $actor, $expectedDocuments, $checkpoint)) {
+            return false;
+        }
+
+        foreach (['entities' => 'entityQuery', 'content_entities' => 'entityContentQuery'] as $group => $method) {
+            foreach (($proof[$group] ?? []) as $type => $ids) {
+                $checkpoint?->__invoke();
+                if (! is_string($type) || ! is_array($ids)) {
+                    return false;
+                }
+                if ($ids === []) {
+                    continue;
+                }
+                $query = $group === 'entities'
+                    ? $this->policy->entityQuery($actor, $organizationId, $type)
+                    : $this->policy->entityContentQuery($actor, $organizationId, $type);
+                if ($query === null) {
+                    return false;
+                }
+                $model = $query->getModel();
+                $visible = array_values(array_unique((clone $query)->whereKey($ids)->pluck($model->getQualifiedKeyName())
+                    ->map(static fn ($id): string => (string) $id)->all()));
+                $expectedIds = array_values(array_unique(array_map('strval', $ids)));
+                sort($visible);
+                sort($expectedIds);
+                if ($visible !== $expectedIds) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private function matchesFileProof(int $organizationId, User $actor, array $proof, ?callable $checkpoint): bool
+    {
+        if ($proof === []) {
+            return true;
+        }
+        $checkpoint?->__invoke();
+        $rows = $this->coverageFiles($actor, $organizationId)->whereIn('files.id', array_keys($proof))
+            ->select(['files.id', 'files.path', 'files.fileable_type', 'files.fileable_id', 'files.disk', 'files.updated_at'])
+            ->get()->mapWithKeys(static fn ($file): array => [(string) $file->id => [
+                (string) $file->path, (string) $file->fileable_type, (string) $file->fileable_id,
+                (string) $file->disk, (string) $file->updated_at,
+            ]])->all();
+
+        ksort($rows);
+        ksort($proof);
+
+        return $rows === $proof;
+    }
+
+    private function matchesDocumentProof(int $organizationId, User $actor, array $proof, ?callable $checkpoint): bool
+    {
+        if ($proof === []) {
+            return true;
+        }
+        $checkpoint?->__invoke();
+        $rows = $this->policy->accessibleDocuments($actor, $organizationId)->whereIn('ai_assistant_documents.id', array_keys($proof))
+            ->select(['ai_assistant_documents.id', 'ai_assistant_documents.file_id', 'ai_assistant_documents.storage_path',
+                'ai_assistant_documents.parent_entity_type', 'ai_assistant_documents.parent_entity_id', 'ai_assistant_documents.updated_at'])
+            ->get()->mapWithKeys(static fn ($document): array => [(string) $document->id => [
+                (string) $document->file_id, (string) $document->storage_path, (string) $document->parent_entity_type,
+                (string) $document->parent_entity_id, (string) $document->updated_at,
+            ]])->all();
+
+        ksort($rows);
+        ksort($proof);
+
+        return $rows === $proof;
+    }
+
+    private function coverageFiles(User $actor, int $organizationId): \Illuminate\Database\Eloquent\Builder
+    {
+        $files = $this->policy->accessibleFiles($actor, $organizationId, false);
+        $operations = app(AssistantOperationsNativeFileAdapter::class);
+        foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeFileType) {
+            $files->whereNotIn('files.id', $operations->sourceQueryForActor($actor, $organizationId, $nativeFileType)
+                ->select($nativeFileType === 'safety_medical_exam' ? 'native_file.id' : 'native_source.id'));
+        }
+
+        return $files;
+    }
+
     private function nativeCandidateTypes(int $organizationId, User $actor, ?callable $checkpoint, ?callable $guard): array
     {
         $queries = [

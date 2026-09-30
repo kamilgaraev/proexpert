@@ -110,6 +110,7 @@ class AIAssistantServiceProvider extends ServiceProvider
 
         $this->app->scoped(AIAssistantService::class);
         $this->app->scoped(AssistantRequestLifecycle::class);
+        $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLimiter::class);
         $this->app->scoped(AssistantDataAccessPolicy::class);
         $this->app->scoped(AssistantMemoryService::class);
         $this->app->scoped(AssistantFinancialAnswerService::class);
@@ -228,12 +229,15 @@ class AIAssistantServiceProvider extends ServiceProvider
 
             foreach ([
                 \App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool::class,
+                \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class,
                 \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
                 \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
                 \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool::class,
                 \App\BusinessModules\Features\AIAssistant\Actions\Domains\ReadAssistantDomainTool::class,
                 \App\BusinessModules\Features\AIAssistant\Actions\Domains\NavigationAssistantDomainTool::class,
                 \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
+                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class,
                 \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool::class,
                 \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateFinancialSnapshotTool::class,
                 \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\CreateMeasurementUnitTool::class,

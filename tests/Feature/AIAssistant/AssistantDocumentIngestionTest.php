@@ -102,6 +102,17 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertSame(0, AIAssistantDocumentUnit::query()->where('document_id', $differentParent->id)->count());
     }
 
+    public function test_status_document_proof_is_rejected_after_parent_access_is_revoked(): void
+    {
+        $this->file('proof.txt', 'visible file');
+        $coverage = app(AssistantDocumentCoverageService::class);
+        $proof = $coverage->captureStatusProof($this->organization->id, $this->owner);
+
+        self::assertTrue($coverage->validateStatusProof($this->organization->id, $this->owner, $proof));
+        $this->deniedProjects[] = $this->project->id;
+        self::assertFalse($coverage->validateStatusProof($this->organization->id, $this->owner, $proof));
+    }
+
     public function test_registration_cannot_attach_an_unrelated_storage_path(): void
     {
         $otherProject = Project::factory()->create(['organization_id' => $this->organization->id]);
