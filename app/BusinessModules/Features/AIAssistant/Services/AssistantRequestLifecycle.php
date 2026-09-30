@@ -210,16 +210,11 @@ final class AssistantRequestLifecycle
         }, 3);
 
         if ($queued && ! is_array($started['response'] ?? null)) {
-            foreach ($phaseDurations + $transactionPhases as $phase => $durationMs) {
-                $this->recordSubmitPhaseDuration($requestId, $phase, $durationMs);
-            }
+            $phaseDurations += $transactionPhases;
             if ($transactionStartedAt !== null) {
-                $this->recordSubmitPhaseDuration(
-                    $requestId,
-                    'database_transaction',
-                    self::elapsedMilliseconds($transactionStartedAt),
-                );
+                $phaseDurations['database_transaction'] = self::elapsedMilliseconds($transactionStartedAt);
             }
+            self::recordSubmitPhases($requestId, $phaseDurations);
         }
 
         return $started;
@@ -246,6 +241,39 @@ final class AssistantRequestLifecycle
                 'request_id' => $requestId,
                 'phase' => $phase,
                 'duration_ms' => round($durationMs, 2),
+            ]);
+        } catch (Throwable) {
+        }
+    }
+
+    public static function recordSubmitPhases(string $requestId, array $phaseDurationsMs): void
+    {
+        if (preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $requestId) !== 1) {
+            return;
+        }
+
+        $safeDurations = [];
+        foreach ($phaseDurationsMs as $phase => $durationMs) {
+            if (! is_string($phase) || ! in_array($phase, self::SUBMIT_TIMED_PHASES, true) || ! is_numeric($durationMs)) {
+                continue;
+            }
+
+            $durationMs = (float) $durationMs;
+            if (! is_finite($durationMs) || $durationMs < 0) {
+                continue;
+            }
+
+            $safeDurations[$phase] = round($durationMs, 2);
+        }
+
+        if ($safeDurations === []) {
+            return;
+        }
+
+        try {
+            Log::info('ai.assistant.submit_phases_completed', [
+                'request_id' => $requestId,
+                'phase_durations_ms' => $safeDurations,
             ]);
         } catch (Throwable) {
         }

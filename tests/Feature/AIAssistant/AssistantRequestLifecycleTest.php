@@ -298,9 +298,16 @@ final class AssistantRequestLifecycleTest extends TestCase
 
             $records = array_values(array_filter(
                 $logger->records,
-                static fn (array $record): bool => $record['event'] === 'ai.assistant.submit_phase_completed',
+                static fn (array $record): bool => in_array($record['event'], [
+                    'ai.assistant.submit_phases_completed',
+                    'ai.assistant.submit_phase_completed',
+                ], true),
             ));
-            $phases = array_column(array_column($records, 'context'), 'phase');
+            $this->assertCount(2, $records);
+            $this->assertSame([
+                'request_id', 'phase_durations_ms',
+            ], array_keys($records[0]['context']));
+            $this->assertSame('ai.assistant.submit_phases_completed', $records[0]['event']);
             $this->assertSame([
                 'authorization_conversation',
                 'request_preparation',
@@ -309,15 +316,18 @@ final class AssistantRequestLifecycleTest extends TestCase
                 'quote_reservation_limits',
                 'request_persist_change_schedule',
                 'database_transaction',
-                'queue_dispatch_call',
-            ], $phases);
-
-            foreach ($records as $record) {
-                $this->assertSame(['request_id', 'phase', 'duration_ms'], array_keys($record['context']));
-                $this->assertSame($requestId, $record['context']['request_id']);
-                $this->assertIsFloat($record['context']['duration_ms']);
-                $this->assertGreaterThanOrEqual(0, $record['context']['duration_ms']);
+            ], array_keys($records[0]['context']['phase_durations_ms']));
+            foreach ($records[0]['context']['phase_durations_ms'] as $durationMs) {
+                $this->assertIsFloat($durationMs);
+                $this->assertGreaterThanOrEqual(0, $durationMs);
             }
+
+            $this->assertSame('ai.assistant.submit_phase_completed', $records[1]['event']);
+            $this->assertSame(['request_id', 'phase', 'duration_ms'], array_keys($records[1]['context']));
+            $this->assertSame($requestId, $records[1]['context']['request_id']);
+            $this->assertSame('queue_dispatch_call', $records[1]['context']['phase']);
+            $this->assertIsFloat($records[1]['context']['duration_ms']);
+            $this->assertGreaterThanOrEqual(0, $records[1]['context']['duration_ms']);
             $this->assertStringNotContainsString('private_submit_prompt_fixture', json_encode($records, JSON_THROW_ON_ERROR));
             $this->assertStringNotContainsString('organization_id', json_encode($records, JSON_THROW_ON_ERROR));
             $this->assertStringNotContainsString('user_id', json_encode($records, JSON_THROW_ON_ERROR));
