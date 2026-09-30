@@ -12,11 +12,13 @@ use App\Models\User;
 use App\Services\Logging\LoggingService;
 use App\Support\AI\TokenBudgetService;
 use App\Support\AI\TokenCounter;
+use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
+use RuntimeException;
 use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantIncompleteResponseTest extends TestCase
@@ -39,7 +41,7 @@ final class AssistantIncompleteResponseTest extends TestCase
         $service = $this->service($provider, $usage);
 
         $this->expectException(AssistantResponseIncomplete::class);
-        (new ReflectionMethod(AIAssistantService::class, 'requestAssistantResponse'))->invoke($service, [['role' => 'user', 'content' => 'Вопрос']], [], 10, (new User())->forceFill(['id' => 1]));
+        (new ReflectionMethod(AIAssistantService::class, 'requestAssistantResponse'))->invoke($service, [['role' => 'user', 'content' => 'Вопрос']], [], 10, (new User)->forceFill(['id' => 1]));
     }
 
     public static function providerFailures(): array
@@ -55,8 +57,77 @@ final class AssistantIncompleteResponseTest extends TestCase
         $usage = $this->createMock(UsageTracker::class);
         $usage->expects($this->once())->method('recordUsage')->with(10, 1, 'timeweb', 'openai/gpt-6-luna', 'assistant_chat', 80, 20, 100, $this->callback(static fn (array $metadata): bool => $metadata['degraded_mode'] === false));
 
-        $result = (new ReflectionMethod(AIAssistantService::class, 'requestAssistantResponse'))->invoke($this->service($provider, $usage), [['role' => 'user', 'content' => 'Вопрос']], [], 10, (new User())->forceFill(['id' => 1]));
+        $result = (new ReflectionMethod(AIAssistantService::class, 'requestAssistantResponse'))->invoke($this->service($provider, $usage), [['role' => 'user', 'content' => 'Вопрос']], [], 10, (new User)->forceFill(['id' => 1]));
         self::assertSame($response, $result['response']);
+    }
+
+    #[DataProvider('telemetryOutcomes')]
+    public function test_provider_timing_is_safe_and_never_changes_the_call_outcome(bool $fails, string $loggerMode): void
+    {
+        $response = ['content' => 'private_answer_fixture', 'finish_reason' => 'stop', 'input_tokens' => 80, 'output_tokens' => 20,
+            'tokens_used' => 100, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna'];
+        $failure = new RuntimeException('private_provider_error_fixture');
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider->method('getModel')->willReturn('openai/gpt-6-luna');
+        $call = $provider->expects($this->once())->method('chat');
+        $fails ? $call->willThrowException($failure) : $call->willReturn($response);
+        $usage = $this->createMock(UsageTracker::class);
+        $usage->expects($this->once())->method('recordUsage');
+        $logger = new class($loggerMode === 'throw') extends \Psr\Log\AbstractLogger
+        {
+            public array $records = [];
+
+            public function __construct(private readonly bool $throws) {}
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                $this->records[] = ['level' => $level, 'event' => (string) $message, 'context' => $context];
+                if ($this->throws) {
+                    throw new RuntimeException('controlled_logger_failure');
+                }
+            }
+        };
+        Log::clearResolvedInstance('log');
+        if ($loggerMode === 'missing') {
+            app()->offsetUnset('log');
+        } else {
+            Log::swap($logger);
+        }
+
+        try {
+            $result = (new ReflectionMethod(AIAssistantService::class, 'requestAssistantResponse'))->invoke(
+                $this->service($provider, $usage), [['role' => 'user', 'content' => 'private_question_fixture']], [], 10, (new User)->forceFill(['id' => 1]));
+            $this->assertFalse($fails);
+            $this->assertSame($response, $result['response']);
+        } catch (RuntimeException $actual) {
+            $this->assertTrue($fails);
+            $this->assertSame($failure, $actual);
+        }
+
+        if ($loggerMode === 'missing') {
+            $this->assertSame([], $logger->records);
+
+            return;
+        }
+        $this->assertCount(1, $logger->records);
+        $this->assertSame('info', $logger->records[0]['level']);
+        $this->assertSame('ai.assistant.provider_call_completed', $logger->records[0]['event']);
+        $context = $logger->records[0]['context'];
+        $this->assertSame(['request_id', 'call_attempt', 'provider', 'model', 'duration_ms', 'success', 'exception_class'], array_keys($context));
+        $this->assertNull($context['request_id']);
+        $this->assertSame(1, $context['call_attempt']);
+        $this->assertSame('timeweb', $context['provider']);
+        $this->assertSame('openai/gpt-6-luna', $context['model']);
+        $this->assertGreaterThanOrEqual(0, $context['duration_ms']);
+        $this->assertSame(! $fails, $context['success']);
+        $this->assertSame($fails ? RuntimeException::class : null, $context['exception_class']);
+        $this->assertStringNotContainsString('private_', json_encode($logger->records, JSON_THROW_ON_ERROR));
+    }
+
+    public static function telemetryOutcomes(): array
+    {
+        return ['success' => [false, 'record'], 'failure' => [true, 'record'], 'logger_failure_after_success' => [false, 'throw'],
+            'logger_failure_after_provider_failure' => [true, 'throw'], 'unavailable_logger' => [false, 'missing']];
     }
 
     private function service(LLMProviderInterface $provider, UsageTracker $usage): AIAssistantService
@@ -67,8 +138,12 @@ final class AssistantIncompleteResponseTest extends TestCase
             'usageTracker' => $usage,
             'logging' => $this->createMock(LoggingService::class),
             'requestLifecycle' => null,
-            'tokenBudget' => new TokenBudgetService(new TokenCounter(new class {
-                public function encode(string $text): array { return array_fill(0, mb_strlen($text), 1); }
+            'tokenBudget' => new TokenBudgetService(new TokenCounter(new class
+            {
+                public function encode(string $text): array
+                {
+                    return array_fill(0, mb_strlen($text), 1);
+                }
             })),
         ];
         foreach ($values as $name => $value) {

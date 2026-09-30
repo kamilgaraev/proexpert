@@ -347,14 +347,44 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             ]);
         }
 
+        $bulkSources = [];
+        for ($index = 0; $index < 260; $index++) {
+            $isContract = $index % 2 === 1;
+            $entityType = $isContract ? 'contract' : 'project';
+            $entityId = $isContract ? $contract->id : $project->id;
+            $bulkSources[] = [
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'identity_project_id' => $project->id,
+                'identity_part_key' => hash('sha256', 'status-proof-batch-'.$index),
+                'source_type' => $entityType,
+                'entity_type' => $entityType,
+                'entity_id' => (string) $entityId,
+                'title' => 'Status proof batch '.$index,
+                'checksum' => hash('sha256', 'status-proof-batch-checksum-'.$index),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+        foreach (array_chunk($bulkSources, 100) as $batch) {
+            DB::table('ai_rag_sources')->insert($batch);
+        }
+
         $service = app(AssistantIndexStatusService::class);
         $this->warmSnapshot($service, $organization->id, $actor->id);
         $queries = 0;
-        DB::listen(static function () use (&$queries): void { $queries++; });
+        $identityScopeQueries = 0;
+        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries): void {
+            $queries++;
+            if (str_contains(strtolower($query->sql), 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"')) {
+                $identityScopeQueries++;
+            }
+        });
         $status = $service->status($organization->id, $actor);
 
         $this->assertTrue($status['status_available']);
-        $this->assertSame(4, $status['source_count']);
+        $this->assertSame(264, $status['source_count']);
+        $this->assertSame(1, $identityScopeQueries, 'Status proof validation must compile the complete source identity ACL once.');
         $this->assertLessThanOrEqual(45, $queries, 'Status proof validation compiled repeated ACL branches for a bounded identity set.');
 
         RagSource::query()->where('organization_id', $organization->id)->where('source_type', 'contract')
