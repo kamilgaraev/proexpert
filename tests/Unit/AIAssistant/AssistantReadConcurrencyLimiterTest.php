@@ -39,7 +39,137 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
         $this->assertSame('unchanged', $result);
         $this->assertSame(2, $fullChecks);
         $this->assertSame(3, $narrowChecks);
-        $this->assertSame(['full', 'enqueue', 'acquire', 'full', 'acquire', 'narrow', 'renew', 'read', 'narrow', 'renew', 'narrow', 'renew', 'release'], $redis->events);
+        $this->assertSame(['full', 'enqueue', 'acquire', 'full', 'acquire', 'narrow', 'renew', 'read', 'narrow', 'narrow', 'renew', 'release'], $redis->events);
+    }
+
+    public function test_burst_guards_run_each_time_but_lease_renewal_is_bounded_and_final_check_is_forced(): void
+    {
+        $redis = $this->redis();
+        $clock = (object) ['now' => 0];
+        $guardChecks = 0;
+        $limiter = new AssistantReadConcurrencyLimiter('test:', static fn (): int => $clock->now);
+
+        $limiter->run(function (callable $heartbeat) use (&$guardChecks, $clock): void {
+            for ($index = 0; $index < 20; $index++) {
+                $heartbeat();
+            }
+            $clock->now = 5_000_000_000;
+            $heartbeat();
+        }, static fn (): null => null, 38, function () use (&$guardChecks): void {
+            $guardChecks++;
+        });
+
+        $this->assertSame(23, $guardChecks);
+        $this->assertSame(3, count(array_filter($redis->events, static fn (string $event): bool => $event === 'renew')));
+        $this->assertSame('release', end($redis->events));
+    }
+
+    public function test_denial_on_any_burst_guard_stops_the_read_and_releases_the_permit(): void
+    {
+        $redis = $this->redis();
+        $guardChecks = 0;
+        $failure = new AuthorizationException;
+
+        try {
+            (new AssistantReadConcurrencyLimiter)->run(function (callable $heartbeat): never {
+                for ($index = 0; $index < 10; $index++) {
+                    $heartbeat();
+                }
+                throw new RuntimeException('guard_should_interrupt_first');
+            }, static fn (): null => null, 38, function () use (&$guardChecks, $failure): void {
+                if (++$guardChecks === 4) {
+                    throw $failure;
+                }
+            });
+            $this->fail('A denied per-callback guard must stop the read.');
+        } catch (AuthorizationException $actual) {
+            $this->assertSame($failure, $actual);
+        }
+
+        $this->assertSame(4, $guardChecks);
+        $this->assertSame('release', end($redis->events));
+    }
+
+    public function test_failed_interval_renewal_fails_closed_and_releases_the_permit(): void
+    {
+        $redis = $this->redis([1], [1, 0]);
+        $clock = (object) ['now' => 0];
+        $guardChecks = 0;
+        $limiter = new AssistantReadConcurrencyLimiter('test:', static fn (): int => $clock->now);
+
+        try {
+            $limiter->run(function (callable $heartbeat) use ($clock): void {
+                $clock->now = 5_000_000_000;
+                $heartbeat();
+            }, static fn (): null => null, 38, function () use (&$guardChecks): void {
+                $guardChecks++;
+            });
+            $this->fail('A lease lost at the renewal boundary must stop the read.');
+        } catch (AssistantReadPermitTimeoutException $failure) {
+            $this->assertSame('assistant_read_permit_lease_lost', $failure->getMessage());
+        }
+
+        $this->assertSame(2, $guardChecks);
+        $this->assertSame(['enqueue', 'acquire', 'renew', 'renew', 'release'], $redis->events);
+    }
+
+    public function test_failed_forced_final_renewal_blocks_result_publication_and_releases_the_permit(): void
+    {
+        $redis = $this->redis([1], [1, 0]);
+        $readExecuted = false;
+
+        try {
+            (new AssistantReadConcurrencyLimiter)->run(static function () use (&$readExecuted): string {
+                $readExecuted = true;
+
+                return 'must_not_publish';
+            }, static fn (): null => null, 38, static fn (): null => null);
+            $this->fail('A failed final ownership check must block publication.');
+        } catch (AssistantReadPermitTimeoutException $failure) {
+            $this->assertSame('assistant_read_permit_lease_lost', $failure->getMessage());
+        }
+
+        $this->assertTrue($readExecuted);
+        $this->assertSame(['enqueue', 'acquire', 'renew', 'renew', 'release'], $redis->events);
+    }
+
+    public function test_monotonic_read_deadline_expires_even_when_burst_renewal_is_skipped(): void
+    {
+        $redis = $this->redis();
+        $clock = (object) ['now' => 0];
+        $guardChecks = 0;
+        $limiter = new AssistantReadConcurrencyLimiter('test:', static fn (): int => $clock->now);
+
+        try {
+            $limiter->run(function (callable $heartbeat) use ($clock): void {
+                $clock->now = 30_000_000_000;
+                $heartbeat();
+            }, static fn (): null => null, 38, function () use (&$guardChecks): void {
+                $guardChecks++;
+            });
+            $this->fail('The monotonic phase deadline must expire before another lease renewal.');
+        } catch (AssistantReadPermitTimeoutException $failure) {
+            $this->assertSame('assistant_read_phase_deadline_exceeded', $failure->getMessage());
+        }
+
+        $this->assertSame(2, $guardChecks);
+        $this->assertSame(['enqueue', 'acquire', 'renew', 'release'], $redis->events);
+    }
+
+    public function test_each_read_scope_acquires_and_renews_a_fresh_token(): void
+    {
+        $redis = $this->redis([1, 1], [1, 1, 1, 1]);
+        $clock = (object) ['now' => 0];
+        $limiter = new AssistantReadConcurrencyLimiter('test:', static fn (): int => $clock->now);
+
+        $limiter->run(static fn (): null => null, static fn (): null => null, 38);
+        $clock->now += 1_000_000_000;
+        $limiter->run(static fn (): null => null, static fn (): null => null, 39);
+
+        $this->assertSame(2, count($redis->arguments['acquire']));
+        $this->assertSame(4, count($redis->arguments['renew']));
+        $this->assertNotSame($redis->arguments['renew'][0][2], $redis->arguments['renew'][2][2]);
+        $this->assertSame(2, count(array_filter($redis->events, static fn (string $event): bool => $event === 'release')));
     }
 
     public function test_initial_admission_has_only_one_full_checkpoint(): void
@@ -126,7 +256,7 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
         }, 38);
 
         $this->assertSame(4, $checks);
-        $this->assertSame(3, count(array_filter($redis->events, static fn (string $event): bool => $event === 'renew')));
+        $this->assertSame(2, count(array_filter($redis->events, static fn (string $event): bool => $event === 'renew')));
         $this->assertSame('release', end($redis->events));
     }
 
@@ -204,12 +334,15 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
         {
             public array $events = [];
 
+            public array $arguments = [];
+
             public function __construct(private readonly array $scripts, private array $admissions, private array $renewals) {}
 
             public function eval(string $script, mixed ...$arguments): int
             {
                 $event = $this->scripts[$script];
                 $this->events[] = $event;
+                $this->arguments[$event][] = $arguments;
 
                 return match ($event) {
                     'acquire' => array_shift($this->admissions) ?? 1,

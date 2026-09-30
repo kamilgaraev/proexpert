@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use Closure;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -15,6 +16,7 @@ final class AssistantReadConcurrencyLimiter
     private const ADMISSION_TIMEOUT_MS = 12_000;
     private const READ_PHASE_DEADLINE_MS = 30_000;
     private const LEASE_TTL_MS = 60_000;
+    private const LEASE_RENEW_INTERVAL_NS = 5_000_000_000;
     private const POLL_INTERVAL_US = 100_000;
     private const STALE_WAITER_TTL_MS = 15_000;
 
@@ -110,7 +112,10 @@ redis.call('ZADD', KEYS[1], ARGV[2] + tonumber(ARGV[3]), ARGV[1])
 return 1
 LUA;
 
-    public function __construct(private readonly string $keyPrefix = 'most:ai-assistant:read-concurrency:v1:')
+    public function __construct(
+        private readonly string $keyPrefix = 'most:ai-assistant:read-concurrency:v1:',
+        private readonly ?Closure $monotonicClock = null,
+    )
     {
         if (trim($keyPrefix) === '') {
             throw new RuntimeException('assistant_read_limiter_key_prefix_invalid');
@@ -168,11 +173,17 @@ LUA;
                 );
 
                 if ($result === 1) {
-                    $readStartedAt = hrtime(true);
-                    $readCheckpoint = function () use ($checkpoint, $readGuard, $redis, $keys, $token, $readStartedAt): void {
+                    $readStartedAt = $this->nowNanoseconds();
+                    $lastRenewedAt = null;
+                    $readCheckpoint = function (bool $forceRenewal = false) use ($checkpoint, $readGuard, $redis, $keys, $token, $readStartedAt, &$lastRenewedAt): void {
                         ($readGuard ?? $checkpoint)();
-                        if (((hrtime(true) - $readStartedAt) / 1_000_000) >= self::READ_PHASE_DEADLINE_MS) {
+                        $nowNanoseconds = $this->nowNanoseconds();
+                        if ((($nowNanoseconds - $readStartedAt) / 1_000_000) >= self::READ_PHASE_DEADLINE_MS) {
                             throw new AssistantReadPermitTimeoutException('assistant_read_phase_deadline_exceeded');
+                        }
+                        if (! $forceRenewal && $lastRenewedAt !== null
+                            && ($nowNanoseconds - $lastRenewedAt) < self::LEASE_RENEW_INTERVAL_NS) {
+                            return;
                         }
 
                         $renewed = (int) $redis->eval(
@@ -186,10 +197,11 @@ LUA;
                         if ($renewed !== 1) {
                             throw new AssistantReadPermitTimeoutException('assistant_read_permit_lease_lost');
                         }
+                        $lastRenewedAt = $nowNanoseconds;
                     };
                     $readCheckpoint();
                     $value = $read($readCheckpoint);
-                    $readCheckpoint();
+                    $readCheckpoint(true);
 
                     return $value;
                 }
@@ -222,5 +234,10 @@ LUA;
             'waiter_orgs' => $prefix.'waiter-orgs',
             'waiter_since' => $prefix.'waiter-since',
         ];
+    }
+
+    private function nowNanoseconds(): int
+    {
+        return $this->monotonicClock === null ? hrtime(true) : ($this->monotonicClock)();
     }
 }
