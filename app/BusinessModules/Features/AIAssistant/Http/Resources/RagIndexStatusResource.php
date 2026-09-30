@@ -55,7 +55,7 @@ class RagIndexStatusResource extends JsonResource
     }
 
     /**
-     * @return array<int, array{type: string, enabled: bool}>
+     * @return array<int, array{type: string, enabled: bool, display_label?: string}>
      */
     private static function sourceCatalogPayload(mixed $catalog): array
     {
@@ -69,7 +69,7 @@ class RagIndexStatusResource extends JsonResource
                     return null;
                 }
 
-                return [
+                $payload = [
                     'type' => $source['type'],
                     'enabled' => (bool) ($source['enabled'] ?? true),
                     'expected_count' => $source['expected_count'] ?? null,
@@ -79,6 +79,12 @@ class RagIndexStatusResource extends JsonResource
                     'pending_count' => $source['pending_count'] ?? null,
                     'error' => $source['error'] ?? null,
                 ];
+
+                if (is_string($source['display_label'] ?? null) && trim($source['display_label']) !== '') {
+                    $payload['display_label'] = trim($source['display_label']);
+                }
+
+                return $payload;
             },
             $catalog
         )));

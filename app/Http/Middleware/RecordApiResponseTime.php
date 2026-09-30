@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use Closure;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Log;
@@ -49,10 +50,54 @@ final class RecordApiResponseTime
                 $context['trace_id'] = $traceId;
             }
 
+            if ($route instanceof Route && $response instanceof JsonResponse) {
+                $requestId = $this->acceptedAssistantChatRequestId($request, $route, $response, $statusCode);
+
+                if ($requestId !== null) {
+                    $context['request_id'] = $requestId;
+                }
+            }
+
             try {
                 Log::channel('api_latency')->info('api_response_timing', $context);
             } catch (Throwable) {
             }
         }
+    }
+
+    private function acceptedAssistantChatRequestId(
+        Request $request,
+        Route $route,
+        JsonResponse $response,
+        ?int $statusCode,
+    ): ?string {
+        if (
+            ! $request->isMethod('POST')
+            || $route->uri() !== 'api/v1/admin/ai-assistant/chat'
+            || $statusCode !== 202
+        ) {
+            return null;
+        }
+
+        try {
+            $payload = $response->getData(true);
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (
+            ! is_array($payload)
+            || ($payload['success'] ?? null) !== true
+            || ! is_array($payload['data'] ?? null)
+        ) {
+            return null;
+        }
+
+        $requestId = $payload['data']['request_id'] ?? null;
+
+        return is_string($requestId)
+            && preg_match('/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i', $requestId) === 1
+                ? $requestId
+                : null;
     }
 }
