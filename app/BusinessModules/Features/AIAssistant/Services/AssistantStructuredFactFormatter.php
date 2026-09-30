@@ -133,6 +133,66 @@ final class AssistantStructuredFactFormatter
         return ['structured_fact_evidence' => $evidence, 'server_formatted_facts' => implode("\n", $lines), 'validation_status' => 'partial'];
     }
 
+    public static function presentation(array $rows, ?string $query = null): string
+    {
+        $requestedFields = [];
+        foreach (AssistantFactIntentClassifier::requirements($query ?? '') as $fields) {
+            $requestedFields = array_merge($requestedFields, $fields);
+        }
+        $details = preg_match('/(?:подробн|детал[ьи]|реквизит)/iu', $query ?? '') === 1;
+        $titles = ['name', 'title', 'subject', 'document_title', 'material_name', 'worker_name'];
+        $identityFields = ['number', 'document_number', 'order_number', 'request_number', 'incident_number', 'position_number',
+            'code', 'asset_code', 'inventory_number', 'document_code', 'revision_label'];
+        $defaultFields = array_merge($identityFields, ['status', 'stage_code', 'stage', 'project_stage', 'severity', 'priority',
+            'is_active', 'is_paid', 'is_current', 'currency', 'budget_currency', 'material_unit', 'unit', 'unit_name', 'unit_short_name']);
+        $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
+        $numericFields = array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields'));
+        $defaultFields = array_merge($defaultFields, array_diff($numericFields, $moneyFields));
+        $allowedFields = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
+        $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
+        $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
+        $lines = [trans_message('ai_assistant_facts.returned_scope')];
+        foreach (array_slice($rows, 0, self::MAX_ROWS) as $row) {
+            $fields = $row['fields'];
+            $entityLabel = $entityLabels[$row['entity_type']] ?? (in_array($row['entity_type'], self::ENTITY_TYPES, true)
+                ? trans_message('ai_assistant_facts.entities.'.$row['entity_type']) : trans_message('ai_assistant_facts.record'));
+            $titleField = null;
+            foreach ($titles as $field) {
+                if (is_string($fields[$field] ?? null) && trim($fields[$field]) !== '') {
+                    $titleField = $field;
+                    break;
+                }
+            }
+            $lines[] = $entityLabel.($titleField === null ? ':' : ': '.self::markdownText($fields[$titleField]));
+            $financial = in_array($row['entity_type'], ['estimate', 'estimate_item', 'estimate_item_resource', 'contract', 'payment_document',
+                'performance_act', 'performance_act_line', 'production_labor_payroll_accrual'], true);
+            foreach ($fields as $field => $value) {
+                $requested = in_array($field, $requestedFields, true);
+                $technical = $field === 'id' || str_ends_with($field, '_id') || str_ends_with($field, '_ids')
+                    || in_array($field, ['created_at', 'updated_at', 'deleted_at', 'fetched_at', 'version', 'source_size_bytes', 'source_mime_type'], true);
+                if ($field === $titleField || ! in_array($field, $allowedFields, true)
+                    || ($technical && ! $requested) || ($value === null && ! $requested)
+                    || (! $requested && ! $details && ! in_array($field, $defaultFields, true)
+                        && ! ($financial && in_array($field, $moneyFields, true)))) {
+                    continue;
+                }
+                $display = $value === null ? trans_message('ai_assistant_facts.unknown')
+                    : (is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
+                        : AssistantStructuredFactLabels::display($row['entity_type'], $field, (string) $value));
+                $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\d+(?:\.\d+)?$/D', $display);
+                $label = in_array($field, self::FIELDS, true) ? trans_message('ai_assistant_facts.fields.'.$field)
+                    : ($fieldLabels[$field] ?? trans_message('ai_assistant_facts.fields.'.$field));
+                $lines[] = $label.': '.($numeric ? $display : self::markdownText($display));
+            }
+            $url = $row['source_ref']['navigation']['url'] ?? null;
+            if (is_string($url) && preg_match('#^/(?!/)[^\s\[\]()<>\\\\]+$#D', $url)) {
+                $lines[] = '['.trans_message('ai_assistant_facts.open_record').']('.$url.')';
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
     private static function boundedText(string $value): string
     {
         $value = preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', ' ', $value) ?? '';

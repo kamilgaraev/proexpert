@@ -94,6 +94,48 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->assertLessThan(32, $this->freshRequestReads);
     }
 
+    public function test_read_phase_uses_only_admission_and_operation_boundary_checkpoints(): void
+    {
+        $this->prepareActualChain();
+        $before = $this->freshRequestReads;
+
+        $this->readPhase(static fn (): array => []);
+
+        $this->assertSame(3, $this->freshRequestReads - $before);
+    }
+
+    public function test_read_phase_checks_cancellation_before_resolving_redis(): void
+    {
+        $this->prepareActualChain();
+        $this->request->cancel_requested_at = now();
+        $redisConnectionAttempts = (object) ['count' => 0];
+        Redis::swap(new class($redisConnectionAttempts)
+        {
+            public function __construct(private readonly object $attempts) {}
+
+            public function connection(?string $name = null): never
+            {
+                $this->attempts->count++;
+                throw new RuntimeException('redis_unavailable');
+            }
+        });
+
+        try {
+            $this->readPhase(static fn (): array => []);
+            $this->fail('A cancelled read must stop before Redis access.');
+        } catch (AssistantRequestCancelled) {
+            $this->assertSame(0, $redisConnectionAttempts->count);
+        }
+    }
+
+    public function test_read_phase_without_execution_context_still_runs_the_callback(): void
+    {
+        $this->prepareActualChain();
+        app()->forgetInstance(AssistantRequestExecutionContext::class);
+
+        $this->assertSame(['read' => 'completed'], $this->readPhase(static fn (): array => ['read' => 'completed']));
+    }
+
     public function test_cancellation_during_preparation_still_stops_outer_fresh_checkpoint(): void
     {
         $this->prepareActualChain();
@@ -151,6 +193,26 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->allowed = false;
         $this->expectException(AuthorizationException::class);
         $this->execution->assertCanContinue();
+    }
+
+    public function test_operation_budget_runs_one_full_precheck_and_one_full_postcheck(): void
+    {
+        $this->prepareActualChain();
+        $before = $this->freshRequestReads;
+
+        $this->execution->withOperationBudget(static fn (): null => null, 30_000);
+
+        $this->assertSame(2, $this->freshRequestReads - $before);
+    }
+
+    public function test_standalone_database_timeout_keeps_its_full_precheck(): void
+    {
+        $this->prepareActualChain();
+        $before = $this->freshRequestReads;
+
+        $this->execution->withDatabaseStatementTimeout(static fn (): null => null);
+
+        $this->assertSame(1, $this->freshRequestReads - $before);
     }
 
     public function test_static_catalog_does_not_repeat_global_authorization_for_each_type(): void

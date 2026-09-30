@@ -185,7 +185,7 @@ final class AssistantToolSchemaBudgetTest extends TestCase
         foreach ($imports[1] as $class) {
             $aliases[substr($class, (int) strrpos($class, '\\') + 1)] = $class;
         }
-        preg_match_all('/registerTool\(\$app->make\((\w+)::class\)\)/', $source, $registered);
+        preg_match_all('/registerFactory\(\'[^\']+\', fn \(\) => \$app->make\((\w+)::class\)\)/', $source, $registered);
         preg_match_all('/\\\\(App\\\\BusinessModules\\\\Features\\\\AIAssistant\\\\[^,]+)::class,/', $source, $qualified);
         $classes = array_merge(array_map(static fn (string $alias): string => $aliases[$alias], $registered[1]), $qualified[1]);
         $registry = new AIToolRegistry;

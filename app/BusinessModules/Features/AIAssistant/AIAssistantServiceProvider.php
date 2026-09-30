@@ -201,51 +201,51 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry = new AIToolRegistry;
 
             // Регистрируем инструменты
-            $registry->registerTool($app->make(GenerateProfitabilityReportTool::class));
-            $registry->registerTool($app->make(GenerateWorkCompletionReportTool::class));
-            $registry->registerTool($app->make(GenerateMaterialMovementsReportTool::class));
-            $registry->registerTool($app->make(GenerateContractorSettlementsReportTool::class));
-            $registry->registerTool($app->make(GenerateWarehouseStockReportTool::class));
-            $registry->registerTool($app->make(GenerateTimeTrackingReportTool::class));
-            $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
-            $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
-            $registry->registerTool($app->make(GenerateOperationalPdfReportTool::class));
-            $registry->registerTool($app->make(GenerateRagPdfReportTool::class));
-            $registry->registerTool($app->make(GetProjectSnapshotTool::class));
-            $registry->registerTool($app->make(GetProcurementSnapshotTool::class));
-            $registry->registerTool($app->make(GetContractSnapshotTool::class));
-            $registry->registerTool($app->make(GetScheduleSnapshotTool::class));
+            $registry->registerFactory('generate_profitability_report', fn () => $app->make(GenerateProfitabilityReportTool::class));
+            $registry->registerFactory('generate_work_completion_report', fn () => $app->make(GenerateWorkCompletionReportTool::class));
+            $registry->registerFactory('generate_material_movements_report', fn () => $app->make(GenerateMaterialMovementsReportTool::class));
+            $registry->registerFactory('generate_contractor_settlements_report', fn () => $app->make(GenerateContractorSettlementsReportTool::class));
+            $registry->registerFactory('generate_warehouse_stock_report', fn () => $app->make(GenerateWarehouseStockReportTool::class));
+            $registry->registerFactory('generate_time_tracking_report', fn () => $app->make(GenerateTimeTrackingReportTool::class));
+            $registry->registerFactory('generate_contract_payments_report', fn () => $app->make(GenerateContractPaymentsReportTool::class));
+            $registry->registerFactory('generate_project_timelines_report', fn () => $app->make(GenerateProjectTimelinesReportTool::class));
+            $registry->registerFactory('generate_operational_pdf_report', fn () => $app->make(GenerateOperationalPdfReportTool::class));
+            $registry->registerFactory('generate_rag_pdf_report', fn () => $app->make(GenerateRagPdfReportTool::class));
+            $registry->registerFactory('get_project_snapshot', fn () => $app->make(GetProjectSnapshotTool::class));
+            $registry->registerFactory('get_procurement_snapshot', fn () => $app->make(GetProcurementSnapshotTool::class));
+            $registry->registerFactory('get_contract_snapshot', fn () => $app->make(GetContractSnapshotTool::class));
+            $registry->registerFactory('get_schedule_snapshot', fn () => $app->make(GetScheduleSnapshotTool::class));
 
             // Phase 2: CRUD and Business Actions
-            $registry->registerTool($app->make(SearchProjectsTool::class));
-            $registry->registerTool($app->make(SearchWarehouseTool::class));
-            $registry->registerTool($app->make(SearchMaterialsTool::class));
-            $registry->registerTool($app->make(SearchUsersTool::class));
-            $registry->registerTool($app->make(SearchContractorsTool::class));
-            $registry->registerTool($app->make(ApprovePaymentRequestTool::class));
-            $registry->registerTool($app->make(CreateScheduleTaskTool::class));
-            $registry->registerTool($app->make(UpdateScheduleTaskStatusTool::class));
-            $registry->registerTool($app->make(SendProjectNotificationTool::class));
+            $registry->registerFactory('search_projects', fn () => $app->make(SearchProjectsTool::class));
+            $registry->registerFactory('search_warehouse', fn () => $app->make(SearchWarehouseTool::class));
+            $registry->registerFactory('search_materials', fn () => $app->make(SearchMaterialsTool::class));
+            $registry->registerFactory('search_users', fn () => $app->make(SearchUsersTool::class));
+            $registry->registerFactory('search_contractors', fn () => $app->make(SearchContractorsTool::class));
+            $registry->registerFactory('approve_payment_request', fn () => $app->make(ApprovePaymentRequestTool::class));
+            $registry->registerFactory('create_schedule_task', fn () => $app->make(CreateScheduleTaskTool::class));
+            $registry->registerFactory('update_schedule_task_status', fn () => $app->make(UpdateScheduleTaskStatusTool::class));
+            $registry->registerFactory('send_project_notification', fn () => $app->make(SendProjectNotificationTool::class));
 
             foreach ([
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\ReadAssistantDomainTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\Domains\NavigationAssistantDomainTool::class,
-                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
-                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class,
-                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool::class,
-                \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateFinancialSnapshotTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\CreateMeasurementUnitTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\UpdateMeasurementUnitTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\DeleteMeasurementUnitTool::class,
-                \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\MassCreateMeasurementUnitsTool::class,
-            ] as $toolClass) {
-                $registry->registerTool($app->make($toolClass));
+                'assistant_domain_discover_capabilities' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool::class,
+                'search_assistant_documents' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool::class,
+                'get_material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class,
+                'get_published_report_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
+                'get_live_project_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
+                'assistant_domain_search' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool::class,
+                'assistant_domain_read' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\ReadAssistantDomainTool::class,
+                'assistant_domain_navigation' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\NavigationAssistantDomainTool::class,
+                'resolve_estimate' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
+                'get_estimate_answer' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class,
+                'get_estimate_positions' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool::class,
+                'get_estimate_financial_snapshot' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateFinancialSnapshotTool::class,
+                'create_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\CreateMeasurementUnitTool::class,
+                'update_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\UpdateMeasurementUnitTool::class,
+                'delete_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\DeleteMeasurementUnitTool::class,
+                'mass_create_measurement_units' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\MassCreateMeasurementUnitsTool::class,
+            ] as $toolName => $toolClass) {
+                $registry->registerFactory($toolName, fn () => $app->make($toolClass));
             }
 
             return $registry;

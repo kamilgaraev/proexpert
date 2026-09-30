@@ -14,7 +14,7 @@ final class AssistantRequestPhaseTimer
     private const PHASES = [
         'job_startup', 'service_graph', 'attachment_prepare', 'image_parts', 'request_permission', 'conversation',
         'request_context', 'access_context', 'task_plan', 'preparation', 'messages', 'catalog',
-        'tool_definitions', 'provider_prepare', 'tool', 'stock_read', 'final_verification', 'request_complete', 'greeting',
+        'tool_definitions', 'provider_prepare', 'tool', 'stock_read', 'final_verification', 'request_complete', 'summary_publish', 'greeting',
     ];
 
     private readonly int $started;

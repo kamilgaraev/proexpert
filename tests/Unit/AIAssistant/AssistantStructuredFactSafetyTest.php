@@ -151,7 +151,7 @@ final class AssistantStructuredFactSafetyTest extends TestCase
         $guard = (new AssistantStructuredFactVerifier)->guard('Сколько осталось?', 'Осталось 9999 единиц.', $results);
 
         self::assertCount(25, $guard['source_refs']);
-        self::assertSame(25, substr_count($guard['text'], 'Остаток на складе №'));
+        self::assertSame(25, substr_count($guard['text'], 'Остаток на складе:'));
         self::assertStringNotContainsString('9999', $guard['text']);
         self::assertStringContainsString('Полнота списка и общие итоги не подтверждены', $guard['text']);
     }

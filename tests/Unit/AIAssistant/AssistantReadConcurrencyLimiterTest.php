@@ -8,9 +8,11 @@ use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelle
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLimiter;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantReadPermitTimeoutException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\Redis;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use RuntimeException;
 
 final class AssistantReadConcurrencyLimiterTest extends TestCase
 {
@@ -35,9 +37,82 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
         });
 
         $this->assertSame('unchanged', $result);
-        $this->assertSame(3, $fullChecks);
+        $this->assertSame(2, $fullChecks);
         $this->assertSame(3, $narrowChecks);
-        $this->assertSame(['full', 'enqueue', 'full', 'acquire', 'full', 'acquire', 'narrow', 'renew', 'read', 'narrow', 'renew', 'narrow', 'renew', 'release'], $redis->events);
+        $this->assertSame(['full', 'enqueue', 'acquire', 'full', 'acquire', 'narrow', 'renew', 'read', 'narrow', 'renew', 'narrow', 'renew', 'release'], $redis->events);
+    }
+
+    public function test_initial_admission_has_only_one_full_checkpoint(): void
+    {
+        $redis = $this->redis();
+        $fullChecks = 0;
+
+        (new AssistantReadConcurrencyLimiter)->run(
+            static fn (): null => null,
+            function () use (&$fullChecks): void {
+                $fullChecks++;
+            },
+            38,
+            static fn (): null => null,
+        );
+
+        $this->assertSame(1, $fullChecks);
+        $this->assertSame(['enqueue', 'acquire', 'renew', 'renew', 'release'], $redis->events);
+    }
+
+    public function test_cancellation_precedes_redis_connection_resolution(): void
+    {
+        $connectionAttempts = 0;
+        Redis::swap(new class($connectionAttempts)
+        {
+            public function __construct(private int &$connectionAttempts) {}
+
+            public function connection(?string $name = null): never
+            {
+                $this->connectionAttempts++;
+                throw new RuntimeException('redis_unavailable');
+            }
+        });
+        $failure = new AssistantRequestCancelled;
+
+        try {
+            (new AssistantReadConcurrencyLimiter)->run(
+                static fn (): null => null,
+                static fn () => throw $failure,
+                38,
+            );
+            $this->fail('Cancellation must precede Redis access.');
+        } catch (AssistantRequestCancelled $actual) {
+            $this->assertSame($failure, $actual);
+        }
+
+        $this->assertSame(0, $connectionAttempts);
+    }
+
+    public function test_revocation_after_an_admission_wait_runs_a_fresh_full_checkpoint(): void
+    {
+        $redis = $this->redis([0, 1]);
+        $fullChecks = 0;
+        $failure = new AuthorizationException;
+
+        try {
+            (new AssistantReadConcurrencyLimiter)->run(
+                fn () => $this->fail('A revoked request cannot run the read.'),
+                function () use (&$fullChecks, $failure): void {
+                    if (++$fullChecks === 2) {
+                        throw $failure;
+                    }
+                },
+                38,
+                fn () => $this->fail('A request without a permit cannot use the narrow guard.'),
+            );
+            $this->fail('Revocation must interrupt admission.');
+        } catch (AuthorizationException $actual) {
+            $this->assertSame($failure, $actual);
+        }
+
+        $this->assertSame(2, $fullChecks);
+        $this->assertSame(['enqueue', 'acquire', 'release'], $redis->events);
     }
 
     public function test_omitting_the_optional_guard_preserves_existing_full_heartbeat_behavior(): void
@@ -50,7 +125,7 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
             $checks++;
         }, 38);
 
-        $this->assertSame(5, $checks);
+        $this->assertSame(4, $checks);
         $this->assertSame(3, count(array_filter($redis->events, static fn (string $event): bool => $event === 'renew')));
         $this->assertSame('release', end($redis->events));
     }
@@ -70,7 +145,7 @@ final class AssistantReadConcurrencyLimiterTest extends TestCase
         } catch (AssistantRequestCancelled $actual) {
             $this->assertSame($failure, $actual);
         }
-        $this->assertSame(['release'], $redis->events);
+        $this->assertSame([], $redis->events);
     }
 
     public function test_expired_effective_budget_after_read_blocks_return_and_releases_the_permit(): void

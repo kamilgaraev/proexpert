@@ -115,8 +115,7 @@ final class AssistantRequestExecutionContext
     public function withDatabaseStatementTimeout(callable $operation, ?string $connection = null): mixed
     {
         $this->assertCanContinue();
-        $this->registerConnection(DB::connection($connection));
-        $this->databaseGuardsActive = true;
+        $this->prepareDatabaseStatementTimeoutGuard($connection);
 
         return $operation();
     }
@@ -128,7 +127,8 @@ final class AssistantRequestExecutionContext
         $this->operationDeadlines[] = $deadline;
 
         try {
-            $result = $this->withDatabaseStatementTimeout($operation, $connection);
+            $this->prepareDatabaseStatementTimeoutGuard($connection);
+            $result = $operation();
             $this->assertCanContinue();
             if ($deadline <= hrtime(true)) {
                 throw new AssistantRequestDeadlineExceeded;
@@ -212,6 +212,12 @@ final class AssistantRequestExecutionContext
             app(self::class)->applyStatementTimeout($connection);
         });
         self::$guardedConnections[$connection] = true;
+    }
+
+    private function prepareDatabaseStatementTimeoutGuard(?string $connection): void
+    {
+        $this->registerConnection(DB::connection($connection));
+        $this->databaseGuardsActive = true;
     }
 
     private function applyStatementTimeout(Connection $connection): void
