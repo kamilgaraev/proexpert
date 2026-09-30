@@ -18,12 +18,20 @@ use App\Models\User;
 use App\Services\Credits\AICreditService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 final class AssistantRequestLifecycle
 {
     private const LEASE_MINUTES = 8;
+
+    private const SUBMIT_TIMED_PHASES = [
+        'authorization_conversation', 'request_preparation', 'organization_row_lock',
+        'request_idempotency_lookup', 'conversation_running_check', 'quote_reservation_limits',
+        'request_persist_change_schedule', 'database_transaction', 'queue_dispatch_call',
+    ];
 
     public function __construct(
         private readonly AICreditService $credits,
@@ -64,13 +72,18 @@ final class AssistantRequestLifecycle
 
     public function start(Organization $organization, User $actor, ?int $conversationId, array $payload, ?string $surface = null, bool $queued = false): array
     {
+        $authorizationStartedAt = $queued ? hrtime(true) : null;
         if (!$this->permissions->canUseAssistant($actor, (int) $organization->id)) {
             throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
         }
         if ($conversationId !== null && $this->conversations->findAccessibleConversation($conversationId, $actor, (int) $organization->id, true) === null) {
             throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found'));
         }
+        $authorizationDurationMs = $authorizationStartedAt === null
+            ? null
+            : self::elapsedMilliseconds($authorizationStartedAt);
 
+        $preparationStartedAt = $queued ? hrtime(true) : null;
         $requestId = (string) ($payload['request_id'] ?? Str::uuid());
         if (!Str::isUuid($requestId)) {
             throw new RuntimeException(trans_message('ai_assistant.request_id_invalid'));
@@ -83,10 +96,39 @@ final class AssistantRequestLifecycle
             $payload = app(AssistantChatAttachmentService::class)->prepareRequest($payload, $actor, (int) $organization->id);
         }
         $requestHash = $this->credits->canonicalAssistantRequest($payload);
+        $phaseDurations = [];
+        if ($authorizationDurationMs !== null) {
+            $phaseDurations['authorization_conversation'] = $authorizationDurationMs;
+        }
+        if ($preparationStartedAt !== null) {
+            $phaseDurations['request_preparation'] = self::elapsedMilliseconds($preparationStartedAt);
+        }
+        $transactionPhases = [];
+        $transactionStartedAt = $queued ? hrtime(true) : null;
 
-        return DB::transaction(function () use ($organization, $actor, $conversationId, $payload, $requestId, $requestHash, $surface, $queued): array {
+        $started = DB::transaction(function () use (
+            $organization,
+            $actor,
+            $conversationId,
+            $payload,
+            $requestId,
+            $requestHash,
+            $surface,
+            $queued,
+            &$transactionPhases,
+        ): array {
+            $transactionPhases = [];
+            $organizationLockStartedAt = $queued ? hrtime(true) : null;
             Organization::query()->whereKey($organization->id)->lockForUpdate()->firstOrFail();
+            if ($organizationLockStartedAt !== null) {
+                $transactionPhases['organization_row_lock'] = self::elapsedMilliseconds($organizationLockStartedAt);
+            }
+
+            $requestLookupStartedAt = $queued ? hrtime(true) : null;
             $existing = AssistantRequest::query()->where('organization_id', $organization->id)->where('request_id', $requestId)->lockForUpdate()->first();
+            if ($requestLookupStartedAt !== null) {
+                $transactionPhases['request_idempotency_lookup'] = self::elapsedMilliseconds($requestLookupStartedAt);
+            }
             if ($existing !== null) {
                 if ($existing->user_id !== (int) $actor->id || !hash_equals($existing->request_hash, $requestHash)
                     || ($surface !== null && $existing->surface !== $surface)) {
@@ -113,10 +155,19 @@ final class AssistantRequestLifecycle
                 throw new AssistantRequestCancelled();
             }
 
-            if ($conversationId !== null && AssistantRequest::query()->where('organization_id', $organization->id)
-                ->where('conversation_id', $conversationId)->where('status', 'running')->exists()) {
-                throw new AssistantRequestInProgress();
+            if ($conversationId !== null) {
+                $conversationCheckStartedAt = $queued ? hrtime(true) : null;
+                $hasRunningRequest = AssistantRequest::query()->where('organization_id', $organization->id)
+                    ->where('conversation_id', $conversationId)->where('status', 'running')->exists();
+                if ($conversationCheckStartedAt !== null) {
+                    $transactionPhases['conversation_running_check'] = self::elapsedMilliseconds($conversationCheckStartedAt);
+                }
+                if ($hasRunningRequest) {
+                    throw new AssistantRequestInProgress();
+                }
             }
+
+            $creditStartedAt = $queued ? hrtime(true) : null;
             $quoteId = (string) ($payload['quote_id'] ?? '');
             if ($quoteId === '') {
                 if ((bool) config('ai-assistant-credits.enforce', false)) {
@@ -127,6 +178,11 @@ final class AssistantRequestLifecycle
             }
             $reservation = $this->credits->begin($organization, $actor, $quoteId, $requestId, $conversationId === null ? null : (string) $conversationId, $payload);
             $limits = $this->credits->limits($reservation);
+            if ($creditStartedAt !== null) {
+                $transactionPhases['quote_reservation_limits'] = self::elapsedMilliseconds($creditStartedAt);
+            }
+
+            $persistenceStartedAt = $queued ? hrtime(true) : null;
             $request = AssistantRequest::query()->create([
                 'request_id' => $requestId,
                 'organization_id' => $organization->id,
@@ -146,9 +202,53 @@ final class AssistantRequestLifecycle
                 'lease_expires_at' => now()->addMinutes(self::LEASE_MINUTES),
             ]);
             $this->publishChangedAfterCommit($request);
+            if ($persistenceStartedAt !== null) {
+                $transactionPhases['request_persist_change_schedule'] = self::elapsedMilliseconds($persistenceStartedAt);
+            }
 
             return ['request' => $request, 'response' => null, 'created' => true];
         }, 3);
+
+        if ($queued && ! is_array($started['response'] ?? null)) {
+            foreach ($phaseDurations + $transactionPhases as $phase => $durationMs) {
+                $this->recordSubmitPhaseDuration($requestId, $phase, $durationMs);
+            }
+            if ($transactionStartedAt !== null) {
+                $this->recordSubmitPhaseDuration(
+                    $requestId,
+                    'database_transaction',
+                    self::elapsedMilliseconds($transactionStartedAt),
+                );
+            }
+        }
+
+        return $started;
+    }
+
+    public static function elapsedMilliseconds(int $startedAt): float
+    {
+        return round((hrtime(true) - $startedAt) / 1_000_000, 2);
+    }
+
+    public static function recordSubmitPhaseDuration(string $requestId, string $phase, float $durationMs): void
+    {
+        if (
+            preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $requestId) !== 1
+            || ! in_array($phase, self::SUBMIT_TIMED_PHASES, true)
+            || ! is_finite($durationMs)
+            || $durationMs < 0
+        ) {
+            return;
+        }
+
+        try {
+            Log::info('ai.assistant.submit_phase_completed', [
+                'request_id' => $requestId,
+                'phase' => $phase,
+                'duration_ms' => round($durationMs, 2),
+            ]);
+        } catch (Throwable) {
+        }
     }
 
     public function bindConversation(AssistantRequest $request, Conversation $conversation, User $actor): void

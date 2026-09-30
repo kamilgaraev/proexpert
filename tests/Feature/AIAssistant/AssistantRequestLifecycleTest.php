@@ -26,6 +26,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter;
 use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
+use App\BusinessModules\Features\AIAssistant\Services\QueuedAssistantChatService;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
@@ -47,13 +48,16 @@ use RuntimeException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Psr\Log\AbstractLogger;
 use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
+use Stringable;
 use Throwable;
 
 final class AssistantRequestLifecycleTest extends TestCase
@@ -266,6 +270,60 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertNotNull($this->lifecycle->claimQueued($started['request']->id));
         $this->assertNull($this->lifecycle->claimQueued($started['request']->id));
         $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->startQueued($this->organization, $this->actor, null, array_replace($payload, ['message' => 'Подмена']), 'lk'));
+    }
+
+    public function test_queued_submit_emits_only_uuid_linked_phase_timings_and_dispatches_job(): void
+    {
+        $requestId = 'a5bb7943-157d-4be0-8fc2-9049cff37763';
+        $payload = $this->quote(['request_id' => $requestId, 'message' => 'private_submit_prompt_fixture']);
+        $logger = new class extends AbstractLogger
+        {
+            public array $records = [];
+
+            public function log($level, string|Stringable $message, array $context = []): void
+            {
+                $this->records[] = ['event' => (string) $message, 'context' => $context];
+            }
+        };
+        $originalLogger = Log::getFacadeRoot();
+        Log::swap($logger);
+
+        try {
+            Bus::fake();
+            $started = (new QueuedAssistantChatService($this->lifecycle))
+                ->submit((int) $this->organization->id, $this->actor, null, $payload, 'lk');
+
+            $this->assertSame($requestId, $started['request']->request_id);
+            Bus::assertDispatched(ExecuteAssistantChatJob::class);
+
+            $records = array_values(array_filter(
+                $logger->records,
+                static fn (array $record): bool => $record['event'] === 'ai.assistant.submit_phase_completed',
+            ));
+            $phases = array_column(array_column($records, 'context'), 'phase');
+            $this->assertSame([
+                'authorization_conversation',
+                'request_preparation',
+                'organization_row_lock',
+                'request_idempotency_lookup',
+                'quote_reservation_limits',
+                'request_persist_change_schedule',
+                'database_transaction',
+                'queue_dispatch_call',
+            ], $phases);
+
+            foreach ($records as $record) {
+                $this->assertSame(['request_id', 'phase', 'duration_ms'], array_keys($record['context']));
+                $this->assertSame($requestId, $record['context']['request_id']);
+                $this->assertIsFloat($record['context']['duration_ms']);
+                $this->assertGreaterThanOrEqual(0, $record['context']['duration_ms']);
+            }
+            $this->assertStringNotContainsString('private_submit_prompt_fixture', json_encode($records, JSON_THROW_ON_ERROR));
+            $this->assertStringNotContainsString('organization_id', json_encode($records, JSON_THROW_ON_ERROR));
+            $this->assertStringNotContainsString('user_id', json_encode($records, JSON_THROW_ON_ERROR));
+        } finally {
+            Log::swap($originalLogger);
+        }
     }
 
     public function test_actual_implicit_project_greeting_uses_no_business_plan_rag_or_provider_and_charges_zero(): void
