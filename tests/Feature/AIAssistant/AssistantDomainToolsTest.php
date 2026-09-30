@@ -52,6 +52,41 @@ final class AssistantDomainToolsTest extends TestCase
         $this->assertSame('/projects/'.$visible->id, $result['results'][0]['navigation']['url']);
     }
 
+    public function test_project_search_reports_acl_scoped_result_window_and_checked_title(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $visible = [];
+        for ($index = 0; $index < 3; $index++) {
+            $project = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'QA_WINDOW_'.$index,
+                'status' => $index === 2 ? 'draft' : 'active', 'start_date' => '2026-01-01', 'end_date' => '2026-12-31', 'is_archived' => false]);
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+            $visible[] = $project;
+        }
+        Project::factory()->create(['organization_id' => $organization->id, 'name' => 'QA_WINDOW_PRIVATE', 'is_archived' => false]);
+
+        $limited = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
+            'limit' => 2, 'fields' => ['id', 'name', 'status', 'start_date', 'end_date']], $actor, $organization->id);
+        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true], $limited['result_window']);
+        self::assertSame($visible[0]->name, $limited['source_refs'][0]['display_label']);
+        self::assertContains('name', $limited['source_refs'][0]['checked_fields']);
+        self::assertStringStartsWith('2026-01-01', $limited['results'][0]['fields']['start_date']);
+        self::assertStringStartsWith('2026-12-31', $limited['results'][0]['fields']['end_date']);
+
+        $complete = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
+            'limit' => 3, 'fields' => ['id', 'name', 'status', 'start_date', 'end_date']], $actor, $organization->id);
+        self::assertSame(['limit' => 3, 'returned' => 3, 'has_more' => false], $complete['result_window']);
+        self::assertCount(3, $complete['results']);
+        self::assertSame(array_key_exists('retrieval_coverage', $limited), array_key_exists('retrieval_coverage', $complete));
+
+        $unsupportedSearch = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
+            'limit' => 2, 'fields' => ['id']], $actor, $organization->id);
+        self::assertSame(['limit' => 2, 'returned' => 0, 'has_more' => null], $unsupportedSearch['result_window']);
+
+        $unlabelled = $this->reader->execute('read', ['domain' => 'projects', 'entity_type' => 'project', 'id' => $visible[0]->id,
+            'fields' => ['id']], $actor, $organization->id);
+        self::assertArrayNotHasKey('display_label', $unlabelled['source_refs'][0]);
+    }
+
     public function test_money_fields_are_removed_without_financial_permission(): void
     {
         [$organization, $actor] = $this->actor();

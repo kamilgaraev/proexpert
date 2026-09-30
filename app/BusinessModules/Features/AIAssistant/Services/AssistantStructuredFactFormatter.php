@@ -193,6 +193,110 @@ final class AssistantStructuredFactFormatter
         return implode("\n", $lines);
     }
 
+    public static function presentationFields(array $row): array
+    {
+        $allowed = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
+        $checked = $row['source_ref']['checked_fields'] ?? [];
+
+        return array_values(array_filter(array_keys($row['fields'] ?? []), static function (string $field) use ($allowed, $checked): bool {
+            return in_array($field, $allowed, true) && in_array($field, $checked, true)
+                && $field !== 'id' && ! str_ends_with($field, '_id') && ! str_ends_with($field, '_ids')
+                && ! in_array($field, ['version', 'source_size_bytes', 'source_mime_type', 'fetched_at', 'created_at', 'updated_at', 'deleted_at'], true);
+        }));
+    }
+
+    public static function renderVerifiedRows(array $sets, array $plan): string
+    {
+        $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
+        $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
+        $rows = [];
+        foreach ($plan['result_sets'] as $setPlan) {
+            $set = $sets[$setPlan['result_set']];
+            foreach ($setPlan['order'] as $ref) {
+                $row = $set['rows'][$ref];
+                $identity = AssistantSourceReferenceIdentity::key($row);
+                if (isset($rows[$identity])) {
+                    continue;
+                }
+                $rows[$identity] = ['row' => $row, 'columns' => $setPlan['columns'], 'layout' => $setPlan['layout'], 'group_by' => $setPlan['group_by']];
+            }
+        }
+        $rendered = [];
+        $currentGroup = null;
+        $currentBlock = null;
+        $appendBlank = static function () use (&$rendered): void {
+            if ($rendered !== [] && end($rendered) !== '') {
+                $rendered[] = '';
+            }
+        };
+        foreach ($rows as $item) {
+            $row = $item['row'];
+            $entityLabel = $entityLabels[$row['entity_type']] ?? (in_array($row['entity_type'], self::ENTITY_TYPES, true)
+                ? trans_message('ai_assistant_facts.entities.'.$row['entity_type']) : trans_message('ai_assistant_facts.record'));
+            $group = $item['group_by'];
+            if ($group !== null) {
+                $rawGroupValue = $row['fields'][$group] ?? null;
+                $groupValue = $rawGroupValue === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $group, $rawGroupValue);
+                $groupKey = $group.'|'.json_encode($rawGroupValue, JSON_THROW_ON_ERROR);
+                if ($currentGroup !== $groupKey) {
+                    $appendBlank();
+                    $rendered[] = self::presentationFieldLabel($group, $fieldLabels).': '.$groupValue;
+                    $rendered[] = '';
+                    $currentGroup = $groupKey;
+                    $currentBlock = null;
+                }
+            } else {
+                $currentGroup = null;
+            }
+            if ($item['layout'] === 'table') {
+                $tableKey = 'table|'.implode('|', $item['columns']);
+                if ($currentBlock !== $tableKey) {
+                    $appendBlank();
+                    $labels = [trans_message('ai_assistant_facts.record')];
+                    foreach ($item['columns'] as $field) {
+                        $labels[] = self::presentationFieldLabel($field, $fieldLabels);
+                    }
+                    $rendered[] = '| '.implode(' | ', $labels).' |';
+                    $rendered[] = '| '.implode(' | ', array_fill(0, count($labels), '---')).' |';
+                    $currentBlock = $tableKey;
+                }
+                $cells = [$entityLabel];
+                foreach ($item['columns'] as $field) {
+                    $value = $row['fields'][$field] ?? null;
+                    $cells[] = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value);
+                }
+                $rendered[] = '| '.implode(' | ', $cells).' |';
+            } else {
+                $appendBlank();
+                $rendered[] = $entityLabel.':';
+                foreach ($item['columns'] as $field) {
+                    $value = $row['fields'][$field] ?? null;
+                    $display = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value);
+                    $rendered[] = self::presentationFieldLabel($field, $fieldLabels).': '.$display;
+                }
+                $currentBlock = 'list|'.implode('|', $item['columns']);
+            }
+        }
+
+        return implode("\n", $rendered);
+    }
+
+    public static function displayPresentationField(array $row, string $field, mixed $value): string
+    {
+        $display = is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
+            : AssistantStructuredFactLabels::display($row['entity_type'], $field, (string) $value);
+        $numericFields = array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields'));
+        $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\\d+(?:\\.\\d+)?$/D', $display);
+
+        return $numeric ? $display : self::markdownText($display);
+    }
+
+    private static function presentationFieldLabel(string $field, array $fieldLabels): string
+    {
+        return in_array($field, self::FIELDS, true) ? trans_message('ai_assistant_facts.fields.'.$field)
+            : ($fieldLabels[$field] ?? trans_message('ai_assistant_facts.fields.'.$field));
+    }
+
     private static function boundedText(string $value): string
     {
         $value = preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', ' ', $value) ?? '';

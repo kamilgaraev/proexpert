@@ -54,14 +54,21 @@ class SearchProjectsTool implements AIToolInterface
                 $q->where('name', 'ilike', "%{$query}%")
                   ->orWhere('address', 'ilike', "%{$query}%");
             })
-            ->limit($limit)
+            ->orderBy('id')
+            ->limit($limit + 1)
             ->get();
+        $hasMore = $projects->count() > $limit;
+        if ($hasMore) {
+            $projects = $projects->take($limit);
+        }
+        $resultWindow = ['limit' => $limit, 'returned' => $projects->count(), 'has_more' => $hasMore];
 
         if ($projects->isEmpty()) {
             return [
                 'status' => 'success',
                 'message' => 'Проекты не найдены по запросу: ' . $query,
-                'results' => []
+                'results' => [],
+                'result_window' => $resultWindow,
             ];
         }
 
@@ -72,7 +79,8 @@ class SearchProjectsTool implements AIToolInterface
                 'name' => $p->name,
                 'address' => $p->address,
                 'status' => $p->status,
-            ])->toArray()
+            ])->toArray(),
+            'result_window' => $resultWindow,
         ];
     }
 }

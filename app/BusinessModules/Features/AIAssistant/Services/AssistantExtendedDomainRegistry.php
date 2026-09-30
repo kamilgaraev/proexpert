@@ -8,6 +8,8 @@ final class AssistantExtendedDomainRegistry
 {
     private static array $definitions = [];
 
+    private static ?array $actorScopeDispatch = null;
+
     private const HELPERS = [
         \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderMetadata::class,
         \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantWorkforceCatalogMetadata::class,
@@ -43,18 +45,36 @@ final class AssistantExtendedDomainRegistry
     public static function applyActorScopes(string $type, \Illuminate\Database\Eloquent\Builder $query, \App\Models\User $actor,
         int $organizationId, \App\Domain\Authorization\Services\AuthorizationService $authorization, AssistantDataAccessPolicy $policy): bool
     {
-        foreach (self::HELPERS as $helper) {
-            if (class_exists($helper) && method_exists($helper, 'entityDefinitions') && isset($helper::entityDefinitions()[$type])
-                && method_exists($helper, 'applyActorScope')) {
-                try {
-                    $helper::applyActorScope($type, $query, $actor, $organizationId, $authorization, $policy);
-                } catch (\Throwable) {
-                    return false;
-                }
+        foreach (self::actorScopeDispatch()[$type] ?? [] as $helper) {
+            try {
+                $helper::applyActorScope($type, $query, $actor, $organizationId, $authorization, $policy);
+            } catch (\Throwable) {
+                return false;
             }
         }
 
         return true;
+    }
+
+    private static function actorScopeDispatch(): array
+    {
+        if (self::$actorScopeDispatch !== null) {
+            return self::$actorScopeDispatch;
+        }
+
+        $dispatch = [];
+        foreach (self::HELPERS as $helper) {
+            if (! class_exists($helper) || ! method_exists($helper, 'entityDefinitions') || ! method_exists($helper, 'applyActorScope')) {
+                continue;
+            }
+            foreach ($helper::entityDefinitions() as $type => $definition) {
+                if ($definition !== null) {
+                    $dispatch[$type][] = $helper;
+                }
+            }
+        }
+
+        return self::$actorScopeDispatch = $dispatch;
     }
 
     public static function retrievalMode(string $type): string

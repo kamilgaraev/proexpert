@@ -13,6 +13,8 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 final class AssistantDomainReadService
 {
+    private const DISPLAY_LABEL_FIELDS = ['name', 'title', 'subject', 'document_title', 'material_name', 'worker_name'];
+
     private array $columns = [];
 
     public function __construct(
@@ -76,7 +78,9 @@ final class AssistantDomainReadService
         $selected = self::projectedColumns($operation, $fields, $columns, $safeColumns,
             AssistantExtendedDomainRegistry::values('versionColumns')[$entityType] ?? [], $query->getModel()->getKeyName());
         $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $selected));
+        $resultWindow = null;
         if ($operation === 'search') {
+            $limit = max(1, min(20, (int) ($arguments['limit'] ?? 5)));
             $term = trim((string) ($arguments['query'] ?? ''));
             if (mb_strlen($term) > 200) {
                 throw ValidationException::withMessages(['query' => ['query_too_long']]);
@@ -84,7 +88,8 @@ final class AssistantDomainReadService
             $columns = array_values(array_intersect($fields, $query->getModel()->getFillable(), ['name', 'title', 'number', 'address', 'description', 'subject', 'document_number', 'order_number', 'asset_code', 'worker_name', 'slug']));
             if ($term !== '') {
                 if ($columns === []) {
-                    return ['results' => [], 'source_refs' => [], 'fetched_at' => now()->toISOString()];
+                    return ['results' => [], 'source_refs' => [], 'fetched_at' => now()->toISOString(),
+                        'result_window' => ['limit' => $limit, 'returned' => 0, 'has_more' => null]];
                 }
                 $query->where(static function (Builder $search) use ($columns, $term, $table): void {
                     foreach ($columns as $column) {
@@ -98,7 +103,12 @@ final class AssistantDomainReadService
                 }
                 $query->where($table.'.project_id', (int) $arguments['project_id']);
             }
-            $models = $query->orderBy($query->getModel()->getQualifiedKeyName())->limit(max(1, min(20, (int) ($arguments['limit'] ?? 5))))->get();
+            $models = $query->orderBy($query->getModel()->getQualifiedKeyName())->limit($limit + 1)->get();
+            $hasMore = $models->count() > $limit;
+            if ($hasMore) {
+                $models = $models->take($limit);
+            }
+            $resultWindow = ['limit' => $limit, 'returned' => $models->count(), 'has_more' => $hasMore];
         } else {
             $id = $arguments['id'] ?? null;
             $idSchema = $definition->schemas[$operation]['properties']['id'] ?? [];
@@ -163,6 +173,9 @@ final class AssistantDomainReadService
         $payload = ['results' => $results, 'source_refs' => $references, 'fetched_at' => $fetchedAt]
             + AssistantDomainNumericEvidence::payload($numericRows, $fetchedAt)
             + AssistantStructuredFactFormatter::payload($factRows, $fetchedAt);
+        if ($resultWindow !== null) {
+            $payload['result_window'] = $resultWindow;
+        }
         $retrievalCoverage = AssistantExtendedDomainRegistry::values('retrievalCoverageDefinitions')[$entityType] ?? null;
         if (is_array($retrievalCoverage)) {
             $payload['retrieval_coverage'] = array_merge($retrievalCoverage, ['mode' => AssistantExtendedDomainRegistry::retrievalMode($entityType),
@@ -225,9 +238,36 @@ final class AssistantDomainReadService
         }
         $policyDomain = match ($definition->domain) { 'works' => 'projects', 'acts' => 'contracts', default => $definition->domain };
         $version = $model->getRawOriginal('updated_at') ?? AssistantSourceReferenceIdentity::key(array_intersect_key($model->getAttributes(), array_flip($fields)));
-        return ['organization_id' => $organizationId, 'source_type' => $definition->sourceType, 'entity_type' => $entityType, 'entity_id' => $model->getKey(),
+        $reference = ['organization_id' => $organizationId, 'source_type' => $definition->sourceType, 'entity_type' => $entityType, 'entity_id' => $model->getKey(),
             'project_id' => $model->getAttribute('project_id'), 'navigation' => ['url' => $url], 'content_scope' => 'structured',
             'checked_fields' => array_values(array_unique($fields)), 'required_permissions' => array_values(array_unique($requiredPermissions)),
             'required_domains' => [$policyDomain], 'source_version' => (string) $version, 'fetched_at' => $fetchedAt];
+        $displayLabel = $this->displayLabel($model, $fields);
+        if ($displayLabel !== null) {
+            $reference['display_label'] = $displayLabel;
+        }
+
+        return $reference;
+    }
+
+    private function displayLabel(Model $model, array $checkedFields): ?string
+    {
+        foreach (self::DISPLAY_LABEL_FIELDS as $field) {
+            if (! in_array($field, $checkedFields, true)) {
+                continue;
+            }
+            $value = $model->getAttribute($field);
+            if (! is_string($value)) {
+                continue;
+            }
+            $value = trim(preg_replace('/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/u', ' ', $value) ?? '');
+            if ($value === '') {
+                continue;
+            }
+
+            return mb_strlen($value) > 255 ? mb_substr($value, 0, 254).'…' : $value;
+        }
+
+        return null;
     }
 }
