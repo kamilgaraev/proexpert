@@ -124,6 +124,10 @@
             <file>tests/Unit/Authorization/PermissionTranslatorTest.php</file>
         </testsuite>
         <testsuite name="AIAssistantFullRelease">
+            <file>tests/Feature/AIAssistant/RagStatusBudgetTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantIndexStatusBudgetTest.php</file>
+            <file>tests/Unit/AIAssistant/Rag/RagUnavailableStatusResourceTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantRagGlobalCatalogNoopTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantAclQueryCompilerTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantAuthorizationBatchTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantProviderQuotaFailureTest.php</file>

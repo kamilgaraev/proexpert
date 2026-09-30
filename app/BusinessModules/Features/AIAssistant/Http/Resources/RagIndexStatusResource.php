@@ -19,14 +19,15 @@ class RagIndexStatusResource extends JsonResource
         $payload = is_array($this->resource) ? $this->resource : [];
 
         return [
+            'status_available' => (bool) ($payload['status_available'] ?? true),
             'enabled' => (bool) ($payload['enabled'] ?? true),
             'ready' => (bool) ($payload['ready'] ?? false),
             'can_reindex' => (bool) ($payload['can_reindex'] ?? false),
             'can_manage_document_settings' => (bool) ($payload['can_manage_document_settings'] ?? false),
             'document_coverage' => is_array($payload['document_coverage'] ?? null) ? $payload['document_coverage'] : null,
             'archive_scan' => is_array($payload['archive_scan'] ?? null) ? $payload['archive_scan'] : null,
-            'source_count' => (int) ($payload['source_count'] ?? 0),
-            'chunk_count' => (int) ($payload['chunk_count'] ?? 0),
+            'source_count' => ($payload['status_available'] ?? true) ? (int) ($payload['source_count'] ?? 0) : null,
+            'chunk_count' => ($payload['status_available'] ?? true) ? (int) ($payload['chunk_count'] ?? 0) : null,
             'expected_source_count' => is_numeric($payload['expected_source_count'] ?? null)
                 ? (int) $payload['expected_source_count']
                 : null,

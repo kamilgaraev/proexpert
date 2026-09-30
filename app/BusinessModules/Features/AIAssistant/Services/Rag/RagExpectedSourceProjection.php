@@ -36,8 +36,9 @@ final class RagExpectedSourceProjection
             ['project_id', 'checksum', 'pending_since', 'updated_at']);
     }
 
-    public function actorCounts(int $organizationId, User $actor, AssistantDataAccessPolicy $policy, array $types, string $generation): array
+    public function actorCounts(int $organizationId, User $actor, AssistantDataAccessPolicy $policy, array $types, string $generation, ?callable $checkpoint = null): array
     {
+        if ($checkpoint !== null) { $checkpoint(); }
         $expected = $policy->applyToExpectedSources(RagExpectedSource::query(), $actor, $organizationId)
             ->where('ai_rag_expected_sources.generation', $generation)->whereIn('ai_rag_expected_sources.source_type', $types);
         $projects = $policy->entityQuery($actor, $organizationId, 'project');
@@ -48,6 +49,7 @@ final class RagExpectedSourceProjection
             }
         });
         $visible = $expected->select('ai_rag_expected_sources.*')->toBase();
+        if ($checkpoint !== null) { $checkpoint(); }
         $matched = 'matched_sources.id IS NOT NULL AND EXISTS (SELECT 1 FROM ai_rag_chunks matched_chunks WHERE matched_chunks.source_id = matched_sources.id AND matched_chunks.organization_id = expected.organization_id AND matched_chunks.project_id IS NOT DISTINCT FROM expected.project_id AND matched_chunks.embedding IS NOT NULL)';
         return DB::query()->fromSub($visible, 'expected')->leftJoin('ai_rag_sources as matched_sources', static function (JoinClause $join): void {
             foreach (['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'] as $column) {

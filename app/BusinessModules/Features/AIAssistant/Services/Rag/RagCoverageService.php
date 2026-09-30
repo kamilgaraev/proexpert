@@ -23,11 +23,13 @@ final class RagCoverageService
 {
     public function __construct(private readonly RagSourceRegistry $registry, private readonly RagIndexer $indexer, private readonly ?AssistantDataAccessPolicy $access = null, private readonly ?RagExpectedSourceProjection $projection = null) {}
 
-    public function coverageForActor(int $organizationId, User $actor): array
+    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null): array
     {
+        if ($checkpoint !== null) { $checkpoint(); }
         $policy = $this->access ?? app(AssistantDataAccessPolicy::class);
         $enabledTypes = $this->registry->enabledSourceTypes();
         $allowedTypes = array_values(array_intersect($enabledTypes, $policy->allowedSourceTypes($actor, $organizationId)));
+        if ($checkpoint !== null) { $checkpoint(); }
         $sources = $policy->applyToSources(RagSource::query(), $actor, $organizationId)
             ->whereIn('ai_rag_sources.source_type', $allowedTypes);
         $projects = $policy->entityQuery($actor, $organizationId, 'project');
@@ -38,6 +40,7 @@ final class RagCoverageService
             }
         });
         $scoped = $sources->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'])->toBase();
+        if ($checkpoint !== null) { $checkpoint(); }
         $counts = DB::query()->fromSub($scoped, 'accessible_sources')
             ->leftJoin('ai_rag_chunks as accessible_chunks', static function (JoinClause $join) use ($organizationId): void {
                 $join->on('accessible_chunks.source_id', '=', 'accessible_sources.id')
@@ -51,6 +54,7 @@ final class RagCoverageService
         $indexed = 0;
         $chunks = 0;
         foreach ($allowedTypes as $type) {
+            if ($checkpoint !== null) { $checkpoint(); }
             $count = $counts->get($type);
             $typeStored = (int) ($count->stored_count ?? 0);
             $typeIndexed = (int) ($count->indexed_count ?? 0);
@@ -75,7 +79,7 @@ final class RagCoverageService
         }
         if (is_array($snapshot) && $this->usableProjection($snapshot, $enabledTypes)) {
             $projection = $this->projection ?? new RagExpectedSourceProjection($this->indexer);
-            $expectedCounts = $projection->actorCounts($organizationId, $actor, $policy, $allowedTypes, $snapshot['projection_generation']);
+            $expectedCounts = $projection->actorCounts($organizationId, $actor, $policy, $allowedTypes, $snapshot['projection_generation'], $checkpoint);
             if ($key === $this->key($organizationId, null, null)) {
                 $expected = 0;
                 $matched = 0;
@@ -108,6 +112,7 @@ final class RagCoverageService
                 return $status;
             }
         }
+        if ($checkpoint !== null) { $checkpoint(); }
         if ($this->actorCoversCompleteSnapshot($organizationId, $snapshot, $catalog, $stored, $indexed, $enabledTypes)
             && $key === $this->key($organizationId, null, null)) {
             $status['expected_source_count'] = $stored;
