@@ -130,6 +130,7 @@ LUA;
             throw new RuntimeException('assistant_read_limiter_organization_invalid');
         }
 
+        $checkpoint();
         $token = (string) Str::uuid();
         $keys = $this->keys();
         $redisConnection = config('queue.connections.redis_ai_rag.connection', 'default');
@@ -138,13 +139,16 @@ LUA;
         }
         $redis = Redis::connection($redisConnection);
         $startedAt = hrtime(true);
+        $firstAdmissionAttempt = true;
         try {
-            $checkpoint();
             $nowMs = (int) floor(microtime(true) * 1000);
             $redis->eval(self::ENQUEUE_SCRIPT, 6, $keys['sequence'], $keys['waiters'], $keys['waiter_orgs'], $keys['waiter_since'], $keys['active'], $keys['active_orgs'], $token, $organization, $nowMs, self::STALE_WAITER_TTL_MS);
 
             do {
-                $checkpoint();
+                if (! $firstAdmissionAttempt) {
+                    $checkpoint();
+                }
+                $firstAdmissionAttempt = false;
                 $nowMs = (int) floor(microtime(true) * 1000);
                 $result = (int) $redis->eval(
                     self::TRY_ACQUIRE_SCRIPT,

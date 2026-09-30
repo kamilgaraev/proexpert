@@ -548,7 +548,7 @@ class AIAssistantService
                             }
                         }
                         $otherFacts = $this->structuredFacts->confirmedResults(array_values(array_filter($this->activeToolResults,
-                            static fn (array $result): bool => !in_array($result['_tool_name'] ?? null, ['get_material_stock', 'get_estimate_answer'], true))));
+                            static fn (array $result): bool => !in_array($result['_tool_name'] ?? null, ['get_material_stock', 'get_estimate_answer'], true))), $query);
                         if ($otherFacts['source_refs'] !== []) {
                             $assistantContent .= "\n\n".$otherFacts['text'];
                             $compoundParts = true;
@@ -626,16 +626,16 @@ class AIAssistantService
             $assistantPayload['fetched_at'] = now()->toISOString();
             $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
             $verificationTimer->finish();
+            $this->rememberRagContext($conversation, $ragMetadata);
+            $this->rememberResolvedEstimate($conversation, $user, $organizationId);
+
             $this->pendingSummary = [
                 'conversation' => $conversation,
                 'summary' => json_encode(['user_request' => $query, 'request_id' => $assistantPayload['request_id']], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
-                'selected_entities' => $this->collectSourceRefs([], $this->activeToolResults),
+                'selected_entities' => $this->selectedSummaryEntities($requestPayload, $organizationId),
                 'source_refs' => $assistantPayload['source_refs'],
                 'user_decisions' => [['request_id' => $assistantPayload['request_id'], 'user_request' => $query]],
             ];
-
-            $this->rememberRagContext($conversation, $ragMetadata);
-            $this->rememberResolvedEstimate($conversation, $user, $organizationId);
 
             $assistantMessage = $this->conversationManager->addMessage(
                 $conversation,
@@ -1101,7 +1101,6 @@ class AIAssistantService
 
     private function readPhase(callable $read, User $actor, int $organizationId): mixed
     {
-        $this->executionCheckpoint();
         if (!app()->bound(AssistantRequestExecutionContext::class)) {
             return $read();
         }
@@ -1232,12 +1231,40 @@ class AIAssistantService
         if ($pending === null || !($pending['conversation'] ?? null) instanceof Conversation) {
             return;
         }
-        $conversation = $pending['conversation'];
-        $conversation->refresh();
-        $this->conversationManager->saveSummary($conversation, $actor, [
-            'validation_status' => 'verified', 'summary' => $pending['summary'],
-            'selected_entities' => $pending['selected_entities'], 'user_decisions' => $pending['user_decisions'],
-        ], $pending['source_refs'], (int) $conversation->context_version);
+        $this->measurePhase('summary_publish', function () use ($pending, $actor): void {
+            $conversation = $pending['conversation'];
+            $conversation->refresh();
+            $this->conversationManager->saveSummary($conversation, $actor, [
+                'validation_status' => 'verified', 'summary' => $pending['summary'],
+                'selected_entities' => $pending['selected_entities'], 'user_decisions' => $pending['user_decisions'],
+            ], $pending['source_refs'], (int) $conversation->context_version);
+        });
+    }
+
+    private function selectedSummaryEntities(array $filteredRequest, int $organizationId): array
+    {
+        $context = is_array($filteredRequest['context'] ?? null) ? $filteredRequest['context'] : [];
+        $references = array_merge(is_array($context['entity_refs'] ?? null) ? $context['entity_refs'] : [],
+            is_array($context['entity_references'] ?? null) ? $context['entity_references'] : []);
+        $estimateId = $this->estimateResolutionAttempted ? $this->resolvedEstimateId
+            : ($this->activeEstimateSelection['estimate_id'] ?? $context['selected_estimate_id'] ?? null);
+        if (is_int($estimateId) && $estimateId > 0) {
+            $references[] = ['entity_type' => 'estimate', 'entity_id' => $estimateId];
+        }
+        $selected = [];
+        foreach ($references as $reference) {
+            if (!is_array($reference)) {
+                continue;
+            }
+            $type = $reference['entity_type'] ?? $reference['type'] ?? null;
+            $id = $reference['entity_id'] ?? $reference['id'] ?? null;
+            if (!is_string($type) || $type === '' || (!is_int($id) && !is_string($id)) || (string) $id === '') {
+                continue;
+            }
+            $selected[$type.':'.$id] ??= ['entity_type' => $type, 'entity_id' => $id, 'organization_id' => $organizationId];
+        }
+
+        return array_values($selected);
     }
 
     private function filterRequestEntityContext(array $request, User $actor, int $organizationId): array
@@ -1310,10 +1337,15 @@ class AIAssistantService
         $this->conversationManager->updateContext($conversation, $user, $organizationId, $contextChanges, $contextRemovals);
         $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, $this->llmProvider->getModel(), $payload);
         if ($answer['validation_status'] === 'verified') {
+            $summaryRequest = $taskPlan['request'] ?? [];
+            $selectedId = $answer['selection']['estimate_id'] ?? $answer['pinned_estimate_id'] ?? null;
+            if (is_int($selectedId) && $selectedId > 0) {
+                $summaryRequest['context']['selected_estimate_id'] = $selectedId;
+            }
             $this->pendingSummary = [
                 'conversation' => $conversation,
                 'summary' => $content,
-                'selected_entities' => $answer['source_refs'] ?? [],
+                'selected_entities' => $this->selectedSummaryEntities($summaryRequest, $organizationId),
                 'source_refs' => $answer['source_refs'] ?? [],
                 'user_decisions' => [['request_id' => $this->activeRequest?->request_id, 'query' => $query, 'created_at' => now()->toISOString()]],
             ];
@@ -1349,6 +1381,7 @@ class AIAssistantService
             return;
         }
         if ($this->resolvedEstimateId === null || ! ($this->dataAccess?->canReadEntity($actor, $organizationId, 'estimate', $this->resolvedEstimateId) ?? false)) {
+            $this->resolvedEstimateId = null;
             $changes = [];
             $remove = ['selected_estimate', 'selected_estimate_id'];
         } else {

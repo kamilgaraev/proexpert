@@ -346,6 +346,102 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertTrue($response['message']['metadata']['degraded_mode']);
     }
 
+    public function test_stock_schema_exposes_direct_text_filter_without_required_entity_lookup(): void
+    {
+        $tool = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class))->newInstanceWithoutConstructor();
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $definition = $registry->getToolsDefinitions(['get_material_stock'])[0]['function'];
+        $properties = $definition['parameters']['properties'];
+        (new AssistantToolArgumentValidator)->validate(['query' => 'Сухая смесь', 'material_ids' => null,
+            'project_id' => null, 'warehouse_id' => null], $definition['parameters']);
+
+        $this->assertSame(['string', 'null'], $properties['query']['type']);
+        $this->assertSame(['array', 'null'], $properties['material_ids']['type']);
+        $this->assertSame(['integer', 'null'], $properties['project_id']['type']);
+        $this->assertSame(['integer', 'null'], $properties['warehouse_id']['type']);
+        $this->assertArrayNotHasKey('entity_type', $properties);
+        $this->assertArrayNotHasKey('domain', $properties);
+        $this->assertNotEmpty($properties['query']['description']);
+        $this->assertNotEmpty($properties['material_ids']['description']);
+        $this->assertStringContainsString('Все совпавшие материалы', $definition['description']);
+        $this->assertStringContainsString('по материалу и единице', $definition['description']);
+    }
+
+    public function test_verified_empty_stock_and_catalog_matches_form_a_human_answer_without_selecting_every_match(): void
+    {
+        $fetchedAt = now()->toISOString();
+        $rows = [];
+        foreach ([61, 62] as $id) {
+            $fields = ['id' => $id, 'name' => 'Щебень фракции '.($id === 61 ? '5-20' : '20-40'), 'code' => 'М-'.$id,
+                'organization_id' => 15, 'measurement_unit_id' => 23, 'created_at' => '2026-09-01', 'unit_price' => '999.99', 'date' => null];
+            $ref = ['entity_type' => 'material', 'entity_id' => $id, 'organization_id' => 15, 'content_scope' => 'structured',
+                'checked_fields' => array_keys($fields), 'fetched_at' => $fetchedAt];
+            $rows[] = ['entity_type' => 'material', 'entity_id' => $id, 'fields' => $fields, 'source_ref' => $ref, 'version' => 'catalog-v1'];
+        }
+        $catalog = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
+        $emptyText = trans_message('ai_assistant.material_stock_empty');
+        $service = $this->service([
+            'assistant_domain_search' => ['status' => 'success', 'source_refs' => array_column($rows, 'source_ref'), ...$catalog],
+            'get_material_stock' => ['status' => 'empty', 'stock' => [], 'stock_evidence' => ['version' => 'stock-v1'], 'source_refs' => []],
+        ], [['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_search'), $this->toolCall('get_material_stock')]],
+            ['content' => 'Всего 777 м³ на складе.']]);
+        $service->verifiedStock = ['text' => $emptyText, 'validation_status' => 'verified', 'source_refs' => [],
+            'replaced' => true, 'needs_clarification' => false];
+
+        $response = $service->ask('Что у нас по щебню?', 15, $this->actor(), 7);
+
+        $content = $response['message']['content'];
+        $this->assertStringStartsWith($emptyText, $content);
+        $this->assertStringContainsString('Щебень фракции', $content);
+        foreach (['Идентификатор', 'измерение', '2026', 'не указано', '999.99', '777', '№61', '№62'] as $technicalOrUnsupported) {
+            $this->assertStringNotContainsString($technicalOrUnsupported, $content);
+        }
+        $this->assertLessThan(1000, mb_strlen($content));
+        $this->assertSame(array_column($rows, 'source_ref'), $response['message']['metadata']['source_refs']);
+        $pending = (new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->getValue($service);
+        $this->assertSame([], $pending['selected_entities']);
+        $this->assertSame($response['message']['metadata']['source_refs'], $pending['source_refs']);
+    }
+
+    public function test_verified_empty_stock_is_a_useful_scoped_answer_without_generic_missing_proof_warning(): void
+    {
+        $emptyText = trans_message('ai_assistant.material_stock_empty');
+        $service = $this->service(['get_material_stock' => ['status' => 'empty', 'stock' => [],
+            'stock_evidence' => ['version' => 'checked-empty-scope'], 'source_refs' => []]],
+            [['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]], ['content' => 'Всего материалов в организации 0.']]);
+        $service->verifiedStock = ['text' => $emptyText, 'validation_status' => 'verified', 'source_refs' => [],
+            'replaced' => true, 'needs_clarification' => false];
+
+        $response = $service->ask('Сколько арматуры на складе?', 15, $this->actor(), 7);
+
+        $this->assertSame($emptyText, $response['message']['content']);
+        $this->assertSame('verified', $response['message']['metadata']['validation_status']);
+        $this->assertFalse($response['message']['metadata']['needs_clarification']);
+        $this->assertSame([], $response['message']['metadata']['source_refs']);
+        $this->assertSame([], $response['message']['metadata']['missing_data']);
+        $this->assertTrue((new \ReflectionMethod(AIAssistantService::class, 'isUsefulAnswer'))->invoke($service, $response));
+    }
+
+    public function test_resolved_estimate_without_current_access_does_not_become_selected_while_answer_sources_remain_for_fresh_verification(): void
+    {
+        $references = [['entity_type' => 'estimate', 'entity_id' => 99, 'organization_id' => 15],
+            ['entity_type' => 'estimate_item', 'entity_id' => 100, 'organization_id' => 15]];
+        $answer = ['status' => 'resolved', 'selection' => ['estimate_id' => 99], 'needs_clarification' => false,
+            'server_formatted_answer' => 'Сумма сметы: 123.45 руб.', 'validation_status' => 'verified', 'source_refs' => $references,
+            'financial_evidence' => ['source_refs' => $references, 'fetched_at' => now()->toISOString(), 'version' => 'estimate-v1', 'validation_status' => 'verified']];
+        $service = $this->service(['get_estimate_answer' => $answer], [['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_answer')]],
+            ['content' => 'Сумма 0 руб.']]);
+
+        $response = $service->ask('Какова сумма выбранной сметы?', 15, $this->actor(), 7);
+
+        $pending = (new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->getValue($service);
+        $this->assertSame([], $pending['selected_entities']);
+        $this->assertSame($references, $pending['source_refs']);
+        $this->assertSame($references, $response['message']['metadata']['source_refs']);
+        $this->assertStringContainsString('123.45', $response['message']['content']);
+    }
+
     private function actor(): User
     {
         $actor = new User;

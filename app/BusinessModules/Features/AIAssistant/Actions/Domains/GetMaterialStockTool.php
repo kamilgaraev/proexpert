@@ -29,8 +29,10 @@ final readonly class GetMaterialStockTool implements AIToolInterface
     public function getParametersSchema(): array
     {
         $properties = [
-            'query' => ['type' => ['string', 'null'], 'maxLength' => 200],
-            'material_ids' => ['type' => ['array', 'null'], 'items' => ['type' => 'integer', 'minimum' => 1], 'maxItems' => 100],
+            'query' => ['type' => ['string', 'null'], 'maxLength' => 200,
+                'description' => 'Название/код.'],
+            'material_ids' => ['type' => ['array', 'null'], 'items' => ['type' => 'integer', 'minimum' => 1], 'maxItems' => 100,
+                'description' => 'Проверенные ID или null.'],
             'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1, 'description' => trans_message('ai_assistant.material_stock_project_scope_note')],
             'warehouse_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
         ];

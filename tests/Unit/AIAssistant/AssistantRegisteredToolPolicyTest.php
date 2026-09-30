@@ -24,7 +24,8 @@ final class AssistantRegisteredToolPolicyTest extends TestCase
     {
         $checker = app(AIPermissionChecker::class);
         $factory = $this->app->getBindings()[AIToolRegistry::class]['concrete'];
-        $registry = $factory(new class {
+        $registry = $factory(new class
+        {
             public function make(string $class): object
             {
                 return (new ReflectionClass($class))->newInstanceWithoutConstructor();
@@ -37,5 +38,29 @@ final class AssistantRegisteredToolPolicyTest extends TestCase
             self::assertTrue($checker->hasExplicitToolPolicy($name), $name);
         }
         self::assertFalse($checker->hasExplicitToolPolicy('unknown_tool'));
+    }
+
+    public function test_provider_defers_tool_construction_until_a_tool_is_requested(): void
+    {
+        $factory = $this->app->getBindings()[AIToolRegistry::class]['concrete'];
+        $container = new class
+        {
+            public array $resolved = [];
+
+            public function make(string $class): object
+            {
+                $this->resolved[] = $class;
+
+                return (new ReflectionClass($class))->newInstanceWithoutConstructor();
+            }
+        };
+
+        $registry = $factory($container);
+
+        self::assertSame([], $container->resolved);
+        self::assertSame('search_projects', $registry->getTool('search_projects')?->getName());
+        self::assertCount(1, $container->resolved);
+        self::assertSame($registry->getTool('search_projects'), $registry->getTool('search_projects'));
+        self::assertCount(1, $container->resolved);
     }
 }

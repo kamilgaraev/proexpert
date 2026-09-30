@@ -126,6 +126,18 @@ final class AssistantRequestPhaseTimerTest extends TestCase
         $this->assertTrue($logger->records[1]['context']['success']);
     }
 
+    public function test_summary_publication_has_a_fixed_content_free_phase_inside_completion(): void
+    {
+        $logger = $this->logger();
+        AssistantRequestPhaseTimer::run(self::REQUEST_ID, 'request_complete', function (): void {
+            AssistantRequestPhaseTimer::run(self::REQUEST_ID, 'summary_publish', static fn (): array => ['private_summary_fixture']);
+        });
+
+        $this->assertSame(['summary_publish', 'request_complete'], array_column(array_column($logger->records, 'context'), 'phase'));
+        $this->assertSame(['request_id', 'phase', 'duration_ms', 'success', 'exception_class'], array_keys($logger->records[0]['context']));
+        $this->assertStringNotContainsString('private_', json_encode($logger->records, JSON_THROW_ON_ERROR));
+    }
+
     public function test_unavailable_logger_does_not_fail_a_completed_operation(): void
     {
         Log::clearResolvedInstance('log');

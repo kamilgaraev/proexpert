@@ -14,12 +14,12 @@ final class AssistantStructuredFactVerifier
         return $this->verifiedResults($query, $text, $toolResults);
     }
 
-    public function confirmedResults(array $toolResults): array
+    public function confirmedResults(array $toolResults, ?string $query = null): array
     {
-        return $this->verifiedResults(null, '', $toolResults);
+        return $this->verifiedResults(null, '', $toolResults, $query);
     }
 
-    private function verifiedResults(?string $query, string $text, array $toolResults): array
+    private function verifiedResults(?string $query, string $text, array $toolResults, ?string $presentationQuery = null): array
     {
         $rows = [];
         $seen = [];
@@ -84,6 +84,7 @@ final class AssistantStructuredFactVerifier
                 'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => $truncated];
         }
         $payload = AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
+        $payload['server_formatted_facts'] = AssistantStructuredFactFormatter::presentation($rows, $presentationQuery ?? $query);
         foreach ($positionPages as $estimateId => $positionPage) {
             if (! $positionPage['incomplete']) {
                 continue;
