@@ -48,7 +48,6 @@ final class AssistantDocumentIngestionTest extends TestCase
     private array $deniedPermissions = [];
     private array $deniedProjects = [];
     private AssistantDataAccessPolicy $policy;
-    private ?string $approvalPath = null;
     private AssistantDocumentService $documents;
     private AICreditService $credits;
     private Organization $organization;
@@ -62,11 +61,6 @@ final class AssistantDocumentIngestionTest extends TestCase
         Storage::fake('s3');
         config(['cache.default' => 'array', 'ai-assistant-credits.enforce' => true,
             'ai-assistant.llm.timeweb.api_key' => 'test-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://example.test/v1']);
-        $approvalPath = tempnam(sys_get_temp_dir(), 'most-document-readiness-');
-        self::assertIsString($approvalPath);
-        $this->approvalPath = $approvalPath;
-        config(['ai-assistant-credits.readiness_approval_path' => $approvalPath]);
-        \Tests\Support\AssistantCreditReadinessFixture::write($approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $this->organization = Organization::withoutEvents(fn () => Organization::factory()->create());
         $this->owner = User::factory()->create(['current_organization_id' => $this->organization->id, 'is_active' => true]);
         $this->organization->users()->attach($this->owner->id, ['is_owner' => true, 'is_active' => true]);
@@ -562,7 +556,6 @@ final class AssistantDocumentIngestionTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) unlink($this->approvalPath);
         parent::tearDown();
     }
 }

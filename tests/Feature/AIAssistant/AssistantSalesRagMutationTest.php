@@ -76,20 +76,25 @@ final class AssistantSalesRagMutationTest extends TestCase
         Queue::assertNotPushed(IndexRagSourceJob::class);
     }
 
-    public function test_actual_postgres_queue_failure_isolated_by_savepoint_preserves_business_commit(): void
+    public function test_actual_postgres_queue_failure_rolls_back_business_change_and_intent(): void
     {
         [$fixture, $company, $points] = $this->fixture(3);
         Queue::fake([IndexRagSourceJob::class]);
         $coordinator = new SalesMutationSqlFailureCoordinator(app(RagIndexer::class), app(RagJobDispatcher::class));
         $this->app->instance(RagIndexingCoordinator::class, $coordinator);
         DB::beginTransaction();
-        $this->replace($fixture, $company);
+        try {
+            $this->replace($fixture, $company);
+            self::fail('Expected a database error while persisting the RAG intent.');
+        } catch (QueryException $exception) {
+            self::assertSame('22012', $coordinator->sqlState);
+        }
         self::assertGreaterThan(0, $coordinator->failures);
-        self::assertSame('22012', $coordinator->sqlState);
         self::assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
         DB::commit();
-        self::assertSame(0, CrmContactPoint::query()->whereIn('id', $points)->count());
+        self::assertSame(3, CrmContactPoint::query()->whereIn('id', $points)->count());
         self::assertSame(0, $this->runs($fixture)->count());
+        Queue::assertNotPushed(IndexRagSourceJob::class);
         self::assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
     }
 

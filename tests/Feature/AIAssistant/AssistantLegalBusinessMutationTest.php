@@ -56,7 +56,7 @@ final class AssistantLegalBusinessMutationTest extends TestCase
         Queue::assertNotPushed(IndexRagSourceJob::class);
     }
 
-    public function test_postgres_queue_failure_isolated_in_savepoint_does_not_abort_business_change(): void
+    public function test_postgres_queue_failure_rolls_back_business_change_and_intent(): void
     {
         [$fixture,,$item] = $this->fixture();
         Queue::fake([IndexRagSourceJob::class]);
@@ -64,12 +64,16 @@ final class AssistantLegalBusinessMutationTest extends TestCase
         $coordinator->failItemId = (string)$item->id;
         $this->app->instance(RagIndexingCoordinator::class,$coordinator);
         DB::beginTransaction();
-        app(ExecutiveDocumentImportService::class)->fail($item->id,1,new RuntimeException('failed'));
+        try {
+            app(ExecutiveDocumentImportService::class)->fail($item->id,1,new RuntimeException('failed'));
+            self::fail('Expected a database error while persisting the RAG intent.');
+        } catch (QueryException $exception) {
+            self::assertSame('22012', $coordinator->sqlState);
+        }
         self::assertGreaterThan(0,$coordinator->failures);
-        self::assertSame('22012',$coordinator->sqlState);
         self::assertSame(1,(int)DB::selectOne('SELECT 1 AS one')->one);
         DB::commit();
-        self::assertSame('failed',$item->fresh()->status);
+        self::assertSame('queued',$item->fresh()->status);
         self::assertSame(0,$this->runs($fixture->organization->id)->count());
         Queue::assertNotPushed(IndexRagSourceJob::class);
     }

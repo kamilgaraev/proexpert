@@ -336,24 +336,103 @@ final class AssistantChatAttachmentTest extends TestCase
         }
     }
 
-    public function test_quote_request_hash_binds_attachment_ids_and_manifest(): void
+    public function test_manifest_linkage_and_provider_parts_preserve_attachment_input_order(): void
+    {
+        $conversation = $this->conversations->createConversation((int) $this->organization->id, $this->owner);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $firstId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+        $secondId = '00000000-0000-4000-8000-000000000001';
+        $firstBytes = 'first-image-payload';
+        $secondBytes = 'second-image-payload';
+        $firstPath = 'org-'.$this->organization->id.'/ai-assistant/chat-images/'.$firstId.'.png';
+        $secondPath = 'org-'.$this->organization->id.'/ai-assistant/chat-images/'.$secondId.'.png';
+        $bytesByPath = [$firstPath => $firstBytes, $secondPath => $secondBytes];
+        $ids = [$firstId, $secondId];
+
+        foreach ([[$firstId, $firstBytes, $firstPath, 'first.png'], [$secondId, $secondBytes, $secondPath, 'second.png']] as [$id, $bytes, $path, $name]) {
+            ChatAttachment::query()->create([
+                'public_id' => $id,
+                'organization_id' => $this->organization->id,
+                'user_id' => $this->owner->id,
+                'conversation_id' => $conversation->id,
+                'name' => $name,
+                'mime' => 'image/png',
+                'size' => strlen($bytes),
+                'width' => 1,
+                'height' => 1,
+                'checksum' => hash('sha256', $bytes),
+                'storage_path' => $path,
+            ]);
+        }
+
+        $prepared = $this->attachments->prepareRequest([
+            'request_id' => $requestId,
+            'conversation_id' => $conversation->id,
+            'attachment_ids' => $ids,
+        ], $this->owner, (int) $this->organization->id, true);
+        self::assertSame($ids, array_column($prepared['attachment_manifest'], 'id'));
+
+        $message = $this->conversations->addMessage($conversation, 'user', 'Сравни первое и второе', metadata: ['request_id' => $requestId]);
+        $this->attachments->linkMessage($ids, $message, $this->owner);
+        self::assertSame($ids, array_column($message->fresh()->metadata['attachments'], 'id'));
+
+        $this->files->shouldReceive('readCurrentBounded')->twice()->andReturnUsing(static function (string $key) use ($bytesByPath) {
+            self::assertArrayHasKey($key, $bytesByPath);
+            $stream = fopen('php://memory', 'r+');
+            fwrite($stream, $bytesByPath[$key]);
+            rewind($stream);
+            return $stream;
+        });
+        $parts = $this->attachments->providerParts($ids, $this->owner, (int) $this->organization->id, $requestId);
+        self::assertSame('data:image/png;base64,'.base64_encode($firstBytes), $parts[0]['image_url']['url']);
+        self::assertSame('data:image/png;base64,'.base64_encode($secondBytes), $parts[1]['image_url']['url']);
+    }
+
+    public function test_quote_request_hash_binds_attachment_order_and_rejects_reordered_begin(): void
     {
         $this->files->shouldReceive('putPrivate')->twice()->andReturnUsing(static fn (string $key, string $bytes, string $mime, string $checksum): CurrentStoredFile => new CurrentStoredFile($key, 'etag', strlen($bytes), $checksum, $mime));
         $first = $this->attachments->upload(UploadedFile::fake()->image('first.png', 8, 8), $this->owner, (int) $this->organization->id);
         $second = $this->attachments->upload(UploadedFile::fake()->image('second.png', 8, 8), $this->owner, (int) $this->organization->id);
         $credits = new AICreditService;
-        $base = ['request_id' => (string) \Illuminate\Support\Str::uuid(), 'message' => 'Сравни', 'profile' => 'short'];
-        $firstPayload = $this->attachments->prepareRequest($base + ['attachment_ids' => [$first->public_id]], $this->owner, (int) $this->organization->id);
-        $secondPayload = $this->attachments->prepareRequest($base + ['attachment_ids' => [$second->public_id]], $this->owner, (int) $this->organization->id);
-        $firstQuote = $credits->quote($this->organization, $this->owner, $base + ['request_key' => 'same-key', 'attachment_ids' => [$first->public_id]]);
-        $secondQuote = $credits->quote($this->organization, $this->owner, $base + ['request_key' => 'same-key', 'attachment_ids' => [$second->public_id]]);
+        config()->set('ai-assistant-credits.enforce', true);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $base = ['request_id' => $requestId, 'message' => 'Сравни первое и второе', 'profile' => 'short'];
+        $ids = [$first->public_id, $second->public_id];
+        $reversedIds = array_reverse($ids);
+        $firstPayload = $this->attachments->prepareRequest($base + ['attachment_ids' => $ids], $this->owner, (int) $this->organization->id);
+        $reversedPayload = $this->attachments->prepareRequest($base + ['attachment_ids' => $reversedIds], $this->owner, (int) $this->organization->id);
+        self::assertSame($ids, array_column($firstPayload['attachment_manifest'], 'id'));
+        self::assertSame($reversedIds, array_column($reversedPayload['attachment_manifest'], 'id'));
+
+        $firstQuote = $credits->quote($this->organization, $this->owner, $base + ['attachment_ids' => $ids]);
+        $reversedQuote = $credits->quote($this->organization, $this->owner, $base + ['attachment_ids' => $reversedIds]);
         $firstRecord = AICreditQuote::query()->where('public_id', $firstQuote['quote_id'])->firstOrFail();
-        $secondRecord = AICreditQuote::query()->where('public_id', $secondQuote['quote_id'])->firstOrFail();
+        $reversedRecord = AICreditQuote::query()->where('public_id', $reversedQuote['quote_id'])->firstOrFail();
 
         self::assertSame($credits->canonicalAssistantRequest($firstPayload), $firstRecord->request_hash);
-        self::assertSame($credits->canonicalAssistantRequest($secondPayload), $secondRecord->request_hash);
-        self::assertNotSame($firstRecord->request_hash, $secondRecord->request_hash);
-        self::assertNotSame($firstQuote['quote_id'], $secondQuote['quote_id']);
+        self::assertSame($credits->canonicalAssistantRequest($reversedPayload), $reversedRecord->request_hash);
+        self::assertNotSame($firstRecord->request_hash, $reversedRecord->request_hash);
+        self::assertNotSame($firstQuote['quote_id'], $reversedQuote['quote_id']);
+
+        $credits->grant($this->organization, 1_000_000, 'purchase', null, 'image-order-'.$requestId);
+        try {
+            $credits->begin($this->organization, $this->owner, $firstQuote['quote_id'], $requestId, null, $base + ['attachment_ids' => $reversedIds]);
+            self::fail('An approved quote must reject the reversed image order.');
+        } catch (\DomainException $exception) {
+            self::assertSame('AI credit quote is invalid or expired.', $exception->getMessage());
+        }
+        self::assertDatabaseMissing('ai_credit_reservations', ['request_id' => $requestId]);
+        foreach ($ids as $id) {
+            self::assertDatabaseHas('ai_chat_attachments', ['public_id' => $id, 'request_id' => null]);
+        }
+
+        $reservation = $credits->begin($this->organization, $this->owner, $firstQuote['quote_id'], $requestId, null, $base + ['attachment_ids' => $ids]);
+        self::assertSame((int) $firstRecord->id, (int) $reservation->ai_credit_quote_id);
+        self::assertSame((int) $firstRecord->max_units_minor, $reservation->reserved_minor);
+        self::assertDatabaseHas('ai_credit_reservations', ['request_id' => $requestId, 'ai_credit_quote_id' => $firstRecord->id]);
+        foreach ($ids as $id) {
+            self::assertDatabaseHas('ai_chat_attachments', ['public_id' => $id, 'request_id' => $requestId]);
+        }
     }
 
     public function test_retention_preview_does_not_delete_and_purge_removes_linked_and_expired_orphan_files(): void

@@ -57,9 +57,6 @@ final class AICreditWalletTest extends TestCase
         $this->user = User::withoutEvents(fn () => User::query()->create(['name' => 'Владелец', 'email' => 'credits@example.test', 'password' => 'password', 'is_active' => true, 'current_organization_id' => $this->organization->id]));
         DB::table('organization_user')->insert(['organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'is_active' => true, 'is_owner' => true]);
         config()->set('app.key', 'wallet-test-readiness-key');
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'most-wallet-readiness-');
-        config()->set('ai-assistant-credits.readiness_approval_path', $this->approvalPath);
-        $this->writeReadinessApproval();
         config()->set('ai-assistant-credits.enforce', true);
         $this->credits = new AICreditService;
     }
@@ -97,7 +94,6 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame($quote['quote_id'], $this->credits->quote($this->organization, $this->user, $request)['quote_id']);
         $this->assertSame(200, $quote['max_units_minor']);
         config()->set('ai-assistant-credits.pricing.input_micro_rub_per_million', 999999999);
-        $this->writeReadinessApproval();
         $this->credits->grant($this->organization, 10000, 'purchase', null, 'pack');
         $reservation = $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request);
         $this->assertSame(14, $this->credits->costMicroRub(1, 0, $reservation));
@@ -380,21 +376,14 @@ final class AICreditWalletTest extends TestCase
         parent::tearDown();
     }
 
-    private function writeReadinessApproval(): void
-    {
-        \Tests\Support\AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
-    }
-
     public function test_precise_supplier_tariff_crosses_charge_threshold_without_repricing_existing_quotes(): void
     {
         config()->set('ai-assistant-credits.price_version', 1);
         config()->set('ai-assistant-credits.pricing', ['input_micro_rub_per_million' => 14000000, 'output_micro_rub_per_million' => 68000000]);
-        $this->writeReadinessApproval();
         $this->credits->grant($this->organization, 10000, 'purchase', null, 'precise-tariff-pack');
         $old = $this->reserve();
         config()->set('ai-assistant-credits.price_version', 2);
         config()->set('ai-assistant-credits.pricing', ['input_micro_rub_per_million' => 13500000, 'output_micro_rub_per_million' => 67500000]);
-        $this->writeReadinessApproval();
         $oldCost = $this->credits->costMicroRub(8192, 1024, $old);
         $this->assertSame(184320, $oldCost);
         $this->credits->recordProviderCost($old, $oldCost, 'timeweb', 'gpt-6-luna', 'completion', [], true);
@@ -416,7 +405,6 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(360000, $this->credits->approvedCostMicroRub($first));
         config()->set('ai-assistant-credits.rub_per_unit', 0.36);
         config()->set('ai-assistant-credits.price_version', 3);
-        $this->writeReadinessApproval();
         $this->credits->recordProviderCost($first, 90001, 'timeweb', 'gpt-6-luna', 'completion', [], true);
         $this->assertSame(100, $this->credits->finalize($first));
         $next = $this->reserve();
@@ -441,11 +429,17 @@ final class AICreditWalletTest extends TestCase
 
     public function test_signed_qa_approval_does_not_block_credit_operations(): void
     {
+        $approvalPath = tempnam(sys_get_temp_dir(), 'most-wallet-readiness-');
+        self::assertIsString($approvalPath);
+        $this->approvalPath = $approvalPath;
+        config()->set('ai-assistant-credits.readiness_approval_path', $approvalPath);
+        \Tests\Support\AssistantCreditReadinessFixture::write($approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $this->credits->grant($this->organization, 10000, 'purchase', null, 'pack');
         $request = $this->request();
         $quote = $this->credits->quote($this->organization, $this->user, $request);
-        $saved = file_get_contents($this->approvalPath);
-        unlink($this->approvalPath);
+        $saved = file_get_contents($approvalPath);
+        self::assertIsString($saved);
+        unlink($approvalPath);
         $this->assertTrue($this->credits->creditPurchasesEnabled());
         $this->assertNotEmpty($this->credits->quote($this->organization, $this->user, $this->request())['quote_id']);
         config()->set('ai-assistant-credits.rub_per_unit', 0.36);
@@ -454,7 +448,7 @@ final class AICreditWalletTest extends TestCase
         config()->set('ai-assistant-credits.rub_per_unit', 0.18);
         $approval = json_decode($saved, true, 128, JSON_THROW_ON_ERROR);
         $approval['signature'] = str_repeat('0', 64);
-        file_put_contents($this->approvalPath, json_encode($approval, JSON_THROW_ON_ERROR));
+        file_put_contents($approvalPath, json_encode($approval, JSON_THROW_ON_ERROR));
         $this->assertTrue($this->credits->creditPurchasesEnabled());
         $this->assertNotEmpty($this->credits->quote($this->organization, $this->user, $this->request())['quote_id']);
     }

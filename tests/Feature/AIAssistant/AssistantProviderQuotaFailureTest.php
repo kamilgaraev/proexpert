@@ -34,7 +34,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use OpenAI\Exceptions\RateLimitException;
-use Tests\Support\AssistantCreditReadinessFixture;
 use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
@@ -42,7 +41,6 @@ final class AssistantProviderQuotaFailureTest extends TestCase
 {
     private ?string $connectionName = null;
     private ?array $originalConnectionConfiguration = null;
-    private ?string $approvalPath = null;
     private Organization $organization;
     private User $actor;
     private AICreditService $credits;
@@ -90,17 +88,11 @@ final class AssistantProviderQuotaFailureTest extends TestCase
         $this->credits = new AICreditService;
         $this->lifecycle = new AssistantRequestLifecycle($this->credits, $permissions, $this->conversations, $policy);
         config()->set('ai-assistant-credits.enforce', true);
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'assistant-luna-quota-');
-        config()->set('ai-assistant-credits.readiness_approval_path', $this->approvalPath);
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $this->credits->grant($this->organization, 10000, 'purchase', null, 'test-pack');
     }
 
     protected function tearDown(): void
     {
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) {
-            unlink($this->approvalPath);
-        }
         if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
             DB::purge($this->connectionName);
             config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);

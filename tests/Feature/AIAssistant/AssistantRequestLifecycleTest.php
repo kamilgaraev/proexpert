@@ -45,7 +45,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Tests\Support\AssistantCreditReadinessFixture;
 use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 use Throwable;
@@ -58,7 +57,6 @@ final class AssistantRequestLifecycleTest extends TestCase
     private Organization $organization;
     private User $actor;
     private bool $assistantEnabled = true;
-    private ?string $approvalPath = null;
     private ?string $connectionName = null;
     private ?array $originalConnectionConfiguration = null;
 
@@ -117,17 +115,11 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->credits = new AICreditService;
         $this->lifecycle = new AssistantRequestLifecycle($this->credits, $permissions, $this->conversations, $policy);
         config()->set('ai-assistant-credits.enforce', true);
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'assistant-lifecycle-');
-        config()->set('ai-assistant-credits.readiness_approval_path', $this->approvalPath);
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $this->credits->grant($this->organization, 10000, 'purchase', null, 'test-pack');
     }
 
     protected function tearDown(): void
     {
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) {
-            unlink($this->approvalPath);
-        }
         if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
             DB::purge($this->connectionName);
             config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
@@ -498,7 +490,6 @@ final class AssistantRequestLifecycleTest extends TestCase
         $payload = $this->quote();
         config()->set('ai-assistant-credits.profiles.short', ['input_tokens' => 1000, 'output_tokens' => 100, 'max_calls' => 1]);
         config()->set('ai-assistant-credits.pricing.input_micro_rub_per_million', 999999999);
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $request = $this->lifecycle->start($this->organization, $this->actor, null, $payload)['request'];
         $this->assertSameJsonObject(['input_tokens' => 8192, 'output_tokens' => 1024, 'max_calls' => 2], $this->lifecycle->limits($request));
         $provider = $this->createMock(LLMProviderInterface::class);

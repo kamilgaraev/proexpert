@@ -95,7 +95,6 @@ final class AssistantChatAttachmentService
             }
         }
         $ids = array_map('strtolower', $ids);
-        sort($ids, SORT_STRING);
         unset($payload['attachment_manifest']);
         if ($ids === []) {
             unset($payload['attachment_ids']);
@@ -112,8 +111,13 @@ final class AssistantChatAttachmentService
         if ($rows->count() !== count($ids)) {
             throw new AuthorizationException(trans_message('ai_assistant.attachment_access_denied'));
         }
+        $rowsById = $rows->keyBy(static fn (ChatAttachment $row): string => strtolower($row->public_id));
         $manifest = [];
-        foreach ($rows as $row) {
+        foreach ($ids as $id) {
+            $row = $rowsById->get($id);
+            if ($row === null) {
+                throw new AuthorizationException(trans_message('ai_assistant.attachment_access_denied'));
+            }
             if (($row->request_id !== null && $row->request_id !== $requestId)
                 || ($row->conversation_id !== null && $row->conversation_id !== $conversationId && !($conversationId === null && $row->request_id === $requestId))
                 || ($row->message_id === null && $row->created_at->lte(now()->subDay()))) {

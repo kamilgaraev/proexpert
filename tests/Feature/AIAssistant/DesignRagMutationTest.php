@@ -70,7 +70,7 @@ final class DesignRagMutationTest extends TestCase
         Queue::assertNotPushed(IndexRagSourceJob::class);
     }
 
-    public function test_real_postgres_queue_failure_isolated_by_savepoint_does_not_abort_ifc_business_write(): void
+    public function test_real_postgres_queue_failure_rolls_back_ifc_business_write_and_intent(): void
     {
         [$fixture, , $version, $other, $derivative] = $this->fixture();
         [$old] = $this->elements($version, $other, $derivative);
@@ -78,14 +78,19 @@ final class DesignRagMutationTest extends TestCase
         $coordinator = new DesignMutationSqlFailureCoordinator(app(RagIndexer::class), app(RagJobDispatcher::class));
         $this->app->instance(RagIndexingCoordinator::class, $coordinator);
         DB::beginTransaction();
-        $this->index($version, $derivative);
+        try {
+            $this->index($version, $derivative);
+            self::fail('Expected a database error while persisting the RAG intent.');
+        } catch (QueryException $exception) {
+            self::assertSame('22012', $coordinator->sqlState);
+        }
         self::assertGreaterThan(0, $coordinator->failures);
-        self::assertSame('22012', $coordinator->sqlState);
         self::assertSame(1, (int) DB::selectOne('SELECT 1 AS one')->one);
         DB::commit();
-        self::assertSame('Updated element', $old->fresh()->name);
-        self::assertTrue(DesignIfcModelElement::query()->where('version_id', $version->id)->where('express_id', 740002)->exists());
+        self::assertSame('Old element', $old->fresh()->name);
+        self::assertFalse(DesignIfcModelElement::query()->where('version_id', $version->id)->where('express_id', 740002)->exists());
         self::assertSame(0, $this->runs($fixture->organization->id, 'design_ifc_model_element')->count());
+        Queue::assertNotPushed(IndexRagSourceJob::class);
     }
 
     public function test_sheet_replacement_preserves_unrelated_version_and_queues_deleted_and_created_native_ids(): void

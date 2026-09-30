@@ -485,9 +485,8 @@ final class AICreditService
     {
         unset($request['quote_id'], $request['request_id'], $request['request_key']);
         $attachments = $request['attachment_ids'] ?? [];
-        if (is_array($attachments)) { $attachments = array_map('strtolower', $attachments); sort($attachments, SORT_STRING); }
+        if (is_array($attachments)) { $attachments = array_map('strtolower', $attachments); }
         $manifest = $request['attachment_manifest'] ?? [];
-        if (is_array($manifest)) { usort($manifest, static fn (array $a, array $b): int => strcmp((string) ($a['id'] ?? ''), (string) ($b['id'] ?? ''))); }
         if (($request['profile'] ?? 'normal') !== 'ocr') {
             $request = [
                 'message' => (string) ($request['message'] ?? ''),

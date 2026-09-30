@@ -15,7 +15,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Tests\Support\AssistantCreditReadinessFixture;
 use Tests\Support\IsolatedPostgresTestDatabase;
 use Tests\TestCase;
 
@@ -26,7 +25,6 @@ final class AICreditConcurrencyTest extends TestCase
     private User $user;
     private string $originalConnection;
     private string $runtimeDirectory;
-    private ?string $approvalPath = null;
 
     public function refreshDatabase(): void {}
 
@@ -54,10 +52,6 @@ final class AICreditConcurrencyTest extends TestCase
         $this->organization = Organization::withoutEvents(fn () => Organization::query()->create(['name' => 'Гонка кредитов']));
         $this->user = User::withoutEvents(fn () => User::query()->create(['name' => 'Владелец', 'email' => 'credit-race@example.test', 'password' => 'password']));
         DB::table('organization_user')->insert(['organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'is_active' => true]);
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'most-credit-race-approval-');
-        config()->set('ai-assistant-credits.readiness_approval_path', $this->approvalPath);
-        $this->assertNotEmpty(config('app.key'));
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         config()->set('ai-assistant-credits.enforce', true);
         $this->runtimeDirectory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-credit-race-'.bin2hex(random_bytes(10));
         $this->assertTrue(mkdir($this->runtimeDirectory));
@@ -188,7 +182,6 @@ final class AICreditConcurrencyTest extends TestCase
             foreach (glob($this->runtimeDirectory.DIRECTORY_SEPARATOR.'*') ?: [] as $path) { unlink($path); }
             rmdir($this->runtimeDirectory);
         }
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) { unlink($this->approvalPath); }
         if (isset($this->originalConnection)) {
             DB::setDefaultConnection($this->originalConnection);
             DB::purge('credit_race');

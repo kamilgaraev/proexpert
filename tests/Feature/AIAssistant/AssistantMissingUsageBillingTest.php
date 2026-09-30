@@ -13,13 +13,11 @@ use App\Models\Credits\AICreditReservation;
 use App\Services\Credits\AICreditService;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
-use Tests\Support\AssistantCreditReadinessFixture;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class AssistantMissingUsageBillingTest extends TestCase
 {
-    private ?string $approvalPath = null;
 
     #[DataProvider('availabilityCases')]
     public function test_actual_lifecycle_keeps_unknown_success_free_and_known_zero_billable(bool $available, int $charge): void
@@ -27,9 +25,6 @@ final class AssistantMissingUsageBillingTest extends TestCase
         $fixture = AssistantRealAuthorizationFixture::create();
         self::assertTrue(app(AIPermissionChecker::class)->canUseAssistant($fixture->owner, $fixture->organization->id));
         config(['app.key' => 'base64:'.base64_encode(str_repeat('u', 32)), 'ai-assistant-credits.enforce' => true]);
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'assistant-missing-usage-');
-        config(['ai-assistant-credits.readiness_approval_path' => $this->approvalPath]);
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $credits = app(AICreditService::class);
         $credits->grant($fixture->organization, 10000, 'purchase', null, 'isolated-missing-usage-fixture');
         $payload = ['request_id' => (string) Str::uuid(), 'message' => 'Покажи текущие данные', 'profile' => 'short', 'allow_actions' => false,
@@ -77,9 +72,6 @@ final class AssistantMissingUsageBillingTest extends TestCase
     {
         $fixture = AssistantRealAuthorizationFixture::create();
         config(['app.key' => 'base64:'.base64_encode(str_repeat('u', 32)), 'ai-assistant-credits.enforce' => true]);
-        $this->approvalPath = tempnam(sys_get_temp_dir(), 'assistant-missing-usage-');
-        config(['ai-assistant-credits.readiness_approval_path' => $this->approvalPath]);
-        AssistantCreditReadinessFixture::write($this->approvalPath, (array) config('ai-assistant-credits'), (string) config('app.key'));
         $credits = app(AICreditService::class);
         $credits->grant($fixture->organization, 10000, 'purchase', null, 'isolated-cancel-usage-fixture');
         $payload = ['request_id' => (string) Str::uuid(), 'message' => 'Покажи данные', 'profile' => 'normal', 'allow_actions' => false, 'conversation_id' => null, 'context' => []];
@@ -112,7 +104,6 @@ final class AssistantMissingUsageBillingTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) { unlink($this->approvalPath); }
         parent::tearDown();
     }
 }
