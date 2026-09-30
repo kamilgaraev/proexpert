@@ -305,14 +305,16 @@ final class DesignBimDeviceAcceptanceHarnessTest extends TestCase
         $library = dirname(PHP_BINARY).'/ext/php_opcache.dll';
         self::assertFileExists($library, 'The opt-in Windows HTTP runtime requires its bundled OPcache extension.');
         $command = [PHP_BINARY, '-d', 'zend_extension='.$library, '-d', 'opcache.enable_cli=1',
-            '-d', 'opcache.memory_consumption=256', '-d', 'opcache.max_accelerated_files=32531'];
+            '-d', 'opcache.memory_consumption=256', '-d', 'opcache.max_accelerated_files=32531',
+            '-d', 'max_execution_time=120'];
         $probe = new Process([...$command, '-r',
-            '$status = function_exists("opcache_get_status") ? opcache_get_status(false) : []; echo json_encode(["loaded" => extension_loaded("Zend OPcache"), "enabled" => $status["opcache_enabled"] ?? false], JSON_THROW_ON_ERROR);']);
+            '$status = function_exists("opcache_get_status") ? opcache_get_status(false) : []; echo json_encode(["loaded" => extension_loaded("Zend OPcache"), "enabled" => $status["opcache_enabled"] ?? false, "max_execution_time" => (int) ini_get("max_execution_time")], JSON_THROW_ON_ERROR);']);
         $probe->setTimeout(10);
         $probe->run();
         self::assertTrue($probe->isSuccessful(), 'Acceptance HTTP OPcache process probe failed.');
         $status = json_decode($probe->getOutput(), true, 8, JSON_THROW_ON_ERROR);
-        self::assertSame(['loaded' => true, 'enabled' => true], $status, 'Acceptance HTTP OPcache extension is unavailable.');
+        self::assertSame(['loaded' => true, 'enabled' => true, 'max_execution_time' => 120], $status,
+            'Acceptance HTTP OPcache or execution limit is unavailable.');
 
         return $command;
     }
