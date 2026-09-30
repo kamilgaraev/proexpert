@@ -7,6 +7,7 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\RagIndexStatusResource;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
+use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
@@ -374,10 +375,15 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->warmSnapshot($service, $organization->id, $actor->id);
         $queries = 0;
         $identityScopeQueries = 0;
-        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries): void {
+        $proofSelectQueries = 0;
+        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries): void {
             $queries++;
-            if (str_contains(strtolower($query->sql), 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"')) {
+            $sql = strtolower($query->sql);
+            if (str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"')) {
                 $identityScopeQueries++;
+            }
+            if (str_contains($sql, 'from "ai_rag_sources"') && str_contains($sql, '"ai_rag_sources"."id" in')) {
+                $proofSelectQueries++;
             }
         });
         $status = $service->status($organization->id, $actor);
@@ -385,7 +391,41 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertTrue($status['status_available']);
         $this->assertSame(264, $status['source_count']);
         $this->assertSame(1, $identityScopeQueries, 'Status proof validation must compile the complete source identity ACL once.');
+        $this->assertSame(1, $proofSelectQueries, 'Status proof identities must be validated by one bounded SELECT.');
         $this->assertLessThanOrEqual(45, $queries, 'Status proof validation compiled repeated ACL branches for a bounded identity set.');
+
+        $generation = (string) \Illuminate\Support\Str::uuid();
+        $expectedSource = RagExpectedSource::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'generation' => $generation,
+            'identity_project_id' => $project->id,
+            'identity_part_key' => '',
+            'source_type' => 'project',
+            'entity_type' => 'project',
+            'entity_id' => (string) $project->id,
+            'checksum' => hash('sha256', 'expected-proof-checksum'),
+            'pending_since' => now(),
+        ]);
+        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, ['projection_generation' => $generation], 300);
+        $snapshotKey = 'ai-rag-status:'.$organization->id.':'.$actor->id.':lk';
+        $snapshot = Cache::get($snapshotKey);
+        $snapshot['proof']['rag']['generation'] = $generation;
+        $snapshot['proof']['rag']['expected'] = [(string) $expectedSource->id => [
+            'project', 'project', (string) $project->id, (string) $project->id, (string) $project->id, '', $expectedSource->checksum,
+        ]];
+        Cache::put($snapshotKey, $snapshot, 60);
+        $expectedProofSelectQueries = 0;
+        DB::listen(static function ($query) use (&$expectedProofSelectQueries): void {
+            $sql = strtolower($query->sql);
+            if (str_contains($sql, 'from "ai_rag_expected_sources"') && str_contains($sql, '"ai_rag_expected_sources"."id" in')) {
+                $expectedProofSelectQueries++;
+            }
+        });
+        $expectedProofStatus = $service->status($organization->id, $actor);
+        $this->assertTrue($expectedProofStatus['status_available']);
+        $this->assertSame(1, $expectedProofSelectQueries, 'Expected proof identities must be validated by one bounded SELECT.');
 
         RagSource::query()->where('organization_id', $organization->id)->where('source_type', 'contract')
             ->update(['checksum' => hash('sha256', 'changed-contract-source')]);

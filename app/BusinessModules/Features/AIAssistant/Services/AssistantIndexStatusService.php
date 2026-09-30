@@ -222,6 +222,9 @@ final class AssistantIndexStatusService
         if ($proof === []) {
             return true;
         }
+        if (count($proof) > self::MAX_PROOF_IDENTITIES) {
+            return false;
+        }
 
         $identities = [];
         foreach ($proof as $row) {
@@ -246,28 +249,31 @@ final class AssistantIndexStatusService
             ? $this->access->applyToExpectedSources($identityScoped, $actor, $organizationId)
             : $this->access->applyToSources($identityScoped, $actor, $organizationId);
 
-        foreach (array_chunk(array_keys($proof), self::PROOF_BATCH_SIZE) as $ids) {
-            $checkpoint();
-            $query = (clone $scoped)->whereIn($table.'.id', $ids);
-            $columns = $expected
-                ? ['ai_rag_expected_sources.id', 'ai_rag_expected_sources.source_type', 'ai_rag_expected_sources.entity_type',
-                    'ai_rag_expected_sources.entity_id', 'ai_rag_expected_sources.project_id', 'ai_rag_expected_sources.identity_project_id',
-                    'ai_rag_expected_sources.identity_part_key', 'ai_rag_expected_sources.checksum']
-                : ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id',
-                    'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key', 'ai_rag_sources.source_version', 'ai_rag_sources.checksum'];
-            $visible = [];
-            foreach ($query->select($columns)->get() as $row) {
-                $visible[(string) $row->id] = $expected ? $this->expectedProofRow($row) : $this->sourceProofRow($row);
+        $columns = $expected
+            ? ['ai_rag_expected_sources.id', 'ai_rag_expected_sources.source_type', 'ai_rag_expected_sources.entity_type',
+                'ai_rag_expected_sources.entity_id', 'ai_rag_expected_sources.project_id', 'ai_rag_expected_sources.identity_project_id',
+                'ai_rag_expected_sources.identity_part_key', 'ai_rag_expected_sources.checksum']
+            : ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id',
+                'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key', 'ai_rag_sources.source_version', 'ai_rag_sources.checksum'];
+        $query = (clone $scoped)->whereIn($table.'.id', array_keys($proof))->toBase()->select($columns);
+        $checkpoint();
+        $validated = 0;
+        foreach ($query->cursor() as $row) {
+            if ($validated > 0 && $validated % self::PROOF_BATCH_SIZE === 0) {
+                $checkpoint();
             }
-            $expectedRows = array_intersect_key($proof, array_flip($ids));
-            ksort($visible);
-            ksort($expectedRows);
-            if ($visible !== $expectedRows) {
+            $id = (string) $row->id;
+            $expectedRow = $proof[$id] ?? null;
+            if (! is_array($expectedRow)
+                || ($expected ? $this->expectedProofRow($row) : $this->sourceProofRow($row)) !== $expectedRow) {
                 return false;
             }
+            $validated++;
         }
 
-        return true;
+        $checkpoint();
+
+        return $validated === count($proof);
     }
 
     private function currentProjectionGeneration(int $organizationId): ?string
