@@ -23,12 +23,13 @@ final class RagCoverageService
 {
     public function __construct(private readonly RagSourceRegistry $registry, private readonly RagIndexer $indexer, private readonly ?AssistantDataAccessPolicy $access = null, private readonly ?RagExpectedSourceProjection $projection = null) {}
 
-    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null): array
+    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null): array
     {
+        $guard = $checkDeadline ?? $checkpoint;
         if ($checkpoint !== null) { $checkpoint(); }
         $policy = $this->access ?? app(AssistantDataAccessPolicy::class);
         $enabledTypes = $this->registry->enabledSourceTypes();
-        $allowedTypes = array_values(array_intersect($enabledTypes, $policy->allowedSourceTypes($actor, $organizationId)));
+        $allowedTypes = $policy->allowedSourceTypes($actor, $organizationId, $enabledTypes);
         if ($checkpoint !== null) { $checkpoint(); }
         $sources = $policy->applyToSources(RagSource::query(), $actor, $organizationId)
             ->whereIn('ai_rag_sources.source_type', $allowedTypes);
@@ -54,7 +55,7 @@ final class RagCoverageService
         $indexed = 0;
         $chunks = 0;
         foreach ($allowedTypes as $type) {
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($guard !== null) { $guard(); }
             $count = $counts->get($type);
             $typeStored = (int) ($count->stored_count ?? 0);
             $typeIndexed = (int) ($count->indexed_count ?? 0);

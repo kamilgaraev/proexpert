@@ -197,7 +197,7 @@ final class AssistantOperationsNativeFileAdapter
         $query = AssistantOperationsNativeFileMetadata::sourceQuery($type, $organizationId);
         if (! $policy->canReadDomain($actor, $organizationId, 'assistant')) { return $query->whereRaw('1 = 0'); }
         foreach (AssistantOperationsNativeFileMetadata::definitions()[$type]['permissions'] as $permission) {
-            if (! $this->authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) { return $query->whereRaw('1 = 0'); }
+            if (! $policy->canCurrentPermission($actor, $organizationId, $permission)) { return $query->whereRaw('1 = 0'); }
         }
         if ($type !== 'warehouse_item_gallery') {
             $parent = $policy->entityQuery($actor, $organizationId, $type);

@@ -34,12 +34,24 @@ final class RagStatusBudget
 
     public function checkpoint(): void
     {
+        $remaining = $this->remainingMilliseconds();
+        if ($this->connection->getDriverName() === 'pgsql') {
+            $this->connection->statement('SET LOCAL statement_timeout = '.$remaining);
+        }
+    }
+
+    public function checkDeadline(): void
+    {
+        $this->remainingMilliseconds();
+    }
+
+    private function remainingMilliseconds(): int
+    {
         $remaining = (int) floor(($this->deadline - hrtime(true)) / 1_000_000);
         if ($remaining <= 0) {
             throw new RagStatusBudgetExceeded;
         }
-        if ($this->connection->getDriverName() === 'pgsql') {
-            $this->connection->statement('SET LOCAL statement_timeout = '.$remaining);
-        }
+
+        return $remaining;
     }
 }

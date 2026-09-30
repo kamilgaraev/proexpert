@@ -7,6 +7,7 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileAdapter;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileMetadata;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
@@ -125,6 +126,22 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
             catch (RuntimeException $exception) { self::assertSame('ai_assistant_document_access_denied',$exception->getMessage()); }
         }
         self::assertSame($before,$this->reads);
+    }
+
+    public function test_coverage_counts_native_path_from_visible_ids_without_exposing_private_projection(): void
+    {
+        [$fixture] = $this->fixture(true);
+        $coverage = app(AssistantDocumentCoverageService::class)->coverage($fixture->organization->id, $fixture->member);
+
+        self::assertSame(1, $coverage['native_attachment_coverage']['legal_document_version']['expected_file_count']);
+        self::assertSame(1, $coverage['native_attachment_coverage']['legal_document_version']['unmapped_file_count']);
+        self::assertSame(1, $coverage['document_coverage']['needs_access_review']);
+        self::assertSame(0, $this->reads);
+        $fixture->memberRole->update(['system_permissions' => ['legal_archive.view']]);
+        $revoked = app(AssistantDocumentCoverageService::class)->coverage($fixture->organization->id, $fixture->member);
+        self::assertArrayNotHasKey('legal_document_version', $revoked['native_attachment_coverage']);
+        self::assertSame(0, $revoked['document_coverage']['total']);
+        self::assertSame(0, $this->reads);
     }
 
     private function fixture(bool $nonfinancial = false): array

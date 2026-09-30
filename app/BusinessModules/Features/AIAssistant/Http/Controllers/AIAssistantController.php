@@ -16,7 +16,6 @@ use App\BusinessModules\Features\AIAssistant\Http\Requests\StoreAssistantConvers
 use App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\MessageResource;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
-use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionProposalService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
@@ -43,8 +42,6 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 final class AIAssistantController extends AbstractAssistantApiController
 {
     public function __construct(
-        private readonly AssistantActionService $actions,
-        private readonly AssistantActionProposalService $proposals,
         private readonly AssistantRequestLifecycle $requests,
         private readonly QueuedAssistantChatService $queuedChats,
         private readonly ConversationManager $conversations,
@@ -56,37 +53,25 @@ final class AIAssistantController extends AbstractAssistantApiController
     {
         return $this->respond($request, function () use ($request): JsonResponse {
             $payload = $request->validated();
-            $asynchronous = (bool) ($payload['async'] ?? false);
             unset($payload['async']);
-            if ($asynchronous) {
-                $surface = $this->surface($request);
-                $started = $this->queuedChats->submit(
-                    $this->organizationId($request),
-                    $this->actor($request),
-                    isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
-                    $payload,
-                    $surface,
-                );
-                if (is_array($started['response'])) {
-                    return $this->success($request, $started['response']);
-                }
-                $assistantRequest = $started['request'];
-                return $this->success($request, [
-                    'request_id' => $assistantRequest->request_id,
-                    'conversation_id' => $assistantRequest->conversation_id,
-                    'status' => 'running',
-                    'stage' => $assistantRequest->stage,
-                ], 202);
-            }
-            $result = app(AIAssistantService::class)->ask(
-                $payload['message'],
+            $surface = $this->surface($request);
+            $started = $this->queuedChats->submit(
                 $this->organizationId($request),
                 $this->actor($request),
                 isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
                 $payload,
-                $this->surface($request),
+                $surface,
             );
-            return $this->success($request, $result);
+            if (is_array($started['response'])) {
+                return $this->success($request, $started['response']);
+            }
+            $assistantRequest = $started['request'];
+            return $this->success($request, [
+                'request_id' => $assistantRequest->request_id,
+                'conversation_id' => $assistantRequest->conversation_id,
+                'status' => 'running',
+                'stage' => $assistantRequest->stage,
+            ], 202);
         });
     }
 
@@ -138,22 +123,22 @@ final class AIAssistantController extends AbstractAssistantApiController
         });
     }
 
-    public function previewAction(AssistantActionPreviewRequest $request): JsonResponse
+    public function previewAction(AssistantActionPreviewRequest $request, AssistantActionProposalService $proposals, AssistantActionService $actions): JsonResponse
     {
-        return $this->respond($request, function () use ($request): JsonResponse {
+        return $this->respond($request, function () use ($request, $proposals, $actions): JsonResponse {
             $conversation = $this->accessibleConversation($request, $request->integer('conversation_id'), true);
-            $proposal = $this->proposals->resolve($conversation, $this->actor($request), $request->validated('action'));
-            return $this->success($request, $this->actions->preview($proposal, $this->organizationId($request), $this->actor($request), $conversation));
+            $proposal = $proposals->resolve($conversation, $this->actor($request), $request->validated('action'));
+            return $this->success($request, $actions->preview($proposal, $this->organizationId($request), $this->actor($request), $conversation));
         });
     }
 
-    public function executeAction(AssistantActionExecuteRequest $request): JsonResponse
+    public function executeAction(AssistantActionExecuteRequest $request, AssistantActionService $actions): JsonResponse
     {
-        return $this->respond($request, function () use ($request): JsonResponse {
+        return $this->respond($request, function () use ($request, $actions): JsonResponse {
             $conversation = $this->accessibleConversation($request, $request->integer('conversation_id'), true);
             $payload = $request->validated('action');
             $payload['confirmed'] = $request->boolean('action.confirmed');
-            $result = $this->actions->execute($payload, $this->organizationId($request), $this->actor($request), $conversation);
+            $result = $actions->execute($payload, $this->organizationId($request), $this->actor($request), $conversation);
             $this->conversations->touchActivity($conversation);
             return $this->success($request, $result);
         });

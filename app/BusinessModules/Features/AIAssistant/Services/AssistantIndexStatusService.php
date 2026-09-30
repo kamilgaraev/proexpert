@@ -33,18 +33,20 @@ final class AssistantIndexStatusService
             throw new AuthorizationException;
         }
         try {
-            return (new RagStatusBudget(DB::connection()))->run(function (callable $checkpoint) use ($organizationId, $actor): array {
-                $coverage = $this->coverage->coverageForActor($organizationId, $actor, $checkpoint);
+            $budget = new RagStatusBudget(DB::connection());
+
+            return $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget): array {
+                $coverage = $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
                 $checkpoint();
-                $documents = $this->documents->coverage($organizationId, $actor, $checkpoint);
+                $documents = $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
                 $checkpoint();
 
                 return array_merge($coverage, $documents, [
                     'status_available' => true,
                     'enabled' => (bool) config('ai-assistant.rag.enabled', true),
-                    'can_reindex' => $this->canReindex($organizationId, $actor),
+                    'can_reindex' => $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]),
                 ]);
-            });
+            }, checkpoint: $budget->checkDeadline(...)));
         } catch (RagStatusBudgetExceeded) {
             return $this->unavailableStatus($organizationId, $actor);
         } catch (QueryException $exception) {

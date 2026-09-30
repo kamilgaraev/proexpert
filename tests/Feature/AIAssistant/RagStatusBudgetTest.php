@@ -86,4 +86,18 @@ final class RagStatusBudgetTest extends TestCase
         }
         $this->assertSame(1, (int) DB::selectOne('SELECT 1 AS value')->value);
     }
+
+    public function test_deadline_only_checkpoint_does_not_issue_sql(): void
+    {
+        $connection = DB::connection();
+        $statements = 0;
+        $connection->beforeExecuting(function () use (&$statements): void { $statements++; });
+        $budget = new RagStatusBudget($connection, 40);
+        $budget->checkDeadline();
+        $this->assertSame(0, $statements);
+        usleep(60_000);
+
+        $this->expectException(RagStatusBudgetExceeded::class);
+        $budget->checkDeadline();
+    }
 }

@@ -32,6 +32,7 @@ final class RagActorCoverageTest extends TestCase
     private RagIndexer $indexer;
     private ActorCoverageCollector $collector;
     private bool $permissions = true;
+    private array $permissionChecks = [];
 
     protected function setUp(): void
     {
@@ -39,7 +40,11 @@ final class RagActorCoverageTest extends TestCase
         Queue::fake();
         Cache::flush();
         $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions && in_array($permission, ['projects.view', 'finance.view'], true));
+        $authorization->shouldReceive('canCurrent')->andReturnUsing(function (User $actor, string $permission): bool {
+            $this->permissionChecks[] = $permission;
+
+            return $this->permissions && in_array($permission, ['projects.view', 'finance.view'], true);
+        });
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'payments']]));
@@ -73,6 +78,17 @@ final class RagActorCoverageTest extends TestCase
         $this->assertNull($status['source_catalog'][0]['error']);
         $this->assertSame(1, $this->collector->collections);
         Queue::assertNotPushed(RefreshRagCoverageJob::class);
+    }
+
+    public function test_disabled_collectors_do_not_trigger_unrelated_permission_checks(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $status = $this->coverage->coverageForActor($organization->id, $actor);
+
+        $this->assertSame(1, $status['source_count']);
+        $this->assertSame(['project'], array_column($status['source_catalog'], 'type'));
+        $this->assertNotContains('payments.invoice.view', $this->permissionChecks);
     }
 
     public function test_revoked_assignment_and_permission_are_applied_before_current_counts(): void
