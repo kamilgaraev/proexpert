@@ -110,7 +110,7 @@ final class AssistantRagEntityObserver
 
     public function saved(Model $model): void
     {
-        $this->queue($model);
+        $this->queue($model, true);
     }
 
     public function deleted(Model $model): void
@@ -123,11 +123,11 @@ final class AssistantRagEntityObserver
         $this->queue($model);
     }
 
-    private function queue(Model $model): void
+    private function queue(Model $model, bool $skipUnchangedGlobalEntities = false): void
     {
         $transactional = \Illuminate\Support\Facades\DB::transactionLevel() > 0;
         try {
-            $this->queueEntity($model);
+            $this->queueEntity($model, $skipUnchangedGlobalEntities);
         } catch (\Throwable $exception) {
             if ($transactional) {
                 throw $exception;
@@ -137,7 +137,7 @@ final class AssistantRagEntityObserver
         }
     }
 
-    private function queueEntity(Model $model): void
+    private function queueEntity(Model $model, bool $skipUnchangedGlobalEntities): void
     {
         if (app(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class)->paused()) {
             return;
@@ -149,17 +149,22 @@ final class AssistantRagEntityObserver
         [$sourceType, $entityType] = $definition;
         if (in_array(\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { return; }
         $entityId = $model->getKey();
-        if ($entityType === 'estimate_template' && ($model->getAttribute('is_public') || $model->getRawOriginal('is_public'))) {
+        if ($entityType === 'estimate_template' && ($model->getAttribute('is_public') || $model->getRawOriginal('is_public'))
+            && (! $skipUnchangedGlobalEntities || $this->hasMaterialChanges($model))) {
             app(GlobalRagQueue::class)->queueAfterCommit('estimate_reference', $entityType, $entityId);
         }
         $globalTypes = \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('globalCatalogEntities')
             + \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('organizationNullableCatalogs')
             + \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('publicCatalogEntities')
             + \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('globalFanoutEntities');
-        if ($sourceType === 'knowledge' || ($sourceType === 'estimate_reference' && $model->getAttribute('organization_id') === null)
+        $isGlobalEntity = $sourceType === 'knowledge' || ($sourceType === 'estimate_reference' && $model->getAttribute('organization_id') === null)
             || (isset($globalTypes[$entityType]) && ($model->getAttribute('organization_id') === null
                 || isset(\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('publicCatalogEntities')[$entityType])
-                || isset(\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('globalFanoutEntities')[$entityType])))) {
+                || isset(\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('globalFanoutEntities')[$entityType])));
+        if ($isGlobalEntity) {
+            if ($skipUnchangedGlobalEntities && ! $this->hasMaterialChanges($model)) {
+                return;
+            }
             app(GlobalRagQueue::class)->queueAfterCommit($sourceType, $entityType, $entityId);
             return;
         }
@@ -184,6 +189,14 @@ final class AssistantRagEntityObserver
             ->select(['organization_id','project_id'])->distinct()->cursor() as $source) {
             app(RagIndexingCoordinator::class)->queueEntity((int) $source->organization_id, $source->project_id, $sourceType, $entityType, $entityId);
         }
+    }
+
+    private function hasMaterialChanges(Model $model): bool
+    {
+        $dirty = $model->getDirty();
+        unset($dirty[$model->getCreatedAtColumn()], $dirty[$model->getUpdatedAtColumn()]);
+
+        return $dirty !== [];
     }
 
     private function scope(Model $model, int $depth = 0): array

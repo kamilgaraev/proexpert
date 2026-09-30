@@ -30,6 +30,7 @@ use App\Services\Logging\LoggingService;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
@@ -506,6 +507,40 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertSame(0, $revoked['archive_scan']['expected_file_count']);
         self::assertSame(0, $revoked['archive_scan']['last_file_id']);
         self::assertNull($revoked['archive_scan']['completed_at']);
+    }
+
+    public function test_coverage_aggregates_units_only_for_actor_accessible_latest_documents(): void
+    {
+        $visibleFile = $this->file('coverage-visible.txt', 'visible');
+        $visible = $this->documents->registerFile($visibleFile);
+        $privateProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id]));
+        $privateFile = $this->file('coverage-private.txt', 'private', $privateProject);
+        $private = $this->documents->registerFile($privateFile);
+        foreach ([[$visible, 2], [$private, 7]] as [$document, $count]) {
+            for ($index = 1; $index <= $count; $index++) {
+                AIAssistantDocumentUnit::query()->create([
+                    'document_id' => $document->id, 'unit_type' => $index === 1 ? 'ocr_page' : 'text_chunk',
+                    'unit_index' => $index, 'text' => 'unit', 'checksum' => hash('sha256', $document->id.'-'.$index),
+                ]);
+            }
+        }
+        $this->deniedProjects = [$privateProject->id];
+        $unitAggregateQueries = [];
+        DB::listen(static function ($query) use (&$unitAggregateQueries): void {
+            $sql = strtolower($query->sql);
+            if (str_contains($sql, 'ai_assistant_document_units') && str_contains($sql, 'group by')) {
+                $unitAggregateQueries[] = $sql;
+            }
+        });
+
+        $coverage = (new AssistantDocumentCoverageService($this->policy, $this->documents))->coverage($this->organization->id, $this->owner);
+
+        self::assertSame(1, $coverage['document_coverage']['total']);
+        self::assertSame(2, $coverage['document_coverage']['processed_units']);
+        self::assertSame(1, $coverage['document_coverage']['ocr_completed_pages']);
+        self::assertNotEmpty($unitAggregateQueries);
+        self::assertStringContainsString('where "document_id" in (select', implode("\n", $unitAggregateQueries));
+        self::assertStringContainsString('ai_assistant_documents', implode("\n", $unitAggregateQueries));
     }
 
     public function test_document_scan_command_advances_organization_batches_and_skips_inactive_assistants(): void
