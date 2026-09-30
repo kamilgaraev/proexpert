@@ -29,12 +29,23 @@ abstract class AbstractAssistantApiController
     protected function organizationId(Request $request): int
     {
         $actor = $this->actor($request);
-        $context = $request->attributes->get('current_organization_id') ?? $request->attributes->get('organization_id');
-        $organizationId = $context ?? $actor->current_organization_id;
-        if (! $actor->is_active || ! is_numeric($organizationId) || (int) $organizationId < 1 || (int) $actor->current_organization_id !== (int) $organizationId || ! $actor->belongsToOrganization((int) $organizationId)) {
+        $organizationId = $this->lifecycleOrganizationId($request);
+        if (! $actor->belongsToOrganization($organizationId)) {
             throw new AccessDeniedHttpException;
         }
-        if (! app(AIPermissionChecker::class)->canUseAssistant($actor, (int) $organizationId)) {
+        if (! app(AIPermissionChecker::class)->canUseAssistant($actor, $organizationId)) {
+            throw new AccessDeniedHttpException;
+        }
+
+        return $organizationId;
+    }
+
+    protected function lifecycleOrganizationId(Request $request): int
+    {
+        $actor = $this->actor($request);
+        $context = $request->attributes->get('current_organization_id') ?? $request->attributes->get('organization_id');
+        $organizationId = $context ?? $actor->current_organization_id;
+        if (! $actor->is_active || ! is_numeric($organizationId) || (int) $organizationId < 1 || (int) $actor->current_organization_id !== (int) $organizationId) {
             throw new AccessDeniedHttpException;
         }
 

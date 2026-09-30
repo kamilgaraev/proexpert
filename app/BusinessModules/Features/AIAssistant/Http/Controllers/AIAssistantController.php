@@ -56,7 +56,7 @@ final class AIAssistantController extends AbstractAssistantApiController
             unset($payload['async']);
             $surface = $this->surface($request);
             $started = $this->queuedChats->submit(
-                $this->organizationId($request),
+                $this->lifecycleOrganizationId($request),
                 $this->actor($request),
                 isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null,
                 $payload,
@@ -146,7 +146,7 @@ final class AIAssistantController extends AbstractAssistantApiController
 
     public function requestStatus(Request $request, string $requestId): JsonResponse
     {
-        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->status($requestId, $this->actor($request), $this->organizationId($request), $this->surface($request))));
+        return $this->respond($request, fn (): JsonResponse => $this->success($request, $this->requests->status($requestId, $this->actor($request), $this->lifecycleOrganizationId($request), $this->surface($request))));
     }
 
     public function cancelRequest(Request $request, string $requestId): JsonResponse

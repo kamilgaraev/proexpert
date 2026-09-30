@@ -59,7 +59,8 @@ final class AssistantIndexStatusService
             $result = $this->inRepeatableRead(fn (): array => $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks(
                 $actor,
                 $organizationId,
-                function (AuthorizationService $authorization) use ($organizationId, $actor, $snapshot, $checkpoint): array {
+                function (AuthorizationService $authorization) use ($organizationId, $actor, $snapshot, $checkpoint, $budget): array {
+                    $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
                     $valid = $this->validateRagProof($organizationId, $actor, $snapshot['proof']['rag'] ?? [], $checkpoint)
                         && $this->documents->validateStatusProof($organizationId, $actor, $snapshot['proof']['documents'] ?? [], $checkpoint);
                     if (! $valid) {

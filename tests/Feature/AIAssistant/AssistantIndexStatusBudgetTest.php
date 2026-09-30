@@ -31,10 +31,13 @@ use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Connection;
+use Illuminate\Database\Schema\PostgresBuilder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\Support\RagTestEmbedding;
@@ -43,6 +46,24 @@ use Tests\TestCase;
 final class AssistantIndexStatusBudgetTest extends TestCase
 {
     private int $moduleReads = 0;
+
+    public function test_schema_metadata_reference_applies_table_prefix_after_schema_resolution(): void
+    {
+        $policy = (new \ReflectionClass(AssistantDataAccessPolicy::class))->newInstanceWithoutConstructor();
+        $method = (new \ReflectionClass(AssistantDataAccessPolicy::class))->getMethod('schemaMetadataTableReference');
+
+        foreach ([
+            ['reports.monthly', ['reports', 'monthly'], ['reports', 'tenant_monthly']],
+            ['projects', ['tenant_schema', 'projects'], ['tenant_schema', 'tenant_projects']],
+        ] as [$table, $resolved, $expected]) {
+            $schemaBuilder = Mockery::mock(PostgresBuilder::class);
+            $schemaBuilder->shouldReceive('parseSchemaAndTable')->once()->with($table)->andReturn($resolved);
+            $connection = Mockery::mock(Connection::class);
+            $connection->shouldReceive('getTablePrefix')->once()->andReturn('tenant_');
+
+            $this->assertSame($expected, $method->invoke($policy, $schemaBuilder, $connection, $table));
+        }
+    }
 
     public function test_status_reads_current_modules_once_and_returns_real_empty_counts(): void
     {
@@ -376,9 +397,13 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $queries = 0;
         $identityScopeQueries = 0;
         $proofSelectQueries = 0;
-        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries): void {
+        $schemaMetadataQueries = 0;
+        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries, &$schemaMetadataQueries): void {
             $queries++;
             $sql = strtolower($query->sql);
+            if (str_contains($sql, 'from pg_attribute a') && str_contains($sql, 'join pg_type t')) {
+                $schemaMetadataQueries++;
+            }
             if (str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"')) {
                 $identityScopeQueries++;
             }
@@ -392,7 +417,12 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertSame(264, $status['source_count']);
         $this->assertSame(1, $identityScopeQueries, 'Status proof validation must compile the complete source identity ACL once.');
         $this->assertSame(1, $proofSelectQueries, 'Status proof identities must be validated by one bounded SELECT.');
+        $this->assertSame(1, $schemaMetadataQueries, 'Status proof validation must prefetch policy schema metadata in one query.');
         $this->assertLessThanOrEqual(45, $queries, 'Status proof validation compiled repeated ACL branches for a bounded identity set.');
+        $policyColumns = (new \ReflectionClass(AssistantDataAccessPolicy::class))->getProperty('columns')->getValue(app(AssistantDataAccessPolicy::class));
+        foreach (['projects', 'contracts', 'estimates'] as $table) {
+            $this->assertSame(Schema::getColumnListing($table), $policyColumns[$table] ?? null);
+        }
 
         $generation = (string) \Illuminate\Support\Str::uuid();
         $expectedSource = RagExpectedSource::query()->create([
