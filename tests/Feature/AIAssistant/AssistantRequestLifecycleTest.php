@@ -43,10 +43,12 @@ use App\Services\Project\UserProjectAccessService;
 use App\Support\AI\TokenBudgetService;
 use App\Support\AI\TokenCounter;
 use DomainException;
+use RuntimeException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Tests\Support\IsolatedPostgresTestDatabase;
@@ -410,6 +412,38 @@ final class AssistantRequestLifecycleTest extends TestCase
 
         $this->assertSame('cancelled', $request->fresh()->status);
         $this->assertSame('request_cancelled', $request->fresh()->error_code);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_generic_service_failure_is_logged_and_rethrown_after_request_is_failed(): void
+    {
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
+        $failure = new RuntimeException('private provider detail');
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldReceive('executeStartedRequest')->once()->andReturnUsing(function (AssistantRequest $activeRequest) use ($failure): array {
+            $this->lifecycle->fail($activeRequest, 'request_failed');
+            throw $failure;
+        });
+        app()->instance(AIAssistantService::class, $assistant);
+        Log::shouldReceive('error')->once()->withArgs(function (string $event, array $context) use ($failure, $request): bool {
+            return $event === 'ai.assistant.queued_request_failed'
+                && $context === [
+                    'request_id' => $request->request_id,
+                    'exception_class' => $failure::class,
+                    'exception_file' => $failure->getFile(),
+                    'exception_line' => $failure->getLine(),
+                ];
+        });
+
+        try {
+            (new ExecuteAssistantChatJob($request->id))->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
+            $this->fail('The original service exception must be rethrown.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame($failure, $exception);
+        }
+
+        $this->assertSame('failed', $request->fresh()->status);
+        $this->assertSame('request_failed', $request->fresh()->error_code);
         $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
     }
 

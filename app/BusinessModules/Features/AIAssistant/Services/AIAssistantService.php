@@ -2894,16 +2894,26 @@ class AIAssistantService
         }
         try {
             $this->executionCheckpoint();
-            if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id)
-                || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName())) {
-                return [];
-            }
-            return $tool->compactForActor($actor, (int) $actor->current_organization_id);
+            $read = function () use ($actor, $tool): array {
+                if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id)
+                    || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName())) {
+                    return [];
+                }
+
+                return $tool->compactForActor($actor, (int) $actor->current_organization_id);
+            };
+            $hints = $this->dataAccess !== null && app()->bound(AssistantRequestExecutionContext::class)
+                ? $this->dataAccess->withCurrentChecks($actor, (int) $actor->current_organization_id, $read, false,
+                    fn (): int => app(AssistantRequestExecutionContext::class)->remainingMilliseconds())
+                : $read();
+            $this->executionCheckpoint();
+
+            return $hints;
         } catch (AssistantRequestCancelled|\App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded $exception) {
             throw $exception;
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
             $this->executionCheckpoint();
-            return [];
+            throw $exception;
         }
     }
 
