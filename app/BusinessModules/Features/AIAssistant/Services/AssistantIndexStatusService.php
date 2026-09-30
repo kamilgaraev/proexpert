@@ -173,14 +173,13 @@ final class AssistantIndexStatusService
     /** @return array<string, mixed> */
     private function captureRagProof(int $organizationId, User $actor, callable $checkpoint, ?array $projectionProof): array
     {
+        $checkpoint();
         $sources = [];
-        foreach ($this->access->sourceIdentityQueries(RagSource::query(), $actor, $organizationId, $checkpoint) as $query) {
-            $checkpoint();
-            foreach ($query->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type',
-                'ai_rag_sources.entity_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key',
-                'ai_rag_sources.source_version', 'ai_rag_sources.checksum'])->get() as $source) {
-                $sources[(string) $source->id] = $this->sourceProofRow($source);
-            }
+        $sourceQuery = $this->access->applyToSources(RagSource::query(), $actor, $organizationId);
+        foreach ($sourceQuery->select(['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type',
+            'ai_rag_sources.entity_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key',
+            'ai_rag_sources.source_version', 'ai_rag_sources.checksum'])->get() as $source) {
+            $sources[(string) $source->id] = $this->sourceProofRow($source);
         }
 
         $generation = is_string($projectionProof['projection_generation'] ?? null)
@@ -223,17 +222,18 @@ final class AssistantIndexStatusService
         foreach (array_chunk(array_keys($proof), self::PROOF_BATCH_SIZE) as $ids) {
             $checkpoint();
             $query = (clone $base)->whereIn(($expected ? 'ai_rag_expected_sources' : 'ai_rag_sources').'.id', $ids);
+            $columns = $expected
+                ? ['ai_rag_expected_sources.id', 'ai_rag_expected_sources.source_type', 'ai_rag_expected_sources.entity_type',
+                    'ai_rag_expected_sources.entity_id', 'ai_rag_expected_sources.project_id', 'ai_rag_expected_sources.identity_project_id',
+                    'ai_rag_expected_sources.identity_part_key', 'ai_rag_expected_sources.checksum']
+                : ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id',
+                    'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key', 'ai_rag_sources.source_version', 'ai_rag_sources.checksum'];
+            $scoped = $expected
+                ? $this->access->applyToExpectedSources($query, $actor, $organizationId)
+                : $this->access->applyToSources($query, $actor, $organizationId);
             $visible = [];
-            foreach ($this->access->sourceIdentityQueries($query, $actor, $organizationId, $checkpoint, $expected) as $scoped) {
-                $columns = $expected
-                    ? ['ai_rag_expected_sources.id', 'ai_rag_expected_sources.source_type', 'ai_rag_expected_sources.entity_type',
-                        'ai_rag_expected_sources.entity_id', 'ai_rag_expected_sources.project_id', 'ai_rag_expected_sources.identity_project_id',
-                        'ai_rag_expected_sources.identity_part_key', 'ai_rag_expected_sources.checksum']
-                    : ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id',
-                        'ai_rag_sources.project_id', 'ai_rag_sources.identity_part_key', 'ai_rag_sources.source_version', 'ai_rag_sources.checksum'];
-                foreach ($scoped->select($columns)->get() as $row) {
-                    $visible[(string) $row->id] = $expected ? $this->expectedProofRow($row) : $this->sourceProofRow($row);
-                }
+            foreach ($scoped->select($columns)->get() as $row) {
+                $visible[(string) $row->id] = $expected ? $this->expectedProofRow($row) : $this->sourceProofRow($row);
             }
             $expectedRows = array_intersect_key($proof, array_flip($ids));
             ksort($visible);

@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Http\Resources\RagIndexStatusResource;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
@@ -20,9 +21,13 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Modules\PackageCatalogService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\Request;
@@ -271,6 +276,103 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertFalse($revoked['status_available']);
         $this->assertNull($revoked['source_count']);
         Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
+    }
+
+    public function test_status_validation_cost_stays_bounded_for_multiple_source_identities_and_document_parents(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $organization = $fixture->organization;
+        $actor = $fixture->owner;
+        $project = Project::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $organization->id,
+            'is_archived' => false,
+        ]));
+        DB::table('organization_user')->where('organization_id', $organization->id)->where('user_id', $actor->id)
+            ->update(['project_access_mode' => 'assigned_projects']);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'owner']);
+        $contractor = Contractor::withoutEvents(fn () => Contractor::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'RAG status proof test',
+        ]));
+        $contract = Contract::withoutEvents(fn () => Contract::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'RAG-STATUS-'.$organization->id,
+            'date' => '2026-09-30',
+            'status' => 'active',
+            'total_amount' => '1000.00',
+        ]));
+        RagSource::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+            'title' => 'Status project source', 'checksum' => hash('sha256', 'status-project-source'),
+        ]);
+        RagSource::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+            'source_type' => 'contract', 'entity_type' => 'contract', 'entity_id' => (string) $contract->id,
+            'title' => 'Status contract source', 'checksum' => hash('sha256', 'status-contract-source'),
+        ]);
+        foreach ([['project', Project::class, $project->id], ['contract', Contract::class, $contract->id]] as [$parentType, $modelType, $parentId]) {
+            $path = 'org-'.$organization->id.'/rag-status-'.$parentType.'.pdf';
+            $file = File::withoutEvents(fn () => File::query()->create([
+                'organization_id' => $organization->id,
+                'user_id' => $actor->id,
+                'fileable_type' => $modelType,
+                'fileable_id' => $parentId,
+                'name' => 'rag-status-'.$parentType.'.pdf',
+                'original_name' => 'rag-status-'.$parentType.'.pdf',
+                'path' => $path,
+                'disk' => 's3',
+                'mime_type' => 'application/pdf',
+                'size' => 128,
+            ]));
+            $document = AIAssistantDocument::withoutEvents(fn () => AIAssistantDocument::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'file_id' => $file->id,
+                'parent_entity_type' => $parentType,
+                'parent_entity_id' => (string) $parentId,
+                'storage_path' => $path,
+                'filename' => 'rag-status-'.$parentType.'.pdf',
+                'mime_type' => 'application/pdf',
+                'checksum' => hash('sha256', $path),
+                'size_bytes' => 128,
+                'status' => 'ready',
+            ]));
+            RagSource::query()->create([
+                'organization_id' => $organization->id, 'project_id' => $project->id,
+                'source_type' => 'file_document', 'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id,
+                'title' => 'Status document source '.$parentType, 'checksum' => hash('sha256', 'document-'.$path),
+            ]);
+        }
+
+        $service = app(AssistantIndexStatusService::class);
+        $this->warmSnapshot($service, $organization->id, $actor->id);
+        $queries = 0;
+        DB::listen(static function () use (&$queries): void { $queries++; });
+        $status = $service->status($organization->id, $actor);
+
+        $this->assertTrue($status['status_available']);
+        $this->assertSame(4, $status['source_count']);
+        $this->assertLessThanOrEqual(45, $queries, 'Status proof validation compiled repeated ACL branches for a bounded identity set.');
+
+        RagSource::query()->where('organization_id', $organization->id)->where('source_type', 'contract')
+            ->update(['checksum' => hash('sha256', 'changed-contract-source')]);
+        $changed = $service->status($organization->id, $actor);
+        $this->assertFalse($changed['status_available']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, function (RefreshAssistantIndexStatusJob $job) use ($service): bool {
+            $job->handle($service, app(AssistantDataAccessPolicy::class));
+
+            return true;
+        });
+        $this->assertTrue($service->status($organization->id, $actor)['status_available']);
+
+        $actor->assignedProjects()->detach($project->id);
+        $revoked = $service->status($organization->id, $actor);
+        $this->assertFalse($revoked['status_available']);
+        $this->assertNull($revoked['source_count']);
+        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 2);
     }
 
     public function test_membership_denial_is_not_replaced_by_unavailable_status(): void

@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLimiter;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
@@ -20,6 +23,7 @@ use App\Models\User;
 use App\Services\Credits\AICreditService;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
+use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
@@ -39,11 +43,19 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
 
     private int $freshRequestReads = 0;
 
+    private int $maximumFreshRequestReads = 64;
+
     private int $membershipQueries = 0;
 
     private bool $allowed = true;
 
     private bool $expireDuringFreshRead = false;
+
+    private int $permissionChecks = 0;
+
+    private ?int $permissionInterruptionAt = null;
+
+    private ?Closure $permissionInterruption = null;
 
     private AssistantRequest $request;
 
@@ -138,6 +150,70 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->execution->assertCanContinue();
     }
 
+    public function test_static_catalog_does_not_repeat_global_authorization_for_each_type(): void
+    {
+        $this->prepareActualChain();
+        $this->maximumFreshRequestReads = 10000;
+        $catalogChecks = 0;
+        $catalog = $this->readPhase(function () use (&$catalogChecks): array {
+            $before = $this->freshRequestReads;
+            $result = (new ReflectionMethod(AIAssistantService::class, 'buildDomainCapabilityHints'))->invoke($this->service, []);
+            $catalogChecks = $this->freshRequestReads - $before;
+
+            return $result;
+        });
+
+        $this->assertGreaterThan(50, count($catalog['domains']));
+        $this->assertLessThanOrEqual(10, $catalogChecks);
+    }
+
+    public function test_cancellation_during_catalog_is_rejected_by_fresh_final_checkpoint(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AssistantRequestCancelled::class);
+        $this->catalogWithInterruption(function (): void {
+            $this->request->cancel_requested_at = now();
+        });
+    }
+
+    public function test_permission_revoked_during_catalog_cannot_return_partial_metadata(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AuthorizationException::class);
+        $this->catalogWithInterruption(function (): void {
+            $this->allowed = false;
+        });
+    }
+
+    public function test_catalog_checkpoint_preserves_read_phase_deadline(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AssistantRequestDeadlineExceeded::class);
+        $this->catalogWithInterruption(function (): void {
+            (new ReflectionProperty(AssistantRequestExecutionContext::class, 'operationDeadlines'))->setValue($this->execution, [hrtime(true) - 1]);
+        });
+    }
+
+    public function test_failed_catalog_does_not_masquerade_as_empty_metadata(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('controlled_catalog_failure');
+        $this->catalogWithInterruption(static function (): void {
+            throw new RuntimeException('controlled_catalog_failure');
+        });
+    }
+
+    private function catalogWithInterruption(Closure $interrupt): void
+    {
+        $this->readPhase(function () use ($interrupt): array {
+            $this->permissionInterruptionAt = $this->permissionChecks + 20;
+            $this->permissionInterruption = $interrupt;
+
+            return (new ReflectionMethod(AIAssistantService::class, 'buildDomainCapabilityHints'))->invoke($this->service, []);
+        });
+    }
+
     private function readPhase(callable $read): array
     {
         return (new ReflectionMethod(AIAssistantService::class, 'readPhase'))->invoke($this->service, $read, $this->actor, 38);
@@ -151,7 +227,7 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $connection->method('select')->willReturnCallback(function (string $query): array {
             if (str_contains($query, 'ai_assistant_requests')) {
                 $this->freshRequestReads++;
-                if ($this->freshRequestReads > 64) {
+                if ($this->freshRequestReads > $this->maximumFreshRequestReads) {
                     throw new RuntimeException('recursive_lifecycle_checkpoint_safety_limit');
                 }
                 if ($this->expireDuringFreshRead) {
@@ -192,9 +268,20 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->request->exists = true;
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('forCurrentChecks')->willReturnSelf();
-        $authorization->method('canCurrent')->willReturnCallback(fn (): bool => $this->allowed);
+        $authorization->method('canCurrent')->willReturnCallback(function (): bool {
+            $this->permissionChecks++;
+            if ($this->permissionInterruption !== null && $this->permissionChecks >= $this->permissionInterruptionAt) {
+                $interrupt = $this->permissionInterruption;
+                $this->permissionInterruption = null;
+                $interrupt();
+            }
+
+            return $this->allowed;
+        });
         $modules = $this->createMock(OrganizationEntitlementService::class);
-        $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant'])]));
+        $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $moduleSlugs = array_unique(['ai-assistant', ...array_map(fn ($definition): string => $definition->module, $catalog->all())]);
+        $modules->method('getEffectiveModules')->willReturn(collect(array_map(fn (string $slug): Module => new Module(['slug' => $slug]), $moduleSlugs)));
         $this->policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class), $modules);
         app()->instance(AssistantDataAccessPolicy::class, $this->policy);
         $lifecycle = new AssistantRequestLifecycle((new ReflectionClass(AICreditService::class))->newInstanceWithoutConstructor(), new AIPermissionChecker($authorization),
@@ -204,5 +291,10 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         app()->instance(AssistantReadConcurrencyLimiter::class, new AssistantReadConcurrencyLimiter);
         $this->service = (new ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
         (new ReflectionProperty(AIAssistantService::class, 'dataAccess'))->setValue($this->service, $this->policy);
+        (new ReflectionProperty(AIAssistantService::class, 'activeActor'))->setValue($this->service, $this->actor);
+        (new ReflectionProperty(AIAssistantService::class, 'permissionChecker'))->setValue($this->service, new AIPermissionChecker($authorization));
+        $registry = new AIToolRegistry;
+        $registry->registerTool(new DiscoverAssistantDomainCapabilitiesTool($catalog, $this->policy, $authorization));
+        (new ReflectionProperty(AIAssistantService::class, 'toolRegistry'))->setValue($this->service, $registry);
     }
 }

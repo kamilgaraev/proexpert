@@ -58,20 +58,13 @@ final class ExecuteAssistantChatJob implements ShouldQueue
         } catch (AssistantRequestDeadlineExceeded) {
             $this->failAndReleaseExecutionContext($requests, $request, 'request_deadline_exceeded', $context);
         } catch (Throwable $exception) {
-            try {
-                $context?->assertCanContinue();
-            } catch (AssistantRequestCancelled) {
-                $this->failAndReleaseExecutionContext($requests, $request, 'request_cancelled', $context);
-
-                return;
-            } catch (AssistantRequestDeadlineExceeded) {
-                $this->failAndReleaseExecutionContext($requests, $request, 'request_deadline_exceeded', $context);
-
-                return;
-            } catch (Throwable) {
-            }
             $this->failAndReleaseExecutionContext($requests, $request, 'request_failed', $context);
-            Log::error('ai.assistant.queued_request_failed', ['request_id' => $request->request_id, 'exception_class' => $exception::class]);
+            Log::error('ai.assistant.queued_request_failed', [
+                'request_id' => $request->request_id,
+                'exception_class' => $exception::class,
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
+            ]);
             throw $exception;
         } finally {
             $policy->setTrustedSurface(null);
