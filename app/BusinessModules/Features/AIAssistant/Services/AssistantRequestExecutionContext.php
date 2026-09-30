@@ -27,6 +27,8 @@ final class AssistantRequestExecutionContext
 
     private ?int $cleanupDeadlineNanoseconds = null;
 
+    private bool $lifecycleCheckpointInProgress = false;
+
     public function __construct(
         private readonly AssistantRequestLifecycle $lifecycle,
         private readonly AssistantRequest $request,
@@ -52,8 +54,19 @@ final class AssistantRequestExecutionContext
 
             return;
         }
-        $this->lifecycle->checkpoint($this->request, $this->actor);
-        $this->assertWithinDeadline();
+        if ($this->lifecycleCheckpointInProgress) {
+            $this->remainingMilliseconds();
+
+            return;
+        }
+
+        $this->lifecycleCheckpointInProgress = true;
+        try {
+            $this->lifecycle->checkpoint($this->request, $this->actor);
+            $this->assertWithinDeadline();
+        } finally {
+            $this->lifecycleCheckpointInProgress = false;
+        }
     }
 
     public function assertWithinDeadline(): void
