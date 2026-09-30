@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestPhaseTimer;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\Models\User;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -45,6 +46,7 @@ final class ExecuteAssistantChatJob implements ShouldQueue
             return;
         }
         $context = null;
+        $startupTimer = AssistantRequestPhaseTimer::start($request->request_id, 'job_startup');
         try {
             $actor = User::query()->findOrFail($request->user_id);
             $context = $requests->createExecutionContext($request, $actor);
@@ -52,12 +54,17 @@ final class ExecuteAssistantChatJob implements ShouldQueue
             $context->activate();
             $policy->setTrustedSurface($surface);
             $context->assertCanContinue();
-            app(AIAssistantService::class)->executeStartedRequest($request, $actor);
-        } catch (AssistantRequestCancelled) {
+            $startupTimer->finish();
+            $service = AssistantRequestPhaseTimer::run($request->request_id, 'service_graph', fn (): AIAssistantService => app(AIAssistantService::class));
+            $service->executeStartedRequest($request, $actor);
+        } catch (AssistantRequestCancelled $exception) {
+            $startupTimer->finish($exception);
             $this->failAndReleaseExecutionContext($requests, $request, 'request_cancelled', $context);
-        } catch (AssistantRequestDeadlineExceeded) {
+        } catch (AssistantRequestDeadlineExceeded $exception) {
+            $startupTimer->finish($exception);
             $this->failAndReleaseExecutionContext($requests, $request, 'request_deadline_exceeded', $context);
         } catch (Throwable $exception) {
+            $startupTimer->finish($exception);
             $this->failAndReleaseExecutionContext($requests, $request, 'request_failed', $context);
             Log::error('ai.assistant.queued_request_failed', [
                 'request_id' => $request->request_id,

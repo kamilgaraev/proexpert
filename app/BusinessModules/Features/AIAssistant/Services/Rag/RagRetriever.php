@@ -36,19 +36,19 @@ final class RagRetriever
      * @param  array<string, mixed>  $requestContext
      * @return array<int, RagSearchResult>
      */
-    public function search(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null): array
+    public function search(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null): array
     {
-        return $this->searchWithDiagnostics($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper)['results'];
+        return $this->searchWithDiagnostics($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard)['results'];
     }
 
-    public function searchWithDiagnostics(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null): array
+    public function searchWithDiagnostics(string $query, int $organizationId, User $user, array $requestContext = [], ?callable $checkpoint = null, ?callable $readWrapper = null, ?callable $readGuard = null): array
     {
         $diagnostics = ['status' => 'available', 'error_code' => null, 'semantic_available' => true, 'lexical_used' => false];
-        $results = $this->executeSearch($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $diagnostics);
+        $results = $this->executeSearch($query, $organizationId, $user, $requestContext, $checkpoint, $readWrapper, $readGuard, $diagnostics);
         return ['results' => $results, 'diagnostics' => $diagnostics];
     }
 
-    private function executeSearch(string $query, int $organizationId, User $user, array $requestContext, ?callable $checkpoint, ?callable $readWrapper, array &$diagnostics): array
+    private function executeSearch(string $query, int $organizationId, User $user, array $requestContext, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard, array &$diagnostics): array
     {
         $checkpoint?->__invoke();
         if (! $this->belongsToOrganization($user, $organizationId)) {
@@ -119,7 +119,8 @@ final class RagRetriever
                 [],
                 $user,
                 $checkpoint,
-                $readWrapper
+                $readWrapper,
+                $readGuard
             );
             if ($results !== []) { $diagnostics['status'] = 'partial'; }
             return $results;
@@ -127,7 +128,7 @@ final class RagRetriever
 
         if (! $cacheHit) { $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $requestProjectId); }
         $checkpoint?->__invoke();
-        $accessibleSources = $this->timed('source_acl', $organizationId, $user, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $user, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $embedding, [], $readCheckpoint), $checkpoint, $organizationId, $readWrapper));
+        $accessibleSources = $this->timed('source_acl', $organizationId, $user, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $user, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $embedding, [], $readCheckpoint), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $accessibleSources = RagSource::query()->whereIntegerInRaw('id', $accessibleSources)->select('id');
 
         $results = [];
@@ -141,9 +142,9 @@ final class RagRetriever
             $requestProjectId,
             $includeOrganizationWideSources,
             $accessibleSources
-        ), $checkpoint, $organizationId, $readWrapper));
+        ), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $checkpoint?->__invoke();
-        $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper);
+        $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard);
         foreach ($rows as $row) {
             $checkpoint?->__invoke();
             $projectId = $row->project_id !== null ? (int) $row->project_id : null;
@@ -191,7 +192,8 @@ final class RagRetriever
                 [],
                 $user,
                 $checkpoint,
-                $readWrapper
+                $readWrapper,
+                $readGuard
             );
         }
 
@@ -246,19 +248,23 @@ final class RagRetriever
         }
     }
 
-    private function runRead(callable $operation, ?callable $checkpoint, int $organizationId, ?callable $readWrapper = null): mixed
+    private function runRead(callable $operation, ?callable $checkpoint, int $organizationId, ?callable $readWrapper = null, ?callable $readGuard = null): mixed
     {
-        $read = function (?callable $permitCheckpoint = null) use ($operation, $checkpoint, $readWrapper): mixed {
-            $currentCheckpoint = $permitCheckpoint ?? $checkpoint;
-            $currentCheckpoint?->__invoke();
-            $result = $readWrapper === null ? $operation($currentCheckpoint) : $readWrapper(fn () => $operation($currentCheckpoint));
-            $currentCheckpoint?->__invoke();
+        $read = function (?callable $permitCheckpoint = null) use ($operation, $checkpoint, $readGuard, $readWrapper): mixed {
+            if ($readGuard !== null) { $checkpoint?->__invoke(); }
+            $currentReadGuard = $permitCheckpoint ?? $readGuard ?? $checkpoint;
+            $currentReadGuard?->__invoke();
+            $result = $readWrapper === null ? $operation($currentReadGuard) : $readWrapper(fn () => $operation($currentReadGuard));
+            $currentReadGuard?->__invoke();
+            if ($readGuard !== null) { $checkpoint?->__invoke(); }
             return $result;
         };
-        return $checkpoint === null || $this->readLimiter === null ? $read() : $this->readLimiter->run($read, $checkpoint, $organizationId);
+        return $checkpoint === null || $this->readLimiter === null
+            ? $read()
+            : $this->readLimiter->run($read, $checkpoint, $organizationId, $readGuard);
     }
 
-    private function readableRows(iterable $rows, User $actor, int $organizationId, ?callable $checkpoint, ?callable $readWrapper): array
+    private function readableRows(iterable $rows, User $actor, int $organizationId, ?callable $checkpoint, ?callable $readWrapper, ?callable $readGuard): array
     {
         return $this->timed('result_acl', $organizationId, $actor, fn (): array => $this->runRead(function (?callable $readCheckpoint) use ($rows, $actor, $organizationId): array {
             return $this->accessPolicy()->withCurrentChecks($actor, $organizationId, function () use ($rows, $actor, $organizationId, $readCheckpoint): array {
@@ -272,7 +278,7 @@ final class RagRetriever
                 }
                 return $visible;
             }, fresh: true, checkpoint: $readCheckpoint);
-        }, $checkpoint, $organizationId, $readWrapper));
+        }, $checkpoint, $organizationId, $readWrapper, $readGuard));
     }
 
     private function authorizedSourceIds(int $organizationId, User $actor, array $sourceTypes, array $projectIds, ?int $projectId, bool $includeOrganizationWideSources, ?array $embedding, array $terms, ?callable $checkpoint): array
@@ -411,7 +417,8 @@ final class RagRetriever
         Builder|array $accessibleSources,
         User $actor,
         ?callable $checkpoint = null,
-        ?callable $readWrapper = null
+        ?callable $readWrapper = null,
+        ?callable $readGuard = null
     ): array {
         $terms = $this->lexicalTerms($query);
         if ($terms === []) {
@@ -419,7 +426,7 @@ final class RagRetriever
         }
 
         $checkpoint?->__invoke();
-        $accessibleSources = $this->timed('lexical_source_acl', $organizationId, $actor, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $actor, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, null, $terms, $readCheckpoint), $checkpoint, $organizationId, $readWrapper));
+        $accessibleSources = $this->timed('lexical_source_acl', $organizationId, $actor, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $actor, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, null, $terms, $readCheckpoint), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $accessibleSources = RagSource::query()->whereIntegerInRaw('id', $accessibleSources)->select('id');
         $checkpoint?->__invoke();
         $order = implode(' + ', array_fill(0, count($terms), "CASE WHEN lower(c.content || ' ' || s.title) LIKE ? THEN 1 ELSE 0 END"));
@@ -475,10 +482,10 @@ final class RagRetriever
             ])
             ->orderByRaw('('.$order.') DESC', $orderBindings)
             ->limit(max($limit * 12, 48))
-            ->get(), $checkpoint, $organizationId, $readWrapper));
+            ->get(), $checkpoint, $organizationId, $readWrapper, $readGuard));
         $checkpoint?->__invoke();
 
-        return collect($this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper))
+        return collect($this->readableRows($rows, $actor, $organizationId, $checkpoint, $readWrapper, $readGuard))
             ->map(function (object $row) use ($terms): object {
                 $row->lexical_score = $this->lexicalScore($row, $terms);
 
