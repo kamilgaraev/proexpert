@@ -266,6 +266,7 @@ final class AssistantRequestLifecycle
             $actor->refresh();
             $this->assertActive($current, $actor);
             $this->assertResponseAccess($response, $actor, $current->organization_id);
+            $this->assertActor($current, $actor);
             $reservation = $this->reservation($current);
             $projected = $useful ? $this->credits->calculatedChargeMinor($reservation) : 0;
             $charged = $this->credits->finalize($reservation, 0, $useful);
@@ -452,18 +453,27 @@ final class AssistantRequestLifecycle
             || !$actor->belongsToOrganization($request->organization_id)) {
             throw new AssistantRequestCancelled();
         }
-        $this->assertActor($request, $actor);
+        $this->assertActor($request, $actor, true);
         if ($request->status !== 'running' || $request->cancel_requested_at !== null || $request->lease_expires_at->isPast()) {
             throw new AssistantRequestCancelled();
         }
         $this->activeExecutionContext()?->assertWithinDeadline();
     }
 
-    private function assertActor(AssistantRequest $request, User $actor): void
+    private function assertActor(AssistantRequest $request, User $actor, bool $organizationMembershipAlreadyChecked = false): void
     {
         if ($request->user_id !== (int) $actor->id || !$actor->is_active || (int) $actor->current_organization_id !== $request->organization_id
-            || !$actor->belongsToOrganization($request->organization_id) || !$this->permissions->canUseAssistant($actor, $request->organization_id)
-            || ($request->conversation_id !== null && $this->conversations->findAccessibleConversation($request->conversation_id, $actor, $request->organization_id, true) === null)) {
+            || ($request->conversation_id === null && !$organizationMembershipAlreadyChecked && !$actor->belongsToOrganization($request->organization_id))) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+        if ($request->conversation_id !== null) {
+            if ($this->conversations->findAccessibleConversation($request->conversation_id, $actor, $request->organization_id, true) === null) {
+                throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+            }
+
+            return;
+        }
+        if (!$this->permissions->canUseAssistant($actor, $request->organization_id)) {
             throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
         }
     }
@@ -509,11 +519,23 @@ final class AssistantRequestLifecycle
         if (!is_array($refs)) {
             throw new AuthorizationException(trans_message('ai_assistant.sources_access_revoked'));
         }
-        foreach ($refs as $ref) {
-            if (!is_array($ref) || !$this->dataAccess->canReadReference($actor, $organizationId, $ref)) {
-                throw new AuthorizationException(trans_message('ai_assistant.sources_access_revoked'));
+        $execution = app()->bound(AssistantRequestExecutionContext::class)
+            ? app(AssistantRequestExecutionContext::class)
+            : null;
+        $checkpoint = $execution === null ? null : fn (): int => $execution->remainingMilliseconds();
+        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint);
+        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint);
+    }
+
+    private function assertResponseReferences(array $refs, User $actor, int $organizationId, ?callable $checkpoint): void
+    {
+        $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId): void {
+            foreach ($refs as $ref) {
+                if (!is_array($ref) || !$this->dataAccess->canReadReference($actor, $organizationId, $ref)) {
+                    throw new AuthorizationException(trans_message('ai_assistant.sources_access_revoked'));
+                }
             }
-        }
+        }, true, $checkpoint);
     }
 
     private function reservation(AssistantRequest $request): AICreditReservation

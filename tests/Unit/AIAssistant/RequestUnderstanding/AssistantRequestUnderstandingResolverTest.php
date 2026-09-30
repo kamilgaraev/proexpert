@@ -154,6 +154,49 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         $this->assertContains('project', $result->requestedEntities);
     }
 
+    #[DataProvider('sectionNavigationProvider')]
+    public function test_bare_registered_sections_are_navigation_without_entity_lookup(string $message, string $domain): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve($message, [
+            'source_module' => 'ai-assistant', 'source_route' => '/dashboard',
+            'ui_state' => ['pathname' => '/dashboard', 'assistant_path' => '/assistant'],
+        ]);
+
+        $this->assertSame('navigate', $result->primaryIntent);
+        $this->assertContains(['type' => 'section_navigation', 'value' => $domain], $result->evidence);
+    }
+
+    public static function sectionNavigationProvider(): array
+    {
+        return [
+            ['Где сметы?', 'estimates'], ['Как найти раздел проектов?', 'projects'],
+            ['Куда перейти в склад?', 'warehouse'], ['Где находится раздел платежей?', 'payments'],
+            ['Открой договоры', 'contracts'], ['Где единицы измерения?', 'measurement_units'],
+        ];
+    }
+
+    #[DataProvider('nonSectionNavigationProvider')]
+    public function test_entity_scopes_and_semantic_requests_are_not_bare_section_navigation(string $message, array $context): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve($message, $context);
+
+        $this->assertNotContains('section_navigation', array_column($result->evidence, 'type'));
+    }
+
+    public static function nonSectionNavigationProvider(): array
+    {
+        return [
+            ['Где смета «Северный дом»?', []], ['Где смета №5?', []], ['Где проект Альфа?', []],
+            ['Найди сметы', []], ['Где сметы за май?', []], ['Где сметы по проекту?', []],
+            ['Где сметы? Без навигации.', []], ['Где сметы?', ['filters' => ['status' => 'approved']]],
+            ['Где проекты?', ['period' => ['from' => '2026-01-01']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'estimate', 'id' => 5]]]],
+            ['Где сметы?', ['selected_estimate_id' => 5]],
+            ['Где сметы?', ['ui_state' => ['selected_estimate' => ['estimate_id' => 5]]]],
+            ['Где договоры с заказчиком?', []],
+        ];
+    }
+
     #[DataProvider('negativeReportProvider')]
     public function test_negative_report_and_file_words_do_not_create_generation_intent(string $message, string $constraint): void
     {

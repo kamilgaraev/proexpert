@@ -46,6 +46,7 @@ use DomainException;
 use RuntimeException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
@@ -63,6 +64,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     private Organization $organization;
     private User $actor;
     private bool $assistantEnabled = true;
+    private int $assistantGateChecks = 0;
     private ?string $connectionName = null;
     private ?array $originalConnectionConfiguration = null;
 
@@ -115,7 +117,10 @@ final class AssistantRequestLifecycleTest extends TestCase
         $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
         $permissions = $this->mock(AIPermissionChecker::class);
-        $permissions->shouldReceive('canUseAssistant')->andReturnUsing(fn (User $user, int $organizationId): bool => $this->assistantEnabled && $policy->belongsToOrganization($user, $organizationId));
+        $permissions->shouldReceive('canUseAssistant')->andReturnUsing(function (User $user, int $organizationId) use ($policy): bool {
+            $this->assistantGateChecks++;
+            return $this->assistantEnabled && $policy->belongsToOrganization($user, $organizationId);
+        });
         $this->conversations = new ConversationManager($policy);
         $this->app->instance(ConversationManager::class, $this->conversations);
         $this->credits = new AICreditService;
@@ -542,6 +547,118 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
     }
 
+    public function test_linked_conversation_claim_uses_one_authoritative_assistant_gate(): void
+    {
+        $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Задача');
+        $payload = $this->quote([], $this->actor, $conversation->id);
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, $conversation->id, $payload, 'admin')['request'];
+        $this->assistantGateChecks = 0;
+
+        $claimed = $this->lifecycle->claimQueued($request->id);
+
+        $this->assertNotNull($claimed);
+        $this->assertSame(1, $this->assistantGateChecks);
+    }
+
+    public function test_disabled_assistant_module_blocks_linked_conversation_claim(): void
+    {
+        $conversation = $this->conversations->createConversation($this->organization->id, $this->actor, 'Задача');
+        $payload = $this->quote([], $this->actor, $conversation->id);
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, $conversation->id, $payload, 'admin')['request'];
+        $this->assistantEnabled = false;
+
+        $this->assertNull($this->lifecycle->claimQueued($request->id));
+        $this->assertSame('failed', $request->fresh()->status);
+        $this->assertSame('access_revoked', $request->fresh()->error_code);
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_response_access_revalidates_all_references_in_a_second_fresh_pass(): void
+    {
+        $first = $this->member('Источник один');
+        $second = $this->member('Источник два');
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'admin')['request'];
+        $peopleChecks = 0;
+        $this->usePeopleReferencePolicy(function (User $user, string $permission) use (&$peopleChecks): bool {
+            if ($permission === 'users.view') {
+                $peopleChecks++;
+                return true;
+            }
+
+            return true;
+        });
+        $targets = [(string) $first->id => 0, (string) $second->id => 0];
+        DB::listen(function (QueryExecuted $query) use (&$targets): void {
+            if (!str_contains(strtolower($query->sql), 'users')) {
+                return;
+            }
+            foreach ($targets as $id => $_) {
+                if (in_array((int) $id, array_map('intval', $query->bindings), true)) {
+                    $targets[$id]++;
+                }
+            }
+        });
+
+        $this->lifecycle->complete($request, $this->actor, [
+            'message' => ['content' => 'Проверены источники', 'metadata' => ['source_refs' => [$this->peopleReference($first), $this->peopleReference($second)]]],
+        ]);
+
+        $this->assertSame(2, $peopleChecks);
+        $this->assertSame([2, 2], array_values($targets));
+        $this->assertSame('completed', $request->fresh()->status);
+    }
+
+    public function test_domain_access_revoked_after_first_reference_pass_blocks_publication_and_charge(): void
+    {
+        $first = $this->member('Источник один');
+        $second = $this->member('Источник два');
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'admin')['request'];
+        $peopleChecks = 0;
+        $this->usePeopleReferencePolicy(function (User $user, string $permission) use (&$peopleChecks): bool {
+            if ($permission === 'users.view') {
+                $peopleChecks++;
+                return $peopleChecks === 1;
+            }
+
+            return true;
+        });
+        $published = false;
+
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->complete($request, $this->actor, [
+            'message' => ['content' => 'Не публиковать', 'metadata' => ['source_refs' => [$this->peopleReference($first), $this->peopleReference($second)]]],
+        ], true, function () use (&$published): void {
+            $published = true;
+        }));
+
+        $this->assertSame(2, $peopleChecks);
+        $this->assertFalse($published);
+        $this->assertSame('running', $request->fresh()->status);
+        $this->assertSame('reserved', AICreditReservation::query()->findOrFail($request->reservation_id)->status);
+        $this->assertSame(0, AICreditLedgerEntry::query()->where('type', 'consume')->count());
+    }
+
+    public function test_assistant_access_is_checked_again_after_source_validation_before_charge(): void
+    {
+        $source = $this->member('Источник');
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'admin')['request'];
+        $assistantChecks = 0;
+        $this->usePeopleReferencePolicy(
+            static fn (User $user, string $permission): bool => true,
+            function (User $user, int $organizationId) use (&$assistantChecks): bool {
+                return ++$assistantChecks === 1;
+            },
+        );
+
+        $this->assertOperationThrows(AuthorizationException::class, fn () => $this->lifecycle->complete($request, $this->actor, [
+            'message' => ['content' => 'Не публиковать', 'metadata' => ['source_refs' => [$this->peopleReference($source)]]],
+        ]));
+
+        $this->assertSame(2, $assistantChecks);
+        $this->assertSame('running', $request->fresh()->status);
+        $this->assertSame('reserved', AICreditReservation::query()->findOrFail($request->reservation_id)->status);
+        $this->assertSame(0, AICreditLedgerEntry::query()->where('type', 'consume')->count());
+    }
+
     public function test_completed_status_checks_source_access_and_payload_expires_after_90_days(): void
     {
         $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $this->quote(), 'lk')['request'];
@@ -849,6 +966,37 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(10000, $this->credits->balance($this->organization)['available_minor']);
     }
 
+    private function usePeopleReferencePolicy(callable $authorizationDecision, ?callable $assistantDecision = null): void
+    {
+        $authorization = $this->mock(AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->andReturnUsing($authorizationDecision);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $modules = $this->mock(OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModules')->andReturn(collect([
+            new Module(['slug' => 'ai-assistant']),
+            new Module(['slug' => 'users']),
+        ]));
+        $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
+        $permissions = $this->mock(AIPermissionChecker::class);
+        $permissions->shouldReceive('canUseAssistant')->andReturnUsing($assistantDecision ?? static fn (): bool => true);
+        $this->conversations = new ConversationManager($policy);
+        $this->lifecycle = new AssistantRequestLifecycle($this->credits, $permissions, $this->conversations, $policy);
+    }
+
+    private function peopleReference(User $user): array
+    {
+        return [
+            'entity_type' => 'user',
+            'entity_id' => $user->id,
+            'organization_id' => $this->organization->id,
+            'content_scope' => 'structured',
+            'checked_fields' => ['name', 'is_active'],
+            'required_permissions' => [],
+            'required_domains' => ['people'],
+            'fetched_at' => now()->toISOString(),
+        ];
+    }
+
     private function pendingMessage(AssistantRequest $request, Conversation $conversation): Message
     {
         return $this->conversations->addMessage($conversation, 'assistant', 'Ответ ожидает публикации', 0, 'gpt-6-luna', [
@@ -1111,6 +1259,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     {
         $permissions = app(AIPermissionChecker::class);
         $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('canExposeTool')->andReturn(true);
         $permissions->shouldReceive('isMutationTool')->andReturn(false);
         $registry = new AIToolRegistry;
         foreach (['assistant_domain_discover_capabilities', 'assistant_domain_read'] as $name) {
@@ -1155,7 +1304,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     {
         return [
             'cancelled request' => ['cancel', AssistantRequestCancelled::class, 'cancelled'],
-            'actor leaves current organization' => ['actor_org', AuthorizationException::class, 'failed'],
+            'actor leaves current organization' => ['actor_org', AssistantRequestCancelled::class, 'cancelled'],
         ];
     }
 
