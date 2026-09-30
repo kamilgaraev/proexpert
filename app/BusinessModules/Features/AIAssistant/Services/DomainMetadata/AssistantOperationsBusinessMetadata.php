@@ -8,7 +8,6 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
-use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -289,7 +288,7 @@ final class AssistantOperationsBusinessMetadata
         if ($record === null) { return; }
         $table = $query->getModel()->getTable();
         if ($record['domain'] === 'operations_assets') {
-            $modules = app(OrganizationEntitlementService::class)->getEffectiveModules($organizationId)->pluck('slug')->all();
+            $modules = $policy->effectiveModuleSlugs($actor, $organizationId);
             $warehouse = in_array('basic-warehouse', $modules, true) && $authorization->canCurrent($actor, 'warehouse.view', ['organization_id' => $organizationId]);
             $machinery = in_array('machinery-operations', $modules, true) && $authorization->canCurrent($actor, 'machinery-operations.view', ['organization_id' => $organizationId]);
             if (! $warehouse && ! $machinery) { $query->whereRaw('1 = 0'); }
