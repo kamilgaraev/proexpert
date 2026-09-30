@@ -22,6 +22,7 @@ use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\Assistan
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\Organization;
 use App\Models\User;
@@ -130,6 +131,10 @@ class AIAssistantService
     private array $currentAttachmentIds = [];
 
     private array $currentImageParts = [];
+
+    private ?array $precomputedCapabilityHints = null;
+
+    private bool $preparationMetadataFrameActive = false;
 
     public function __construct(
         LLMProviderInterface $llmProvider,
@@ -369,7 +374,7 @@ class AIAssistantService
 
         if (($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
             && empty($conversationContext['selected_estimate']) && empty($conversationContext['selected_estimate_id'])
-            && is_array($navigationRequestContext) && empty($navigationRequestContext['entity_refs'])
+            && is_array($navigationRequestContext) && AssistantRequestUnderstandingResolver::hasOnlyBackgroundProjectReferences($navigationRequestContext)
             && empty($navigationRequestContext['entity_references']) && empty($navigationRequestContext['filters'])
             && empty($navigationRequestContext['period'])
             && array_diff(array_keys($navigationRequestContext), ['source_module', 'source_route', 'ui_state', 'entity_refs', 'period', 'filters']) === []) {
@@ -382,10 +387,12 @@ class AIAssistantService
         }
 
         $ragMetadata = ['used' => false, 'sources' => []];
-        [$messages, $tools] = $this->measurePhase('preparation', fn (): array => $this->readPhase(fn (): array => [
-            $this->measurePhase('messages', fn (): array => $this->buildMessages($conversation, $legacyContext, $taskPlan, '', $query)),
-            $this->measurePhase('tool_definitions', fn (): array => $this->resolveToolDefinitions($taskPlan)),
-        ], $user, $organizationId));
+        [$messages, $tools] = $this->measurePhase('preparation', fn (): array => $this->readPhase(function () use ($taskPlan, $user, $organizationId, $conversation, $legacyContext, $query): array {
+            $metadata = $this->buildPreparationMetadata($taskPlan, $user, $organizationId);
+            $messages = $this->measurePhase('messages', fn (): array => $this->buildMessagesWithCapabilityHints($conversation, $legacyContext, $taskPlan, $query, $metadata['capability_hints']));
+
+            return [$messages, $metadata['tools']];
+        }, $user, $organizationId));
 
         $verificationTimer = null;
         try {
@@ -2431,6 +2438,10 @@ class AIAssistantService
         if (($access['can_use_assistant'] ?? false) !== true) {
             throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
         }
+        if ($this->dataAccess !== null && !empty($requestPayload['context']['entity_refs'])) {
+            $requestPayload = $this->dataAccess->withCurrentChecks($user, $organizationId,
+                fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId), true);
+        }
         $plan = $this->taskOrchestrator->plan($query, $requestPayload, $access);
         $domain = $plan['capability']['domain'] ?? null;
         $allowed = ($plan['section_navigation'] ?? false) === true && is_array($plan['navigation_target'] ?? null);
@@ -2617,6 +2628,17 @@ class AIAssistantService
         return null;
     }
 
+    private function buildMessagesWithCapabilityHints(Conversation $conversation, array $context, array $taskPlan, string $currentQuery, array $capabilityHints): array
+    {
+        $previous = $this->precomputedCapabilityHints;
+        $this->precomputedCapabilityHints = $capabilityHints;
+        try {
+            return $this->buildMessages($conversation, $context, $taskPlan, '', $currentQuery);
+        } finally {
+            $this->precomputedCapabilityHints = $previous;
+        }
+    }
+
     protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = '', ?string $currentQuery = null): array
     {
         $messages = [[
@@ -2654,7 +2676,7 @@ class AIAssistantService
         if ($this->activeEstimateSelection !== null) {
             $references['selected_estimate'] = $this->activeEstimateSelection;
         }
-        $capabilityHints = $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan));
+        $capabilityHints = $this->precomputedCapabilityHints ?? $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan));
         if ($capabilityHints !== []) {
             $references['registered_domain_capabilities'] = $capabilityHints;
         }
@@ -2904,18 +2926,56 @@ class AIAssistantService
         return $compacted;
     }
 
+    private function buildPreparationMetadata(array $taskPlan, User $actor, int $organizationId): array
+    {
+        $this->executionCheckpoint();
+        $metadataFrameActive = $this->dataAccess !== null;
+        $read = function () use ($taskPlan, $metadataFrameActive): array {
+            $previous = $this->preparationMetadataFrameActive;
+            $this->preparationMetadataFrameActive = $metadataFrameActive;
+            try {
+                return [
+                    'capability_hints' => $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan)),
+                    'tools' => $this->measurePhase('tool_definitions', fn (): array => $this->resolveToolDefinitions($taskPlan)),
+                ];
+            } finally {
+                $this->preparationMetadataFrameActive = $previous;
+            }
+        };
+
+        try {
+            $metadata = $metadataFrameActive
+                ? $this->dataAccess->withCurrentChecks($actor, $organizationId, $read, true)
+                : $read();
+        } catch (Throwable $exception) {
+            $this->executionCheckpoint();
+            throw $exception;
+        }
+
+        $this->executionCheckpoint();
+
+        return $metadata;
+    }
+
     protected function resolveToolDefinitions(array $taskPlan): array
     {
+        $metadataFrameActive = $this->preparationMetadataFrameActive;
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
         if ($this->activeActor !== null) {
-            $this->executionCheckpoint();
+            if (! $metadataFrameActive) {
+                $this->executionCheckpoint();
+            }
             $filter = fn (): array => array_values(array_filter($toolNames,
                 fn (string $toolName): bool => $this->permissionChecker->canExposeTool($this->activeActor, $toolName, false)));
-            $toolNames = $this->dataAccess === null ? $filter() : $this->dataAccess->withCurrentChecks(
-                $this->activeActor, (int) $this->activeActor->current_organization_id, $filter, true,
-                fn (): ?int => app()->bound(AssistantRequestExecutionContext::class)
-                    ? app(AssistantRequestExecutionContext::class)->remainingMilliseconds() : null);
-            $this->executionCheckpoint();
+            if ($metadataFrameActive) {
+                $toolNames = $filter();
+            } else {
+                $toolNames = $this->dataAccess === null ? $filter() : $this->dataAccess->withCurrentChecks(
+                    $this->activeActor, (int) $this->activeActor->current_organization_id, $filter, true,
+                    fn (): ?int => app()->bound(AssistantRequestExecutionContext::class)
+                        ? app(AssistantRequestExecutionContext::class)->remainingMilliseconds() : null);
+                $this->executionCheckpoint();
+            }
         }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
 
@@ -3030,32 +3090,41 @@ class AIAssistantService
 
     protected function buildDomainCapabilityHints(array $taskPlan): array
     {
+        $metadataFrameActive = $this->preparationMetadataFrameActive;
         $actor = $this->activeActor;
         $tool = $this->toolRegistry->getTool('assistant_domain_discover_capabilities');
         if ($actor === null || ! $tool instanceof DiscoverAssistantDomainCapabilitiesTool) {
             return [];
         }
         try {
-            $this->executionCheckpoint();
-            $read = function () use ($actor, $tool): array {
-                if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id)
-                    || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName())) {
+            if (! $metadataFrameActive) {
+                $this->executionCheckpoint();
+            }
+            $read = function () use ($actor, $tool, $metadataFrameActive): array {
+                if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id, ! $metadataFrameActive)
+                    || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName(), [], ! $metadataFrameActive)) {
                     return [];
                 }
 
-                return $tool->compactForActor($actor, (int) $actor->current_organization_id);
+                return $tool->compactForActor($actor, (int) $actor->current_organization_id, ! $metadataFrameActive);
             };
-            $hints = $this->dataAccess !== null && app()->bound(AssistantRequestExecutionContext::class)
-                ? $this->dataAccess->withCurrentChecks($actor, (int) $actor->current_organization_id, $read, false,
-                    fn (): int => app(AssistantRequestExecutionContext::class)->remainingMilliseconds())
-                : $read();
-            $this->executionCheckpoint();
+            if ($metadataFrameActive) {
+                $hints = $read();
+            } else {
+                $hints = $this->dataAccess !== null && app()->bound(AssistantRequestExecutionContext::class)
+                    ? $this->dataAccess->withCurrentChecks($actor, (int) $actor->current_organization_id, $read, false,
+                        fn (): int => app(AssistantRequestExecutionContext::class)->remainingMilliseconds())
+                    : $read();
+                $this->executionCheckpoint();
+            }
 
             return $hints;
         } catch (AssistantRequestCancelled|\App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded $exception) {
             throw $exception;
         } catch (Throwable $exception) {
-            $this->executionCheckpoint();
+            if (! $metadataFrameActive) {
+                $this->executionCheckpoint();
+            }
             throw $exception;
         }
     }
