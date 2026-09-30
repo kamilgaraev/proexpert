@@ -123,7 +123,7 @@ LUA;
      * @param callable(): mixed $checkpoint
      * @return TResult
      */
-    public function run(callable $read, callable $checkpoint, int|string $organizationId): mixed
+    public function run(callable $read, callable $checkpoint, int|string $organizationId, ?callable $readGuard = null): mixed
     {
         $organization = trim((string) $organizationId);
         if ($organization === '') {
@@ -165,8 +165,8 @@ LUA;
 
                 if ($result === 1) {
                     $readStartedAt = hrtime(true);
-                    $readCheckpoint = function () use ($checkpoint, $redis, $keys, $token, $readStartedAt): void {
-                        $checkpoint();
+                    $readCheckpoint = function () use ($checkpoint, $readGuard, $redis, $keys, $token, $readStartedAt): void {
+                        ($readGuard ?? $checkpoint)();
                         if (((hrtime(true) - $readStartedAt) / 1_000_000) >= self::READ_PHASE_DEADLINE_MS) {
                             throw new AssistantReadPermitTimeoutException('assistant_read_phase_deadline_exceeded');
                         }

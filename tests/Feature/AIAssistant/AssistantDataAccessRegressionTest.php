@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
@@ -148,6 +152,69 @@ final class AssistantDataAccessRegressionTest extends TestCase
             public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
         };
         $this->assertSame([], (new RagRetriever($provider, new UserProjectAccessService, $this->policy))->search('стройка revoke', $organization->id, $actor));
+    }
+
+    public function test_rag_acl_callbacks_do_not_reenter_full_lifecycle_checkpoint_during_compilation(): void
+    {
+        [$organization, $actor, $visible] = $this->fixtures();
+        $provider = $this->indexCompatibleChunk($organization->id, $visible->id, 'Доступная стройка');
+        $fullCheckpoints = 0;
+        $checkpointActive = false;
+        $fullCheckpoint = function () use ($actor, $organization, &$fullCheckpoints, &$checkpointActive): void {
+            if ($checkpointActive) { return; }
+            $fullCheckpoints++;
+            $checkpointActive = true;
+            try {
+                $allowed = $this->policy->withCurrentChecks($actor, $organization->id,
+                    fn (): bool => $this->policy->canReadDomain($actor, $organization->id, 'assistant'), true);
+                if (! $allowed) { throw new AccessDeniedHttpException; }
+            } finally {
+                $checkpointActive = false;
+            }
+        };
+        $readGuard = static fn (): int => 1;
+        $results = (new RagRetriever($provider, new UserProjectAccessService, $this->policy))->search(
+            'стройка checkpoint', $organization->id, $actor, [], $fullCheckpoint,
+            static fn (callable $read): mixed => $read(), $readGuard
+        );
+
+        $this->assertCount(1, $results);
+        $this->assertGreaterThan(0, $fullCheckpoints);
+    }
+
+    public function test_rag_read_guard_propagates_effective_deadline_without_running_full_checkpoint_inside_acl_compiler(): void
+    {
+        [$organization, $actor, $visible] = $this->fixtures();
+        $provider = $this->indexCompatibleChunk($organization->id, $visible->id, 'Доступная стройка');
+        $fullCheckpoints = 0;
+        $checkpointActive = false;
+        $fullCheckpoint = function () use ($actor, $organization, &$fullCheckpoints, &$checkpointActive): void {
+            if ($checkpointActive) { return; }
+            $fullCheckpoints++;
+            $checkpointActive = true;
+            try {
+                $this->policy->withCurrentChecks($actor, $organization->id,
+                    fn (): bool => $this->policy->canReadDomain($actor, $organization->id, 'assistant'), true);
+            } finally {
+                $checkpointActive = false;
+            }
+        };
+        $readGuardCalls = 0;
+        $readGuard = function () use (&$readGuardCalls): int {
+            $readGuardCalls++;
+            if ($readGuardCalls === 4) { throw new AssistantRequestDeadlineExceeded; }
+            return 1;
+        };
+        try {
+            (new RagRetriever($provider, new UserProjectAccessService, $this->policy))->search(
+                'стройка deadline', $organization->id, $actor, [], $fullCheckpoint,
+                static fn (callable $read): mixed => $read(), $readGuard
+            );
+            $this->fail('Expected effective operation deadline to stop the ACL read');
+        } catch (AssistantRequestDeadlineExceeded) {
+            $this->assertSame(4, $readGuardCalls);
+            $this->assertGreaterThan(0, $fullCheckpoints);
+        }
     }
 
     public function test_read_wrapper_bounds_database_phases_without_embedding_wait(): void
@@ -454,5 +521,28 @@ final class AssistantDataAccessRegressionTest extends TestCase
         DB::table('ai_rag_chunks')->insert(['source_id' => $source->id, 'organization_id' => $organizationId, 'project_id' => $projectId,
             'chunk_index' => 0, 'content' => $title, 'content_hash' => hash('sha256', $title), 'created_at' => now(), 'updated_at' => now(),
             'embedding' => '['.implode(',', RagTestEmbedding::fromLeadingValues($embedding)).']']);
+    }
+
+    private function indexCompatibleChunk(int $organizationId, int $projectId, string $title): RagEmbeddingProviderInterface
+    {
+        $provider = new class implements RagEmbeddingProviderInterface {
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array { return RagTestEmbedding::fromLeadingValues([1.0, 0.0]); }
+            public function provider(): string { return 'test'; }
+            public function model(): string { return 'test'; }
+            public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
+        };
+        (new RagIndexer($provider, new RagSourceRegistry([])))->indexChunk(new RagChunkData(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            sourceType: 'project',
+            entityType: 'project',
+            entityId: (string) $projectId,
+            title: $title,
+            content: $title,
+            metadata: ['title' => $title],
+            updatedAt: now()
+        ));
+
+        return $provider;
     }
 }

@@ -5,9 +5,15 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantMaterialStockReader;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\ConversationManager;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceIdentity;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
@@ -20,9 +26,15 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
+use App\Services\Credits\AICreditService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Mockery;
+use ReflectionClass;
+use ReflectionProperty;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Tests\TestCase;
 
@@ -36,13 +48,18 @@ final class AssistantMaterialStockToolTest extends TestCase
     private User $actor;
     private Project $project;
     private bool $permissions = true;
+    private array $deniedPermissions = [];
+    private AuthorizationService $authorization;
+    private ?AssistantRequestExecutionContext $execution = null;
 
     protected function setUp(): void
     {
         parent::setUp();
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
-        $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (): bool => $this->permissions);
+        $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions
+            && ! in_array($permission, $this->deniedPermissions, true))->byDefault();
+        $this->authorization = $authorization;
         $modules = Mockery::mock(OrganizationEntitlementService::class);
         $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'basic-warehouse', 'catalog-management', 'project-management'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
@@ -54,6 +71,106 @@ final class AssistantMaterialStockToolTest extends TestCase
         $this->actor->organizations()->attach($this->organization->id, ['is_active' => true, 'project_access_mode' => 'assigned_projects']);
         $this->project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]));
         $this->actor->assignedProjects()->attach($this->project->id, ['is_active' => true, 'role' => 'member']);
+    }
+
+    protected function tearDown(): void
+    {
+        $this->execution?->restoreDatabaseStatementTimeouts();
+        $this->app->forgetInstance(AssistantRequestExecutionContext::class);
+        parent::tearDown();
+    }
+
+    public function test_runtime_read_has_bounded_full_checkpoints_and_returns_the_same_empty_result(): void
+    {
+        $baseline = $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+        $this->assertSame('empty', $baseline['status']);
+        $this->runtime();
+        $requestReads = 0;
+        DB::listen(static function (QueryExecuted $query) use (&$requestReads): void {
+            if (str_starts_with($query->sql, 'select') && str_contains($query->sql, 'ai_assistant_requests')) {
+                $requestReads++;
+            }
+        });
+        try {
+            $result = $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+        } catch (\Throwable $exception) {
+            $this->fail('Runtime reader failed after '.$requestReads.' fresh request reads: '.$exception::class.': '.$exception->getMessage());
+        }
+        $this->assertSame($baseline['status'], $result['status']);
+        $this->assertGreaterThan(0, $requestReads);
+        $this->assertLessThanOrEqual(3, $requestReads);
+        $this->assertNotNull($this->reader->verifiedAnswer($result, $this->actor, $this->organization->id));
+    }
+
+    public function test_runtime_read_observes_warehouse_revocation_and_fresh_quantities_on_repeated_reads(): void
+    {
+        $warehouse = $this->warehouse($this->project);
+        $material = $this->material('Бетон', 'т');
+        $balance = $this->balance($warehouse, $material, '4.000', '1.000');
+        $this->runtime();
+        $result = $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+        $this->assertSame('success', $result['status']);
+        $this->assertSame('4.000', $result['stock'][0]['available_quantity']);
+        $this->assertNotNull($this->reader->verifiedAnswer($result, $this->actor, $this->organization->id));
+        $balance->update(['available_quantity' => '6.000']);
+        $this->assertNull($this->reader->verifiedAnswer($result, $this->actor, $this->organization->id));
+        $fresh = $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+        $this->assertSame('6.000', $fresh['stock'][0]['available_quantity']);
+        $this->deniedPermissions = ['warehouse.view'];
+        $this->assertSame('unavailable', $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон'])['status']);
+        $this->assertNull($this->reader->verifiedAnswer($fresh, $this->actor, $this->organization->id));
+    }
+
+    public function test_runtime_read_rejects_cancellation_before_the_read_and_after_the_stock_query(): void
+    {
+        $request = $this->runtime();
+        $request->update(['cancel_requested_at' => now()]);
+        try {
+            $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+            $this->fail('A cancelled request must not return stock.');
+        } catch (AssistantRequestCancelled) {
+            $this->assertTrue(true);
+        }
+        $request->update(['cancel_requested_at' => null]);
+        $cancelled = false;
+        DB::listen(static function (QueryExecuted $query) use ($request, &$cancelled): void {
+            if (! $cancelled && str_contains($query->sql, 'SUM(stock.available_quantity)')) {
+                $cancelled = true;
+                AssistantRequest::query()->whereKey($request->id)->update(['cancel_requested_at' => now()]);
+            }
+        });
+        $this->expectException(AssistantRequestCancelled::class);
+        $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+    }
+
+    public function test_runtime_policy_callback_checks_the_effective_operation_deadline(): void
+    {
+        $this->runtime();
+        $this->authorization->shouldReceive('canCurrent')->with($this->actor, 'warehouse.view', Mockery::any())
+            ->andReturnUsing(function (): bool {
+                $property = new ReflectionProperty(AssistantRequestExecutionContext::class, 'operationDeadlines');
+                $deadlines = $property->getValue($this->execution);
+                $deadlines[array_key_last($deadlines)] = hrtime(true) - 1;
+                $property->setValue($this->execution, $deadlines);
+
+                return true;
+            });
+        $this->expectException(AssistantRequestDeadlineExceeded::class);
+        $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);
+    }
+
+    private function runtime(): AssistantRequest
+    {
+        $request = AssistantRequest::withoutEvents(fn () => AssistantRequest::query()->create([
+            'request_id' => (string) Str::uuid(), 'request_hash' => str_repeat('a', 64), 'organization_id' => $this->organization->id,
+            'user_id' => $this->actor->id, 'profile' => 'normal', 'status' => 'running', 'stage' => 'reading', 'surface' => 'admin',
+            'max_calls' => 3, 'approved_max_minor' => 0, 'heartbeat_at' => now(), 'lease_expires_at' => now()->addMinutes(8)]));
+        $lifecycle = new AssistantRequestLifecycle((new ReflectionClass(AICreditService::class))->newInstanceWithoutConstructor(),
+            new AIPermissionChecker($this->authorization), Mockery::mock(ConversationManager::class), $this->policy);
+        $this->execution = new AssistantRequestExecutionContext($lifecycle, $request, $this->actor, 30_000);
+        $this->app->instance(AssistantRequestExecutionContext::class, $this->execution);
+
+        return $request;
     }
 
     public function test_live_sum_separates_reservations_and_units_and_excludes_private_contributions(): void

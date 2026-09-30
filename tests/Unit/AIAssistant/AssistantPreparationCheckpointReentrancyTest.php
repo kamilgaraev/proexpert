@@ -277,6 +277,58 @@ final class AssistantPreparationCheckpointReentrancyTest extends TestCase
         $this->assertGreaterThan($before, $this->permissionChecks);
     }
 
+    public function test_policy_compilation_during_admitted_read_does_not_reenter_fresh_authorization(): void
+    {
+        $this->prepareActualChain();
+        $result = $this->readCompiledDomain();
+
+        $this->assertSame(['compiled' => true], $result);
+        $this->assertGreaterThan(0, $this->freshRequestReads);
+        $this->assertLessThan(16, $this->freshRequestReads);
+    }
+
+    public function test_compiled_read_cancellation_is_rejected_before_the_result_returns(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AssistantRequestCancelled::class);
+        $this->readCompiledDomain(function (): void {
+            $this->request->cancel_requested_at = now();
+        });
+    }
+
+    public function test_compiled_read_permission_revocation_is_rejected_before_the_result_returns(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AuthorizationException::class);
+        $this->readCompiledDomain(function (): void {
+            $this->allowed = false;
+        });
+    }
+
+    public function test_compiled_read_callback_preserves_the_effective_operation_deadline(): void
+    {
+        $this->prepareActualChain();
+        $this->expectException(AssistantRequestDeadlineExceeded::class);
+        $this->readCompiledDomain(function (): void {
+            (new ReflectionProperty(AssistantRequestExecutionContext::class, 'operationDeadlines'))->setValue($this->execution, [hrtime(true) - 1]);
+        });
+    }
+
+    private function readCompiledDomain(?Closure $interrupt = null): array
+    {
+        return $this->readPhase(function () use ($interrupt): array {
+            $allowed = false;
+            (new ReflectionMethod(AssistantDataAccessPolicy::class, 'compileAcl'))->invoke($this->policy, $this->actor, 38, function () use ($interrupt, &$allowed): null {
+                $interrupt?->__invoke();
+                $allowed = $this->policy->canReadDomain($this->actor, 38, 'warehouse');
+
+                return null;
+            });
+
+            return ['compiled' => $allowed];
+        });
+    }
+
     private function toolDefinitions(): array
     {
         return (new ReflectionMethod(AIAssistantService::class, 'resolveToolDefinitions'))->invoke($this->service, ['task_type' => 'find']);

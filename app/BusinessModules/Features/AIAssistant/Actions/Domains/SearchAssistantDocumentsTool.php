@@ -63,7 +63,8 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
             static fn (mixed $value): bool => $value !== null);
         $search = fn (): array => $this->retriever->searchWithDiagnostics($arguments['query'], (int) $organization->id, $user, $context,
             $execution === null ? null : $execution->assertCanContinue(...),
-            $execution === null ? null : fn (callable $read): mixed => $execution->withOperationBudget($read, 30_000, 'pgsql'));
+            $execution === null ? null : fn (callable $read): mixed => $execution->withOperationBudget($read, 30_000, 'pgsql'),
+            $execution === null ? null : fn (): int => $execution->remainingMilliseconds());
         $searchResult = $execution === null ? $search() : $execution->withDatabaseStatementTimeout($search);
         $execution?->assertCanContinue();
         return self::responseForSearch($this->prompts->build('', $searchResult['results']), $searchResult['diagnostics']);

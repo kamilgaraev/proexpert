@@ -23,7 +23,7 @@ final readonly class AssistantMaterialStockReader
         $execution = app()->bound(AssistantRequestExecutionContext::class) ? app(AssistantRequestExecutionContext::class) : null;
         $operation = fn (): array => $this->access->withCurrentChecks($actor, $organizationId,
             fn (): array => $this->readCurrent($actor, $organizationId, $filters), true,
-            $execution === null ? null : fn () => $execution->assertCanContinue());
+            $execution === null ? null : fn () => $execution->remainingMilliseconds());
         if ($execution === null) {
             return $operation();
         }

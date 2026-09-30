@@ -107,6 +107,8 @@ class AIAssistantService
 
     private ?AssistantRequest $activeRequest = null;
 
+    private bool $runtimeTimingEnabled = false;
+
     private ?User $activeActor = null;
 
     private string $activeProfile = 'normal';
@@ -246,23 +248,25 @@ class AIAssistantService
         $this->estimateResolutionAttempted = false;
         $this->resolvedEstimateId = null;
         $this->activeRequest = $request;
+        $this->runtimeTimingEnabled = true;
         $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
         $this->currentImageParts = [];
         try {
             if ($this->currentAttachmentIds !== []) {
-                $validated = app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id);
+                $validated = $this->measurePhase('attachment_prepare', fn (): array => app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id));
                 if (!hash_equals($request->request_hash, app(\App\Services\Credits\AICreditService::class)->canonicalAssistantRequest($validated))) {
                     throw new AuthorizationException(trans_message('ai_assistant.request_mismatch'));
                 }
             }
-            $this->requestLifecycle->stage($request, $user, 'reading');
+            $this->measurePhase('request_context', fn () => $this->requestLifecycle->stage($request, $user, 'reading'));
             $result = $this->performAsk($query, (int) $request->organization_id, $user, $conversationId, $payload);
-            return $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
+            return $this->measurePhase('request_complete', fn (): array => $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user)));
         } catch (Throwable $exception) {
             $errorCode = $this->requestErrorCode($exception);
             $this->requestLifecycle->fail($request, $errorCode);
             throw $exception;
         } finally {
+            $this->runtimeTimingEnabled = false;
             $this->activeRequest = null;
             $this->activeActor = null;
             $this->activeToolResults = [];
@@ -274,7 +278,7 @@ class AIAssistantService
 
     private function performAsk(string $query, int $organizationId, User $user, ?int $conversationId, array $requestPayload): array
     {
-        if (! $this->permissionChecker->canUseAssistant($user, $organizationId)) {
+        if (! $this->measurePhase('request_permission', fn (): bool => $this->permissionChecker->canUseAssistant($user, $organizationId))) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.access_denied', 'Недостаточно прав для работы с AI-ассистентом.'));
         }
 
@@ -289,16 +293,20 @@ class AIAssistantService
             throw new RuntimeException($this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'));
         }
 
-        $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
-        if ($this->activeRequest !== null) {
-            $this->requestLifecycle?->bindConversation($this->activeRequest, $conversation, $user);
-        }
-        $this->stage('reading');
+        $conversation = $this->measurePhase('conversation', function () use ($conversationId, $organizationId, $user): Conversation {
+            $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
+            if ($this->activeRequest !== null) {
+                $this->requestLifecycle?->bindConversation($this->activeRequest, $conversation, $user);
+            }
+            $this->stage('reading');
+
+            return $conversation;
+        });
         if ($standaloneGreeting) {
-            return $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload);
+            return $this->measurePhase('greeting', fn (): array => $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload));
         }
         $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
-        $requestPayload = $this->filterRequestEntityContext($requestPayload, $user, $organizationId);
+        $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
         $this->activeEstimateSelection = null;
         $selection = $conversation->context['selected_estimate'] ?? null;
         if (is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
@@ -306,8 +314,8 @@ class AIAssistantService
                 fn (): bool => $this->dataAccess->canReadEntityContent($user, $organizationId, 'estimate', $selection['estimate_id']), true)) {
             $this->activeEstimateSelection = array_intersect_key($selection, array_flip(['estimate_id', 'position_filter', 'position_numbers']));
         }
-        $accessContext = $this->accessContextResolver->resolve($user, $organizationId);
-        $taskPlan = $this->taskOrchestrator->plan($query, $requestPayload, $accessContext);
+        $accessContext = $this->measurePhase('access_context', fn (): array => $this->accessContextResolver->resolve($user, $organizationId));
+        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($query, $requestPayload, $accessContext));
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
         $businessDomain = $this->businessDataDomain($taskPlan);
         if ($businessDomain !== null && $this->dataAccess !== null && !$this->dataAccess->canReadDomain($user, $organizationId, $businessDomain)) {
@@ -362,11 +370,12 @@ class AIAssistantService
         }
 
         $ragMetadata = ['used' => false, 'sources' => []];
-        [$messages, $tools] = $this->readPhase(fn (): array => [
-            $this->buildMessages($conversation, $legacyContext, $taskPlan, '', $query),
-            $this->resolveToolDefinitions($taskPlan),
-        ], $user, $organizationId);
+        [$messages, $tools] = $this->measurePhase('preparation', fn (): array => $this->readPhase(fn (): array => [
+            $this->measurePhase('messages', fn (): array => $this->buildMessages($conversation, $legacyContext, $taskPlan, '', $query)),
+            $this->measurePhase('tool_definitions', fn (): array => $this->resolveToolDefinitions($taskPlan)),
+        ], $user, $organizationId));
 
+        $verificationTimer = null;
         try {
             $options = [];
             $options['profile'] = 'assistant';
@@ -492,6 +501,7 @@ class AIAssistantService
             )));
             $ragMetadata = $this->ragMetadataFromToolResults($query, $this->activeToolResults);
 
+            $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
             $this->stage('verifying');
             if ($assistantContent === '') {
@@ -615,6 +625,7 @@ class AIAssistantService
             $assistantPayload['actor_user_id'] = (int) $user->id;
             $assistantPayload['fetched_at'] = now()->toISOString();
             $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
+            $verificationTimer->finish();
             $this->pendingSummary = [
                 'conversation' => $conversation,
                 'summary' => json_encode(['user_request' => $query, 'request_id' => $assistantPayload['request_id']], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
@@ -683,6 +694,7 @@ class AIAssistantService
 
             return $result;
         } catch (Throwable $exception) {
+            $verificationTimer?->finish($exception);
             $this->logging->technical('ai.assistant.error', [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
@@ -1047,6 +1059,11 @@ class AIAssistantService
         }
     }
 
+    private function measurePhase(string $phase, callable $operation): mixed
+    {
+        return AssistantRequestPhaseTimer::run($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, $phase, $operation);
+    }
+
     private function requestErrorCode(Throwable $exception): string
     {
         return match (true) {
@@ -1096,7 +1113,7 @@ class AIAssistantService
                     $actor, $organizationId, $read, false, $heartbeat);
                 $heartbeat();
                 return $result;
-            }, 30_000), fn () => $this->executionCheckpoint(), $organizationId);
+            }, 30_000), fn () => $this->executionCheckpoint(), $organizationId, fn (): int => $execution->remainingMilliseconds());
     }
 
     protected function verifyMaterialStock(array $result, User $actor, int $organizationId): ?array
@@ -1104,7 +1121,7 @@ class AIAssistantService
         if (!in_array($result['status'] ?? null, ['success', 'empty'], true) || !is_array($result['stock_evidence'] ?? null)) {
             return null;
         }
-        $read = fn (): ?array => app(AssistantMaterialStockReader::class)->verifiedAnswer($result, $actor, $organizationId);
+        $read = fn (): ?array => $this->measurePhase('stock_read', fn (): ?array => app(AssistantMaterialStockReader::class)->verifiedAnswer($result, $actor, $organizationId));
         $this->executionCheckpoint();
         try {
             $verified = $this->readPhase($read, $actor, $organizationId);
@@ -1523,11 +1540,12 @@ class AIAssistantService
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool
                 ? $tool->executeForSelection($args, $user, $organization, $this->activeEstimateSelection)
                 : $tool->execute($args, $user, $organization);
-            if ($pureDatabaseRead && app()->bound(AssistantRequestExecutionContext::class)) {
-                $toolResult = $this->readPhase($read, $user, $organizationId);
-            } else {
-                $toolResult = $read();
+            if ($toolName === 'get_material_stock') {
+                $stockRead = $read;
+                $read = fn (): array|string => $this->measurePhase('stock_read', $stockRead);
             }
+            $toolResult = $this->measurePhase('tool', fn (): array|string => $pureDatabaseRead && app()->bound(AssistantRequestExecutionContext::class)
+                ? $this->readPhase($read, $user, $organizationId) : $read());
             $this->executionCheckpoint();
             if (is_array($toolResult) && in_array($toolResult['status'] ?? null, ['access_denied', 'forbidden'], true)) {
                 $this->recordRequestOutcome('access_denied');
@@ -1610,7 +1628,7 @@ class AIAssistantService
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
     {
         $this->executionCheckpoint();
-        [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->prepareProviderPayload($messages, $options, $organizationId, $user);
+        [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->measurePhase('provider_prepare', fn (): array => $this->prepareProviderPayload($messages, $options, $organizationId, $user));
         if (app()->bound(AssistantRequestExecutionContext::class)) {
             $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
             $profileTimeout = $provider === 'timeweb' ? config('ai-assistant.llm.timeweb.profiles.assistant.timeout') : null;
@@ -2542,7 +2560,7 @@ class AIAssistantService
         if ($this->activeEstimateSelection !== null) {
             $references['selected_estimate'] = $this->activeEstimateSelection;
         }
-        $capabilityHints = $this->buildDomainCapabilityHints($taskPlan);
+        $capabilityHints = $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan));
         if ($capabilityHints !== []) {
             $references['registered_domain_capabilities'] = $capabilityHints;
         }
@@ -2556,7 +2574,7 @@ class AIAssistantService
                 if ($this->activeActor === null || $this->activeRequest === null) {
                     throw new RuntimeException('assistant_attachment_request_required');
                 }
-                $this->currentImageParts = app(AssistantChatAttachmentService::class)->providerParts($this->currentAttachmentIds, $this->activeActor, (int) $conversation->organization_id, $this->activeRequest->request_id);
+                $this->currentImageParts = $this->measurePhase('image_parts', fn (): array => app(AssistantChatAttachmentService::class)->providerParts($this->currentAttachmentIds, $this->activeActor, (int) $conversation->organization_id, $this->activeRequest->request_id));
                 $messages[] = ['role' => 'user', 'content' => array_merge([['type' => 'text', 'text' => $currentQuery]], $this->currentImageParts), '_trusted_chat_images' => true];
             } else {
                 $messages[] = ['role' => 'user', 'content' => $currentQuery];
