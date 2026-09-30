@@ -7,6 +7,9 @@ namespace Tests\Unit\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool;
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Models\Message;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor;
@@ -20,6 +23,10 @@ use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantCapabilityRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
@@ -32,6 +39,9 @@ use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Models\Organization;
 use App\Models\User;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Services\Project\UserProjectAccessService;
+use App\Services\Credits\AICreditService;
 use App\Services\Logging\LoggingService;
 use App\Support\AI\TokenBudgetService;
 use App\Support\AI\TokenCounter;
@@ -42,6 +52,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class AssistantToolFirstQualityTest extends TestCase
@@ -50,6 +61,7 @@ final class AssistantToolFirstQualityTest extends TestCase
     private ?Container $previousContainer;
     private array $providerCalls = [];
     private int $toolExecutions = 0;
+    private int $assistantMessages = 0;
 
     protected function setUp(): void
     {
@@ -442,6 +454,169 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertStringContainsString('123.45', $response['message']['content']);
     }
 
+    #[DataProvider('stockVerificationStates')]
+    public function test_actual_payload_drops_only_preliminary_domain_warning_after_authoritative_stock_verification(string $status, ?string $verification, bool $domainResolved, ?string $additionalMissing = 'Для сравнения не выполнена дополнительная проверка.'): void
+    {
+        $orchestrator = new AssistantTaskOrchestrator(new AssistantCapabilityRegistry, $this->createMock(AssistantAccessContextResolver::class));
+        $limits = [['code' => 'actions_locked', 'message' => 'Изменяющие действия отключены до отдельного подтверждения.']];
+        $preliminary = $orchestrator->buildPayload(['capability' => [], 'request' => ['context' => []]], 'Ответ', [])['missing_data'];
+        $references = $status === 'success' ? [['entity_type' => 'warehouse_balance', 'entity_id' => 41, 'organization_id' => 15]] : [];
+        $stock = ['status' => $status, 'stock' => [], 'stock_evidence' => ['version' => 'current-stock-receipt'], 'source_refs' => $references];
+        $service = $this->service(['get_material_stock' => $stock],
+            [['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]], ['content' => 'Данные получены.']], [],
+            static function (array $plan, string $answer, array $options) use ($orchestrator, $additionalMissing, $limits): array {
+                $plan['access_limits'] = $limits;
+                if ($additionalMissing !== null) {
+                    $options['missing_data'][] = $additionalMissing;
+                }
+
+                return $orchestrator->buildPayload($plan, $answer, $options);
+            });
+        $service->verifiedStock = $verification === null ? null : ['text' => trans_message('ai_assistant.material_stock_empty'),
+            'validation_status' => $verification, 'source_refs' => $references, 'replaced' => true, 'needs_clarification' => false];
+
+        $response = $service->ask('Проверь текущие складские остатки.', 15, $this->actor(), 7);
+
+        $metadata = $response['message']['metadata'];
+        $otherMissing = $additionalMissing === null ? [] : [$additionalMissing];
+        $this->assertSame($domainResolved ? $otherMissing : [...$preliminary, ...$otherMissing], $metadata['missing_data']);
+        $this->assertSame($limits, $metadata['access_limits']);
+        $this->assertSame($references, $metadata['source_refs']);
+        $this->assertSame('assistant_tool', $metadata['evidence'][0]['source']);
+        if ($domainResolved) {
+            $this->assertSame('verified', $metadata['validation_status']);
+            $this->assertFalse($metadata['needs_clarification']);
+            $this->assertSame(1, $service->stockVerifications);
+        }
+    }
+
+    public static function stockVerificationStates(): array
+    {
+        return [['empty', 'verified', true, null], ['empty', 'verified', true], ['success', 'verified', true], ['empty', 'partial', false], ['unavailable', null, false]];
+    }
+
+    #[DataProvider('sectionRoutes')]
+    public function test_section_navigation_uses_registered_route_and_fresh_permissions_without_provider_or_entity_reads(string $query, string $permission, string $route): void
+    {
+        $service = $this->service([], [], navigationPermissions: [[$permission], [$permission]]);
+
+        $response = $service->ask($query, 15, $this->actor(), 7, ['context' => [
+            'source_module' => 'ai-assistant', 'source_route' => '/dashboard',
+            'ui_state' => ['pathname' => '/dashboard', 'assistant_path' => '/assistant'],
+        ]]);
+
+        $metadata = $response['message']['metadata'];
+        $this->assertSame(['route' => $route], $metadata['navigation_target']);
+        $this->assertSame($route, $metadata['next_actions'][0]['target']['route']);
+        $this->assertSame('verified', $metadata['validation_status']);
+        $this->assertSame([], $metadata['missing_data']);
+        $this->assertSame([], $metadata['access_limits']);
+        $this->assertSame([], $metadata['source_refs']);
+        $this->assertSame(0, $response['tokens_used']);
+        $this->assertSame([], $this->providerCalls);
+        $this->assertSame(0, $this->toolExecutions);
+    }
+
+    public static function sectionRoutes(): array
+    {
+        return [['Где сметы?', 'budget-estimates.view', '/estimates'],
+            ['Где раздел проектов?', 'projects.view', '/projects'],
+            ['Открой склад', 'warehouse.view', '/warehouse'],
+            ['Как найти договоры?', 'contracts.view', '/contracts']];
+    }
+
+    public function test_section_navigation_rechecks_revoked_permission_and_does_not_publish_old_route(): void
+    {
+        $service = $this->service([], [], navigationPermissions: [['budget-estimates.view'], []]);
+
+        $response = $service->ask('Где сметы?', 15, $this->actor(), 7);
+
+        $this->assertNull($response['message']['metadata']['navigation_target']);
+        $this->assertSame([], $response['message']['metadata']['next_actions']);
+        $this->assertSame('access_denied', $response['message']['metadata']['outcome']);
+        $this->assertStringContainsString('недоступен', $response['message']['content']);
+        $this->assertSame([], $this->providerCalls);
+    }
+
+    public function test_section_navigation_checks_current_membership_before_domain_navigation_publication(): void
+    {
+        $actor = $this->actor();
+        $actor->is_active = false;
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->expects($this->once())->method('forCurrentChecks')->with(true)->willReturnSelf();
+        $policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class));
+        $service = $this->service([], [], navigationPermissions: [['budget-estimates.view']], navigationPolicy: $policy,
+            afterNavigationAccess: static function () use ($actor): void { $actor->is_active = false; });
+
+        $response = $service->ask('Где сметы?', 15, $actor, 7);
+
+        $this->assertNull($response['message']['metadata']['navigation_target']);
+        $this->assertSame([], $response['message']['metadata']['next_actions']);
+        $this->assertSame('access_denied', $response['message']['metadata']['outcome']);
+    }
+
+    #[DataProvider('navigationBoundaryFailures')]
+    public function test_section_navigation_does_not_publish_after_cancellation_or_deadline(string $failure): void
+    {
+        $actor = $this->createPartialMock(User::class, ['refresh', 'belongsToOrganization']);
+        $actor->forceFill(['id' => 7, 'current_organization_id' => 15, 'is_active' => true]);
+        $actor->method('refresh')->willReturnSelf();
+        $actor->method('belongsToOrganization')->willReturn(true);
+        $request = (new AssistantRequest)->setDateFormat('Y-m-d H:i:s');
+        $request->forceFill(['user_id' => 7, 'organization_id' => 15, 'status' => 'running', 'conversation_id' => null,
+            'cancel_requested_at' => null, 'lease_expires_at' => now()->addMinute()]);
+        $permissions = $this->createMock(AIPermissionChecker::class);
+        $permissions->method('canUseAssistant')->willReturn(true);
+        $lifecycle = new AssistantRequestLifecycle((new \ReflectionClass(AICreditService::class))->newInstanceWithoutConstructor(),
+            $permissions, $this->createMock(ConversationManager::class),
+            (new \ReflectionClass(AssistantDataAccessPolicy::class))->newInstanceWithoutConstructor());
+        $execution = new AssistantRequestExecutionContext($lifecycle, $request, $actor, 30_000);
+        app()->instance(AssistantRequestExecutionContext::class, $execution);
+        $service = $this->service([], [], navigationPermissions: [['budget-estimates.view']],
+            afterNavigationAccess: static function () use ($execution, $failure, $request): void {
+                if ($failure === 'cancelled') {
+                    $request->cancel_requested_at = now();
+                } else {
+                    (new \ReflectionProperty($execution, 'deadlineNanoseconds'))->setValue($execution, hrtime(true) - 1);
+                }
+            });
+
+        try {
+            $service->ask('Где сметы?', 15, $actor, 7);
+            $this->fail('A failed boundary must prevent publication');
+        } catch (AssistantRequestCancelled|AssistantRequestDeadlineExceeded $exception) {
+            $this->assertSame($failure === 'cancelled' ? AssistantRequestCancelled::class : AssistantRequestDeadlineExceeded::class, $exception::class);
+        }
+        $this->assertSame(0, $this->assistantMessages);
+        $this->assertSame([], $this->providerCalls);
+    }
+
+    public static function navigationBoundaryFailures(): array
+    {
+        return [['cancelled'], ['deadline']];
+    }
+
+    #[DataProvider('sectionDataScopes')]
+    public function test_section_fast_path_does_not_discard_entity_filters_or_stale_selection(string $query, array $context, array $conversationContext = []): void
+    {
+        $service = $this->service([], [['content' => 'Нужен проверенный источник.']], navigationPermissions: [['budget-estimates.view']]);
+        $service->conversation->context = $conversationContext;
+
+        $response = $service->ask($query, 15, $this->actor(), 7, ['context' => $context]);
+
+        $this->assertCount(1, $this->providerCalls);
+        $this->assertNotSame('navigation', $response['message']['metadata']['response_kind'] ?? null);
+    }
+
+    public static function sectionDataScopes(): array
+    {
+        return [['Где смета «Дом у реки»?', []], ['Где смета №42?', []],
+            ['Где сметы?', ['filters' => ['status' => 'draft']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'estimate', 'id' => 99]]]],
+            ['Где сметы?', ['selected_estimate_id' => 99]],
+            ['Где сметы?', [], ['selected_estimate' => ['estimate_id' => 99]]]];
+    }
+
     private function actor(): User
     {
         $actor = new User;
@@ -454,7 +629,8 @@ final class AssistantToolFirstQualityTest extends TestCase
         return ['id' => 'call_read', 'type' => 'function', 'function' => ['name' => $name, 'arguments' => '{}']];
     }
 
-    private function service(array $toolResults, array $responses, array $history = []): ToolFirstStubService
+    private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
+        ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null): ToolFirstStubService
     {
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
@@ -485,7 +661,8 @@ final class AssistantToolFirstQualityTest extends TestCase
         $manager->method('getMessagesForContextWithBudget')->willReturn($history);
         $manager->method('getSummary')->willReturn(null);
         $manager->method('updateContext')->willReturn($conversation);
-        $manager->method('addMessage')->willReturnCallback(static function (Conversation $conversation, string $role, string $content, int $tokens, string $model, array $metadata): Message {
+        $manager->method('addMessage')->willReturnCallback(function (Conversation $conversation, string $role, string $content, int $tokens, string $model, array $metadata): Message {
+            if ($role === 'assistant') { $this->assistantMessages++; }
             return new Message(['id' => 11, 'role' => $role, 'content' => $content, 'metadata' => $metadata, 'created_at' => now()]);
         });
         $context = $this->createMock(ContextBuilder::class);
@@ -499,17 +676,29 @@ final class AssistantToolFirstQualityTest extends TestCase
         $usage = $this->createMock(UsageTracker::class);
         $usage->method('canMakeRequest')->willReturn(true);
         $usage->method('getUsageStats')->willReturn([]);
-        $orchestrator = $this->createMock(AssistantTaskOrchestrator::class);
-        $orchestrator->method('plan')->willReturnCallback(static fn (string $query): array => ['request' => ['message' => $query, 'context' => [], 'allow_actions' => false],
-            'task_type' => 'summary', 'capability' => [], 'access_context_public' => []]);
-        $orchestrator->method('buildPayload')->willReturnCallback(static fn (array $plan, string $answer, array $options): array => $options + ['answer' => $answer]);
+        $accessResolver = $this->createMock(AssistantAccessContextResolver::class);
+        if ($navigationPermissions === null) {
+            $orchestrator = $this->createMock(AssistantTaskOrchestrator::class);
+            $orchestrator->method('plan')->willReturnCallback(static fn (string $query): array => ['request' => ['message' => $query, 'context' => [], 'allow_actions' => false],
+                'task_type' => 'summary', 'capability' => [], 'access_context_public' => []]);
+            $orchestrator->method('buildPayload')->willReturnCallback($payloadBuilder ?? static fn (array $plan, string $answer, array $options): array => $options + ['answer' => $answer]);
+        } else {
+            $accessResolver = $this->getMockBuilder(AssistantAccessContextResolver::class)->disableOriginalConstructor()->onlyMethods(['resolve'])->getMock();
+            $accessResolutions = 0;
+            $accessResolver->method('resolve')->willReturnCallback(static function () use (&$navigationPermissions, &$accessResolutions, $afterNavigationAccess): array {
+                if (++$accessResolutions > 1) { $afterNavigationAccess?->__invoke(); }
+                $permissions = count($navigationPermissions) > 1 ? array_shift($navigationPermissions) : $navigationPermissions[0];
+                return ['can_use_assistant' => true, 'permissions_flat' => $permissions, 'permissions_structured' => [], 'available_modules' => [], 'is_read_only' => true];
+            });
+            $orchestrator = new AssistantTaskOrchestrator(new AssistantCapabilityRegistry, $accessResolver);
+        }
         $service = new ToolFirstStubService($provider, $manager, $context, $this->createMock(IntentRecognizer::class), $usage,
-            $this->createMock(LoggingService::class), $registry, $permissions, $this->createMock(AssistantAccessContextResolver::class), $orchestrator,
+            $this->createMock(LoggingService::class), $registry, $permissions, $accessResolver, $orchestrator,
             new AssistantAgentStateStore, new AssistantAgentPlanner(new AssistantCapabilityCatalog, new AssistantPeriodResolver),
             new AssistantAgentExecutor($registry, $permissions, new AssistantArtifactNormalizer), new AssistantResponseVerifier,
             tokenBudget: new TokenBudgetService(new TokenCounter(new class {
                 public function encode(string $text): array { return array_fill(0, (int) ceil(mb_strlen($text) / 4), 1); }
-            })), financialClaims: new AssistantFinancialClaimVerifier);
+            })), financialClaims: new AssistantFinancialClaimVerifier, dataAccess: $navigationPolicy);
         $service->conversation = $conversation;
         return $service;
     }

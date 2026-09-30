@@ -41,6 +41,8 @@ class AIAssistantService
 
     private const HISTORY_TOTAL_CHARS = 120000;
 
+    private const UNRESOLVED_DOMAIN_MESSAGE = 'Ассистент не смог однозначно определить домен запроса по текущему контексту.';
+
     private const HISTORY_USER_MESSAGE_CHARS = 4000;
 
     private const HISTORY_ASSISTANT_MESSAGE_CHARS = 24000;
@@ -305,6 +307,7 @@ class AIAssistantService
         if ($standaloneGreeting) {
             return $this->measurePhase('greeting', fn (): array => $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload));
         }
+        $navigationRequestContext = $requestPayload['context'] ?? [];
         $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
         $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
         $this->activeEstimateSelection = null;
@@ -363,6 +366,15 @@ class AIAssistantService
 
         $conversation->context = $conversationContext;
         $conversation->save();
+
+        if (($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
+            && empty($conversationContext['selected_estimate']) && empty($conversationContext['selected_estimate_id'])
+            && is_array($navigationRequestContext) && empty($navigationRequestContext['entity_refs'])
+            && empty($navigationRequestContext['entity_references']) && empty($navigationRequestContext['filters'])
+            && empty($navigationRequestContext['period'])
+            && array_diff(array_keys($navigationRequestContext), ['source_module', 'source_route', 'ui_state', 'entity_refs', 'period', 'filters']) === []) {
+            return $this->answerSectionNavigation($query, $organizationId, $user, $conversation, $requestPayload);
+        }
 
         $agentResult = $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($agentResult !== null) {
@@ -524,10 +536,14 @@ class AIAssistantService
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
+            $stockDomainResolved = false;
             foreach (array_reverse($this->activeToolResults) as $toolResult) {
                 if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
                     $verifiedStock = $this->verifyMaterialStock($toolResult, $user, $organizationId);
                     if ($verifiedStock !== null) {
+                        $stockDomainResolved = in_array($toolResult['status'] ?? null, ['success', 'empty'], true)
+                            && ($verifiedStock['validation_status'] ?? null) === 'verified'
+                            && ($verifiedStock['needs_clarification'] ?? true) === false;
                         $assistantContent = $verifiedStock['text'];
                         $structuredCheck = $verifiedStock;
                         $compoundParts = false;
@@ -615,6 +631,11 @@ class AIAssistantService
             $validationStatus = $structuredCheck['validation_status'] ?? $financialCheck['validation_status'] ?? 'unverified';
             $assistantPayload['validation_status'] = $validationStatus === 'unverified' && $assistantPayload['source_refs'] !== []
                 ? 'partial' : $validationStatus;
+            if ($stockDomainResolved && $validationStatus === 'verified' && empty($taskPlan['capability'])
+                && is_array($assistantPayload['missing_data'] ?? null)) {
+                $assistantPayload['missing_data'] = array_values(array_filter($assistantPayload['missing_data'],
+                    static fn (mixed $reason): bool => $reason !== self::UNRESOLVED_DOMAIN_MESSAGE));
+            }
             $assistantPayload['needs_clarification'] = (bool) ($assistantPayload['needs_clarification'] ?? false)
                 || (bool) ($structuredCheck['needs_clarification'] ?? false)
                 || ($terminalToolResponse && $assistantPayload['source_refs'] === []);
@@ -2400,6 +2421,46 @@ class AIAssistantService
         $uiState = $context['ui_state'] ?? [];
 
         return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path', 'pathname']) === [];
+    }
+
+    private function answerSectionNavigation(string $query, int $organizationId, User $user, Conversation $conversation, array $requestPayload): array
+    {
+        $this->stage('verifying');
+        $this->executionCheckpoint();
+        $access = $this->accessContextResolver->resolve($user, $organizationId);
+        if (($access['can_use_assistant'] ?? false) !== true) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+        $plan = $this->taskOrchestrator->plan($query, $requestPayload, $access);
+        $domain = $plan['capability']['domain'] ?? null;
+        $allowed = ($plan['section_navigation'] ?? false) === true && is_array($plan['navigation_target'] ?? null);
+        if ($allowed && $this->dataAccess !== null) {
+            $allowed = is_string($domain) && $this->dataAccess->withCurrentChecks($user, $organizationId,
+                fn (): bool => $this->dataAccess->canReadDomain($user, $organizationId, $domain), true);
+        }
+        $this->executionCheckpoint();
+        if (!$allowed) {
+            $plan['navigation_target'] = null;
+            $plan['next_actions'] = [];
+            $this->recordRequestOutcome('access_denied');
+        } else {
+            $plan['access_limits'] = array_values(array_filter($plan['access_limits'] ?? [],
+                static fn (array $limit): bool => ($limit['code'] ?? null) !== 'actions_locked'));
+        }
+        $content = trans_message($allowed ? 'ai_assistant.section_navigation_response' : 'ai_assistant.section_navigation_denied',
+            ['section' => $plan['capability']['label'] ?? '']);
+        $metadata = $this->decorateMetadata(array_replace($this->taskOrchestrator->buildPayload($plan, $content), [
+            'validation_status' => $allowed ? 'verified' : 'unverified',
+            'needs_clarification' => false, 'source_refs' => [],
+            'response_kind' => 'navigation', 'request_id' => $requestPayload['request_id'] ?? null,
+            'actor_user_id' => (int) $user->id,
+        ]), $user);
+        $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, 'system', $metadata);
+        $this->usageTracker->trackRequest($organizationId, $user, 0, 0.0);
+        return ['conversation_id' => $conversation->id, 'message' => [
+            'id' => $message->id, 'role' => 'assistant', 'content' => $content, 'tokens_used' => 0,
+            'metadata' => $metadata, 'created_at' => $message->created_at?->toISOString(),
+        ], 'tokens_used' => 0, 'usage' => $this->usageTracker->getUsageStats($organizationId)];
     }
 
     private function answerStandaloneGreeting(string $query, int $organizationId, User $user, Conversation $conversation, array $requestPayload): array

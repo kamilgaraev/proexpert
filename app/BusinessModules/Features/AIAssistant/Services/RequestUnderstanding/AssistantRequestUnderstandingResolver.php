@@ -21,13 +21,18 @@ final class AssistantRequestUnderstandingResolver
         if ($domain === 'estimates' && ! in_array('estimate', $requestedEntities, true)) {
             $requestedEntities[] = 'estimate';
         }
-        $primaryIntent = $this->resolvePrimaryIntent($normalized, $constraints);
+        $sectionNavigation = !in_array('no_navigation', $constraints, true)
+            && $this->isSectionNavigation($normalized, $context, $capability);
+        $primaryIntent = $sectionNavigation ? 'navigate' : $this->resolvePrimaryIntent($normalized, $constraints);
         $outputFormat = $this->resolveOutputFormat($normalized, $constraints, $primaryIntent);
         $actionPolicy = $this->resolveActionPolicy($primaryIntent, $constraints);
         $evidence = $this->buildEvidence($normalized, $primaryIntent, $outputFormat, $actionPolicy, $constraints, $requestedEntities);
 
         if (is_string($domain)) {
             $evidence[] = ['type' => 'primary_domain', 'value' => $domain];
+        }
+        if ($sectionNavigation) {
+            $evidence[] = ['type' => 'section_navigation', 'value' => $capability['id']];
         }
 
         return new AssistantRequestUnderstanding(
@@ -444,6 +449,41 @@ final class AssistantRequestUnderstandingResolver
     private function isNavigationRequest(string $normalized): bool
     {
         return $this->containsAny($normalized, ['открой', 'перейди', 'покажи раздел', 'открой проект']);
+    }
+
+    private function isSectionNavigation(string $normalized, array $context, ?array $capability): bool
+    {
+        if ($capability === null || !empty($context['entity_refs']) || !empty($context['filters'])
+            || !empty($context['period']) || !empty($context['selected_estimate_id'])
+            || !empty($context['selected_estimate']) || !empty($context['selected_entities'])
+            || array_diff(array_keys($context), ['source_module', 'source_route', 'entity_refs', 'period', 'filters', 'ui_state']) !== []) {
+            return false;
+        }
+        $uiState = $context['ui_state'] ?? [];
+        if (!is_array($uiState) || array_diff(array_keys($uiState), ['pathname', 'assistant_path']) !== []) {
+            return false;
+        }
+        if (preg_match('/^(?:где(?: находится| находятся| найти)?|куда(?: перейти)?|как найти|открой(?:те)?|перейди(?:те)?|покажи(?:те)? раздел)\s+(.+)$/u', $normalized, $match) !== 1) {
+            return false;
+        }
+        $subject = preg_replace('/^(?:(?:у нас|в|раздел|список|меню)\s+)+/u', '', $match[1]) ?? $match[1];
+        $subject = preg_replace('/\s+(?:в меню|в интерфейсе|в системе|в мост)$/u', '', $subject) ?? $subject;
+        $aliases = [$capability['label'] ?? '', ...($capability['keywords'] ?? [])];
+        $ending = '(?:а|я|ы|и|е|у|ю|о|ов|ев|ей|ах|ях|ам|ям|ами|ями|ие|ия|ии|ий|ию|ения|ений|ению|ениях)?';
+        foreach ($aliases as $alias) {
+            if (!is_string($alias) || ($alias = $this->normalize($alias)) === '') {
+                continue;
+            }
+            if ($subject === $alias) {
+                return true;
+            }
+            $words = explode(' ', $alias);
+            $pattern = implode('\s+', array_map(static fn (string $word): string => preg_quote($word, '/').$ending, $words));
+            if (preg_match('/^'.$pattern.'$/u', $subject) === 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function isCreateRequest(string $normalized): bool

@@ -27,17 +27,28 @@ class AssistantTaskOrchestrator
     public function plan(string $query, array $requestPayload, array $accessContext): array
     {
         $request = $this->normalizeRequest($query, $requestPayload);
-        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query, $request['context']);
+        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query,
+            is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : $request['context']);
         $taskType = $this->resolveTaskType($request, $requestUnderstanding);
         $capability = $this->capabilityRegistry->match($query, $request['context'], $request['goal']);
         $navigationTarget = $this->resolveNavigationTarget($capability, $request['context']);
         $nextActions = $this->buildNextActions($capability, $accessContext, $request, $navigationTarget, $requestUnderstanding);
         $accessLimits = $this->buildAccessLimits($capability, $accessContext, $request, $nextActions);
+        $sectionNavigation = in_array('section_navigation', array_column($requestUnderstanding->evidence, 'type'), true)
+            && empty($requestPayload['attachment_ids'])
+            && in_array($request['goal'], [null, '', 'navigate'], true)
+            && in_array($request['desired_mode'], [null, '', 'navigate'], true);
+        if ($sectionNavigation) {
+            $nextActions = array_values(array_filter($nextActions, static fn (array $action): bool =>
+                ($action['type'] ?? null) === 'navigate' && ($action['allowed'] ?? false) === true));
+            $navigationTarget = $nextActions[0]['target'] ?? null;
+        }
 
         return [
             'request' => $request,
             'request_understanding' => $requestUnderstanding->toArray(),
             'task_type' => $taskType,
+            'section_navigation' => $sectionNavigation,
             'capability' => $capability,
             'navigation_target' => $navigationTarget,
             'next_actions' => $nextActions,
