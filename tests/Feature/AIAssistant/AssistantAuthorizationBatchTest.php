@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
+use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantOperationsBusinessMetadata;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -69,6 +70,65 @@ final class AssistantAuthorizationBatchTest extends TestCase
         self::assertLessThan(120, count($queries), 'Source filtering must not reload role and domain gates per registered entity');
         \App\Models\Module::query()->where('slug', 'project-management')->update(['is_active' => false]);
         self::assertNotContains('project', $access->allowedSourceTypes($fixture->owner, $fixture->organization->id));
+    }
+
+    public function test_operations_asset_actor_scopes_do_not_reload_entitlements_per_identity(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $access = app(AssistantDataAccessPolicy::class);
+        $definitions = array_filter(AssistantOperationsBusinessMetadata::recordDefinitions(),
+            static fn (array $record): bool => $record['domain'] === 'operations_assets');
+        $types = array_keys($definitions);
+        self::assertGreaterThanOrEqual(2, count($types));
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $access->withCurrentChecks($fixture->owner, $fixture->organization->id,
+                function (AuthorizationService $authorization) use ($access, $fixture, $definitions, $types): void {
+                    foreach ($types as $type) {
+                        $model = $definitions[$type]['model'];
+                        AssistantOperationsBusinessMetadata::applyActorScope($type, $model::query(), $fixture->owner,
+                            $fixture->organization->id, $authorization, $access);
+                    }
+                }, true);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $subscriptionReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
+        $moduleReads = array_filter($queries, static fn (array $query): bool => preg_match('/\bmodules\b/', $query['query']) === 1);
+        self::assertLessThanOrEqual(2, count($subscriptionReads), 'Scoped identities should share one policy entitlement read and one authorization module read');
+        self::assertLessThanOrEqual(6, count($moduleReads), 'Module table reads should not grow with each operations asset identity');
+
+        $ownerModules = $access->withCurrentChecks($fixture->owner, $fixture->organization->id,
+            fn (): array => $access->effectiveModuleSlugs($fixture->owner, $fixture->organization->id), true);
+        $foreignModules = $access->withCurrentChecks($fixture->foreignOwner, $fixture->foreignOrganization->id,
+            fn (): array => $access->effectiveModuleSlugs($fixture->foreignOwner, $fixture->foreignOrganization->id), true);
+        self::assertContains('ai-assistant', $ownerModules);
+        self::assertNotContains('ai-assistant', $foreignModules);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $firstOutsideRead = $access->effectiveModuleSlugs($fixture->owner, $fixture->organization->id);
+            $secondOutsideRead = $access->effectiveModuleSlugs($fixture->owner, $fixture->organization->id);
+            $outsideQueries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame($firstOutsideRead, $secondOutsideRead);
+        $outsideSubscriptionReads = array_filter($outsideQueries,
+            static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
+        self::assertCount(2, $outsideSubscriptionReads, 'Outside an explicit frame, each call must see current entitlements independently');
+
+        $fixture->subscription->update(['status' => 'expired']);
+        $revokedModules = $access->withCurrentChecks($fixture->owner, $fixture->organization->id,
+            fn (): array => $access->effectiveModuleSlugs($fixture->owner, $fixture->organization->id), true);
+        self::assertNotContains('ai-assistant', $revokedModules);
     }
 
     public function test_catalogue_and_tool_boundaries_observe_current_role_and_package_revocation(): void
