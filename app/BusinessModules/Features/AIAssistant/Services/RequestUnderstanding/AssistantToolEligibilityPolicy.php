@@ -35,9 +35,14 @@ final class AssistantToolEligibilityPolicy
         return $this->toolEligibility($toolName, $understanding, false, $allowActions);
     }
 
-    public function canExecuteTool(string $toolName, AssistantRequestUnderstanding $understanding, bool $allowActions = false): AssistantToolEligibility
+    public function canExecuteTool(
+        string $toolName,
+        AssistantRequestUnderstanding $understanding,
+        bool $allowActions = false,
+        array $arguments = []
+    ): AssistantToolEligibility
     {
-        return $this->toolEligibility($toolName, $understanding, true, $allowActions);
+        return $this->toolEligibility($toolName, $understanding, true, $allowActions, $arguments);
     }
 
     public function canExposeAction(array $action, AssistantRequestUnderstanding $understanding, bool $allowActions = false): AssistantToolEligibility
@@ -63,7 +68,8 @@ final class AssistantToolEligibilityPolicy
         string $toolName,
         AssistantRequestUnderstanding $understanding,
         bool $execute,
-        bool $allowActions
+        bool $allowActions,
+        array $arguments = []
     ): AssistantToolEligibility {
         $category = $this->toolCategory($toolName);
 
@@ -79,6 +85,10 @@ final class AssistantToolEligibilityPolicy
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_report_explicit_only'));
         }
 
+        if ($this->isPaymentOnlyRequest($understanding) && $this->blocksPaymentOnlyTool($toolName, $execute, $arguments)) {
+            return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_payment_scope_disabled'));
+        }
+
         if ($category === 'mutation') {
             if (! $this->allowsMutation($understanding, $allowActions) || ! $this->matchesMutationIntent($toolName, $understanding)) {
                 return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_mutation_disabled'));
@@ -90,6 +100,31 @@ final class AssistantToolEligibilityPolicy
         }
 
         return AssistantToolEligibility::allow($category);
+    }
+
+    public function isPaymentOnlyRequest(?AssistantRequestUnderstanding $understanding): bool
+    {
+        return $understanding instanceof AssistantRequestUnderstanding
+            && count($understanding->requestedEntities) === 1
+            && $understanding->requestedEntities[0] === 'payment';
+    }
+
+    private function blocksPaymentOnlyTool(string $toolName, bool $execute, array $arguments): bool
+    {
+        if (in_array($toolName, ['get_contract_snapshot', 'get_project_snapshot'], true)) {
+            return true;
+        }
+
+        if (! in_array($toolName, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'], true)) {
+            return false;
+        }
+
+        if (! $execute) {
+            return false;
+        }
+
+        return ($arguments['domain'] ?? null) !== 'finance'
+            || ($arguments['entity_type'] ?? null) !== 'payment_document';
     }
 
     private function allowsMutation(AssistantRequestUnderstanding $understanding, bool $allowActions): bool

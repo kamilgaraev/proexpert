@@ -1705,7 +1705,7 @@ class AIAssistantService
             if ($requestUnderstanding instanceof AssistantRequestUnderstanding) {
                 $eligibility = $isMutationTool
                     ? $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding, $allowActions)
-                    : $this->toolEligibilityPolicy->canExecuteTool($toolName, $requestUnderstanding, $allowActions);
+                    : $this->toolEligibilityPolicy->canExecuteTool($toolName, $requestUnderstanding, $allowActions, $args);
                 if (! $eligibility->allowed) {
                     $this->recordRequestOutcome('request_blocked');
                     $message = $this->toolBlockedMessage($eligibility->reason);
@@ -3226,13 +3226,15 @@ class AIAssistantService
     {
         $taskType = (string) ($taskPlan['task_type'] ?? 'summary');
         $capabilityId = $taskPlan['capability']['id'] ?? null;
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding);
 
         $capabilityTools = match ($capabilityId) {
             'projects' => ['get_project_snapshot', 'search_projects'],
             'contracts' => ['get_contract_snapshot', 'search_contractors'],
             'reports' => ['get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report', 'generate_operational_pdf_report', 'generate_rag_pdf_report'],
             'warehouse' => ['search_warehouse', 'search_materials'],
-            'payments' => ['get_contract_snapshot', 'get_project_snapshot', 'approve_payment_request', 'generate_contract_payments_report'],
+            'payments' => ['approve_payment_request', 'generate_contract_payments_report'],
             'schedules' => ['get_schedule_snapshot', 'search_projects', 'create_schedule_task', 'update_schedule_task_status'],
             'procurement' => ['get_procurement_snapshot', 'get_project_snapshot', 'search_materials', 'search_contractors'],
             'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
@@ -3242,13 +3244,21 @@ class AIAssistantService
         };
 
         $toolNames = $capabilityTools;
+        if ($capabilityId === 'payments' && $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            if (in_array('contract', $requestUnderstanding->requestedEntities, true)) {
+                $toolNames[] = 'get_contract_snapshot';
+            }
+            if (in_array('project', $requestUnderstanding->requestedEntities, true)) {
+                $toolNames[] = 'get_project_snapshot';
+            }
+        }
         if (in_array($capabilityId, ['reports', 'payments'], true)
             || in_array($taskPlan['domain'] ?? $taskPlan['capability']['domain'] ?? null, ['finance', 'reports', 'budgeting', 'holding_finance', 'organization_reporting'], true)) {
             $toolNames[] = 'get_published_report_financial_evidence';
             $toolNames[] = 'get_live_project_financial_evidence';
         }
 
-        if ($taskType === 'find') {
+        if ($taskType === 'find' && ! $paymentOnlyRequest) {
             $toolNames = array_merge($toolNames, [
                 'search_projects',
                 'search_contractors',

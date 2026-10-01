@@ -15,6 +15,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVer
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
@@ -92,6 +93,132 @@ class AIAssistantServiceBudgetTest extends TestCase
 
         $this->assertContains('get_procurement_snapshot', $toolNames);
         $this->assertContains('get_project_snapshot', $toolNames);
+    }
+
+    public function test_payment_only_capability_exposes_payment_search_and_explicit_contract_request_keeps_contract_snapshot(): void
+    {
+        $toolRegistry = new AIToolRegistry;
+        foreach ([
+            'assistant_domain_search',
+            'assistant_domain_read',
+            'assistant_domain_navigation',
+            'get_contract_snapshot',
+            'get_project_snapshot',
+            'search_projects',
+            'get_schedule_snapshot',
+        ] as $toolName) {
+            $toolRegistry->registerTool($this->makeTool($toolName));
+        }
+
+        $service = $this->makeService($toolRegistry);
+        $resolver = new AssistantRequestUnderstandingResolver;
+        $request = [
+            'allow_actions' => false,
+            'context' => [],
+        ];
+        $paymentPlan = [
+            'task_type' => 'find',
+            'capability' => ['id' => 'payments', 'domain' => 'finance'],
+            'request' => $request,
+            'request_understanding' => $resolver->resolve('Что с платежами?')->toArray(),
+        ];
+        $paymentToolNames = array_column(array_column($service->exposeResolveToolDefinitions($paymentPlan), 'function'), 'name');
+
+        $this->assertContains('assistant_domain_search', $paymentToolNames);
+        $this->assertNotContains('get_contract_snapshot', $paymentToolNames);
+        $this->assertNotContains('get_project_snapshot', $paymentToolNames);
+        $this->assertNotContains('search_projects', $paymentToolNames);
+        $this->assertNotContains('get_schedule_snapshot', $paymentToolNames);
+
+        $contractPlan = $paymentPlan;
+        $contractPlan['task_type'] = 'summary';
+        $contractPlan['request_understanding'] = $resolver->resolve('Покажи платежи по договору')->toArray();
+        $contractToolNames = array_column(array_column($service->exposeResolveToolDefinitions($contractPlan), 'function'), 'name');
+
+        $this->assertContains('get_contract_snapshot', $contractToolNames);
+    }
+
+    public function test_payment_only_tool_calls_block_contract_and_cross_domain_search(): void
+    {
+        $contractTool = new class implements AIToolInterface
+        {
+            public bool $executed = false;
+
+            public function getName(): string
+            {
+                return 'get_contract_snapshot';
+            }
+
+            public function getDescription(): string
+            {
+                return 'Test contract snapshot';
+            }
+
+            public function getParametersSchema(): array
+            {
+                return ['type' => 'object', 'properties' => [], 'required' => [], 'additionalProperties' => false];
+            }
+
+            public function execute(array $arguments, ?User $user, Organization $organization): array|string
+            {
+                $this->executed = true;
+
+                return ['status' => 'success'];
+            }
+        };
+        $searchTool = new class implements AIToolInterface
+        {
+            public bool $executed = false;
+
+            public function getName(): string
+            {
+                return 'assistant_domain_search';
+            }
+
+            public function getDescription(): string
+            {
+                return 'Test domain search';
+            }
+
+            public function getParametersSchema(): array
+            {
+                return ['type' => 'object', 'properties' => [
+                    'domain' => ['type' => 'string'],
+                    'entity_type' => ['type' => 'string'],
+                ], 'required' => ['domain', 'entity_type'], 'additionalProperties' => false];
+            }
+            public function execute(array $arguments, ?User $user, Organization $organization): array|string
+            {
+                $this->executed = true;
+
+                return ['status' => 'success'];
+            }
+        };
+        $toolRegistry = new AIToolRegistry;
+        $toolRegistry->registerTool($contractTool);
+        $toolRegistry->registerTool($searchTool);
+        $service = $this->makeService($toolRegistry, true);
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray()];
+        $failures = [];
+
+        $contractResult = $service->exposeHandleToolCall([
+            'function' => ['name' => 'get_contract_snapshot', 'arguments' => '{}'],
+        ], $plan, $failures);
+        $searchResult = $service->exposeHandleToolCall([
+            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{"domain":"contracts","entity_type":"contract"}'],
+        ], $plan, $failures);
+
+        $this->assertSame('blocked_by_request_policy', $contractResult['status']);
+        $this->assertSame('blocked_by_request_policy', $searchResult['status']);
+        $this->assertFalse($contractTool->executed);
+        $this->assertFalse($searchTool->executed);
+
+        $paymentSearch = $service->exposeHandleToolCall([
+            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{"domain":"finance","entity_type":"payment_document"}'],
+        ], $plan, $failures);
+
+        $this->assertSame('success', $paymentSearch['status']);
+        $this->assertTrue($searchTool->executed);
     }
 
     public function test_reports_capability_exposes_schedule_report_tools(): void

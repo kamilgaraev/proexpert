@@ -106,6 +106,33 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
         }
     }
 
+    public function test_payment_only_scope_blocks_contract_reads_and_cross_domain_searches(): void
+    {
+        $resolver = new AssistantRequestUnderstandingResolver;
+        $paymentOnly = $resolver->resolve('Что с платежами?');
+        $explicitContract = $resolver->resolve('Покажи платежи по договору');
+        $policy = new AssistantToolEligibilityPolicy;
+
+        $this->assertSame(['payment'], $paymentOnly->requestedEntities);
+        $this->assertFalse($policy->canExposeTool('get_contract_snapshot', $paymentOnly)->allowed);
+        $this->assertFalse($policy->canExecuteTool('get_contract_snapshot', $paymentOnly)->allowed);
+        $this->assertFalse($policy->canExecuteTool('get_project_snapshot', $paymentOnly)->allowed);
+        $this->assertTrue($policy->canExposeTool('get_contract_snapshot', $explicitContract)->allowed);
+
+        $this->assertTrue($policy->canExecuteTool('assistant_domain_search', $paymentOnly, false, [
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+        ])->allowed);
+        $this->assertFalse($policy->canExecuteTool('assistant_domain_search', $paymentOnly, false, [
+            'domain' => 'contracts',
+            'entity_type' => 'contract',
+        ])->allowed);
+        $this->assertFalse($policy->canExecuteTool('assistant_domain_search', $paymentOnly, false, [
+            'domain' => 'finance',
+            'entity_type' => 'contract',
+        ])->allowed);
+    }
+
     public function test_unknown_tools_are_denied_even_with_read_prefix(): void
     {
         $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Найди проекты');
