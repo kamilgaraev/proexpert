@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNa
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileMetadata;
+use Aws\S3\Exception\S3Exception;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -233,6 +234,20 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldBeUnique, Shou
         if ($this->sourceType === 'legal_business') {
             try {
                 $legal->prepare($this->organizationId, null, $nativeType, $sourceId);
+            } catch (S3Exception $exception) {
+                if ($exception->getStatusCode() !== 404 || $exception->getAwsErrorCode() !== 'NoSuchKey') {
+                    throw $exception;
+                }
+
+                Log::notice('ai_assistant.native_attachment_source_missing', [
+                    'run_id' => $this->runId,
+                    'organization_id' => $this->organizationId,
+                    'source_type' => $this->sourceType,
+                    'native_type' => $nativeType,
+                    'source_id' => $sourceId,
+                    'storage_error_code' => 'NoSuchKey',
+                    'storage_status_code' => 404,
+                ]);
             } catch (RuntimeException $exception) {
                 if ($exception->getMessage() !== 'ai_assistant_document_native_source_invalid') {
                     throw $exception;

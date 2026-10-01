@@ -4,9 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Jobs\PrepareAssistantNativeAttachmentsJob;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileAdapter;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileMetadata;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
@@ -20,9 +26,16 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\Project;
 use App\Services\Storage\FileService;
+use Aws\Command;
+use Aws\S3\Exception\S3Exception;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Mockery;
 use RuntimeException;
+use GuzzleHttp\Psr7\Response;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
@@ -144,6 +157,139 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertSame(0, $this->reads);
     }
 
+    public function test_missing_legal_s3_object_is_skipped_without_blocking_next_source_or_marking_coverage_ready(): void
+    {
+        [$fixture, $missingVersion] = $this->fixture();
+        $secondDocument = LegalArchiveDocument::withoutEvents(fn () => LegalArchiveDocument::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'title' => 'Дополнительный документ',
+            'document_type' => 'nda',
+            'status' => 'draft',
+            'lifecycle_status' => 'draft',
+            'approval_status' => 'not_started',
+            'signature_status' => 'unsigned',
+            'confidentiality_level' => 'restricted',
+            'lock_version' => 0,
+        ]));
+        $secondFile = LegalArchiveDocumentFile::withoutEvents(fn () => LegalArchiveDocumentFile::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $secondDocument->id,
+            'role' => 'primary',
+            'title' => 'Основной документ',
+            'sort_order' => 0,
+            'is_required' => true,
+        ]));
+        $secondVersion = LegalArchiveDocumentVersion::withoutEvents(fn () => LegalArchiveDocumentVersion::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $secondDocument->id,
+            'document_file_id' => $secondFile->id,
+            'uploaded_by_user_id' => $fixture->member->id,
+            'version_number' => '1',
+            'is_current' => true,
+            'status' => 'uploaded',
+            'processing_status' => 'ready',
+            'file_path' => 'org-'.$fixture->organization->id.'/legal-archive/files/'.$secondFile->id.'/versions/87654321-1234-1234-1234-123456789abc.pdf',
+            'original_filename' => 'Дополнительный документ.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => strlen($this->content),
+            'content_hash' => hash('sha256', $this->content),
+        ]));
+        LegalDocumentAccessGrant::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $secondDocument->id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => $fixture->organization->id,
+            'subject_user_id' => $fixture->member->id,
+            'abilities' => ['view'],
+            'granted_by_user_id' => $fixture->owner->id,
+        ]);
+
+        config(['cache.default' => 'array']);
+        Cache::clearResolvedInstances();
+        Queue::fake();
+        $missingEvents = [];
+        Log::listen(static function (MessageLogged $event) use (&$missingEvents): void {
+            if ($event->message === 'ai_assistant.native_attachment_source_missing') {
+                $missingEvents[] = $event;
+            }
+        });
+        $currentFailure = $this->s3Exception('AccessDenied', 404);
+        $storage = Mockery::mock(FileService::class)->makePartial();
+        $storage->shouldReceive('readCurrentBounded')->andReturnUsing(function (...$arguments) use (&$currentFailure, $missingVersion): mixed {
+            if (($arguments[0] ?? null) === $missingVersion->file_path) {
+                throw $currentFailure;
+            }
+
+            $stream = fopen('php://temp', 'w+b');
+            if ($stream === false) {
+                throw new RuntimeException('fixture_stream_unavailable');
+            }
+            fwrite($stream, $this->content);
+            rewind($stream);
+
+            return $stream;
+        });
+        $this->app->instance(FileService::class, $storage);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'source_type' => 'legal_business',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_ASYNC,
+            'queued_at' => now(),
+        ]);
+        $queue = app(AssistantNativeAttachmentPreparationQueue::class);
+        self::assertTrue($queue->dispatchQueuedRun($run));
+        $job = Queue::pushed(PrepareAssistantNativeAttachmentsJob::class)->first();
+        self::assertInstanceOf(PrepareAssistantNativeAttachmentsJob::class, $job);
+        $legal = app(AssistantLegalNativeFileIndexer::class);
+        $operations = app(AssistantOperationsNativeFileIndexer::class);
+
+        foreach ([$this->s3Exception('AccessDenied', 404), $this->s3Exception('RequestTimeout', 503)] as $currentFailure) {
+            try {
+                $job->handle($legal, $operations, $queue);
+                self::fail('Other S3 failures must be retried by the queue worker.');
+            } catch (S3Exception $exception) {
+                self::assertSame($currentFailure, $exception);
+            }
+            self::assertFalse($queue->isComplete((int) $run->id));
+            self::assertSame(0, AIAssistantDocument::query()->where('organization_id', $fixture->organization->id)->count());
+        }
+
+        $currentFailure = $this->s3Exception('NoSuchKey', 404);
+        $job->handle($legal, $operations, $queue);
+
+        self::assertTrue($queue->isComplete((int) $run->id));
+        self::assertSame('complete', $queue->pageProgress((int) $run->id, 'legal_business', 0, null)['state']);
+        self::assertSame(0, AIAssistantDocument::query()
+            ->where('organization_id', $fixture->organization->id)
+            ->where('parent_entity_id', (string) $missingVersion->id)
+            ->count());
+        self::assertSame(1, AIAssistantDocument::query()
+            ->where('organization_id', $fixture->organization->id)
+            ->where('parent_entity_id', (string) $secondVersion->id)
+            ->where('status', AIAssistantDocument::STATUS_QUEUED)
+            ->count());
+
+        $coverage = app(AssistantDocumentCoverageService::class)->coverage($fixture->organization->id, $fixture->member);
+        self::assertSame(2, $coverage['native_attachment_coverage']['legal_document_version']['expected_file_count']);
+        self::assertSame(1, $coverage['native_attachment_coverage']['legal_document_version']['unmapped_file_count']);
+        self::assertSame(1, $coverage['document_coverage']['needs_access_review']);
+        self::assertFalse($queue->dispatchQueuedRun($run->fresh()));
+        self::assertCount(1, Queue::pushed(PrepareAssistantNativeAttachmentsJob::class));
+        self::assertCount(1, $missingEvents);
+        $context = $missingEvents[0]->context;
+        self::assertSame($run->id, $context['run_id']);
+        self::assertSame('legal_business', $context['source_type']);
+        self::assertSame('legal_document_version', $context['native_type']);
+        self::assertSame((string) $missingVersion->id, $context['source_id']);
+        self::assertSame('NoSuchKey', $context['storage_error_code']);
+        self::assertSame(404, $context['storage_status_code']);
+        self::assertArrayNotHasKey('path', $context);
+        self::assertArrayNotHasKey('filename', $context);
+        self::assertArrayNotHasKey('exception_message', $context);
+    }
+
     private function fixture(bool $nonfinancial = false): array
     {
         $this->content = $this->pdf($nonfinancial ? 'Confidentiality obligations only' : 'Invoice total 1234.56');
@@ -188,5 +334,13 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         });
         $this->app->instance(FileService::class,$storage);
         return new AssistantLegalNativeFileAdapter(app(AssistantDataAccessPolicy::class),app(AuthorizationService::class),$storage);
+    }
+
+    private function s3Exception(string $errorCode, int $statusCode): S3Exception
+    {
+        return new S3Exception($errorCode, new Command('GetObject', []), [
+            'code' => $errorCode,
+            'response' => new Response($statusCode),
+        ]);
     }
 }
