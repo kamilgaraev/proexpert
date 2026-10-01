@@ -171,6 +171,32 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertSame(KnowledgeSurface::MOBILE, $policy->trustedSurface());
     }
 
+    public function test_current_status_finishes_after_one_and_a_half_seconds_within_its_bounded_deadline(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
+        $actor->organizations()->attach($organization->id, ['is_active' => true]);
+        $service = $this->service();
+        Cache::put('ai-rag-status:'.$organization->id.':'.$actor->id.':lk', ['status' => ['source_count' => 987654]], 60);
+        $delayed = false;
+        DB::listen(static function ($query) use (&$delayed): void {
+            if (! $delayed && str_contains(strtolower($query->sql), 'count(distinct accessible_sources.id)')) {
+                $delayed = true;
+                usleep(1_600_000);
+            }
+        });
+
+        $status = $service->status($organization->id, $actor);
+
+        $this->assertTrue($delayed);
+        $this->assertTrue($status['status_available']);
+        $this->assertSame(0, $status['source_count']);
+        $this->assertSame(0, $status['chunk_count']);
+        $this->assertSame(0, $status['document_coverage']['total']);
+        $this->assertNull($status['expected_source_count']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
+    }
+
     public function test_budget_expiry_returns_unknown_without_reusing_or_refreshing_an_actor_snapshot(): void
     {
         $organization = Organization::factory()->create();
@@ -182,7 +208,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         DB::listen(static function ($query) use (&$expired): void {
             if (! $expired && str_contains(strtolower($query->sql), 'count(distinct accessible_sources.id)')) {
                 $expired = true;
-                throw new RagStatusBudgetExceeded;
+                usleep(2_600_000);
             }
         });
 

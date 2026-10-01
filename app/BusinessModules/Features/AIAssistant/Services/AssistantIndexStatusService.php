@@ -43,7 +43,7 @@ final class AssistantIndexStatusService
         }
 
         try {
-            $budget = new RagStatusBudget(DB::connection());
+            $budget = new RagStatusBudget(DB::connection(), 2500);
             $result = $this->inRepeatableRead(fn (): array => $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks(
                 $actor,
                 $organizationId,
