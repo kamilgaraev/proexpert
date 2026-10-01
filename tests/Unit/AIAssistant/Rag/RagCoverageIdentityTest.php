@@ -49,7 +49,14 @@ final class RagCoverageIdentityTest extends TestCase
         $this->assertArrayNotHasKey('content', $identity);
         $this->assertArrayNotHasKey('metadata', $identity);
         $stored = new RagChunk;
-        $stored->setRawAttributes(['embedding_provider' => 'fake', 'embedding_model' => 'fake-model', 'embedding' => '[0.1,0.2]']);
+        $stored->setRawAttributes([
+            'chunk_index' => 0,
+            'content' => 'Body text',
+            'content_hash' => hash('sha256', 'Body text'),
+            'embedding_provider' => 'fake',
+            'embedding_model' => 'fake-model',
+            'embedding' => '[0.1,0.2]',
+        ]);
         $wrongProvider = clone $stored;
         $wrongProvider->setAttribute('embedding_provider', 'other-provider');
         $wrongModel = clone $stored;
@@ -57,12 +64,16 @@ final class RagCoverageIdentityTest extends TestCase
         $wrongDimensions = clone $stored;
         $wrongDimensions->setAttribute('embedding', '[0.1]');
         $chunks = $this->createMock(HasMany::class);
-        $chunks->expects(self::exactly(5))->method('get')->with(['embedding_provider', 'embedding_model', 'embedding'])->willReturn(
-            new Collection([$stored]), new Collection([$wrongProvider]), new Collection([$wrongModel]), new Collection([$wrongDimensions]), new Collection,
+        $chunks->expects(self::exactly(10))->method('get')->willReturnOnConsecutiveCalls(
+            new Collection([$stored]), new Collection([$stored]),
+            new Collection([$stored]), new Collection([$wrongProvider]),
+            new Collection([$stored]), new Collection([$wrongModel]),
+            new Collection([$stored]), new Collection([$wrongDimensions]),
+            new Collection([$stored]), new Collection,
         );
         $source = $this->getMockBuilder(RagSource::class)->onlyMethods(['chunks'])->getMock();
         $source->setRawAttributes(['checksum' => $identity['checksum']]);
-        $source->expects(self::exactly(5))->method('chunks')->willReturn($chunks);
+        $source->expects(self::exactly(10))->method('chunks')->willReturn($chunks);
         $equivalent = new RagChunkData(7, null, 'project', 'project', '42', 'Title', 'Body text',
             ['a' => 'value', 'unit_id' => 0, 'z' => 2], $timestamp);
         $this->assertTrue($indexer->matchesSource($source, $equivalent));
