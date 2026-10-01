@@ -18,7 +18,7 @@ final class AssistantStructuredFactFormatter
         'document_type', 'incident_type', 'item_type', 'resource_type', 'date', 'start_date', 'end_date',
         'estimate_date', 'planned_start_date', 'planned_end_date', 'planned_finish_date', 'required_date',
         'due_date', 'needed_by', 'order_date', 'delivery_date', 'paid_at', 'completion_date', 'work_date', 'expected_close_at', 'valid_until', 'sent_at',
-        'published_at', 'is_billable', 'is_active', 'is_paid', 'quantity', 'quantity_total',
+        'published_at', 'is_billable', 'is_active', 'is_paid', 'quantity', 'quantity_per_unit', 'quantity_total',
         'total_quantity', 'completed_quantity', 'unit_price', 'total_amount', 'total_amount_with_vat', 'amount', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'hours',
         'hours_worked', 'volume_completed', 'progress_percent', 'reading_time', 'project_id', 'contract_id',
         'estimate_id', 'estimate_section_id', 'estimate_item_id', 'work_order_id', 'schedule_id',
@@ -32,7 +32,7 @@ final class AssistantStructuredFactFormatter
         'personnel_count', 'equipment_count', 'work_start_date', 'work_end_date', 'rental_start_date', 'rental_end_date', 'equipment_start_at', 'equipment_end_at',
     ];
 
-    private const NUMERIC_FIELDS = ['quantity', 'quantity_total', 'total_quantity', 'completed_quantity', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'unit_price', 'total_amount',
+    private const NUMERIC_FIELDS = ['quantity', 'quantity_per_unit', 'quantity_total', 'total_quantity', 'completed_quantity', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'unit_price', 'total_amount',
         'total_amount_with_vat', 'amount', 'hours', 'hours_worked', 'volume_completed', 'progress_percent', 'reading_time', 'material_quantity', 'personnel_count', 'equipment_count'];
 
     private const ENTITY_TYPES = [
@@ -151,6 +151,7 @@ final class AssistantStructuredFactFormatter
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
         $numericFields = array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields'));
         $defaultFields = array_merge($defaultFields, array_diff($numericFields, $moneyFields));
+        $moneyCurrencyMissing = false;
         $allowedFields = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
         $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
         $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
@@ -188,6 +189,22 @@ final class AssistantStructuredFactFormatter
                 $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\d+(?:\.\d+)?$/D', $display);
                 $presentationFields[$field] = $numeric ? $display : self::markdownText($display);
             }
+            $hasMoneyValue = false;
+            foreach (array_intersect(array_keys($presentationFields), $moneyFields) as $field) {
+                if ($presentationFields[$field] !== trans_message('ai_assistant_facts.unknown')) {
+                    $hasMoneyValue = true;
+                    break;
+                }
+            }
+            $hasCurrency = false;
+            foreach (['currency', 'budget_currency'] as $currencyField) {
+                $currency = $presentationFields[$currencyField] ?? null;
+                if (is_string($currency) && trim($currency) !== '' && $currency !== trans_message('ai_assistant_facts.unknown')) {
+                    $hasCurrency = true;
+                    break;
+                }
+            }
+            $moneyCurrencyMissing = $moneyCurrencyMissing || ($hasMoneyValue && ! $hasCurrency);
             $url = $row['source_ref']['navigation']['url'] ?? null;
             $records[] = [
                 'entity_type' => $entityType,
@@ -246,6 +263,12 @@ final class AssistantStructuredFactFormatter
                 }
             }
             $offset = $end;
+        }
+        if ($moneyCurrencyMissing) {
+            if ($lines !== [] && end($lines) !== '') {
+                $lines[] = '';
+            }
+            $lines[] = trans_message('ai_assistant_facts.money_currency_missing');
         }
 
         return implode("\n", $lines)."\n";
@@ -358,6 +381,10 @@ final class AssistantStructuredFactFormatter
 
     public static function displayPresentationField(array $row, string $field, mixed $value, array $rows = []): string
     {
+        if ($value === null || (is_string($value) && trim($value) === '')) {
+            return trans_message('ai_assistant_facts.unknown');
+        }
+
         $entityType = self::presentationEntityType($row, $rows);
         $display = is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
             : AssistantStructuredFactLabels::display($entityType, $field, (string) $value);

@@ -373,7 +373,7 @@ final class AssistantPresentationPlanner
     private function pairedMeasures(array $sets, array $plans): bool
     {
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
-        $quantityFields = ['quantity', 'quantity_total', 'total_quantity', 'completed_quantity', 'volume_completed', 'material_quantity', 'hours', 'hours_worked'];
+        $quantityFields = ['quantity', 'quantity_per_unit', 'quantity_total', 'total_quantity', 'completed_quantity', 'volume_completed', 'material_quantity', 'hours', 'hours_worked'];
         foreach ($plans as $plan) {
             $selected = $plan['columns'];
             $hasMoney = array_intersect($selected, $moneyFields) !== [];
