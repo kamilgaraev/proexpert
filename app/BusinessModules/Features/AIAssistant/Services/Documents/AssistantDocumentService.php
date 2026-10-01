@@ -123,7 +123,9 @@ final class AssistantDocumentService
                         }
                         $document->update(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => $reusable->coverage_status,
                             'extracted_text' => $reusable->extracted_text, 'processed_at' => now(),
-                            'metadata' => array_merge($document->metadata ?? [], ['page_count' => $reusable->metadata['page_count'] ?? 1, 'reused_from_document_id' => $reusable->id])]);
+                            'metadata' => array_merge($document->metadata ?? [], ['page_count' => $reusable->metadata['page_count'] ?? 1,
+                                'reused_from_document_id' => $reusable->id,
+                                'docx_text_extraction_version' => $reusable->metadata['docx_text_extraction_version'] ?? null])]);
                     });
                 }
             }
@@ -148,10 +150,43 @@ final class AssistantDocumentService
                         'unit_index' => $unit['index'], 'text' => $unit['text'], 'provenance' => $unit['provenance'], 'checksum' => hash('sha256', $unit['text'])]);
                 }
                 $document->update(['status' => $result['status'], 'coverage_status' => $result['coverage'], 'extracted_text' => $result['text'],
-                    'metadata' => array_merge($document->metadata ?? [], ['page_count' => $result['page_count'] ?? 1]), 'processed_at' => now(), 'last_error' => null]);
+                    'metadata' => $this->extractionMetadata($document, $result), 'processed_at' => now(), 'last_error' => null]);
             });
 
             return $document->refresh();
+        });
+    }
+
+    public function recoverEmptyDocx(int $documentId, string $checksum, string $version): AIAssistantDocument
+    {
+        return Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId, $checksum, $version): AIAssistantDocument {
+            $document = AIAssistantDocument::query()->findOrFail($documentId);
+            if (! $this->isPendingEmptyDocxRecovery($document, $checksum, $version)) {
+                return $document;
+            }
+
+            $this->assertCurrentFile($document);
+            $result = $this->extractor->extract($this->documentContent($document), $document->mime_type, $document->filename);
+
+            return DB::transaction(function () use ($document, $checksum, $version, $result): AIAssistantDocument {
+                $current = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                if (! $this->isPendingEmptyDocxRecovery($current, $checksum, $version)) {
+                    return $current;
+                }
+
+                AIAssistantDocumentUnit::query()->where('document_id', $current->id)->delete();
+                foreach ($result['units'] as $unit) {
+                    AIAssistantDocumentUnit::query()->create(['document_id' => $current->id, 'unit_type' => $unit['type'],
+                        'unit_index' => $unit['index'], 'text' => $unit['text'], 'provenance' => $unit['provenance'], 'checksum' => hash('sha256', $unit['text'])]);
+                }
+                $metadata = array_merge($current->metadata ?? [], $this->extractionMetadata($current, $result));
+                unset($metadata['docx_recovery_pending_version']);
+                $manualOcr = $result['status'] === AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED;
+                $current->update(['status' => $result['status'], 'coverage_status' => $result['coverage'], 'extracted_text' => $result['text'],
+                    'metadata' => $metadata, 'processed_at' => now(), 'last_error' => $manualOcr ? 'docx_recovery_manual_ocr_required' : null]);
+
+                return $current->refresh();
+            });
         });
     }
 
@@ -360,6 +395,27 @@ final class AssistantDocumentService
         if ((int) ($document->metadata['page_count'] ?? 1) > AssistantDocumentOcrClient::MAX_PAGES) {
             throw new RuntimeException('ai_assistant_document_ocr_page_limit');
         }
+    }
+
+    private function extractionMetadata(AIAssistantDocument $document, array $result): array
+    {
+        $metadata = array_merge($document->metadata ?? [], ['page_count' => $result['page_count'] ?? 1]);
+        if (strtolower(pathinfo($document->filename, PATHINFO_EXTENSION)) === 'docx') {
+            $metadata['docx_text_extraction_version'] = DocumentTextExtractor::DOCX_EXTRACTION_VERSION;
+        }
+
+        return $metadata;
+    }
+
+    private function isPendingEmptyDocxRecovery(AIAssistantDocument $document, string $checksum, string $version): bool
+    {
+        return $version === DocumentTextExtractor::DOCX_EXTRACTION_VERSION
+            && hash_equals($document->checksum, $checksum)
+            && $document->status === AIAssistantDocument::STATUS_READY
+            && $document->coverage_status === 'empty'
+            && strtolower(pathinfo($document->filename, PATHINFO_EXTENSION)) === 'docx'
+            && ($document->metadata['docx_recovery_pending_version'] ?? null) === $version
+            && ($document->metadata['docx_text_extraction_version'] ?? null) !== $version;
     }
 
     private function assertReadable(User $actor, int $organizationId, AIAssistantDocument $document): void
