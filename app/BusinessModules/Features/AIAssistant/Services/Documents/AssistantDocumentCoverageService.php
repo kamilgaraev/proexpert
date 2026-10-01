@@ -6,10 +6,14 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Documents;
 
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\AssistantDesignIfcElementPreviewFormatter;
+use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\Models\User;
-use Illuminate\Database\Query\JoinClause;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -22,23 +26,35 @@ final class AssistantDocumentCoverageService
     public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null): array
     {
         $guard = $checkDeadline ?? $checkpoint;
-        if (! $this->policy->belongsToOrganization($actor, $organizationId)) throw new AccessDeniedHttpException;
-        if ($checkpoint !== null) { $checkpoint(); }
+        if (! $this->policy->belongsToOrganization($actor, $organizationId)) {
+            throw new AccessDeniedHttpException;
+        }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         $canManage = $this->canManageSettings($organizationId, $actor);
-        if ($checkpoint !== null) { $checkpoint(); }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         $files = $this->policy->accessibleFiles($actor, $organizationId, false);
         $operations = app(AssistantOperationsNativeFileAdapter::class);
         foreach (['safety_medical_exam', 'warehouse_item_gallery'] as $nativeFileType) {
             $files->whereNotIn('files.id', $operations->sourceQueryForActor($actor, $organizationId, $nativeFileType)
                 ->select($nativeFileType === 'safety_medical_exam' ? 'native_file.id' : 'native_source.id'));
         }
-        if ($checkpoint !== null) { $checkpoint(); }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         $documents = $this->policy->accessibleDocuments($actor, $organizationId);
         $types = [];
-        if ($checkpoint !== null) { $checkpoint(); }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         foreach ((clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type') as $fileType) {
             $entityType = $this->policy->entityTypeForModel((string) $fileType);
-            if ($entityType !== null) $types[(string) $fileType] = $entityType;
+            if ($entityType !== null) {
+                $types[(string) $fileType] = $entityType;
+            }
         }
         $latest = (clone $documents)->select([])->selectRaw('MAX(ai_assistant_documents.id)')->groupBy('file_id');
         $indexed = (clone $documents)->whereIn('ai_assistant_documents.id', $latest)->select('ai_assistant_documents.*');
@@ -49,17 +65,38 @@ final class AssistantDocumentCoverageService
                 ->whereRaw('document.parent_entity_id = CAST(files.fileable_id AS TEXT)');
             $join->where(function (JoinClause $parents) use ($types): void {
                 $parents->whereRaw('1 = 0');
-                foreach ($types as $fileType => $entityType) $parents->orWhere(function (JoinClause $branch) use ($fileType, $entityType): void {
-                    $branch->where('files.fileable_type', $fileType)->where('document.parent_entity_type', $entityType);
-                });
+                foreach ($types as $fileType => $entityType) {
+                    $parents->orWhere(function (JoinClause $branch) use ($fileType, $entityType): void {
+                        $branch->where('files.fileable_type', $fileType)->where('document.parent_entity_type', $entityType);
+                    });
+                }
             });
         })->leftJoinSub($units, 'units', 'units.document_id', '=', 'document.id');
+        $ifcCoverageQueries = $this->ifcCoverageQueries($organizationId, $actor);
+        if ($ifcCoverageQueries !== null) {
+            $versionModel = new DesignArtifactVersion;
+            $versionFileTypes = array_values(array_unique([DesignArtifactVersion::class, $versionModel->getMorphClass()]));
+            $base->leftJoinSub($ifcCoverageQueries['versions'], 'ifc_version_state', static function (JoinClause $join) use ($versionFileTypes): void {
+                $join->on(DB::raw('CAST(files.fileable_id AS TEXT)'), '=', DB::raw('CAST(ifc_version_state.version_id AS TEXT)'))
+                    ->whereIn('files.fileable_type', $versionFileTypes);
+            })->leftJoinSub($ifcCoverageQueries['elements'], 'ifc_content', 'ifc_content.version_id', '=', 'ifc_version_state.version_id');
+        }
         $unsupported = $types === [] ? 'TRUE' : 'files.fileable_type NOT IN ('.implode(',', array_fill(0, count($types), '?')).')';
         $supportedFormat = "(LOWER(COALESCE(NULLIF(files.original_name, ''), files.name, '')) ~ '\\.(txt|csv|json|xml|pdf|xlsx|xls|docx|doc)$'
             OR COALESCE(files.mime_type, '') LIKE 'text/%'
             OR files.mime_type IN ('application/json', 'application/xml', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp')
             OR files.mime_type ~ '^application/[a-z0-9.+-]+\\+xml$')";
-        $state = "CASE WHEN files.disk IS DISTINCT FROM 's3' OR $unsupported OR NOT COALESCE($supportedFormat, FALSE) THEN 'unsupported'
+        $ifcState = $ifcCoverageQueries === null ? "'unsupported'" : "CASE
+            WHEN COALESCE(ifc_content.expected_element_count, 0) = 0 AND ifc_version_state.derivative_status = 'failed' THEN 'failed'
+            WHEN COALESCE(ifc_content.expected_element_count, 0) = 0 AND ifc_version_state.derivative_status = 'ready' AND ifc_version_state.indexed_element_count = 0 THEN 'empty'
+            WHEN COALESCE(ifc_content.expected_element_count, 0) = 0 THEN 'pending'
+            WHEN ifc_version_state.indexed_element_count IS NOT NULL AND ifc_version_state.indexed_element_count <> ifc_content.expected_element_count THEN 'pending'
+            WHEN COALESCE(ifc_content.retrievable_element_count, 0) = ifc_content.expected_element_count THEN 'ready'
+            ELSE 'pending' END";
+        $ifcCondition = $ifcCoverageQueries === null ? 'FALSE' : 'ifc_version_state.version_id IS NOT NULL';
+        $state = "CASE WHEN files.disk IS DISTINCT FROM 's3' THEN 'unsupported'
+            WHEN $ifcCondition THEN $ifcState
+            WHEN $unsupported OR NOT COALESCE($supportedFormat, FALSE) THEN 'unsupported'
             WHEN document.id IS NULL THEN 'pending'
             WHEN document.coverage_status = 'empty' OR document.last_error = 'ocr_empty' THEN 'empty'
             WHEN document.status IN ('failed', 'damaged') OR document.coverage_status = 'failed' THEN 'failed'
@@ -69,28 +106,45 @@ final class AssistantDocumentCoverageService
             WHEN document.status = 'ocr_approved' THEN 'ocr_processing'
             WHEN document.status = 'ocr_quote_required' THEN 'ocr_required'
             ELSE 'pending' END";
+        $processedUnits = $ifcCoverageQueries === null
+            ? 'COALESCE(units.processed_units, 0)'
+            : 'CASE WHEN ifc_version_state.version_id IS NOT NULL THEN COALESCE(ifc_content.retrievable_element_count, 0) ELSE COALESCE(units.processed_units, 0) END';
         $base->selectRaw($state.' AS coverage_state', array_keys($types))
-            ->selectRaw("COALESCE(units.processed_units, 0) AS processed_units, COALESCE(units.ocr_completed_pages, 0) AS ocr_completed_pages,
+            ->selectRaw("$processedUnits AS processed_units, COALESCE(units.ocr_completed_pages, 0) AS ocr_completed_pages,
                 CASE WHEN (document.metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (document.metadata->>'page_count')::bigint ELSE 0 END AS total_pages");
         $aggregate = DB::query()->fromSub($base->toBase(), 'coverage')->selectRaw('COUNT(*) AS total');
         foreach (['ready', 'pending', 'ocr_required', 'ocr_processing', 'failed', 'unsupported', 'empty'] as $status) {
             $aggregate->selectRaw('COALESCE(SUM(CASE WHEN coverage_state = ? THEN 1 ELSE 0 END), 0) AS '.$status, [$status]);
         }
-        foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(SUM('.$metric.'), 0) AS '.$metric);
-        if ($checkpoint !== null) { $checkpoint(); }
+        foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) {
+            $aggregate->selectRaw('COALESCE(SUM('.$metric.'), 0) AS '.$metric);
+        }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         $result = $aggregate->first();
         $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
         $nativeCandidates = $this->nativeCandidateTypes($organizationId, $actor, $checkpoint, $guard);
         $nativeCoverage = [];
         $nativeMetadataCount = 0;
         foreach (\App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('attachmentCoverageDefinitions') as $type => $definition) {
-            if ($guard !== null) { $guard(); }
-            if ($type === 'tender_file' && ! isset($nativeCandidates[$type])) { continue; }
+            if ($guard !== null) {
+                $guard();
+            }
+            if ($type === 'tender_file' && ! isset($nativeCandidates[$type])) {
+                continue;
+            }
             $native = $this->policy->entityQuery($actor, $organizationId, $type);
-            if ($native === null) { continue; }
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($native === null) {
+                continue;
+            }
+            if ($checkpoint !== null) {
+                $checkpoint();
+            }
             $count = $native->count();
-            if ($count === 0) { continue; }
+            if ($count === 0) {
+                continue;
+            }
             $nativeMetadataCount += $count;
             $coverage['total'] += $count;
             $status = $definition['status'];
@@ -100,21 +154,31 @@ final class AssistantDocumentCoverageService
         $unmappedNativeCount = 0;
         $nativeMappedCount = 0;
         foreach (AssistantSalesNativeFileMetadata::definitions() + AssistantOperationsNativeFileMetadata::definitions() as $type => $definition) {
-            if ($guard !== null) { $guard(); }
-            if (! isset($nativeCandidates[$type])) { continue; }
+            if ($guard !== null) {
+                $guard();
+            }
+            if (! isset($nativeCandidates[$type])) {
+                continue;
+            }
             $isOperations = isset(AssistantOperationsNativeFileMetadata::definitions()[$type]);
             if ($isOperations) {
                 $expected = $operations->sourceQueryForActor($actor, $organizationId, $type);
             } else {
                 $readable = $this->policy->entityContentQuery($actor, $organizationId, $type);
-                if ($readable === null) { continue; }
+                if ($readable === null) {
+                    continue;
+                }
                 $expected = AssistantSalesNativeFileMetadata::sourceQuery($type, $organizationId)
                     ->whereIn('native_source.id', $readable->select($readable->getModel()->getQualifiedKeyName()))
                     ->whereNotNull(DB::raw(AssistantSalesNativeFileMetadata::versionExpressions($type)[$definition['path']]));
             }
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($checkpoint !== null) {
+                $checkpoint();
+            }
             $expectedCount = $expected->count('native_source.id');
-            if ($expectedCount === 0) { continue; }
+            if ($expectedCount === 0) {
+                continue;
+            }
             $nativeDocuments = (clone $documents)->whereNull('file_id')->where('parent_entity_type', $type)
                 ->where('metadata->assistant_native_source', $isOperations ? AssistantOperationsNativeFileMetadata::SOURCE : AssistantSalesNativeFileMetadata::SOURCE);
             $latestNative = (clone $nativeDocuments)->select([])->selectRaw('MAX(ai_assistant_documents.id)')
@@ -141,7 +205,9 @@ final class AssistantDocumentCoverageService
                 ELSE 'pending' END AS native_coverage_state")
                 ->selectRaw("COALESCE(units.processed_units, 0) AS processed_units, COALESCE(units.ocr_completed_pages, 0) AS ocr_completed_pages,
                     CASE WHEN (document.metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (document.metadata->>'page_count')::bigint ELSE 0 END AS total_pages");
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($checkpoint !== null) {
+                $checkpoint();
+            }
             $nativeAggregate = DB::query()->fromSub($nativeRows, 'native_documents')
                 ->select('native_coverage_state')->selectRaw('COUNT(*) AS file_count')
                 ->selectRaw('COALESCE(SUM(processed_units), 0) AS processed_units')
@@ -168,24 +234,40 @@ final class AssistantDocumentCoverageService
                 'manual_ingestion_available' => $missing > 0];
         }
         foreach (['design_artifact_version', ...AssistantNativeFileMetadata::types(), ...AssistantLegalNativeFileMetadata::types()] as $type) {
-            if ($guard !== null) { $guard(); }
-            if (! isset($nativeCandidates[$type])) { continue; }
+            if ($guard !== null) {
+                $guard();
+            }
+            if (! isset($nativeCandidates[$type])) {
+                continue;
+            }
             $native = $this->policy->entityContentQuery($actor, $organizationId, $type);
-            if ($native === null) { continue; }
+            if ($native === null) {
+                continue;
+            }
             $model = $native->getModel();
             $table = $model->getTable();
             $native = $model->newQuery()->whereIn($model->getQualifiedKeyName(), $native->select($model->getQualifiedKeyName()));
-            if ($type === 'design_artifact_version') { $native->whereNotNull($table.'.source_file_path'); }
-            if ($type === 'legal_document_version') { $native->where($table.'.processing_status', 'ready'); }
+            if ($type === 'design_artifact_version') {
+                $native->whereNotNull($table.'.source_file_path');
+            }
+            if ($type === 'legal_document_version') {
+                $native->where($table.'.processing_status', 'ready');
+            }
             if (isset(AssistantLegalNativeFileMetadata::definitions()[$type])) {
                 $native->whereNotNull($table.'.'.AssistantLegalNativeFileMetadata::definitions()[$type]['path']);
             }
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($checkpoint !== null) {
+                $checkpoint();
+            }
             $expectedNative = (clone $native)->count();
-            if ($expectedNative === 0) { continue; }
+            if ($expectedNative === 0) {
+                continue;
+            }
             $mapped = (clone $files)->whereIn('files.fileable_type', [$model::class, $model->getMorphClass()])
                 ->select([])->selectRaw('CAST(files.fileable_id AS TEXT)');
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($checkpoint !== null) {
+                $checkpoint();
+            }
             $missing = $native->whereNotIn(DB::raw('CAST('.$model->getQualifiedKeyName().' AS TEXT)'), $mapped)->count();
             $unmappedNativeCount += $missing;
             $coverage['total'] += $missing;
@@ -193,11 +275,15 @@ final class AssistantDocumentCoverageService
             $nativeCoverage[$type] = ['expected_file_count' => $expectedNative, 'unmapped_file_count' => $missing,
                 'status' => $missing > 0 ? 'needs_access_review' : 'mapped', 'manual_ingestion_available' => $missing > 0];
         }
-        if ($checkpoint !== null) { $checkpoint(); }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         $settings = AssistantDocumentSettings::query()->where('organization_id', $organizationId)->first();
         $scanFiles = (clone $files)->where('files.disk', 's3');
         $cursor = (int) ($settings?->last_file_id ?? 0);
-        if ($checkpoint !== null) { $checkpoint(); }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
         $scan = $scanFiles->select([])->selectRaw('COUNT(*) AS expected')
             ->selectRaw('COUNT(*) FILTER (WHERE files.id <= ?) AS scanned', [$cursor])
             ->selectRaw('MAX(files.id) FILTER (WHERE files.id <= ?) AS last_visible', [$cursor])
@@ -208,7 +294,9 @@ final class AssistantDocumentCoverageService
         $lastVisible = (int) ($scan->last_visible ?? 0);
         $completed = $scanned === $expected;
         $completedAt = $completed ? $scan->completed_at : null;
-        if (is_string($completedAt) && $completedAt !== '') $completedAt = \Carbon\CarbonImmutable::parse($completedAt)->toAtomString();
+        if (is_string($completedAt) && $completedAt !== '') {
+            $completedAt = \Carbon\CarbonImmutable::parse($completedAt)->toAtomString();
+        }
 
         return ['document_coverage' => $coverage, 'native_attachment_coverage' => $nativeCoverage, 'can_manage_document_settings' => $canManage,
             'archive_scan' => ['expected_file_count' => $expected + $nativeMetadataCount + $unmappedNativeCount + $nativeMappedCount, 'scanned_file_count' => $scanned + $nativeMetadataCount + $nativeMappedCount,
@@ -221,11 +309,92 @@ final class AssistantDocumentCoverageService
     {
         try {
             $this->documents->assertOwner($actor, $organizationId);
+
             return true;
         } catch (RuntimeException $exception) {
-            if ($exception instanceof QueryException || $exception instanceof RagStatusBudgetExceeded) { throw $exception; }
+            if ($exception instanceof QueryException || $exception instanceof RagStatusBudgetExceeded) {
+                throw $exception;
+            }
+
             return false;
         }
+    }
+
+    /**
+     * @return array{versions: QueryBuilder, elements: QueryBuilder}|null
+     */
+    private function ifcCoverageQueries(int $organizationId, User $actor): ?array
+    {
+        $versions = $this->policy->entityContentQuery($actor, $organizationId, 'design_artifact_version');
+        $elements = $this->policy->entityContentQuery($actor, $organizationId, 'design_ifc_model_element');
+        if ($versions === null || $elements === null) {
+            return null;
+        }
+
+        $versionTable = $versions->getModel()->getTable();
+        $versions->where(static function (Builder $query) use ($versionTable): void {
+            $query->whereRaw("LOWER(COALESCE({$versionTable}.file_format, '')) IN (?, ?)", ['ifc', '.ifc'])
+                ->orWhereRaw("LOWER(COALESCE({$versionTable}.source_format, '')) IN (?, ?)", ['ifc', '.ifc'])
+                ->orWhereRaw("LOWER(COALESCE({$versionTable}.source_original_name, '')) LIKE ?", ['%.ifc']);
+        });
+        $versionIds = (clone $versions)->select([])->selectRaw($versionTable.'.id');
+
+        $versionStates = DB::table('design_artifact_versions as ifc_version')
+            ->whereIn('ifc_version.id', $versionIds)
+            ->leftJoin('design_model_derivatives as ifc_derivative', static function (JoinClause $join): void {
+                $join->on('ifc_derivative.version_id', '=', 'ifc_version.id')
+                    ->where('ifc_derivative.viewer_provider', '=', 'thatopen')
+                    ->where('ifc_derivative.derivative_format', '=', 'thatopen_frag');
+            })
+            ->selectRaw("ifc_version.id AS version_id, ifc_derivative.status AS derivative_status,
+                CASE WHEN (ifc_derivative.metadata->>'indexed_element_count') ~ '^[0-9]{1,12}$'
+                    THEN (ifc_derivative.metadata->>'indexed_element_count')::BIGINT ELSE NULL END AS indexed_element_count");
+
+        $elementTable = $elements->getModel()->getTable();
+        $elements->whereIn($elementTable.'.version_id', $versionIds);
+        $elementIds = (clone $elements)->select([])->selectRaw($elementTable.'.id');
+        $expected = DB::table('design_ifc_model_elements as ifc_element')->whereIn('ifc_element.id', $elementIds)
+            ->select('ifc_element.version_id')->selectRaw('COUNT(*) AS expected_element_count')->groupBy('ifc_element.version_id');
+        $sourceCandidates = DB::table('design_ifc_model_elements as candidate_element')
+            ->join('ai_rag_sources as candidate_source', static function (JoinClause $join): void {
+                $join->on('candidate_source.organization_id', '=', 'candidate_element.organization_id')
+                    ->on('candidate_source.project_id', '=', 'candidate_element.project_id')
+                    ->where('candidate_source.source_type', '=', 'design_additional')
+                    ->where('candidate_source.entity_type', '=', 'design_ifc_model_element')
+                    ->whereRaw('candidate_source.entity_id = CAST(candidate_element.id AS TEXT)')
+                    ->whereColumn('candidate_source.indexed_at', '>=', 'candidate_element.updated_at');
+            })
+            ->whereIn('candidate_element.id', $elementIds)
+            ->select('candidate_element.id AS element_id', 'candidate_element.version_id', 'candidate_source.id AS source_id');
+        $embeddingProvider = app(RagEmbeddingProviderInterface::class);
+        $chunkCompatibility = 'ifc_chunk.embedding IS NOT NULL AND ifc_chunk.embedding_provider = ? AND ifc_chunk.embedding_model = ? AND vector_dims(ifc_chunk.embedding) = ?';
+        $chunkCompatibilityBindings = [$embeddingProvider->provider(), $embeddingProvider->model(), $embeddingProvider->dimensions()];
+        $chunkCoverage = DB::table('ai_rag_chunks as ifc_chunk')
+            ->whereIn('ifc_chunk.source_id', (clone $sourceCandidates)->select('source_id'))
+            ->select('ifc_chunk.source_id')
+            ->selectRaw('COUNT(*) AS actual_chunk_count')
+            ->selectRaw("MAX(CASE WHEN (ifc_chunk.metadata->>'chunk_count') ~ '^[0-9]{1,6}$' THEN (ifc_chunk.metadata->>'chunk_count')::INTEGER ELSE 0 END) AS expected_chunk_count")
+            ->selectRaw('MIN(CASE WHEN '.$chunkCompatibility.' THEN 1 ELSE 0 END) AS all_chunks_compatible', $chunkCompatibilityBindings)
+            ->selectRaw('MAX(CASE WHEN ifc_chunk.chunk_index = 0 AND ifc_chunk.content LIKE ? AND '.$chunkCompatibility.' THEN 1 ELSE 0 END) AS marker_chunk_compatible', [
+                AssistantDesignIfcElementPreviewFormatter::COVERAGE_MARKER.'%', ...$chunkCompatibilityBindings,
+            ])
+            ->groupBy('ifc_chunk.source_id');
+        $retrievableSources = DB::query()->fromSub($chunkCoverage, 'ifc_chunk_coverage')
+            ->whereColumn('ifc_chunk_coverage.actual_chunk_count', '=', 'ifc_chunk_coverage.expected_chunk_count')
+            ->where('ifc_chunk_coverage.all_chunks_compatible', '=', 1)
+            ->where('ifc_chunk_coverage.marker_chunk_compatible', '=', 1)
+            ->select('ifc_chunk_coverage.source_id');
+        $retrievable = DB::query()->fromSub($sourceCandidates, 'ifc_candidate')
+            ->whereIn('ifc_candidate.source_id', $retrievableSources)
+            ->select('ifc_candidate.version_id')
+            ->selectRaw('COUNT(DISTINCT ifc_candidate.element_id) AS retrievable_element_count')
+            ->groupBy('ifc_candidate.version_id');
+        $elementCoverage = DB::query()->fromSub($expected, 'ifc_expected')
+            ->leftJoinSub($retrievable, 'ifc_retrievable', 'ifc_retrievable.version_id', '=', 'ifc_expected.version_id')
+            ->select('ifc_expected.version_id', 'ifc_expected.expected_element_count')
+            ->selectRaw('COALESCE(ifc_retrievable.retrievable_element_count, 0) AS retrievable_element_count');
+
+        return ['versions' => $versionStates, 'elements' => $elementCoverage];
     }
 
     /** @return array<string, mixed> */
@@ -398,14 +567,22 @@ final class AssistantDocumentCoverageService
         }
         $union = null;
         foreach ($queries as $type => $query) {
-            if ($guard !== null) { $guard(); }
+            if ($guard !== null) {
+                $guard();
+            }
             $domain = $this->policy->domainForEntity($type);
-            if ($domain !== null && ! $this->policy->canReadDomain($actor, $organizationId, $domain)) { continue; }
+            if ($domain !== null && ! $this->policy->canReadDomain($actor, $organizationId, $domain)) {
+                continue;
+            }
             $branch = DB::query()->selectRaw('? AS type', [$type])->whereExists($query->selectRaw('1'));
             $union = $union instanceof QueryBuilder ? $union->unionAll($branch) : $branch;
         }
-        if (! $union instanceof QueryBuilder) { return []; }
-        if ($checkpoint !== null) { $checkpoint(); }
+        if (! $union instanceof QueryBuilder) {
+            return [];
+        }
+        if ($checkpoint !== null) {
+            $checkpoint();
+        }
 
         return array_fill_keys($union->pluck('type')->all(), true);
     }
