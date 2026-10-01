@@ -115,8 +115,36 @@ final class AssistantEstimatePositionReadService
                 $items = EstimateItem::query();
                 if ($type === 'estimate_item') {
                     $items->whereKey((int) $id);
+                    if (array_key_exists('parent_work_id', $reference)) {
+                        $parentWorkId = filter_var($reference['parent_work_id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $referenceEstimateId = filter_var($reference['estimate_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $referenceOrganizationId = filter_var($reference['organization_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $referenceEstimateItemId = filter_var($reference['estimate_item_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $referenceEntityId = filter_var($reference['entity_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        $referenceProjectId = $reference['project_id'] ?? null;
+                        if ($parentWorkId === false || $referenceEstimateId === false || $referenceOrganizationId !== $organizationId
+                            || $referenceEntityId === false || $referenceEstimateItemId !== $referenceEntityId || $referenceEntityId !== (int) $id
+                            || $parentWorkId === $referenceEntityId || ($reference['composition_scope'] ?? null) !== 'resources'
+                            || ! array_key_exists('project_id', $reference)
+                            || ($referenceProjectId !== null && filter_var($referenceProjectId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false)) {
+                            return false;
+                        }
+                        $items->whereKey($referenceEntityId)->where('estimate_id', $referenceEstimateId)->where('parent_work_id', $parentWorkId)
+                            ->whereHas('parentWork', static fn (Builder $parent): Builder => $parent->where('estimate_id', $referenceEstimateId)->whereNull('parent_work_id'));
+                    }
                 } else {
-                    $items->whereIn('id', EstimateItemResource::query()->whereKey((int) $id)->select('estimate_item_id'));
+                    $resource = EstimateItemResource::query()->whereKey((int) $id);
+                    if (array_key_exists('composition_scope', $reference) || array_key_exists('finance_representation', $reference)) {
+                        $representation = $reference['finance_representation'] ?? null;
+                        if (($reference['composition_scope'] ?? null) !== 'resources' || ! is_string($representation) || $representation === '') {
+                            return false;
+                        }
+                        $resource->where('finance_representation', $representation);
+                        if ($representation === 'independent') {
+                            $resource->whereNull('represented_by_item_id');
+                        }
+                    }
+                    $items->whereIn('id', $resource->select('estimate_item_id'));
                     if (isset($reference['estimate_item_id'])) {
                         $items->whereKey($reference['estimate_item_id']);
                     }
@@ -167,14 +195,17 @@ final class AssistantEstimatePositionReadService
         bool $includeComposition = false,
         int $compositionPage = 1,
         int $compositionPerPage = 20,
+        ?string $positionNumber = null,
     ): array {
-        Validator::make(compact('estimateId', 'organizationId', 'page', 'perPage', 'query', 'positionId', 'compositionPage', 'compositionPerPage'), [
+        $positionNumber = $positionNumber === null ? null : trim($positionNumber);
+        Validator::make(compact('estimateId', 'organizationId', 'page', 'perPage', 'query', 'positionId', 'compositionPage', 'compositionPerPage', 'positionNumber'), [
             'estimateId' => ['required', 'integer', 'min:1'],
             'organizationId' => ['required', 'integer', 'min:1'],
             'page' => ['required', 'integer', 'between:1,1000000'],
             'perPage' => ['required', 'integer', 'between:1,100'],
             'query' => ['nullable', 'string', 'max:200'],
             'positionId' => ['nullable', 'integer', 'min:1'],
+            'positionNumber' => ['nullable', 'string', 'min:1', 'max:50'],
             'compositionPage' => ['required', 'integer', 'between:1,1000000'],
             'compositionPerPage' => ['required', 'integer', 'between:1,20'],
         ])->validate();
@@ -191,6 +222,7 @@ final class AssistantEstimatePositionReadService
             $includeComposition,
             $compositionPage,
             $compositionPerPage,
+            $positionNumber,
         ): array {
             if (DB::transactionLevel() === 1) {
                 DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
@@ -198,7 +230,7 @@ final class AssistantEstimatePositionReadService
 
             return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use (
                 $estimateId, $organizationId, $actor, $page, $perPage, $query, $positionId,
-                $includeComposition, $compositionPage, $compositionPerPage,
+                $includeComposition, $compositionPage, $compositionPerPage, $positionNumber,
             ): array {
                 if (! $this->access->canReadEntityContent($actor, $organizationId, 'estimate', $estimateId)) {
                     throw new AuthorizationException;
@@ -209,7 +241,7 @@ final class AssistantEstimatePositionReadService
                 }
 
                 $matches = EstimateItem::query()->where('estimate_id', $estimateId);
-                $this->applySelection($matches, $query, $positionId);
+                $this->applySelection($matches, $query, $positionId, $positionNumber);
                 $matchingCount = (clone $matches)->count();
                 $totalCount = EstimateItem::query()->where('estimate_id', $estimateId)->count();
                 $offset = ($page - 1) * $perPage;
@@ -263,6 +295,7 @@ final class AssistantEstimatePositionReadService
                     'per_page' => $perPage,
                     'matching_count' => $matchingCount,
                     'total_count' => $totalCount,
+                    'position_number' => $positionNumber,
                     'positions' => $positions,
                 ], JSON_THROW_ON_ERROR));
                 $source = [
@@ -323,10 +356,13 @@ final class AssistantEstimatePositionReadService
         });
     }
 
-    private function applySelection(Builder $query, ?string $search, ?int $positionId): void
+    private function applySelection(Builder $query, ?string $search, ?int $positionId, ?string $positionNumber): void
     {
         if ($positionId !== null) {
             $query->whereKey($positionId);
+        }
+        if ($positionNumber !== null && $positionNumber !== '') {
+            $query->where('position_number', $positionNumber);
         }
         if ($search === null || $search === '') {
             return;
@@ -395,11 +431,180 @@ final class AssistantEstimatePositionReadService
         return $excluded;
     }
 
+    private function childResources(Builder $query, Builder $independentQuery, EstimateItem $item, Estimate $estimate, int $organizationId, string $fetchedAt, int $page, int $perPage): array
+    {
+        $childrenTotal = (clone $query)->count();
+        $independentTotal = (clone $independentQuery)->count();
+        $total = $childrenTotal + $independentTotal;
+        $offset = ($page - 1) * $perPage;
+        $withOrganizationUnit = ['measurementUnit' => static fn (BelongsTo $units): BelongsTo => $units->where('organization_id', $organizationId)];
+        $children = collect();
+        $independentResources = collect();
+        if ($offset < $childrenTotal) {
+            $childLimit = min($perPage, $childrenTotal - $offset);
+            $children = (clone $query)->with($withOrganizationUnit)->orderBy('id')->sharedLock()
+                ->offset($offset)->limit($childLimit)->get();
+            $remaining = $perPage - $children->count();
+            if ($remaining > 0) {
+                $independentResources = (clone $independentQuery)->with($withOrganizationUnit)->orderBy('id')->sharedLock()
+                    ->limit($remaining)->get();
+            }
+        } else {
+            $independentResources = (clone $independentQuery)->with($withOrganizationUnit)->orderBy('id')->sharedLock()
+                ->offset($offset - $childrenTotal)->limit($perPage)->get();
+        }
+        $shown = $children->count() + $independentResources->count();
+        $hasMore = $offset + $shown < $total;
+        $resources = [];
+        $references = [];
+        foreach ($children as $child) {
+            $itemType = (string) $child->getRawOriginal('item_type');
+            $unit = $child->measurementUnit?->short_name ?? $child->measurementUnit?->name;
+            $quantity = $child->getRawOriginal('quantity') === null
+                ? null : FinanceDecimal::value((string) $child->getRawOriginal('quantity'), 8);
+            $unitPrice = $child->unit_price === null ? null : FinanceDecimal::value((string) $child->unit_price, 4);
+            $totalAmount = $child->total_amount === null ? null : FinanceDecimal::value((string) $child->total_amount, 2);
+            $fields = [
+                'id' => (int) $child->id,
+                'estimate_item_id' => (int) $child->id,
+                'position_number' => (string) $child->position_number,
+                'resource_type' => $itemType,
+                'name' => (string) $child->name,
+                'quantity' => $quantity,
+                'material_unit' => $unit,
+                'unit_price' => $unitPrice,
+                'total_amount' => $totalAmount,
+            ];
+            $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));
+            $factFields = array_intersect_key($fields, array_fill_keys([
+                'position_number', 'resource_type', 'name', 'quantity', 'material_unit', 'unit_price', 'total_amount',
+            ], true));
+            $reference = [
+                'source_type' => 'estimate',
+                'entity_type' => 'estimate_item',
+                'entity_id' => (int) $child->id,
+                'estimate_id' => (int) $estimate->id,
+                'estimate_item_id' => (int) $child->id,
+                'parent_work_id' => (int) $item->id,
+                'composition_scope' => 'resources',
+                'project_id' => $estimate->project_id === null ? null : (int) $estimate->project_id,
+                'organization_id' => $organizationId,
+                'version' => $rowVersion,
+                'source_version' => (string) ($child->getRawOriginal('updated_at') ?? $item->getRawOriginal('updated_at')),
+                'fetched_at' => $fetchedAt,
+                'content_scope' => 'structured',
+                'checked_fields' => array_keys($factFields),
+                'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
+                'required_domains' => ['estimates'],
+                'navigation' => ['url' => '/estimates/'.$estimate->id.'?position_id='.$item->id],
+            ];
+            $factRow = ['entity_type' => 'estimate_item', 'entity_id' => (int) $child->id,
+                'fields' => $factFields, 'source_ref' => $reference, 'source_version' => $reference['source_version']];
+            $factRow['version'] = hash('sha256', json_encode($factRow, JSON_THROW_ON_ERROR));
+            $resources[] = $fields + ['version' => $rowVersion];
+            $references[] = $reference;
+            $references[] = $factRow;
+        }
+        foreach ($independentResources as $resource) {
+            $record = $this->normalizedResourceRecord($resource, $item, $estimate, $organizationId, $fetchedAt);
+            $resources[] = $record['item'];
+            $references[] = $record['source_ref'];
+            $references[] = $record['fact_row'];
+        }
+
+        return [
+            'status' => 'returned',
+            'scope' => 'resources',
+            'position_id' => (int) $item->id,
+            'items' => $resources,
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+            'has_more' => $hasMore,
+            'next_page' => $hasMore ? $page + 1 : null,
+            'source_refs' => array_values(array_filter($references, static fn (array $row): bool => isset($row['source_type']))),
+            'fact_rows' => array_values(array_filter($references, static fn (array $row): bool => isset($row['fields']))),
+        ];
+    }
+
+    private function normalizedResourceRecord(EstimateItemResource $resource, EstimateItem $item, Estimate $estimate, int $organizationId, string $fetchedAt): array
+    {
+        $fields = [
+            'id' => (int) $resource->id,
+            'estimate_item_id' => (int) $item->id,
+            'resource_type' => (string) $resource->resource_type,
+            'name' => (string) $resource->name,
+            'quantity_per_unit' => FinanceDecimal::value((string) $resource->quantity_per_unit, 4),
+            'total_quantity' => FinanceDecimal::value((string) $resource->total_quantity, 4),
+            'material_unit' => $resource->measurementUnit?->short_name ?? $resource->measurementUnit?->name,
+            'unit_price' => $resource->unit_price === null ? null : FinanceDecimal::value((string) $resource->unit_price, 2),
+            'total_amount' => $resource->total_amount === null ? null : FinanceDecimal::value((string) $resource->total_amount, 2),
+        ];
+        $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));
+        $reference = [
+            'source_type' => 'estimate',
+            'entity_type' => 'estimate_item_resource',
+            'entity_id' => (int) $resource->id,
+            'estimate_id' => (int) $estimate->id,
+            'estimate_item_id' => (int) $item->id,
+            'composition_scope' => 'resources',
+            'finance_representation' => (string) $resource->finance_representation,
+            'project_id' => $estimate->project_id === null ? null : (int) $estimate->project_id,
+            'organization_id' => $organizationId,
+            'version' => $rowVersion,
+            'source_version' => (string) ($resource->getRawOriginal('updated_at') ?? $item->getRawOriginal('updated_at')),
+            'fetched_at' => $fetchedAt,
+            'content_scope' => 'structured',
+            'checked_fields' => array_keys($fields),
+            'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
+            'required_domains' => ['estimates'],
+            'navigation' => ['url' => '/estimates/'.$estimate->id.'?position_id='.$item->id],
+        ];
+        $factRow = ['entity_type' => 'estimate_item_resource', 'entity_id' => (int) $resource->id,
+            'fields' => $fields, 'source_ref' => $reference, 'source_version' => $reference['source_version']];
+        $factRow['version'] = hash('sha256', json_encode($factRow, JSON_THROW_ON_ERROR));
+
+        return ['item' => $fields + ['version' => $rowVersion], 'source_ref' => $reference, 'fact_row' => $factRow];
+    }
+
+    private function independentResourceQuery(EstimateItem $item, Estimate $estimate): Builder
+    {
+        return EstimateItemResource::query()->where('estimate_item_id', $item->id)
+            ->where('finance_representation', 'independent')->whereNull('represented_by_item_id')
+            ->whereHas('item', static fn (Builder $parent): Builder => $parent->where('estimate_id', $estimate->id));
+    }
+
     private function resources(EstimateItem $item, Estimate $estimate, int $organizationId, string $fetchedAt, int $page, int $perPage): array
     {
+        $children = EstimateItem::query()->where('estimate_id', $estimate->id)->where('parent_work_id', $item->id);
+        if ((clone $children)->exists()) {
+            return $this->childResources($children, $this->independentResourceQuery($item, $estimate), $item, $estimate,
+                $organizationId, $fetchedAt, $page, $perPage);
+        }
+
         $query = EstimateItemResource::query()->where('estimate_item_id', $item->id)
+            ->where('finance_representation', 'independent')
+            ->whereNull('represented_by_item_id')
             ->whereHas('item', static fn (Builder $parent): Builder => $parent->where('estimate_id', $estimate->id));
         $total = (clone $query)->count();
+        if ($total === 0 && EstimateItemResource::query()->where('estimate_item_id', $item->id)
+            ->where('finance_representation', 'unreviewed')
+            ->whereHas('item', static fn (Builder $parent): Builder => $parent->where('estimate_id', $estimate->id))
+            ->exists()) {
+            return [
+                'status' => 'unknown',
+                'scope' => 'resources',
+                'position_id' => (int) $item->id,
+                'items' => [],
+                'total' => null,
+                'page' => $page,
+                'per_page' => $perPage,
+                'has_more' => null,
+                'next_page' => null,
+                'source_refs' => [],
+                'fact_rows' => [],
+            ];
+        }
         $rows = $query->with(['measurementUnit' => static fn (BelongsTo $units): BelongsTo => $units->where('organization_id', $organizationId)])
             ->orderBy('id')->sharedLock()
             ->offset(($page - 1) * $perPage)->limit($perPage + 1)->get();
@@ -407,41 +612,10 @@ final class AssistantEstimatePositionReadService
         $resources = [];
         $references = [];
         foreach ($rows->take($perPage) as $resource) {
-            $fields = [
-                'id' => (int) $resource->id,
-                'estimate_item_id' => (int) $item->id,
-                'resource_type' => (string) $resource->resource_type,
-                'name' => (string) $resource->name,
-                'quantity_per_unit' => FinanceDecimal::value((string) $resource->quantity_per_unit, 4),
-                'total_quantity' => FinanceDecimal::value((string) $resource->total_quantity, 4),
-                'material_unit' => $resource->measurementUnit?->short_name ?? $resource->measurementUnit?->name,
-                'unit_price' => $resource->unit_price === null ? null : FinanceDecimal::value((string) $resource->unit_price, 2),
-                'total_amount' => $resource->total_amount === null ? null : FinanceDecimal::value((string) $resource->total_amount, 2),
-            ];
-            $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));
-            $reference = [
-                'source_type' => 'estimate',
-                'entity_type' => 'estimate_item_resource',
-                'entity_id' => (int) $resource->id,
-                'estimate_id' => (int) $estimate->id,
-                'estimate_item_id' => (int) $item->id,
-                'project_id' => $estimate->project_id === null ? null : (int) $estimate->project_id,
-                'organization_id' => $organizationId,
-                'version' => $rowVersion,
-                'source_version' => (string) ($resource->getRawOriginal('updated_at') ?? $item->getRawOriginal('updated_at')),
-                'fetched_at' => $fetchedAt,
-                'content_scope' => 'structured',
-                'checked_fields' => array_keys($fields),
-                'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
-                'required_domains' => ['estimates'],
-                'navigation' => ['url' => '/estimates/'.$estimate->id.'?position_id='.$item->id],
-            ];
-            $factRow = ['entity_type' => 'estimate_item_resource', 'entity_id' => (int) $resource->id,
-                'fields' => $fields, 'source_ref' => $reference, 'source_version' => $reference['source_version']];
-            $factRow['version'] = hash('sha256', json_encode($factRow, JSON_THROW_ON_ERROR));
-            $resources[] = [...$fields, 'version' => $rowVersion];
-            $references[] = $reference;
-            $references[] = $factRow;
+            $record = $this->normalizedResourceRecord($resource, $item, $estimate, $organizationId, $fetchedAt);
+            $resources[] = $record['item'];
+            $references[] = $record['source_ref'];
+            $references[] = $record['fact_row'];
         }
 
         return [

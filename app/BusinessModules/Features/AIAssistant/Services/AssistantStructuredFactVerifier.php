@@ -4,17 +4,28 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
+
 final class AssistantStructuredFactVerifier
 {
     public function guard(string $query, string $text, array $toolResults = []): array
     {
         $planCandidate = AssistantPresentationPlanner::isPlanCandidate($text);
+        $compositionIntent = AssistantEstimateCompositionIntent::matches($query, $this->hasEstimateContext($toolResults));
         if (! $planCandidate && AssistantFactIntentClassifier::isNarrative($query)) {
             return ['text' => $text, 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => false, 'needs_clarification' => false];
         }
-        if (! AssistantFactIntentClassifier::isFactual($query) && ! $planCandidate) {
+        if (! AssistantFactIntentClassifier::isFactual($query) && ! $planCandidate
+            && ! $compositionIntent) {
             return ['text' => $text, 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => false, 'needs_clarification' => false];
         }
+        if ($compositionIntent && $this->hasUnknownComposition($toolResults)) {
+            $clarification = trans_message('ai_assistant_facts.composition_unverified');
+
+            return ['text' => $clarification, 'validation_status' => 'partial', 'source_refs' => [],
+                'replaced' => $text !== $clarification, 'needs_clarification' => true];
+        }
+
         return $this->verifiedResults($query, $text, $toolResults);
     }
 
@@ -55,6 +66,7 @@ final class AssistantStructuredFactVerifier
             if (is_array($evidence['composition_page'] ?? null)) {
                 $page = $evidence['composition_page'];
                 $position = current(array_filter($evidence['rows'], static fn (array $row): bool => $row['entity_type'] === 'estimate_item'
+                    && ! array_key_exists('parent_work_id', $row['source_ref'] ?? [])
                     && (string) $row['entity_id'] === (string) $page['position_id']));
                 if (! is_array($position) || ! is_array($position['source_ref'] ?? null)) {
                     continue;
@@ -63,8 +75,10 @@ final class AssistantStructuredFactVerifier
                 $key = json_encode([(string) $reference['organization_id'], (string) $reference['estimate_id'], (string) $page['position_id']], JSON_THROW_ON_ERROR);
                 if (! isset($compositionPages[$key])) {
                     $compositionPages[$key] = ['organization_id' => $reference['organization_id'], 'estimate_id' => $reference['estimate_id'],
+                        'project_id' => $reference['project_id'] ?? null,
                         'position_id' => $page['position_id'], 'total' => $page['total'], 'inconsistent' => false, 'pages' => [], 'next_pages' => []];
-                } elseif ($compositionPages[$key]['total'] !== $page['total']) {
+                } elseif ($compositionPages[$key]['total'] !== $page['total']
+                    || $compositionPages[$key]['project_id'] !== ($reference['project_id'] ?? null)) {
                     $compositionPages[$key]['inconsistent'] = true;
                 }
                 $compositionPages[$key]['pages'][$page['page']] = true;
@@ -81,7 +95,7 @@ final class AssistantStructuredFactVerifier
                 if (count($rows) >= AssistantStructuredFactFormatter::MAX_ROWS) {
                     $truncated = true;
                     $estimateId = $row['source_ref']['estimate_id'] ?? null;
-                    if ($row['entity_type'] === 'estimate_item' && isset($positionPages[$estimateId])) {
+                    if ($this->isBasePositionRow($row) && isset($positionPages[$estimateId])) {
                         $positionPages[$estimateId]['incomplete'] = true;
                     }
                     continue;
@@ -122,7 +136,7 @@ final class AssistantStructuredFactVerifier
             }
             $shownIds = [];
             foreach ($rows as $row) {
-                if ($row['entity_type'] === 'estimate_item' && (int) ($row['source_ref']['estimate_id'] ?? 0) === (int) $estimateId) {
+                if ($this->isBasePositionRow($row) && (int) ($row['source_ref']['estimate_id'] ?? 0) === (int) $estimateId) {
                     $shownIds[(string) $row['entity_id']] = true;
                 }
             }
@@ -135,11 +149,14 @@ final class AssistantStructuredFactVerifier
             $shownIds = [];
             foreach ($rows as $row) {
                 $reference = $row['source_ref'];
-                if ($row['entity_type'] === 'estimate_item_resource'
+                $isResourceTableRow = $row['entity_type'] === 'estimate_item_resource'
+                    && ($reference['estimate_item_id'] ?? null) === $compositionPage['position_id'];
+                $isPositionChildRow = $this->isCompositionChildRow($row, $compositionPage['position_id']);
+                if (($isResourceTableRow || $isPositionChildRow)
                     && ($reference['organization_id'] ?? null) === $compositionPage['organization_id']
                     && ($reference['estimate_id'] ?? null) === $compositionPage['estimate_id']
-                    && ($reference['estimate_item_id'] ?? null) === $compositionPage['position_id']) {
-                    $shownIds[(string) $row['entity_id']] = true;
+                    && ($reference['project_id'] ?? null) === $compositionPage['project_id']) {
+                    $shownIds[$row['entity_type'].':'.(string) $row['entity_id']] = true;
                 }
             }
             $shown = count($shownIds);
@@ -187,7 +204,7 @@ final class AssistantStructuredFactVerifier
         }
         if (array_key_exists('truncated', $evidence)) {
             $page = $evidence['position_page'] ?? null;
-            $shown = count(array_filter($evidence['rows'], static fn (mixed $row): bool => is_array($row) && ($row['entity_type'] ?? null) === 'estimate_item'));
+            $shown = count(array_filter($evidence['rows'], fn (mixed $row): bool => is_array($row) && $this->isBasePositionRow($row)));
             if (! is_bool($evidence['truncated']) || ! is_array($page)
                 || ! is_int($page['estimate_id'] ?? null)
                 || ($evidence['rows'][0]['entity_type'] ?? null) !== 'estimate'
@@ -251,10 +268,28 @@ final class AssistantStructuredFactVerifier
             if (! is_array($row)) {
                 return false;
             }
-            if ($row['entity_type'] === 'estimate_item' && (string) $row['entity_id'] === (string) $page['position_id']) {
-                $positionRows[] = $row;
+            if ($row['entity_type'] === 'estimate_item') {
+                $reference = $row['source_ref'];
+                if ($this->isBasePositionRow($row)) {
+                    if ((string) $row['entity_id'] !== (string) $page['position_id']) {
+                        return false;
+                    }
+                    $positionRows[] = $row;
+                } elseif (($reference['parent_work_id'] ?? null) === $page['position_id']
+                    && ($reference['estimate_item_id'] ?? null) === $row['entity_id']
+                    && ($reference['entity_id'] ?? null) === $row['entity_id']
+                    && ($reference['composition_scope'] ?? null) === 'resources') {
+                    $resourceRows[] = $row;
+                } else {
+                    return false;
+                }
             }
             if ($row['entity_type'] === 'estimate_item_resource') {
+                if (($row['source_ref']['estimate_item_id'] ?? null) !== $page['position_id']
+                    || ($row['source_ref']['composition_scope'] ?? null) !== 'resources'
+                    || ($row['source_ref']['finance_representation'] ?? null) !== 'independent') {
+                    return false;
+                }
                 $resourceRows[] = $row;
             }
         }
@@ -267,19 +302,31 @@ final class AssistantStructuredFactVerifier
         }
         $organizationId = $positionReference['organization_id'] ?? null;
         $estimateId = $positionReference['estimate_id'] ?? null;
-        if (! is_int($organizationId) || ! is_int($estimateId)) {
+        $projectId = $positionReference['project_id'] ?? null;
+        if (! is_int($organizationId) || $organizationId < 1 || ! is_int($estimateId) || $estimateId < 1
+            || ! array_key_exists('project_id', $positionReference)
+            || ($projectId !== null && (! is_int($projectId) || $projectId < 1))) {
             return false;
         }
         foreach ($resourceRows as $row) {
             $reference = $row['source_ref'] ?? null;
-            if (! is_array($reference)) {
+            if (! is_array($reference) || ! array_key_exists('organization_id', $reference)
+                || ! array_key_exists('estimate_id', $reference) || ! array_key_exists('project_id', $reference)) {
                 return false;
             }
             if (($reference['organization_id'] ?? null) !== $organizationId
                 || ($reference['estimate_id'] ?? null) !== $estimateId
-                || ($reference['estimate_item_id'] ?? null) !== $page['position_id']) {
+                || ($reference['project_id'] ?? null) !== $projectId
+                || ($row['entity_type'] === 'estimate_item' && (($reference['parent_work_id'] ?? null) !== $page['position_id']
+                    || ($reference['estimate_item_id'] ?? null) !== $row['entity_id']))
+                || ($row['entity_type'] === 'estimate_item_resource' && ($reference['estimate_item_id'] ?? null) !== $page['position_id'])) {
                 return false;
             }
+        }
+
+        $resourceIds = array_map(static fn (array $row): string => $row['entity_type'].':'.(string) $row['entity_id'], $resourceRows);
+        if (count(array_unique($resourceIds)) !== count($resourceIds)) {
+            return false;
         }
 
         $offset = ($page['page'] - 1) * $page['per_page'];
@@ -288,6 +335,53 @@ final class AssistantStructuredFactVerifier
 
         return count($resourceRows) === $expectedReturned && $page['has_more'] === $hasMore
             && $page['next_page'] === ($hasMore ? $page['page'] + 1 : null);
+    }
+
+    private function isBasePositionRow(array $row): bool
+    {
+        return ($row['entity_type'] ?? null) === 'estimate_item'
+            && ! array_key_exists('parent_work_id', $row['source_ref'] ?? []);
+    }
+
+    private function isCompositionChildRow(array $row, int $positionId): bool
+    {
+        $reference = $row['source_ref'] ?? null;
+        $entityId = filter_var($row['entity_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+
+        return ($row['entity_type'] ?? null) === 'estimate_item'
+            && is_array($reference)
+            && $entityId !== false
+            && ($reference['entity_id'] ?? null) === $entityId
+            && ($reference['estimate_item_id'] ?? null) === $entityId
+            && ($reference['parent_work_id'] ?? null) === $positionId
+            && ($reference['composition_scope'] ?? null) === 'resources';
+    }
+
+    private function hasEstimateContext(array $toolResults): bool
+    {
+        foreach ($toolResults as $result) {
+            if (! is_array($result) || ! is_array($result['structured_fact_evidence']['rows'] ?? null)) {
+                continue;
+            }
+            foreach ($result['structured_fact_evidence']['rows'] as $row) {
+                if (is_array($row) && ($row['entity_type'] ?? null) === 'estimate') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function hasUnknownComposition(array $toolResults): bool
+    {
+        foreach ($toolResults as $result) {
+            if (is_array($result) && ($result['composition']['status'] ?? null) === 'unknown') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function trustedEvidence(array $evidence): bool
