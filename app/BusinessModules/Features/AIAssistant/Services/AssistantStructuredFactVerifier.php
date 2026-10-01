@@ -149,7 +149,7 @@ final class AssistantStructuredFactVerifier
                     && ($reference['organization_id'] ?? null) === $compositionPage['organization_id']
                     && ($reference['estimate_id'] ?? null) === $compositionPage['estimate_id']
                     && ($reference['project_id'] ?? null) === $compositionPage['project_id']) {
-                    $shownIds[(string) $row['entity_id']] = true;
+                    $shownIds[$row['entity_type'].':'.(string) $row['entity_id']] = true;
                 }
             }
             $shown = count($shownIds);
@@ -257,7 +257,6 @@ final class AssistantStructuredFactVerifier
 
         $positionRows = [];
         $resourceRows = [];
-        $resourceTypes = [];
         foreach ($evidence['rows'] as $row) {
             if (! is_array($row)) {
                 return false;
@@ -274,20 +273,20 @@ final class AssistantStructuredFactVerifier
                     && ($reference['entity_id'] ?? null) === $row['entity_id']
                     && ($reference['composition_scope'] ?? null) === 'resources') {
                     $resourceRows[] = $row;
-                    $resourceTypes['estimate_item'] = true;
                 } else {
                     return false;
                 }
             }
             if ($row['entity_type'] === 'estimate_item_resource') {
-                if (($row['source_ref']['estimate_item_id'] ?? null) !== $page['position_id']) {
+                if (($row['source_ref']['estimate_item_id'] ?? null) !== $page['position_id']
+                    || ($row['source_ref']['composition_scope'] ?? null) !== 'resources'
+                    || ($row['source_ref']['finance_representation'] ?? null) !== 'independent') {
                     return false;
                 }
                 $resourceRows[] = $row;
-                $resourceTypes['estimate_item_resource'] = true;
             }
         }
-        if (count($positionRows) !== 1 || count($resourceTypes) > 1) {
+        if (count($positionRows) !== 1) {
             return false;
         }
         $positionReference = $positionRows[0]['source_ref'] ?? null;
@@ -318,7 +317,7 @@ final class AssistantStructuredFactVerifier
             }
         }
 
-        $resourceIds = array_map(static fn (array $row): string => (string) $row['entity_id'], $resourceRows);
+        $resourceIds = array_map(static fn (array $row): string => $row['entity_type'].':'.(string) $row['entity_id'], $resourceRows);
         if (count(array_unique($resourceIds)) !== count($resourceIds)) {
             return false;
         }

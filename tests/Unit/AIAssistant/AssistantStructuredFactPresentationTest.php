@@ -141,6 +141,32 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertFalse($result['needs_clarification']);
     }
 
+    public function test_unreviewed_normalized_resource_is_not_trusted_as_composition(): void
+    {
+        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100, ['project_id' => 16]);
+        $position = $this->payload('estimate_item', ['name' => 'Работа', 'position_number' => '1'], 200,
+            ['estimate_id' => 100, 'project_id' => 16]);
+        $unreviewed = $this->payload('estimate_item_resource', ['name' => 'Непроверенное зеркало', 'resource_type' => 'material'], 1001,
+            ['estimate_id' => 100, 'estimate_item_id' => 200, 'composition_scope' => 'resources',
+                'finance_representation' => 'unreviewed', 'project_id' => 16]);
+        $rows = [
+            $estimate['structured_fact_evidence']['rows'][0],
+            $position['structured_fact_evidence']['rows'][0],
+            $unreviewed['structured_fact_evidence']['rows'][0],
+        ];
+        $payload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 1, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $verifier = new AssistantStructuredFactVerifier;
+        $this->assertFalse($verifier->trustedEvidence($payload['structured_fact_evidence']));
+        $result = $verifier->guard('Покажи состав позиции', 'Непроверенное зеркало', [$payload]);
+        $this->assertTrue($result['needs_clarification']);
+        $this->assertStringNotContainsString('Непроверенное зеркало', $result['text']);
+    }
+
     public function test_estimate_composition_requires_live_proof_for_resource_requests(): void
     {
         $result = (new AssistantStructuredFactVerifier)->guard(
@@ -186,6 +212,40 @@ final class AssistantStructuredFactPresentationTest extends TestCase
             $invalid = $this->tamperCompositionReference($payload, $field, $value);
             $this->assertFalse($verifier->trustedEvidence($invalid['structured_fact_evidence']), $field);
         }
+    }
+
+    public function test_mixed_child_and_independent_resources_use_type_scoped_identity(): void
+    {
+        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100, ['project_id' => 16]);
+        $position = $this->payload('estimate_item', ['name' => 'Работа', 'position_number' => '1'], 200,
+            ['estimate_id' => 100, 'project_id' => 16]);
+        $child = $this->payload('estimate_item', ['name' => 'Дочерний ресурс', 'position_number' => '1.1',
+            'resource_type' => 'material', 'quantity' => '1.00000000'], 201,
+            ['estimate_id' => 100, 'estimate_item_id' => 201, 'parent_work_id' => 200, 'composition_scope' => 'resources', 'project_id' => 16]);
+        $independent = $this->payload('estimate_item_resource', ['name' => 'Независимый ресурс', 'resource_type' => 'material',
+            'total_quantity' => '2.0000', 'total_amount' => '10.00'], 201,
+            ['estimate_id' => 100, 'estimate_item_id' => 200, 'composition_scope' => 'resources',
+                'finance_representation' => 'independent', 'project_id' => 16]);
+        $rows = [
+            $estimate['structured_fact_evidence']['rows'][0],
+            $position['structured_fact_evidence']['rows'][0],
+            $child['structured_fact_evidence']['rows'][0],
+            $independent['structured_fact_evidence']['rows'][0],
+        ];
+        $payload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 3, 'page' => 1,
+            'per_page' => 2, 'has_more' => true, 'next_page' => 2,
+        ];
+
+        $verifier = new AssistantStructuredFactVerifier;
+        $this->assertTrue($verifier->trustedEvidence($payload['structured_fact_evidence']));
+        $result = $verifier->confirmedResults([$payload], 'Покажи состав позиции');
+
+        $this->assertFalse($result['needs_clarification']);
+        $this->assertStringContainsString('Дочерний ресурс', $result['text']);
+        $this->assertStringContainsString('Независимый ресурс', $result['text']);
+        $this->assertStringContainsString('Показаны 2 из 3 найденных ресурсов.', $result['text']);
     }
 
     public function test_conflicting_composition_pages_use_unknown_resources_footer(): void
@@ -256,7 +316,8 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $rows = array_merge($estimate['structured_fact_evidence']['rows'], $position['structured_fact_evidence']['rows']);
         for ($id = $firstResourceId; $id < $firstResourceId + $resourceCount; $id++) {
             $resource = $this->payload('estimate_item_resource', ['name' => 'Ресурс '.$id], 1000 + $id,
-                ['estimate_id' => 100, 'estimate_item_id' => 200, 'project_id' => 16]);
+                ['estimate_id' => 100, 'estimate_item_id' => 200, 'composition_scope' => 'resources',
+                    'finance_representation' => 'independent', 'project_id' => 16]);
             $rows[] = $resource['structured_fact_evidence']['rows'][0];
         }
 

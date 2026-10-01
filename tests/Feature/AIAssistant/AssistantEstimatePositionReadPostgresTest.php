@@ -105,6 +105,8 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
                 'total_quantity' => '4.1250',
                 'unit_price' => '125.50',
                 'total_amount' => '517.69',
+                'finance_representation' => 'independent',
+                'represented_by_item_id' => null,
             ]);
         }
 
@@ -185,7 +187,8 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         );
         for ($index = 1; $index <= 21; $index++) {
             EstimateItemResource::query()->create(['estimate_item_id' => $target->id, 'resource_type' => 'material', 'name' => 'Ресурс '.$index,
-                'measurement_unit_id' => $unit->id, 'quantity_per_unit' => '1.0000', 'total_quantity' => '2.0000', 'unit_price' => '5.00', 'total_amount' => '10.00']);
+                'measurement_unit_id' => $unit->id, 'quantity_per_unit' => '1.0000', 'total_quantity' => '2.0000', 'unit_price' => '5.00',
+                'total_amount' => '10.00', 'finance_representation' => 'independent', 'represented_by_item_id' => null]);
         }
         $foreignUnit = MeasurementUnit::query()->create(['organization_id' => $foreignOrganization->id,
             'name' => 'Чужая единица', 'short_name' => 'чужая-ед', 'type' => 'material', 'is_default' => false, 'is_system' => false]);
@@ -219,6 +222,131 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
 
         $this->expectException(AuthorizationException::class);
         app(GetEstimatePositionsTool::class)->execute(['estimate_id' => $foreignEstimate->id], $this->actor, $this->organization);
+    }
+
+    public function test_soft_deleted_child_mirror_is_not_restored_as_normalized_composition(): void
+    {
+        $estimate = $this->estimate('SM-DELETED-CHILD', 'Удалённый ресурс');
+        $position = $this->item($estimate, '1', 'Монтаж оборудования');
+        $deletedChild = $this->item($estimate, '1.1', 'Удалённый ресурс', [
+            'parent_work_id' => $position->id,
+            'item_type' => 'material',
+        ]);
+        $deletedChild->delete();
+
+        $attributes = [
+            'estimate_item_id' => $position->id,
+            'resource_type' => 'material',
+            'measurement_unit_id' => null,
+            'quantity_per_unit' => '1.0000',
+            'total_quantity' => '2.0000',
+            'unit_price' => '5.00',
+            'total_amount' => '10.00',
+        ];
+        EstimateItemResource::query()->create($attributes + [
+            'name' => 'Зеркало удалённого дочернего ресурса',
+            'finance_representation' => 'child',
+            'represented_by_item_id' => $deletedChild->id,
+        ]);
+        EstimateItemResource::query()->create($attributes + [
+            'name' => 'Непроверенное зеркало удалённого дочернего ресурса',
+            'finance_representation' => 'unreviewed',
+            'represented_by_item_id' => null,
+        ]);
+        EstimateItemResource::query()->create($attributes + [
+            'name' => 'Самостоятельный нормализованный ресурс',
+            'finance_representation' => 'independent',
+            'represented_by_item_id' => null,
+        ]);
+
+        $result = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $estimate->id,
+            'position_id' => $position->id,
+            'include_composition' => true,
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($result);
+        self::assertSame(1, $result['composition']['total']);
+        self::assertSame(['Самостоятельный нормализованный ресурс'], array_column($result['composition']['items'], 'name'));
+        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool =>
+            ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
+        self::assertStringNotContainsString('Зеркало удалённого дочернего ресурса', json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        self::assertStringNotContainsString('Непроверенное зеркало удалённого дочернего ресурса', json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    public function test_live_children_include_only_explicit_independent_normalized_resources(): void
+    {
+        $estimate = $this->estimate('SM-MIXED-RESOURCES', 'Состав с независимым ресурсом');
+        $position = $this->item($estimate, '1', 'Монтаж оборудования');
+        $child = $this->item($estimate, '1.1', 'Живой дочерний ресурс', [
+            'parent_work_id' => $position->id,
+            'item_type' => 'material',
+            'quantity' => '1.00000000',
+            'quantity_total' => '1.00000000',
+            'unit_price' => '2.00',
+            'total_amount' => '2.00',
+        ]);
+        $resourceAttributes = [
+            'estimate_item_id' => $position->id,
+            'resource_type' => 'material',
+            'measurement_unit_id' => null,
+            'quantity_per_unit' => '1.0000',
+            'total_quantity' => '2.0000',
+            'unit_price' => '5.00',
+            'total_amount' => '10.00',
+        ];
+        EstimateItemResource::query()->create($resourceAttributes + [
+            'name' => 'Зеркало дочернего ресурса',
+            'finance_representation' => 'child',
+            'represented_by_item_id' => $child->id,
+        ]);
+        EstimateItemResource::query()->create($resourceAttributes + [
+            'name' => 'Непроверенная нормализованная строка',
+            'finance_representation' => 'unreviewed',
+            'represented_by_item_id' => null,
+        ]);
+        EstimateItemResource::query()->create($resourceAttributes + [
+            'name' => 'Явная независимая строка',
+            'finance_representation' => 'independent',
+            'represented_by_item_id' => null,
+        ]);
+
+        $result = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $estimate->id,
+            'position_id' => $position->id,
+            'include_composition' => true,
+            'composition_per_page' => 20,
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($result);
+        self::assertSame(2, $result['composition']['total']);
+        self::assertSame(['Живой дочерний ресурс', 'Явная независимая строка'], array_column($result['composition']['items'], 'name'));
+        self::assertTrue((new AssistantStructuredFactVerifier)->trustedEvidence($result['structured_fact_evidence']));
+        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool =>
+            ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
+        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool =>
+            ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
+
+        $firstPage = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $estimate->id,
+            'position_id' => $position->id,
+            'include_composition' => true,
+            'composition_per_page' => 1,
+        ], $this->actor, $this->organization);
+        self::assertSame(2, $firstPage['composition']['total']);
+        self::assertSame(['Живой дочерний ресурс'], array_column($firstPage['composition']['items'], 'name'));
+        self::assertTrue($firstPage['composition']['has_more']);
+        self::assertSame(2, $firstPage['composition']['next_page']);
+
+        $secondPage = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $estimate->id,
+            'position_id' => $position->id,
+            'include_composition' => true,
+            'composition_page' => 2,
+            'composition_per_page' => 1,
+        ], $this->actor, $this->organization);
+        self::assertSame(['Явная независимая строка'], array_column($secondPage['composition']['items'], 'name'));
+        self::assertFalse($secondPage['composition']['has_more']);
     }
 
     public function test_denied_estimate_selector_stops_before_positions_or_composition_are_read(): void
@@ -597,7 +725,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         $item = $this->item($estimate, '1', 'Проверяемая работа');
         EstimateItemResource::query()->create(['estimate_item_id' => $item->id, 'resource_type' => 'labor',
             'name' => 'Проверяемый ресурс', 'quantity_per_unit' => '1.0000', 'total_quantity' => '2.0000',
-            'unit_price' => '5.00', 'total_amount' => '10.00']);
+            'unit_price' => '5.00', 'total_amount' => '10.00', 'finance_representation' => 'independent', 'represented_by_item_id' => null]);
         $result = app(GetEstimatePositionsTool::class)->execute(['estimate_id' => $estimate->id, 'include_composition' => true], $this->actor, $this->organization);
         self::assertIsArray($result);
         $policy = app(AssistantDataAccessPolicy::class);
