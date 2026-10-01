@@ -10,6 +10,8 @@ use Throwable;
 
 final class DocumentTextExtractor
 {
+    public const DOCX_EXTRACTION_VERSION = 'docx-ooxml-v1';
+
     /** @return array{status: string, coverage: string, text: string, units: array<int, array{type: string, index: int, text: string, provenance: array<string,mixed>}>} */
     public function extract(string $content, string $mimeType, string $filename): array
     {

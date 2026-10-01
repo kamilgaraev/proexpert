@@ -16,7 +16,9 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumen
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\DocumentTextExtractor;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Jobs\AuthorizeBackgroundAssistantDocumentOcr;
 use App\Jobs\RegisterAssistantEntityFile;
+use App\Jobs\RecoverEmptyAssistantDocxText;
 use App\Jobs\ScanAssistantDocuments;
 use App\Models\Credits\AICreditReservation;
 use App\Models\File;
@@ -341,6 +343,90 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertNotNull($settings->scan_completed_at);
     }
 
+    public function test_docx_recovery_claims_only_bounded_old_empty_rows_and_stamps_version(): void
+    {
+        $content = $this->docxContent('Восстановленный текст');
+        $documents = [];
+        for ($index = 1; $index <= 6; $index++) {
+            $document = $this->documents->registerFile($this->file('old-'.$index.'.docx', $content,
+                null, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
+            $document->updateQuietly(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => 'empty',
+                'extracted_text' => '', 'metadata' => []]);
+            $documents[] = $document->fresh();
+        }
+        $this->documents->registerFile($this->file('ignored.txt', 'not a DOCX'))
+            ->updateQuietly(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => 'empty']);
+
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+        Queue::assertPushed(RecoverEmptyAssistantDocxText::class, 5);
+        self::assertSame(DocumentTextExtractor::DOCX_EXTRACTION_VERSION, $documents[0]->fresh()->metadata['docx_recovery_pending_version']);
+        self::assertNull($documents[5]->fresh()->metadata['docx_recovery_pending_version'] ?? null);
+
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+        Queue::assertPushed(RecoverEmptyAssistantDocxText::class, 6);
+
+        (new RecoverEmptyAssistantDocxText((int) $documents[0]->id, $documents[0]->checksum,
+            DocumentTextExtractor::DOCX_EXTRACTION_VERSION))->handle($this->documents);
+        $recovered = $documents[0]->fresh();
+        self::assertSame(AIAssistantDocument::STATUS_READY, $recovered->status);
+        self::assertSame('full', $recovered->coverage_status);
+        self::assertStringContainsString('Восстановленный текст', $recovered->extracted_text);
+        self::assertSame(DocumentTextExtractor::DOCX_EXTRACTION_VERSION, $recovered->metadata['docx_text_extraction_version']);
+        self::assertNull($recovered->metadata['docx_recovery_pending_version'] ?? null);
+
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+        Queue::assertPushed(RecoverEmptyAssistantDocxText::class, 6);
+        self::assertSame(0, AICreditReservation::query()->count());
+    }
+
+    public function test_recovered_image_only_docx_stays_quote_required_without_background_ocr(): void
+    {
+        $document = $this->documents->registerFile($this->file('old-scan.docx', $this->docxContent('', true),
+            null, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
+        $document->updateQuietly(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => 'empty',
+            'extracted_text' => '', 'metadata' => []]);
+
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+        Queue::assertPushed(RecoverEmptyAssistantDocxText::class, 1);
+        (new RecoverEmptyAssistantDocxText((int) $document->id, $document->checksum,
+            DocumentTextExtractor::DOCX_EXTRACTION_VERSION))->handle($this->documents);
+
+        $recovered = $document->fresh();
+        self::assertSame(AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED, $recovered->status);
+        self::assertSame('image_ocr_required', $recovered->coverage_status);
+        self::assertSame('docx_recovery_manual_ocr_required', $recovered->last_error);
+        self::assertSame(DocumentTextExtractor::DOCX_EXTRACTION_VERSION, $recovered->metadata['docx_text_extraction_version']);
+
+        AssistantDocumentSettings::query()->where('organization_id', $this->organization->id)
+            ->update(['background_ocr_enabled' => true, 'approved_by' => $this->owner->id, 'approved_at' => now()]);
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+
+        Queue::assertNotPushed(AuthorizeBackgroundAssistantDocumentOcr::class);
+        self::assertSame(0, AICreditReservation::query()->count());
+        self::assertSame(AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED, $recovered->fresh()->status);
+    }
+
+    public function test_docx_recovery_versions_empty_results_to_prevent_repeated_scans(): void
+    {
+        $document = $this->documents->registerFile($this->file('old-empty.docx', $this->docxContent(''),
+            null, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
+        $document->updateQuietly(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => 'empty',
+            'extracted_text' => '', 'metadata' => []]);
+
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+        Queue::assertPushed(RecoverEmptyAssistantDocxText::class, 1);
+        (new RecoverEmptyAssistantDocxText((int) $document->id, $document->checksum,
+            DocumentTextExtractor::DOCX_EXTRACTION_VERSION))->handle($this->documents);
+
+        $recovered = $document->fresh();
+        self::assertSame(AIAssistantDocument::STATUS_READY, $recovered->status);
+        self::assertSame('empty', $recovered->coverage_status);
+        self::assertSame(DocumentTextExtractor::DOCX_EXTRACTION_VERSION, $recovered->metadata['docx_text_extraction_version']);
+
+        (new ScanAssistantDocuments($this->organization->id))->handle();
+        Queue::assertPushed(RecoverEmptyAssistantDocxText::class, 1);
+    }
+
     public function test_owner_coverage_includes_unindexed_and_unsupported_archive_files(): void
     {
         $readyFile = $this->file('ready.txt', 'ready');
@@ -585,6 +671,26 @@ final class AssistantDocumentIngestionTest extends TestCase
     {
         $content = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
         return $this->documents->process((int) $this->documents->registerFile($this->file('scan.png', $content, null, 'image/png'))->id);
+    }
+
+    private function docxContent(string $text, bool $withImage = false): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most-docx-recovery-');
+        $archive = new \ZipArchive;
+        self::assertTrue($archive->open($path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE));
+        $paragraph = $text === '' ? '' : '<w:r><w:t>'.htmlspecialchars($text, ENT_XML1 | ENT_QUOTES, 'UTF-8').'</w:t></w:r>';
+        self::assertTrue($archive->addFromString('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>'.$paragraph.'</w:p></w:body></w:document>'));
+        if ($withImage) {
+            $image = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=');
+            self::assertIsString($image);
+            self::assertTrue($archive->addFromString('word/media/image1.png', $image));
+        }
+        self::assertTrue($archive->close());
+        $content = file_get_contents($path);
+        unlink($path);
+        self::assertIsString($content);
+
+        return $content;
     }
 
     private function pdfContent(int $pages): string

@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocxRecoveryService;
 use App\Models\File;
 use App\Models\Organization;
 use Illuminate\Bus\Queueable;
@@ -46,6 +47,7 @@ final class ScanAssistantDocuments implements ShouldQueue, ShouldBeUnique
                 }
                 $settings->update(['last_file_id' => $files->last()?->id ?? $settings->last_file_id,
                     'scanned_count' => $settings->scanned_count + $files->count(), 'scan_completed_at' => $files->count() < 50 ? now() : null]);
+                app(AssistantDocxRecoveryService::class)->dispatchUnversionedEmptyDocx($this->organizationId);
                 if ($settings->background_ocr_enabled) {
                     $pending = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::query()
                         ->where('organization_id', $this->organizationId)->where('status', 'ocr_quote_required')
