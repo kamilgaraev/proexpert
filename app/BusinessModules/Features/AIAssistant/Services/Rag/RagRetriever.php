@@ -24,12 +24,15 @@ use Throwable;
 
 final class RagRetriever
 {
+    private const RECIPROCAL_RANK_OFFSET = 60;
+
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly UserProjectAccessService $projectAccessService,
         private readonly ?AssistantDataAccessPolicy $accessPolicy = null,
         private readonly ?UsageTracker $usageTracker = null,
-        private readonly ?AssistantReadConcurrencyLimiter $readLimiter = null
+        private readonly ?AssistantReadConcurrencyLimiter $readLimiter = null,
+        private readonly ?RagEmbeddingProviderRegistry $embeddingProviderRegistry = null
     ) {}
 
     /**
@@ -95,92 +98,19 @@ final class RagRetriever
         }
 
         $checkpoint?->__invoke();
-        try {
-            [$embedding, $cacheHit] = $this->timed('query_embedding', $organizationId, $user, fn (): array => $this->queryEmbedding($query, $organizationId, $user));
-        } catch (Throwable $throwable) {
-            $this->rethrowExecutionFailure($throwable);
-            $checkpoint?->__invoke();
-            $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $requestProjectId, false);
-            Log::warning('ai_assistant.rag.query_embedding_failed', [
-                'organization_id' => $organizationId,
-                'user_id' => $user->id,
-                'exception_class' => $throwable::class,
-            ]);
-
-            $diagnostics = ['status' => 'unavailable', 'error_code' => 'rag_query_embedding_unavailable', 'semantic_available' => false, 'lexical_used' => true];
-            $results = $this->lexicalFallback(
-                $query,
-                $organizationId,
-                $allowedProjectIds,
-                $requestProjectId,
-                $limit,
-                $sourceTypes,
-                $includeOrganizationWideSources,
-                [],
-                $user,
-                $checkpoint,
-                $readWrapper,
-                $readGuard
-            );
-            if ($results !== []) { $diagnostics['status'] = 'partial'; }
-            return $results;
-        }
-
-        if (! $cacheHit) { $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $requestProjectId); }
-        $checkpoint?->__invoke();
-        $accessibleSources = $this->timed('source_acl', $organizationId, $user, fn (): array => $this->runRead(fn (?callable $readCheckpoint): array => $this->authorizedSourceIds($organizationId, $user, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $embedding, [], $readCheckpoint), $checkpoint, $organizationId, $readWrapper, $readGuard));
-        $accessibleSources = RagSource::query()->whereIntegerInRaw('id', $accessibleSources)->select('id');
-
-        $results = [];
-        $checkpoint?->__invoke();
-        $rows = $this->timed('semantic_sql', $organizationId, $user, fn (): iterable => $this->runRead(fn (): iterable => $this->candidateRows(
-            $embedding,
+        $accessibleSourceIds = $this->timed('source_acl', $organizationId, $user, fn (): array => $this->runRead(
+            fn (?callable $readCheckpoint): array => $this->authorizedSourceIds(
+                $organizationId, $user, $sourceTypes, $allowedProjectIds, $requestProjectId,
+                $includeOrganizationWideSources, null, [], $readCheckpoint
+            ),
+            $checkpoint,
             $organizationId,
-            max($limit * 4, $limit),
-            $sourceTypes,
-            $allowedProjectIds,
-            $requestProjectId,
-            $includeOrganizationWideSources,
-            $accessibleSources
-        ), $checkpoint, $organizationId, $readWrapper, $readGuard));
-        $checkpoint?->__invoke();
-        $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard);
-        foreach ($rows as $row) {
-            $checkpoint?->__invoke();
-            $projectId = $row->project_id !== null ? (int) $row->project_id : null;
-
-            if (
-                $requestProjectId !== null
-                && $projectId !== $requestProjectId
-                && ! ($includeOrganizationWideSources && $projectId === null)
-            ) {
-                continue;
-            }
-
-            $similarity = (float) $row->similarity;
-            if ($similarity < $threshold) {
-                continue;
-            }
-
-            $results[] = new RagSearchResult(
-                sourceType: (string) $row->source_type,
-                entityType: (string) $row->entity_type,
-                entityId: (string) $row->entity_id,
-                projectId: $projectId,
-                title: (string) $row->title,
-                excerpt: $this->excerpt((string) $row->content),
-                similarity: $similarity,
-                metadata: $this->metadata($row->chunk_metadata),
-                updatedAt: $this->date($row->source_indexed_at)
-            );
-
-            if (count($results) >= $limit) {
-                break;
-            }
-        }
-
-        if ($results === []) {
+            $readWrapper,
+            $readGuard
+        ));
+        if ($accessibleSourceIds === []) {
             $diagnostics['lexical_used'] = true;
+
             return $this->lexicalFallback(
                 $query,
                 $organizationId,
@@ -196,15 +126,230 @@ final class RagRetriever
                 $readGuard
             );
         }
+        $accessibleSources = RagSource::query()->whereIntegerInRaw('id', $accessibleSourceIds)->select('id');
+        $storedProfiles = $this->timed('embedding_profiles', $organizationId, $user, fn (): array => $this->runRead(
+            fn (?callable $readCheckpoint): array => $this->storedEmbeddingProfiles(
+                $organizationId,
+                $sourceTypes,
+                $allowedProjectIds,
+                $requestProjectId,
+                $includeOrganizationWideSources,
+                $accessibleSources,
+                $readCheckpoint
+            ),
+            $checkpoint,
+            $organizationId,
+            $readWrapper,
+            $readGuard
+        ));
+
+        $supportedProfiles = [];
+        $unsupportedProfiles = [];
+        foreach ($storedProfiles as $profile) {
+            $checkpoint?->__invoke();
+            $providerName = $profile['provider'];
+            $model = $profile['model'];
+            $dimensions = $profile['dimensions'];
+            $provider = null;
+            if (is_string($providerName) && is_string($model) && is_int($dimensions) && $dimensions > 0) {
+                if ($this->embeddingProviderRegistry !== null) {
+                    $provider = $this->embeddingProviderRegistry->forProfile($providerName, $model, $dimensions);
+                } elseif ($providerName === $this->embeddingProvider->provider()
+                    && $model === $this->embeddingProvider->model() && $dimensions === $this->embeddingProvider->dimensions()) {
+                    $provider = $this->embeddingProvider;
+                }
+            }
+            if ($provider === null || $provider->provider() !== $providerName || $provider->model() !== $model
+                || $provider->dimensions() !== $dimensions) {
+                $unsupportedProfiles[] = $this->diagnosticProfile($profile);
+
+                continue;
+            }
+
+            $supportedProfiles[] = ['provider' => $provider, 'key' => $this->embeddingProfileKey($profile)];
+        }
+
+        if ($unsupportedProfiles !== []) {
+            $diagnostics['unsupported_embedding_profiles'] = array_slice($unsupportedProfiles, 0, 8);
+            Log::warning('ai_assistant.rag.embedding_profile_unsupported', [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+                'profiles' => array_slice($unsupportedProfiles, 0, 8),
+                'profile_count' => count($unsupportedProfiles),
+            ]);
+        }
+
+        if ($supportedProfiles === []) {
+            $diagnostics = [
+                ...$diagnostics,
+                'status' => 'unavailable',
+                'error_code' => $unsupportedProfiles === [] ? 'rag_embedding_profile_unavailable' : 'rag_embedding_profile_unsupported',
+                'semantic_available' => false,
+                'lexical_used' => true,
+            ];
+            $results = $this->lexicalFallback(
+                $query,
+                $organizationId,
+                $allowedProjectIds,
+                $requestProjectId,
+                $limit,
+                $sourceTypes,
+                $includeOrganizationWideSources,
+                [],
+                $user,
+                $checkpoint,
+                $readWrapper,
+                $readGuard
+            );
+            if ($results !== []) {
+                $diagnostics['status'] = 'partial';
+            }
+
+            return $results;
+        }
+
+        $rankedResults = [];
+        $nextSequence = 0;
+        $queryEmbeddingFailures = [];
+        foreach ($supportedProfiles as $profile) {
+            $checkpoint?->__invoke();
+            $provider = $profile['provider'] ?? null;
+            if (! $provider instanceof RagEmbeddingProviderInterface) {
+                continue;
+            }
+            try {
+                [$embedding, $cacheHit] = $this->timed('query_embedding', $organizationId, $user,
+                    fn (): array => $this->queryEmbedding($query, $organizationId, $user, $provider));
+            } catch (Throwable $throwable) {
+                $this->rethrowExecutionFailure($throwable);
+                $checkpoint?->__invoke();
+                $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $provider, $requestProjectId, false);
+                $queryEmbeddingFailures[] = $profile['key'];
+                Log::warning('ai_assistant.rag.query_embedding_failed', [
+                    'organization_id' => $organizationId,
+                    'user_id' => $user->id,
+                    'provider' => $provider->provider(),
+                    'model' => $provider->model(),
+                    'exception_class' => $throwable::class,
+                ]);
+
+                continue;
+            }
+
+            if (! $cacheHit) {
+                $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $provider, $requestProjectId);
+            }
+            $checkpoint?->__invoke();
+            $rows = $this->timed('semantic_sql', $organizationId, $user, fn (): iterable => $this->runRead(
+                fn (): iterable => $this->candidateRows(
+                    $embedding,
+                    $provider,
+                    $organizationId,
+                    max($limit * 4, $limit),
+                    $sourceTypes,
+                    $allowedProjectIds,
+                    $requestProjectId,
+                    $includeOrganizationWideSources,
+                    $accessibleSources
+                ),
+                $checkpoint,
+                $organizationId,
+                $readWrapper,
+                $readGuard
+            ));
+            $rows = $this->readableRows($rows, $user, $organizationId, $checkpoint, $readWrapper, $readGuard);
+            $profileRank = 0;
+            $seenProfileResults = [];
+            foreach ($rows as $row) {
+                $checkpoint?->__invoke();
+                $projectId = $row->project_id !== null ? (int) $row->project_id : null;
+                if ($requestProjectId !== null && $projectId !== $requestProjectId
+                    && ! ($includeOrganizationWideSources && $projectId === null)) {
+                    continue;
+                }
+
+                $similarity = (float) $row->similarity;
+                if ($similarity < $threshold) {
+                    continue;
+                }
+
+                $identity = $this->candidateIdentity($row);
+                if (isset($seenProfileResults[$identity])) {
+                    continue;
+                }
+                $seenProfileResults[$identity] = true;
+                $rank = ++$profileRank;
+                $result = new RagSearchResult(
+                    sourceType: (string) $row->source_type,
+                    entityType: (string) $row->entity_type,
+                    entityId: (string) $row->entity_id,
+                    projectId: $projectId,
+                    title: (string) $row->title,
+                    excerpt: $this->excerpt((string) $row->content),
+                    similarity: $similarity,
+                    metadata: $this->metadata($row->chunk_metadata),
+                    updatedAt: $this->date($row->source_indexed_at)
+                );
+
+                if (! isset($rankedResults[$identity])) {
+                    $rankedResults[$identity] = ['fusion_score' => 0.0, 'best_rank' => $rank,
+                        'sequence' => $nextSequence++, 'result' => $result];
+                } elseif ($rank < $rankedResults[$identity]['best_rank']) {
+                    $rankedResults[$identity]['best_rank'] = $rank;
+                    $rankedResults[$identity]['result'] = $result;
+                }
+                $rankedResults[$identity]['fusion_score'] += 1 / (self::RECIPROCAL_RANK_OFFSET + $rank);
+            }
+        }
+
+        if ($unsupportedProfiles !== [] || $queryEmbeddingFailures !== []) {
+            $diagnostics['error_code'] = $queryEmbeddingFailures !== []
+                ? 'rag_query_embedding_partial_failure'
+                : 'rag_embedding_profile_unsupported';
+            if ($queryEmbeddingFailures !== []) {
+                $diagnostics['failed_embedding_profiles'] = array_slice($queryEmbeddingFailures, 0, 8);
+            }
+            $diagnostics['status'] = 'partial';
+        }
+        $diagnostics['semantic_available'] = count($supportedProfiles) > count($queryEmbeddingFailures);
+
+        if ($rankedResults !== []) {
+            $merged = array_values($rankedResults);
+            usort($merged, static fn (array $left, array $right): int =>
+                ($right['fusion_score'] <=> $left['fusion_score'])
+                ?: ($left['best_rank'] <=> $right['best_rank'])
+                ?: ($left['sequence'] <=> $right['sequence']));
+
+            return array_map(static fn (array $item): RagSearchResult => $item['result'], array_slice($merged, 0, $limit));
+        }
+
+        $diagnostics['lexical_used'] = true;
+        $results = $this->lexicalFallback(
+            $query,
+            $organizationId,
+            $allowedProjectIds,
+            $requestProjectId,
+            $limit,
+            $sourceTypes,
+            $includeOrganizationWideSources,
+            [],
+            $user,
+            $checkpoint,
+            $readWrapper,
+            $readGuard
+        );
+        if (! $diagnostics['semantic_available']) {
+            $diagnostics['status'] = $results === [] ? 'unavailable' : 'partial';
+        }
 
         return $results;
     }
 
-    private function queryEmbedding(string $query, int $organizationId, User $actor): array
+    private function queryEmbedding(string $query, int $organizationId, User $actor, RagEmbeddingProviderInterface $provider): array
     {
         $key = 'ai_assistant:query_embedding:'.hash('sha256', json_encode([
             $organizationId, (int) $actor->id, RagEmbeddingProviderInterface::PURPOSE_QUERY,
-            $this->embeddingProvider->provider(), $this->embeddingProvider->model(), $this->embeddingProvider->dimensions(), $query,
+            $provider->provider(), $provider->model(), $provider->dimensions(), $query,
         ], JSON_THROW_ON_ERROR));
         $cached = null;
         try { $cached = Cache::get($key); }
@@ -212,9 +357,9 @@ final class RagRetriever
             $this->rethrowExecutionFailure($exception);
             Log::warning('ai_assistant.rag.query_embedding_cache_failed', ['organization_id' => $organizationId, 'user_id' => $actor->id, 'operation' => 'read', 'exception_class' => $exception::class]);
         }
-        if ($this->validEmbedding($cached)) { return [$cached, true]; }
-        $embedding = $this->embeddingProvider->embed($query, RagEmbeddingProviderInterface::PURPOSE_QUERY);
-        if (! $this->validEmbedding($embedding)) { throw new \RuntimeException('rag_query_embedding_invalid'); }
+        if ($this->validEmbedding($cached, $provider->dimensions())) { return [$cached, true]; }
+        $embedding = $provider->embed($query, RagEmbeddingProviderInterface::PURPOSE_QUERY);
+        if (! $this->validEmbedding($embedding, $provider->dimensions())) { throw new \RuntimeException('rag_query_embedding_invalid'); }
         try { Cache::put($key, $embedding, 3600); }
         catch (Throwable $exception) {
             $this->rethrowExecutionFailure($exception);
@@ -229,13 +374,126 @@ final class RagRetriever
             || $exception instanceof RagStatusBudgetExceeded || $exception instanceof QueryException) { throw $exception; }
     }
 
-    private function validEmbedding(mixed $embedding): bool
+    private function validEmbedding(mixed $embedding, int $dimensions): bool
     {
-        if (! is_array($embedding) || ! array_is_list($embedding) || count($embedding) !== $this->embeddingProvider->dimensions()) { return false; }
+        if (! is_array($embedding) || ! array_is_list($embedding) || count($embedding) !== $dimensions) { return false; }
         foreach ($embedding as $value) {
             if ((! is_float($value) && ! is_int($value)) || ! is_finite((float) $value)) { return false; }
         }
         return true;
+    }
+
+    private function storedEmbeddingProfiles(
+        int $organizationId,
+        array $sourceTypes,
+        array $allowedProjectIds,
+        ?int $requestProjectId,
+        bool $includeOrganizationWideSources,
+        Builder $accessibleSources,
+        ?callable $checkpoint
+    ): array {
+        $baseQuery = function () use (
+            $organizationId,
+            $sourceTypes,
+            $allowedProjectIds,
+            $requestProjectId,
+            $includeOrganizationWideSources,
+            $accessibleSources
+        ): \Illuminate\Database\Query\Builder {
+            return DB::table('ai_rag_chunks as c')
+                ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
+                ->where('c.organization_id', $organizationId)
+                ->where('s.organization_id', $organizationId)
+                ->whereIn('s.id', $accessibleSources)
+                ->whereNotNull('c.embedding')
+                ->when($sourceTypes !== [], static fn ($builder) => $builder->whereIn('s.source_type', $sourceTypes))
+                ->where(static function ($projects) use ($allowedProjectIds, $requestProjectId, $includeOrganizationWideSources): void {
+                    if ($requestProjectId !== null) {
+                        $projects->where('c.project_id', $requestProjectId);
+                        if ($includeOrganizationWideSources) {
+                            $projects->orWhereNull('c.project_id');
+                        }
+
+                        return;
+                    }
+
+                    $projects->whereIn('c.project_id', $allowedProjectIds);
+                    if ($includeOrganizationWideSources) {
+                        $projects->orWhereNull('c.project_id');
+                    }
+                });
+        };
+
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            return $baseQuery()
+                ->selectRaw('DISTINCT c.embedding_provider AS provider, c.embedding_model AS model, vector_dims(c.embedding) AS dimensions')
+                ->orderBy('provider')
+                ->orderBy('model')
+                ->orderBy('dimensions')
+                ->get()
+                ->map(static fn (object $profile): array => [
+                    'provider' => $profile->provider,
+                    'model' => $profile->model,
+                    'dimensions' => is_numeric($profile->dimensions) ? (int) $profile->dimensions : null,
+                ])
+                ->all();
+        }
+
+        $pairs = $baseQuery()
+            ->select(['c.embedding_provider', 'c.embedding_model'])
+            ->distinct()
+            ->orderBy('c.embedding_provider')
+            ->orderBy('c.embedding_model')
+            ->get();
+        $profiles = [];
+        foreach ($pairs as $pair) {
+            $checkpoint?->__invoke();
+            $sampleQuery = $baseQuery();
+            $sampleQuery = $pair->embedding_provider === null
+                ? $sampleQuery->whereNull('c.embedding_provider')
+                : $sampleQuery->where('c.embedding_provider', $pair->embedding_provider);
+            $sampleQuery = $pair->embedding_model === null
+                ? $sampleQuery->whereNull('c.embedding_model')
+                : $sampleQuery->where('c.embedding_model', $pair->embedding_model);
+            $sample = $sampleQuery->select('c.embedding')->first();
+            $profiles[] = [
+                'provider' => $pair->embedding_provider,
+                'model' => $pair->embedding_model,
+                'dimensions' => is_object($sample) ? count($this->parseVector((string) $sample->embedding)) : 0,
+            ];
+        }
+
+        return $profiles;
+    }
+
+    private function diagnosticProfile(array $profile): array
+    {
+        return [
+            'provider' => is_string($profile['provider'] ?? null) ? mb_substr($profile['provider'], 0, 80) : null,
+            'model' => is_string($profile['model'] ?? null) ? mb_substr($profile['model'], 0, 120) : null,
+            'dimensions' => is_int($profile['dimensions'] ?? null) ? $profile['dimensions'] : null,
+        ];
+    }
+
+    private function embeddingProfileKey(array $profile): string
+    {
+        return json_encode([
+            is_string($profile['provider'] ?? null) ? $profile['provider'] : null,
+            is_string($profile['model'] ?? null) ? $profile['model'] : null,
+            is_int($profile['dimensions'] ?? null) ? $profile['dimensions'] : null,
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+    }
+
+    private function candidateIdentity(object $row): string
+    {
+        return hash('sha256', json_encode([
+            (string) $row->source_type,
+            (string) $row->entity_type,
+            (string) $row->entity_id,
+            $row->project_id !== null ? (int) $row->project_id : null,
+            (string) $row->content,
+            $this->metadata($row->chunk_metadata),
+        ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
     }
 
     private function timed(string $phase, int $organizationId, User $actor, callable $operation): mixed
@@ -304,7 +562,7 @@ final class RagRetriever
                         $chunks->whereNotNull('candidate_chunks.embedding')->where('candidate_chunks.embedding_provider', $this->embeddingProvider->provider())
                             ->where('candidate_chunks.embedding_model', $this->embeddingProvider->model());
                         if (DB::connection()->getDriverName() === 'pgsql') { $chunks->whereRaw('vector_dims(candidate_chunks.embedding) = ?', [count($embedding)]); }
-                    } else {
+                    } elseif ($terms !== []) {
                         $chunks->where(function ($matches) use ($terms): void {
                             foreach ($terms as $term) {
                                 $pattern = '%'.$term.'%';
@@ -327,7 +585,8 @@ final class RagRetriever
                 $checkpoint?->__invoke();
             }
             Log::info('ai_assistant.rag.source_scope', ['organization_id' => $organizationId, 'user_id' => $actor->id,
-                'mode' => $embedding === null ? 'lexical' : 'semantic', 'branches' => $branches, 'source_count' => count($ids), 'max_sql_bytes' => $maxSqlBytes]);
+                'mode' => $embedding === null ? ($terms === [] ? 'source_access' : 'lexical') : 'semantic',
+                'branches' => $branches, 'source_count' => count($ids), 'max_sql_bytes' => $maxSqlBytes]);
             return array_values(array_unique($ids));
         }, fresh: true, checkpoint: $checkpoint);
     }
@@ -336,21 +595,22 @@ final class RagRetriever
         string $query,
         int $organizationId,
         User $user,
+        RagEmbeddingProviderInterface $provider,
         ?int $requestProjectId,
         bool $successful = true
     ): void {
         try {
-            $usage = $this->embeddingUsage($query);
+            $usage = $this->embeddingUsage($query, $provider);
             $tracker = $this->usageTracker ?? app(UsageTracker::class);
-            $attempts = method_exists($this->embeddingProvider, 'usageAttempts') ? $this->embeddingProvider->usageAttempts() : [];
+            $attempts = method_exists($provider, 'usageAttempts') ? $provider->usageAttempts() : [];
             if (! is_array($attempts) || $attempts === []) $attempts = [$usage + ['is_successful' => $successful, 'usage_key' => 'embedding:'.bin2hex(random_bytes(16))]];
             foreach ($attempts as $attempt) {
                 $usage = OpenAIRagEmbeddingProvider::usageEvidence($attempt, $query);
                 $tracker->recordUsage(
                     $organizationId,
                     $user->id,
-                    $this->embeddingProvider->provider(),
-                    $this->embeddingProvider->model(),
+                    $provider->provider(),
+                    $provider->model(),
                     'rag_query',
                     $usage['input_tokens'],
                     $usage['output_tokens'],
@@ -382,10 +642,8 @@ final class RagRetriever
     /**
      * @return array<string, mixed>
      */
-    private function embeddingUsage(string $content): array
+    private function embeddingUsage(string $content, RagEmbeddingProviderInterface $provider): array
     {
-        $provider = $this->embeddingProvider;
-
         if (method_exists($provider, 'lastUsage')) {
             try {
                 $usage = $provider->lastUsage();
@@ -516,6 +774,7 @@ final class RagRetriever
      */
     private function candidateRows(
         array $embedding,
+        RagEmbeddingProviderInterface $provider,
         int $organizationId,
         int $limit,
         array $sourceTypes,
@@ -526,8 +785,8 @@ final class RagRetriever
     ): iterable
     {
         return DB::connection()->getDriverName() === 'pgsql'
-            ? $this->postgresRows($embedding, $organizationId, $limit, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources)
-            : $this->fallbackRows($embedding, $organizationId, $limit, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources);
+            ? $this->postgresRows($embedding, $provider, $organizationId, $limit, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources)
+            : $this->fallbackRows($embedding, $provider, $organizationId, $limit, $sourceTypes, $allowedProjectIds, $requestProjectId, $includeOrganizationWideSources, $accessibleSources);
     }
 
     /**
@@ -535,11 +794,11 @@ final class RagRetriever
      * @param  array<int, string>  $sourceTypes
      * @return array<int, object>
      */
-    private function postgresRows(array $embedding, int $organizationId, int $limit, array $sourceTypes, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder|array $accessibleSources): array
+    private function postgresRows(array $embedding, RagEmbeddingProviderInterface $provider, int $organizationId, int $limit, array $sourceTypes, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder|array $accessibleSources): array
     {
         $vector = $this->vectorLiteral($embedding);
         $sourceFilter = '';
-        $bindings = [$organizationId, $this->embeddingProvider->provider(), $this->embeddingProvider->model(), count($embedding)];
+        $bindings = [$organizationId, $provider->provider(), $provider->model(), $provider->dimensions()];
 
         if ($sourceTypes !== []) {
             $sourceFilter = '  AND s.source_type IN ('.implode(',', array_fill(0, count($sourceTypes), '?')).')'."\n";
@@ -594,7 +853,7 @@ SQL;
      * @param  array<int, string>  $sourceTypes
      * @return Collection<int, object>
      */
-    private function fallbackRows(array $embedding, int $organizationId, int $limit, array $sourceTypes, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder|array $accessibleSources): Collection
+    private function fallbackRows(array $embedding, RagEmbeddingProviderInterface $provider, int $organizationId, int $limit, array $sourceTypes, array $allowedProjectIds, ?int $requestProjectId, bool $includeOrganizationWideSources, Builder|array $accessibleSources): Collection
     {
         return DB::table('ai_rag_chunks as c')
             ->join('ai_rag_sources as s', 's.id', '=', 'c.source_id')
@@ -602,8 +861,8 @@ SQL;
             ->where('s.organization_id', $organizationId)
             ->whereIn('s.id', $accessibleSources)
             ->whereNotNull('c.embedding')
-            ->where('c.embedding_provider', $this->embeddingProvider->provider())
-            ->where('c.embedding_model', $this->embeddingProvider->model())
+            ->where('c.embedding_provider', $provider->provider())
+            ->where('c.embedding_model', $provider->model())
             ->when(
                 $sourceTypes !== [],
                 static fn ($builder) => $builder->whereIn('s.source_type', $sourceTypes)
@@ -636,7 +895,8 @@ SQL;
                 's.indexed_at as source_indexed_at',
             ])
             ->get()
-            ->filter(fn (object $row): bool => count($this->parseVector((string) $row->embedding)) === count($embedding))
+            ->filter(fn (object $row): bool => count($this->parseVector((string) $row->embedding)) === $provider->dimensions()
+                && count($embedding) === $provider->dimensions())
             ->map(function (object $row) use ($embedding): object {
                 $row->similarity = $this->cosineSimilarity($embedding, $this->parseVector((string) $row->embedding));
 

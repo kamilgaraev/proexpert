@@ -314,6 +314,10 @@ class UsageTracker
      */
     protected function timewebPricing(string $model): array
     {
+        if ($model === (string) config('ai-assistant.rag.new_index_embedding_model', 'dashscope/text-embedding-v4')) {
+            $price = config('ai-assistant.rag.new_index_embedding_input_price_per_million', 9.0);
+            if (is_numeric($price) && is_finite((float) $price) && (float) $price >= 0) { return ['input' => (float) $price, 'output' => 0.0]; }
+        }
         if ($model === (string) config('ai-assistant.rag.embedding_model', 'openai/text-embedding-3-large')) {
             $price = config('ai-assistant.rag.embedding_input_price_per_million', 45.0);
             if (is_numeric($price) && (float) $price >= 0) { return ['input' => (float) $price, 'output' => 0.0]; }
@@ -350,6 +354,7 @@ class UsageTracker
             'text-embedding-005' => ['input' => 13.5, 'output' => 0.0],
             'gemini-embedding-2' => ['input' => 27.0, 'output' => 0.0],
             'qwen-text-embedding-v4' => ['input' => 9.0, 'output' => 0.0],
+            'text-embedding-v4' => ['input' => 9.0, 'output' => 0.0],
             'qwen-3.6-plus' => ['input' => 68.0, 'output' => 405.0],
             'qwen-3.5-plus' => ['input' => 60.0, 'output' => 60.0],
             'qwen-3.5-flash' => ['input' => 60.0, 'output' => 60.0],

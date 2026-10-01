@@ -25,10 +25,14 @@ final class RagExpectedSourceProjection
             if ($chunk->organizationId !== $organizationId || $chunk->sourceType !== $sourceType) {
                 throw new RuntimeException('rag_coverage_collector_scope_mismatch');
             }
-            $identity = $this->indexer->coverageIdentity($chunk);
+        }
+
+        $identities = $this->indexer->coverageIdentities($batch);
+        foreach ($batch as $batchKey => $chunk) {
+            $identity = $identities[$batchKey] ?? throw new RuntimeException('rag_coverage_identity_missing');
             $changedAt = $chunk->updatedAt === null ? $timestamp : Carbon::instance($chunk->updatedAt);
-            $key = json_encode([$identity['identity_project_id'], $identity['identity_part_key'], $identity['entity_type'], $identity['entity_id']], JSON_THROW_ON_ERROR);
-            $rows[$key] = $identity + ['generation' => $generation, 'pending_since' => $changedAt->min($timestamp),
+            $identityKey = json_encode([$identity['identity_project_id'], $identity['identity_part_key'], $identity['entity_type'], $identity['entity_id']], JSON_THROW_ON_ERROR);
+            $rows[$identityKey] = $identity + ['generation' => $generation, 'pending_since' => $changedAt->min($timestamp),
                 'created_at' => $timestamp, 'updated_at' => $timestamp];
         }
         RagExpectedSource::query()->upsert(array_values($rows),
