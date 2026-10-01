@@ -17,6 +17,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecut
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -3231,6 +3232,9 @@ class AIAssistantService
         $capabilityId = $taskPlan['capability']['id'] ?? null;
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
         $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding);
+        if (AssistantEstimateCompositionIntent::matches((string) ($taskPlan['request']['message'] ?? ''), $capabilityId === 'estimates')) {
+            return ['get_estimate_positions'];
+        }
 
         $capabilityTools = match ($capabilityId) {
             'projects' => ['get_project_snapshot', 'search_projects'],

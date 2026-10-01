@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
+
 class AssistantCapabilityRegistry
 {
     private readonly AssistantDomainCatalog $domainCatalog;
@@ -274,6 +276,13 @@ class AssistantCapabilityRegistry
 
         $capabilities = $this->all();
         $selectedEstimate = $this->hasEstimateContext($context);
+        if (AssistantEstimateCompositionIntent::matches($query, $selectedEstimate)) {
+            foreach ($capabilities as $capability) {
+                if ($capability['domain'] === 'estimates') {
+                    return $capability;
+                }
+            }
+        }
         $explicitDomains = [];
         foreach ($capabilities as $capability) {
             $domain = (string) $capability['domain'];
