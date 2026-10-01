@@ -3230,11 +3230,11 @@ class AIAssistantService
     {
         $taskType = (string) ($taskPlan['task_type'] ?? 'summary');
         $capabilityId = $taskPlan['capability']['id'] ?? null;
-        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
-        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding);
         if (AssistantEstimateCompositionIntent::matches((string) ($taskPlan['request']['message'] ?? ''), $capabilityId === 'estimates')) {
             return ['get_estimate_positions'];
         }
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding);
 
         $capabilityTools = match ($capabilityId) {
             'projects' => ['get_project_snapshot', 'search_projects'],

@@ -118,8 +118,10 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
     private function toolNames(string $query, string $capabilityId): array
     {
         $class = new ReflectionClass(AIAssistantService::class);
+        $service = $class->newInstanceWithoutConstructor();
+        $class->getProperty('toolEligibilityPolicy')->setValue($service, new AssistantToolEligibilityPolicy);
 
-        return $class->getMethod('resolveRelevantToolNames')->invoke($class->newInstanceWithoutConstructor(), [
+        return $class->getMethod('resolveRelevantToolNames')->invoke($service, [
             'task_type' => 'summary', 'capability' => ['id' => $capabilityId], 'request' => ['message' => $query],
         ]);
     }
