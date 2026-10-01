@@ -49,6 +49,30 @@ final class AssistantPresentationPlannerTest extends TestCase
         $this->assertStringNotContainsString('entity_id', $result);
     }
 
+    public function test_model_plan_can_render_union_field_missing_from_some_rows_as_not_provided(): void
+    {
+        $first = $this->payload(18, 'project', ['name' => 'Северный корпус', 'status' => 'active']);
+        $second = $this->payload(19, 'project', ['name' => 'Западный корпус']);
+        $combined = AssistantStructuredFactFormatter::payload(array_merge(
+            $first['structured_fact_evidence']['rows'], $second['structured_fact_evidence']['rows']), '2026-10-01T10:00:00Z');
+        $view = AssistantPresentationPlanner::providerView($combined);
+        $plan = json_encode(['kind' => 'verified_rows', 'version' => 1, 'result_sets' => [[
+            'result_set' => $view['result_set'], 'layout' => 'table', 'columns' => ['name', 'status'],
+            'order' => ['r01', 'r02'], 'group_by' => null,
+        ]]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        $result = (new AssistantPresentationPlanner)->render($plan, [$combined]);
+
+        $this->assertSame(['name', 'status'], $view['fields']);
+        $this->assertNotNull($result);
+        $this->assertStringContainsString('| Запись | Название | Статус |', $result);
+        $this->assertStringContainsString('не указано', $result);
+        $this->assertStringContainsString('Западный корпус', $result);
+        $instructions = trans_message('ai_assistant.tool_first_instructions');
+        $this->assertStringContainsString('одного типа выбирай table', $instructions);
+        $this->assertStringContainsString('записей разных типов выбирай list', $instructions);
+        $this->assertStringContainsString('не указано', $instructions);
+    }
+
     public function test_money_and_quantity_require_selected_verified_currency_and_unit_with_exact_decimals(): void
     {
         $money = $this->payload(11, 'payment_document', ['amount' => '9007199254740993.17', 'currency' => 'RUB']);
@@ -57,6 +81,8 @@ final class AssistantPresentationPlannerTest extends TestCase
 
         $this->assertStringContainsString('9007199254740993.17', $validMoney['text']);
         $this->assertStringContainsString('RUB', $validMoney['text']);
+        $this->assertStringContainsString("- Платёжный документ:\n  - Сумма: 9007199254740993.17", $validMoney['text']);
+        $this->assertStringContainsString('<ul>', (string) (new GithubFlavoredMarkdownConverter)->convert($validMoney['text']));
         $this->assertSame('partial', $validMoney['validation_status']);
 
         $missingCurrency = $this->renderPlan([$money], [['amount']], 'list');
@@ -170,7 +196,7 @@ final class AssistantPresentationPlannerTest extends TestCase
         $mixedPlan = $this->planObject([$receipts[0], $receipts[2]], [['name', 'unit'], ['name', 'unit']], 'table');
         $mixedPlan['result_sets'][1]['layout'] = 'list';
         $mixed = (new AssistantPresentationPlanner)->render(json_encode($mixedPlan, JSON_THROW_ON_ERROR), [$receipts[0], $receipts[2]], 'Покажи данные');
-        $this->assertStringContainsString("| Запись | Название | Единица |\n| --- | --- | --- |\n| Проект | А | м³ |\n\nПроект:", $mixed);
+        $this->assertStringContainsString("| Запись | Название | Единица |\n| --- | --- | --- |\n| Проект | А | м³ |\n\n- Проект:", $mixed);
     }
 
     private function renderPlan(array $receipts, array $columnsByReceipt, string $layout): string

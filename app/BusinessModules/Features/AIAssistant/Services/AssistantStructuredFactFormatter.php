@@ -18,7 +18,7 @@ final class AssistantStructuredFactFormatter
         'document_type', 'incident_type', 'item_type', 'resource_type', 'date', 'start_date', 'end_date',
         'estimate_date', 'planned_start_date', 'planned_end_date', 'planned_finish_date', 'required_date',
         'due_date', 'needed_by', 'order_date', 'delivery_date', 'paid_at', 'completion_date', 'work_date', 'expected_close_at', 'valid_until', 'sent_at',
-        'published_at', 'is_billable', 'is_active', 'is_paid', 'quantity', 'quantity_total',
+        'published_at', 'is_billable', 'is_active', 'is_paid', 'quantity', 'quantity_per_unit', 'quantity_total',
         'total_quantity', 'completed_quantity', 'unit_price', 'total_amount', 'total_amount_with_vat', 'amount', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'hours',
         'hours_worked', 'volume_completed', 'progress_percent', 'reading_time', 'project_id', 'contract_id',
         'estimate_id', 'estimate_section_id', 'estimate_item_id', 'work_order_id', 'schedule_id',
@@ -32,7 +32,7 @@ final class AssistantStructuredFactFormatter
         'personnel_count', 'equipment_count', 'work_start_date', 'work_end_date', 'rental_start_date', 'rental_end_date', 'equipment_start_at', 'equipment_end_at',
     ];
 
-    private const NUMERIC_FIELDS = ['quantity', 'quantity_total', 'total_quantity', 'completed_quantity', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'unit_price', 'total_amount',
+    private const NUMERIC_FIELDS = ['quantity', 'quantity_per_unit', 'quantity_total', 'total_quantity', 'completed_quantity', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'unit_price', 'total_amount',
         'total_amount_with_vat', 'amount', 'hours', 'hours_worked', 'volume_completed', 'progress_percent', 'reading_time', 'material_quantity', 'personnel_count', 'equipment_count'];
 
     private const ENTITY_TYPES = [
@@ -151,13 +151,15 @@ final class AssistantStructuredFactFormatter
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
         $numericFields = array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields'));
         $defaultFields = array_merge($defaultFields, array_diff($numericFields, $moneyFields));
+        $moneyCurrencyMissing = false;
         $allowedFields = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
         $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
         $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
-        $lines = $compositionScopeResolved ? [] : [trans_message('ai_assistant_facts.returned_scope')];
         $presentationRows = array_slice($rows, 0, self::MAX_ROWS);
+        $records = [];
         foreach ($presentationRows as $row) {
             $fields = $row['fields'];
+            $presentationFields = [];
             $entityType = self::presentationEntityType($row, $presentationRows);
             $entityLabel = $entityLabels[$entityType] ?? (in_array($entityType, self::ENTITY_TYPES, true)
                 ? trans_message('ai_assistant_facts.entities.'.$entityType) : trans_message('ai_assistant_facts.record'));
@@ -168,7 +170,6 @@ final class AssistantStructuredFactFormatter
                     break;
                 }
             }
-            $lines[] = $entityLabel.($titleField === null ? ':' : ': '.self::markdownText($fields[$titleField]));
             $financial = in_array($entityType, ['estimate', 'estimate_item', 'estimate_item_resource', 'contract', 'payment_document',
                 'performance_act', 'performance_act_line', 'production_labor_payroll_accrual'], true);
             foreach ($fields as $field => $value) {
@@ -181,21 +182,106 @@ final class AssistantStructuredFactFormatter
                         && ! ($financial && in_array($field, $moneyFields, true)))) {
                     continue;
                 }
-                $display = $value === null ? trans_message('ai_assistant_facts.unknown')
+                $display = $value === null || (is_string($value) && trim($value) === '')
+                    ? trans_message('ai_assistant_facts.unknown')
                     : (is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
                         : AssistantStructuredFactLabels::display($entityType, $field, (string) $value));
                 $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\d+(?:\.\d+)?$/D', $display);
-                $label = in_array($field, self::FIELDS, true) ? trans_message('ai_assistant_facts.fields.'.$field)
-                    : ($fieldLabels[$field] ?? trans_message('ai_assistant_facts.fields.'.$field));
-                $lines[] = $label.': '.($numeric ? $display : self::markdownText($display));
+                $presentationFields[$field] = $numeric ? $display : self::markdownText($display);
             }
+            $hasMoneyValue = false;
+            foreach (array_intersect(array_keys($presentationFields), $moneyFields) as $field) {
+                if ($presentationFields[$field] !== trans_message('ai_assistant_facts.unknown')) {
+                    $hasMoneyValue = true;
+                    break;
+                }
+            }
+            $hasCurrency = false;
+            foreach (['currency', 'budget_currency'] as $currencyField) {
+                $currency = $presentationFields[$currencyField] ?? null;
+                if (is_string($currency) && trim($currency) !== '' && $currency !== trans_message('ai_assistant_facts.unknown')) {
+                    $hasCurrency = true;
+                    break;
+                }
+            }
+            $moneyCurrencyMissing = $moneyCurrencyMissing || ($hasMoneyValue && ! $hasCurrency);
             $url = $row['source_ref']['navigation']['url'] ?? null;
-            if (is_string($url) && preg_match('#^/(?!/)[^\s\[\]()<>\\\\]+$#D', $url)) {
-                $lines[] = '['.trans_message('ai_assistant_facts.open_record').']('.$url.')';
-            }
+            $records[] = [
+                'entity_type' => $entityType,
+                'entity_label' => $entityLabel,
+                'title' => $titleField === null ? null : self::markdownText($fields[$titleField]),
+                'fields' => $presentationFields,
+                'url' => is_string($url) && preg_match('#^/(?!/)[^\s\[\]()<>\\\\]+$#D', $url) ? $url : null,
+            ];
         }
 
-        return implode("\n", $lines);
+        $lines = $compositionScopeResolved ? [] : [trans_message('ai_assistant_facts.returned_scope')];
+        for ($offset = 0, $count = count($records); $offset < $count;) {
+            $end = $offset + 1;
+            while ($end < $count && $records[$end]['entity_type'] === $records[$offset]['entity_type']) {
+                $end++;
+            }
+            $group = array_slice($records, $offset, $end - $offset);
+            $fieldKeys = [];
+            $fieldKeySet = [];
+            foreach ($group as $record) {
+                foreach (array_keys($record['fields']) as $field) {
+                    if (isset($fieldKeySet[$field])) {
+                        continue;
+                    }
+                    $fieldKeySet[$field] = true;
+                    $fieldKeys[] = $field;
+                }
+            }
+            $homogeneous = count($group) > 1;
+            if ($homogeneous) {
+                if ($lines !== [] && end($lines) !== '') {
+                    $lines[] = '';
+                }
+                $headers = [trans_message('ai_assistant_facts.record')];
+                foreach ($fieldKeys as $field) {
+                    $headers[] = self::presentationFieldLabel($field, $fieldLabels);
+                }
+                $lines[] = '| '.implode(' | ', $headers).' |';
+                $lines[] = '| '.implode(' | ', array_fill(0, count($headers), '---')).' |';
+                foreach ($group as $record) {
+                    $cells = [self::presentationRecordTitle($record)];
+                    foreach ($fieldKeys as $field) {
+                        $cells[] = $record['fields'][$field] ?? trans_message('ai_assistant_facts.unknown');
+                    }
+                    $lines[] = '| '.implode(' | ', $cells).' |';
+                }
+            } else {
+                if ($lines !== [] && end($lines) !== '') {
+                    $lines[] = '';
+                }
+                foreach ($group as $record) {
+                    $lines[] = '- '.self::presentationRecordTitle($record);
+                    foreach ($record['fields'] as $field => $value) {
+                        $lines[] = '  - '.self::presentationFieldLabel($field, $fieldLabels).': '.$value;
+                    }
+                }
+            }
+            $offset = $end;
+        }
+        if ($moneyCurrencyMissing) {
+            if ($lines !== [] && end($lines) !== '') {
+                $lines[] = '';
+            }
+            $lines[] = trans_message('ai_assistant_facts.money_currency_missing');
+        }
+
+        return implode("\n", $lines)."\n";
+    }
+
+    private static function presentationRecordTitle(array $record): string
+    {
+        $title = $record['entity_label'].(is_string($record['title']) ? ': '.$record['title'] : '');
+        if (is_string($record['url'])) {
+            $title .= ' ['.trans_message('ai_assistant_facts.open_record').']('.$record['url'].')';
+        }
+
+        return $title;
     }
 
     public static function presentationFields(array $row): array
@@ -280,11 +366,11 @@ final class AssistantStructuredFactFormatter
                 $rendered[] = '| '.implode(' | ', $cells).' |';
             } else {
                 $appendBlank();
-                $rendered[] = $entityLabel.':';
+                $rendered[] = '- '.$entityLabel.':';
                 foreach ($item['columns'] as $field) {
                     $value = $row['fields'][$field] ?? null;
                     $display = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value, $allRows);
-                    $rendered[] = self::presentationFieldLabel($field, $fieldLabels).': '.$display;
+                    $rendered[] = '  - '.self::presentationFieldLabel($field, $fieldLabels).': '.$display;
                 }
                 $currentBlock = 'list|'.implode('|', $item['columns']);
             }
@@ -295,6 +381,10 @@ final class AssistantStructuredFactFormatter
 
     public static function displayPresentationField(array $row, string $field, mixed $value, array $rows = []): string
     {
+        if ($value === null || (is_string($value) && trim($value) === '')) {
+            return trans_message('ai_assistant_facts.unknown');
+        }
+
         $entityType = self::presentationEntityType($row, $rows);
         $display = is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
             : AssistantStructuredFactLabels::display($entityType, $field, (string) $value);
