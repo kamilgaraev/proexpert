@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
-use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
@@ -21,13 +20,11 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Throwable;
 
 final class AssistantIndexStatusService
 {
     private const SNAPSHOT_TTL_SECONDS = 60;
-    private const REFRESH_LOCK_SECONDS = 180;
     private const MAX_PROOF_IDENTITIES = 10000;
     private const PROOF_BATCH_SIZE = 250;
 
@@ -45,33 +42,22 @@ final class AssistantIndexStatusService
             throw new AuthorizationException;
         }
 
-        $surface = $this->currentSurface();
-        $key = $this->snapshotKey($organizationId, (int) $actor->id, $surface);
-        $snapshot = Cache::get($key);
-        if (! is_array($snapshot) || ! $this->isFreshSnapshot($snapshot)) {
-            $this->queueRefresh($organizationId, (int) $actor->id, $surface, $key);
-
-            return $this->unavailableStatus();
-        }
-
         try {
             $budget = new RagStatusBudget(DB::connection());
             $result = $this->inRepeatableRead(fn (): array => $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks(
                 $actor,
                 $organizationId,
-                function (AuthorizationService $authorization) use ($organizationId, $actor, $snapshot, $checkpoint, $budget): array {
+                function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget): array {
                     $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
-                    $valid = $this->validateRagProof($organizationId, $actor, $snapshot['proof']['rag'] ?? [], $checkpoint)
-                        && $this->documents->validateStatusProof($organizationId, $actor, $snapshot['proof']['documents'] ?? [], $checkpoint);
-                    if (! $valid) {
-                        return ['valid' => false];
-                    }
+                    $projectionProof = null;
+                    $coverage = $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true);
+                    $documents = $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
 
-                    return [
-                        'valid' => true,
+                    return array_merge($coverage, $documents, [
+                        'status_available' => true,
                         'can_reindex' => $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]),
-                        'can_manage_document_settings' => $this->documents->canManageSettings($organizationId, $actor),
-                    ];
+                        'stale_after_seconds' => self::SNAPSHOT_TTL_SECONDS,
+                    ]);
                 },
                 fresh: true,
                 checkpoint: $budget->checkDeadline(...),
@@ -80,21 +66,10 @@ final class AssistantIndexStatusService
             if ($exception instanceof QueryException && ($exception->errorInfo[0] ?? null) !== '57014') {
                 throw $exception;
             }
-            $result = ['valid' => false];
+            $result = $this->unavailableStatus();
         }
 
-        if (! ($result['valid'] ?? false)) {
-            $this->queueRefresh($organizationId, (int) $actor->id, $surface, $key);
-
-            return $this->unavailableStatus();
-        }
-
-        $status = $snapshot['status'];
-        $status['can_reindex'] = (bool) ($result['can_reindex'] ?? false);
-        $status['can_manage_document_settings'] = (bool) ($result['can_manage_document_settings'] ?? false);
-        $status['stale_after_seconds'] = self::SNAPSHOT_TTL_SECONDS;
-
-        return $status;
+        return $result;
     }
 
     public function refreshSnapshot(int $organizationId, int $actorId, KnowledgeSurface $surface, string $cacheKey): void
@@ -383,24 +358,6 @@ final class AssistantIndexStatusService
 
             return $operation();
         }, 1);
-    }
-
-    private function queueRefresh(int $organizationId, int $actorId, KnowledgeSurface $surface, string $key): void
-    {
-        $queuedKey = $key.':queued';
-        if (! Cache::add($queuedKey, true, self::REFRESH_LOCK_SECONDS)) {
-            return;
-        }
-        try {
-            dispatch(new RefreshAssistantIndexStatusJob($organizationId, $actorId, $surface, $key));
-        } catch (Throwable $exception) {
-            Cache::forget($queuedKey);
-            Log::warning('ai_assistant.rag.status_refresh_queue_failed', [
-                'organization_id' => $organizationId,
-                'user_id' => $actorId,
-                'exception_class' => $exception::class,
-            ]);
-        }
     }
 
     private function unavailableStatus(): array

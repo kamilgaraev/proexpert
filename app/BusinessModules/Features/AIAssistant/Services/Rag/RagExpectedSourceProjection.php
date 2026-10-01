@@ -36,37 +36,56 @@ final class RagExpectedSourceProjection
             ['project_id', 'checksum', 'pending_since', 'updated_at']);
     }
 
-    public function actorCounts(int $organizationId, User $actor, AssistantDataAccessPolicy $policy, array $types, string $generation, ?callable $checkpoint = null, ?array &$proof = null): array
+    public function actorCounts(int $organizationId, User $actor, AssistantDataAccessPolicy $policy, array $types, string $generation, ?callable $checkpoint = null, ?array &$proof = null, bool $collectProof = true): array
     {
-        $proof = [];
+        $proof = $collectProof ? [] : null;
         if ($checkpoint !== null) { $checkpoint(); }
         $expected = RagExpectedSource::query()->where('ai_rag_expected_sources.organization_id', $organizationId)
             ->where('ai_rag_expected_sources.generation', $generation)->whereIn('ai_rag_expected_sources.source_type', $types);
-        $projects = $policy->entityQuery($actor, $organizationId, 'project');
-        $expected->where(static function (Builder $scope) use ($projects): void {
-            $scope->where('ai_rag_expected_sources.source_type', 'file_document')->orWhereNull('ai_rag_expected_sources.project_id');
-            if ($projects !== null) {
-                $scope->orWhereIn('ai_rag_expected_sources.project_id', $projects->select('projects.id'));
-            }
-        });
+        if ($collectProof) {
+            $projects = $policy->entityQuery($actor, $organizationId, 'project');
+            $expected->where(static function (Builder $scope) use ($projects): void {
+                $scope->where('ai_rag_expected_sources.source_type', 'file_document')->orWhereNull('ai_rag_expected_sources.project_id');
+                if ($projects !== null) {
+                    $scope->orWhereIn('ai_rag_expected_sources.project_id', $projects->select('projects.id'));
+                }
+            });
+        }
         $matched = 'matched_sources.id IS NOT NULL AND EXISTS (SELECT 1 FROM ai_rag_chunks matched_chunks WHERE matched_chunks.source_id = matched_sources.id AND matched_chunks.organization_id = expected.organization_id AND matched_chunks.project_id IS NOT DISTINCT FROM expected.project_id AND matched_chunks.embedding IS NOT NULL)';
         $proofColumns = array_map(static fn (string $column): string => "COALESCE(CAST(expected.".$column." AS TEXT), '')",
             ['source_type', 'entity_type', 'entity_id', 'project_id', 'identity_project_id', 'identity_part_key', 'checksum']);
         $counts = [];
+        $aggregate = static function (\Illuminate\Database\Query\Builder $visible) use ($matched, $collectProof, $proofColumns): \Illuminate\Database\Query\Builder {
+            $query = DB::query()->fromSub($visible, 'expected')->leftJoin('ai_rag_sources as matched_sources', static function (JoinClause $join): void {
+                foreach (['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'] as $column) {
+                    $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
+                }
+                $join->whereRaw('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id');
+            })->groupBy('expected.source_type')
+                ->selectRaw('expected.source_type, COUNT(*) AS expected_count, SUM(CASE WHEN '.$matched.' THEN 1 ELSE 0 END) AS indexed_count, MIN(CASE WHEN NOT ('.$matched.') THEN expected.pending_since END) AS pending_since');
+            if ($collectProof) {
+                $query->selectRaw('jsonb_object_agg(CAST(expected.id AS TEXT), jsonb_build_array('.implode(', ', $proofColumns).')) AS identity_proof');
+            }
+
+            return $query;
+        };
+        if (! $collectProof) {
+            $scoped = $policy->aggregateSourceIdentities($expected, $actor, $organizationId,
+                ['ai_rag_expected_sources.*'], $aggregate, $checkpoint, expectedProjection: true);
+            if ($scoped === null) { return []; }
+            if ($checkpoint !== null) { $checkpoint(); }
+
+            return $scoped->get()->keyBy('source_type')->all();
+        }
         foreach ($policy->sourceIdentityQueries($expected, $actor, $organizationId, $checkpoint, true) as $branch) {
             $visible = $branch->select('ai_rag_expected_sources.*')->toBase();
             if ($checkpoint !== null) { $checkpoint(); }
-            $rows = DB::query()->fromSub($visible, 'expected')->leftJoin('ai_rag_sources as matched_sources', static function (JoinClause $join): void {
-            foreach (['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'] as $column) {
-                $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
-            }
-            $join->whereRaw('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id');
-        })->groupBy('expected.source_type')
-            ->selectRaw('expected.source_type, COUNT(*) AS expected_count, SUM(CASE WHEN '.$matched.' THEN 1 ELSE 0 END) AS indexed_count, MIN(CASE WHEN NOT ('.$matched.') THEN expected.pending_since END) AS pending_since')
-            ->selectRaw('jsonb_object_agg(CAST(expected.id AS TEXT), jsonb_build_array('.implode(', ', $proofColumns).')) AS identity_proof')->get();
+            $rows = $aggregate($visible)->get();
             foreach ($rows as $row) {
-                $proof += json_decode((string) $row->identity_proof, true, 512, JSON_THROW_ON_ERROR);
-                unset($row->identity_proof);
+                if ($collectProof) {
+                    $proof += json_decode((string) $row->identity_proof, true, 512, JSON_THROW_ON_ERROR);
+                    unset($row->identity_proof);
+                }
                 $previous = $counts[$row->source_type] ?? null;
                 if ($previous !== null) {
                     $row->expected_count = (int) $row->expected_count + (int) $previous->expected_count;

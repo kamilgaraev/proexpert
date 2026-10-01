@@ -119,7 +119,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertLessThan(4, count($subscriptions));
     }
 
-    public function test_cold_status_returns_unknown_and_queues_one_actor_refresh(): void
+    public function test_cold_status_returns_current_empty_counts_without_actor_refresh(): void
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
@@ -133,47 +133,68 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $result = (new RagIndexStatusResource($service->status($organization->id, $actor)))->toArray(new Request);
         $service->status($organization->id, $actor);
 
-        $this->assertFalse($result['status_available']);
-        $this->assertNull($result['source_count']);
-        $this->assertNull($result['chunk_count']);
-        $this->assertNull($result['document_coverage']);
-        $this->assertNull($result['archive_scan']);
+        $this->assertTrue($result['status_available']);
+        $this->assertSame(0, $result['source_count']);
+        $this->assertSame(0, $result['chunk_count']);
+        $this->assertSame(0, $result['document_coverage']['total']);
+        $this->assertIsArray($result['archive_scan']);
         $this->assertFalse($result['ready']);
         $this->assertSame([], $result['source_catalog']);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
-    public function test_status_snapshots_and_refresh_jobs_are_isolated_by_trusted_surface(): void
+    public function test_current_status_ignores_actor_snapshots_and_legacy_jobs_restore_trusted_surface(): void
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
         $actor->organizations()->attach($organization->id, ['is_active' => true]);
         $service = $this->service();
         $policy = app(AssistantDataAccessPolicy::class);
+        foreach (['admin', 'lk'] as $surface) {
+            Cache::put('ai-rag-status:'.$organization->id.':'.$actor->id.':'.$surface, ['status' => ['source_count' => 987654]], 60);
+        }
 
         $policy->setTrustedSurface(KnowledgeSurface::ADMIN);
         $admin = $service->status($organization->id, $actor);
         $policy->setTrustedSurface(KnowledgeSurface::LK);
         $lk = $service->status($organization->id, $actor);
 
-        $this->assertFalse($admin['status_available']);
-        $this->assertFalse($lk['status_available']);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 2);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, static fn (RefreshAssistantIndexStatusJob $job): bool =>
-            $job->surface === KnowledgeSurface::ADMIN
-            && $job->cacheKey === 'ai-rag-status:'.$organization->id.':'.$actor->id.':admin'
-            && $job->connection === 'redis'
-            && $job->queue === 'default');
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, static fn (RefreshAssistantIndexStatusJob $job): bool =>
-            $job->surface === KnowledgeSurface::LK
-            && $job->cacheKey === 'ai-rag-status:'.$organization->id.':'.$actor->id.':lk'
-            && $job->connection === 'redis'
-            && $job->queue === 'default');
+        $this->assertTrue($admin['status_available']);
+        $this->assertTrue($lk['status_available']);
+        $this->assertSame(0, $admin['source_count']);
+        $this->assertSame(0, $lk['source_count']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
 
         $policy->setTrustedSurface(KnowledgeSurface::MOBILE);
         (new RefreshAssistantIndexStatusJob($organization->id, PHP_INT_MAX, KnowledgeSurface::ADMIN, 'test:surface-context'))
             ->handle($service, $policy);
         $this->assertSame(KnowledgeSurface::MOBILE, $policy->trustedSurface());
+    }
+
+    public function test_budget_expiry_returns_unknown_without_reusing_or_refreshing_an_actor_snapshot(): void
+    {
+        $organization = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
+        $actor->organizations()->attach($organization->id, ['is_active' => true]);
+        $service = $this->service();
+        Cache::put('ai-rag-status:'.$organization->id.':'.$actor->id.':lk', ['status' => ['source_count' => 987654]], 60);
+        $expired = false;
+        DB::listen(static function ($query) use (&$expired): void {
+            if (! $expired && str_contains(strtolower($query->sql), 'count(distinct accessible_sources.id)')) {
+                $expired = true;
+                throw new RagStatusBudgetExceeded;
+            }
+        });
+
+        $status = (new RagIndexStatusResource($service->status($organization->id, $actor)))->toArray(new Request);
+
+        $this->assertTrue($expired);
+        $this->assertFalse($status['status_available']);
+        $this->assertNull($status['source_count']);
+        $this->assertNull($status['chunk_count']);
+        $this->assertNull($status['expected_source_count']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
+        $this->assertTrue($service->status($organization->id, $actor)['status_available']);
     }
 
     public function test_legacy_complete_coverage_without_expected_proof_keeps_actor_scoped_status_available(): void
@@ -213,7 +234,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $policy = app(AssistantDataAccessPolicy::class);
 
         $first = $service->status($organization->id, $actor);
-        $this->assertFalse($first['status_available']);
+        $this->assertTrue($first['status_available']);
+        $this->assertSame(1, $first['source_count']);
 
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
         Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, [
@@ -239,11 +261,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertSame(1, $legacyCoverage['indexed_source_count']);
         $this->assertNull($projectionProof);
 
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, function (RefreshAssistantIndexStatusJob $job) use ($service, $policy): bool {
-            $job->handle($service, $policy);
-
-            return true;
-        });
+        $this->warmSnapshot($service, $organization->id, $actor->id);
 
         $snapshotKey = 'ai-rag-status:'.$organization->id.':'.$actor->id.':lk';
         $this->assertTrue(Cache::has($snapshotKey));
@@ -263,7 +281,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertNull($sourceStatus['expected_count']);
         $this->assertNull($sourceStatus['pending_count']);
         $this->assertNull($sourceStatus['stale_count']);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
     public function test_status_snapshot_is_invalidated_when_source_project_access_is_revoked(): void
@@ -295,9 +313,9 @@ final class AssistantIndexStatusBudgetTest extends TestCase
 
         $member->assignedProjects()->detach($project->id);
         $revoked = (new RagIndexStatusResource($service->status($fixture->organization->id, $member)))->toArray(new Request);
-        $this->assertFalse($revoked['status_available']);
-        $this->assertNull($revoked['source_count']);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
+        $this->assertTrue($revoked['status_available']);
+        $this->assertSame(0, $revoked['source_count']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
     public function test_status_validation_cost_stays_bounded_for_multiple_source_identities_and_document_parents(): void
@@ -398,9 +416,23 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $identityScopeQueries = 0;
         $proofSelectQueries = 0;
         $schemaMetadataQueries = 0;
-        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries, &$schemaMetadataQueries): void {
+        $queryCategories = [];
+        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries, &$schemaMetadataQueries, &$queryCategories): void {
             $queries++;
             $sql = strtolower($query->sql);
+            $category = match (true) {
+                str_starts_with($sql, 'set local statement_timeout'), str_contains($sql, "set_config('statement_timeout'") => 'timeout_setting',
+                str_contains($sql, 'pg_catalog'), str_contains($sql, 'information_schema') => 'schema',
+                str_contains($sql, 'count(distinct accessible_sources.id)') => 'stored_counts',
+                str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"') => 'source_discovery',
+                str_contains($sql, 'organization_package_subscriptions') => 'entitlements',
+                str_contains($sql, '"roles"'), str_contains($sql, '"permissions"') => 'authorization',
+                str_contains($sql, 'count('), str_contains($sql, 'sum(') => 'coverage_counts',
+                str_contains($sql, '"ai_assistant_documents"'), str_contains($sql, '"files"') => 'document_discovery',
+                str_contains($sql, '"organization_user"'), str_contains($sql, '"project_user"') => 'membership_or_project_scope',
+                default => 'other',
+            };
+            $queryCategories[$category] = ($queryCategories[$category] ?? 0) + 1;
             if (str_contains($sql, 'from pg_attribute a') && str_contains($sql, 'join pg_type t')) {
                 $schemaMetadataQueries++;
             }
@@ -416,9 +448,11 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertTrue($status['status_available']);
         $this->assertSame(264, $status['source_count']);
         $this->assertSame(1, $identityScopeQueries, 'Status proof validation must compile the complete source identity ACL once.');
-        $this->assertSame(1, $proofSelectQueries, 'Status proof identities must be validated by one bounded SELECT.');
+        $this->assertSame(0, $proofSelectQueries, 'Current counts must not select cached identity proofs.');
         $this->assertSame(1, $schemaMetadataQueries, 'Status proof validation must prefetch policy schema metadata in one query.');
-        $this->assertLessThanOrEqual(45, $queries, 'Status proof validation compiled repeated ACL branches for a bounded identity set.');
+        $timeoutQueries = $queryCategories['timeout_setting'] ?? 0;
+        $this->assertLessThanOrEqual(45, $queries - $timeoutQueries, 'Current status read queries: '.json_encode($queryCategories));
+        $this->assertLessThanOrEqual(20, $timeoutQueries, 'Deadline checkpoints must stay bounded for repeated identity parts.');
         $policyColumns = (new \ReflectionClass(AssistantDataAccessPolicy::class))->getProperty('columns')->getValue(app(AssistantDataAccessPolicy::class));
         foreach (['projects', 'contracts', 'estimates'] as $table) {
             $this->assertSame(Schema::getColumnListing($table), $policyColumns[$table] ?? null);
@@ -438,7 +472,9 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             'pending_since' => now(),
         ]);
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
-        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, ['projection_generation' => $generation], 300);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, ['projection_generation' => $generation,
+            'eligible_count_known' => true, 'snapshot_at' => now()->toAtomString(),
+            'source_catalog' => app(RagSourceRegistry::class)->sourceCatalog()], 300);
         $snapshotKey = 'ai-rag-status:'.$organization->id.':'.$actor->id.':lk';
         $snapshot = Cache::get($snapshotKey);
         $snapshot['proof']['rag']['generation'] = $generation;
@@ -455,24 +491,24 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         });
         $expectedProofStatus = $service->status($organization->id, $actor);
         $this->assertTrue($expectedProofStatus['status_available']);
-        $this->assertSame(1, $expectedProofSelectQueries, 'Expected proof identities must be validated by one bounded SELECT.');
+        $this->assertSame(0, $expectedProofSelectQueries, 'Current expected counts must not select cached identity proofs.');
+        $this->assertSame(1, $expectedProofStatus['expected_source_count']);
+        $this->assertSame(0, $expectedProofStatus['indexed_source_count']);
 
         RagSource::query()->where('organization_id', $organization->id)->where('source_type', 'contract')
             ->update(['checksum' => hash('sha256', 'changed-contract-source')]);
         $changed = $service->status($organization->id, $actor);
-        $this->assertFalse($changed['status_available']);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, function (RefreshAssistantIndexStatusJob $job) use ($service): bool {
-            $job->handle($service, app(AssistantDataAccessPolicy::class));
-
-            return true;
-        });
-        $this->assertTrue($service->status($organization->id, $actor)['status_available']);
+        $this->assertTrue($changed['status_available']);
+        $this->assertSame(264, $changed['source_count']);
+        $this->assertSame(1, $changed['expected_source_count']);
+        $this->assertSame(0, $changed['indexed_source_count']);
 
         $actor->assignedProjects()->detach($project->id);
         $revoked = $service->status($organization->id, $actor);
-        $this->assertFalse($revoked['status_available']);
-        $this->assertNull($revoked['source_count']);
-        Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 2);
+        $this->assertTrue($revoked['status_available']);
+        $this->assertSame(0, $revoked['source_count']);
+        $this->assertSame(0, $revoked['expected_source_count']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
     public function test_membership_denial_is_not_replaced_by_unavailable_status(): void
