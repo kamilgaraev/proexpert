@@ -6,7 +6,9 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\PrepareAssistantNativeAttachmentsJob;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileAdapter;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileMetadata;
@@ -14,6 +16,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNa
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
@@ -207,6 +210,32 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         config(['cache.default' => 'array']);
         Cache::clearResolvedInstances();
         Queue::fake();
+        $nativeAdapter = $this->adapter();
+        $missingFileMapping = $nativeAdapter->map($fixture->member, $fixture->organization->id, 'legal_document_version', $missingVersion->id);
+        $missingDocument = app(AssistantDocumentService::class)->registerFile($missingFileMapping);
+        $missingDocument->update([
+            'status' => AIAssistantDocument::STATUS_READY,
+            'coverage_status' => 'ready',
+            'extracted_text' => 'Previously indexed legal content.',
+            'processed_at' => now(),
+        ]);
+        $missingUnit = AIAssistantDocumentUnit::query()->create([
+            'document_id' => $missingDocument->id,
+            'unit_type' => 'text_chunk',
+            'unit_index' => 0,
+            'text' => 'Previously indexed legal content.',
+            'checksum' => hash('sha256', 'Previously indexed legal content.'),
+        ]);
+        $unrelatedFileMapping = $nativeAdapter->map($fixture->member, $fixture->organization->id, 'legal_document_version', $secondVersion->id);
+        $unrelatedDocument = app(AssistantDocumentService::class)->registerFile($unrelatedFileMapping);
+        $unrelatedDocument->update([
+            'status' => AIAssistantDocument::STATUS_READY,
+            'coverage_status' => 'ready',
+            'extracted_text' => 'Unrelated indexed legal content.',
+            'processed_at' => now(),
+        ]);
+        $missingRagSource = $this->ragSource($missingDocument);
+        $unrelatedRagSource = $this->ragSource($unrelatedDocument);
         $missingEvents = [];
         Log::listen(static function (MessageLogged $event) use (&$missingEvents): void {
             if ($event->message === 'ai_assistant.native_attachment_source_missing') {
@@ -253,7 +282,7 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
                 self::assertSame($currentFailure, $exception);
             }
             self::assertFalse($queue->isComplete((int) $run->id));
-            self::assertSame(0, AIAssistantDocument::query()->where('organization_id', $fixture->organization->id)->count());
+            self::assertSame(2, AIAssistantDocument::query()->where('organization_id', $fixture->organization->id)->count());
         }
 
         $currentFailure = $this->s3Exception('NoSuchKey', 404);
@@ -261,15 +290,17 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
 
         self::assertTrue($queue->isComplete((int) $run->id));
         self::assertSame('complete', $queue->pageProgress((int) $run->id, 'legal_business', 0, null)['state']);
-        self::assertSame(0, AIAssistantDocument::query()
-            ->where('organization_id', $fixture->organization->id)
-            ->where('parent_entity_id', (string) $missingVersion->id)
-            ->count());
-        self::assertSame(1, AIAssistantDocument::query()
-            ->where('organization_id', $fixture->organization->id)
-            ->where('parent_entity_id', (string) $secondVersion->id)
-            ->where('status', AIAssistantDocument::STATUS_QUEUED)
-            ->count());
+        self::assertTrue(File::withTrashed()->findOrFail($missingFileMapping->id)->trashed());
+        self::assertSame(1, File::query()->whereKey($unrelatedFileMapping->id)->count());
+        self::assertSame(AIAssistantDocument::STATUS_FAILED, $missingDocument->fresh()->status);
+        self::assertSame('needs_access_review', $missingDocument->fresh()->coverage_status);
+        self::assertSame('native_source_missing', $missingDocument->fresh()->last_error);
+        self::assertSame('Previously indexed legal content.', $missingDocument->fresh()->extracted_text);
+        self::assertTrue(AIAssistantDocumentUnit::query()->whereKey($missingUnit->id)->exists());
+        self::assertSame(AIAssistantDocument::STATUS_READY, $unrelatedDocument->fresh()->status);
+        self::assertSame('ready', $unrelatedDocument->fresh()->coverage_status);
+        self::assertFalse(RagSource::query()->whereKey($missingRagSource->id)->exists());
+        self::assertTrue(RagSource::query()->whereKey($unrelatedRagSource->id)->exists());
 
         $coverage = app(AssistantDocumentCoverageService::class)->coverage($fixture->organization->id, $fixture->member);
         self::assertSame(2, $coverage['native_attachment_coverage']['legal_document_version']['expected_file_count']);
@@ -341,6 +372,21 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         return new S3Exception($errorCode, new Command('GetObject', []), [
             'code' => $errorCode,
             'response' => new Response($statusCode),
+        ]);
+    }
+
+    private function ragSource(AIAssistantDocument $document): RagSource
+    {
+        return RagSource::query()->create([
+            'organization_id' => $document->organization_id,
+            'project_id' => $document->project_id,
+            'source_type' => 'file_document',
+            'entity_type' => 'assistant_document',
+            'entity_id' => (string) $document->id,
+            'title' => $document->filename,
+            'checksum' => hash('sha256', (string) $document->extracted_text),
+            'metadata' => [],
+            'indexed_at' => now(),
         ]);
     }
 }
