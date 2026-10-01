@@ -91,6 +91,7 @@ final class AssistantDataAccessPolicy
     private ?AuthorizationService $batchAuthorization = null;
     private ?array $batchIdentity = null;
     private array $batchDecisions = [];
+    private array $batchEntityQueries = [];
     private ?\Closure $currentCheckpoint = null;
 
     public function withCurrentChecks(User $actor, int $organizationId, callable $operation, bool $fresh = false, ?callable $checkpoint = null): mixed
@@ -107,18 +108,20 @@ final class AssistantDataAccessPolicy
         }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_authorization_batch_during_query_compilation'); }
         $authorization = $this->authorization->forCurrentChecks(true);
-        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->currentCheckpoint];
+        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint];
         $this->batchIdentity = $identity;
         $this->batchAuthorization = $authorization;
         $this->batchDecisions = [];
+        $this->batchEntityQueries = [];
         if ($checkpoint !== null) { $this->currentCheckpoint = \Closure::fromCallable($checkpoint); }
         try {
             return $operation($this->batchAuthorization);
         } finally {
-            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->currentCheckpoint] = $previous;
+            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint] = $previous;
             if ($this->batchIdentity !== null) {
                 $this->batchAuthorization = $this->authorization->forCurrentChecks(true);
                 $this->batchDecisions = [];
+                $this->batchEntityQueries = [];
             }
         }
     }
@@ -387,11 +390,16 @@ final class AssistantDataAccessPolicy
 
     public function sourceIdentityQueries(Builder $query, User $user, int $organizationId, ?callable $checkpoint = null, bool $expectedProjection = false): \Generator
     {
+        if ($expectedProjection) { $this->assertExpectedSourceQuery($query); }
         $table = $query->getModel()->getTable();
         $candidates = (clone $query)->where($table.'.organization_id', $organizationId);
+        if (! $expectedProjection) {
+            \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($candidates, $table);
+        }
         $checkpoint?->__invoke();
-        $identities = $candidates->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
-            ->select([$table.'.source_type', $table.'.entity_type'])->distinct()->get();
+        $identityQuery = $candidates->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
+            ->select([$table.'.source_type', $table.'.entity_type'])->distinct();
+        $identities = $this->finishAclDiscovery($candidates, $identityQuery)->get();
         foreach ($identities as $identity) {
             $checkpoint?->__invoke();
             $branch = (clone $query)->where($table.'.source_type', $identity->source_type)->where($table.'.entity_type', $identity->entity_type);
@@ -400,48 +408,90 @@ final class AssistantDataAccessPolicy
                     ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
                         (clone $branch)->where($table.'.organization_id', $organizationId)->select($table.'.entity_id'));
                 $checkpoint?->__invoke();
-                foreach ((clone $documents)->distinct()->pluck('parent_entity_type') as $parentType) {
+                $parentTypes = (clone $documents)->select('parent_entity_type')->distinct()->toBase();
+                foreach ($this->finishAclDiscovery($documents, $parentTypes)->pluck('parent_entity_type') as $parentType) {
                     $checkpoint?->__invoke();
                     $documentBranch = (clone $branch)->whereIn($table.'.entity_id', (clone $documents)
                         ->where('parent_entity_type', $parentType)->selectRaw('CAST(ai_assistant_documents.id AS TEXT)'));
-                    yield $expectedProjection ? $this->applyToExpectedSources($documentBranch, $user, $organizationId)
-                        : $this->applyToSources($documentBranch, $user, $organizationId);
+                    yield $this->applySourceIdentityScope($documentBranch, $user, $organizationId, $expectedProjection, (string) $identity->source_type, (string) $identity->entity_type);
                 }
             } else {
-                yield $expectedProjection ? $this->applyToExpectedSources($branch, $user, $organizationId)
-                    : $this->applyToSources($branch, $user, $organizationId);
+                yield $this->applySourceIdentityScope($branch, $user, $organizationId, $expectedProjection, (string) $identity->source_type, (string) $identity->entity_type);
             }
         }
     }
 
+    public function aggregateSourceIdentities(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false): ?QueryBuilder
+    {
+        if ($expectedProjection) { $this->assertExpectedSourceQuery($query); }
+        if ($this->aclCompiler !== null) { throw new \LogicException('assistant_source_aggregate_during_query_compilation'); }
+
+        $scoped = $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection): ?Builder {
+            $query = clone $query;
+            $table = $query->getModel()->getTable();
+            $query->where($table.'.organization_id', $organizationId);
+            $projects = $this->entityQuery($user, $organizationId, 'project');
+            $query->where(static function (Builder $scope) use ($projects, $table): void {
+                $scope->where($table.'.source_type', 'file_document')->orWhereNull($table.'.project_id');
+                if ($projects !== null) { $scope->orWhereIn($table.'.project_id', $projects->select('projects.id')); }
+            });
+            if (! $expectedProjection) {
+                \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($query, $table);
+            }
+            $candidateColumns = in_array($table.'.*', $columns, true) ? $columns : array_values(array_unique(array_merge($columns,
+                array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
+            $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query->select($candidateColumns), []);
+            $checkpoint?->__invoke();
+            $visible = $this->applySourceIdentityScope($candidates, $user, $organizationId, $expectedProjection, preparedCandidates: true)
+                ->select($columns)->toBase();
+            $checkpoint?->__invoke();
+
+            return $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible), $table)->select($table.'.*');
+        });
+
+        return $scoped?->toBase();
+    }
+
     public function applyToExpectedSources(Builder $query, User $user, int $organizationId): Builder
+    {
+        $this->assertExpectedSourceQuery($query);
+
+        return $this->applySourceIdentityScope($query, $user, $organizationId, true);
+    }
+
+    private function assertExpectedSourceQuery(Builder $query): void
     {
         if (! $query->getModel() instanceof RagExpectedSource
             || $query->getModel()->getTable() !== 'ai_rag_expected_sources'
             || $query->getQuery()->from !== 'ai_rag_expected_sources') {
             throw new \InvalidArgumentException('assistant_expected_projection_model_required');
         }
-
-        return $this->applySourceIdentityScope($query, $user, $organizationId, true);
     }
 
-    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection): Builder
+    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false): Builder
     {
         if ($this->aclCompiler === null) {
-            return $this->compileAcl($user, $organizationId, fn (): Builder => $this->applySourceIdentityScope($query, $user, $organizationId, $expectedProjection)) ?? $query->whereRaw('1 = 0');
+            if ($preparedCandidates) { throw new \LogicException('assistant_prepared_candidates_require_query_compilation'); }
+            return $this->compileAcl($user, $organizationId, fn (): Builder => $this->applySourceIdentityScope($query, $user, $organizationId, $expectedProjection, $knownSourceType, $knownEntityType)) ?? $query->whereRaw('1 = 0');
         }
         $table = $query->getModel()->getTable();
         $query->where($table.'.organization_id', $organizationId);
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return $query->whereRaw('1 = 0');
         }
-        if (! $expectedProjection) {
+        if (! $expectedProjection && ! $preparedCandidates) {
             \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($query, $table);
         }
         $sourceIdentities = [];
-        foreach ($query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
-            ->select([$table.'.source_type', $table.'.entity_type'])->distinct()->get() as $identity) {
-            $sourceIdentities[(string) $identity->entity_type][(string) $identity->source_type] = true;
+        if ($knownSourceType !== null && $knownEntityType !== null) {
+            $query->where($table.'.source_type', $knownSourceType)->where($table.'.entity_type', $knownEntityType);
+            $sourceIdentities[$knownEntityType][$knownSourceType] = true;
+        } else {
+            $identityQuery = $query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
+                ->select([$table.'.source_type', $table.'.entity_type'])->distinct();
+            foreach ($this->finishAclDiscovery($query, $identityQuery)->get() as $identity) {
+                $sourceIdentities[(string) $identity->entity_type][(string) $identity->source_type] = true;
+            }
         }
         return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities, $query): void {
             $scope->whereRaw('1 = 0');
@@ -508,7 +558,8 @@ final class AssistantDataAccessPolicy
         $query = File::query()->where('files.organization_id', $organizationId);
         if ($supportedStorageOnly) { $query->where('files.disk', 's3'); }
         if (! $this->belongsToOrganization($user, $organizationId)) { return $query->whereRaw('1 = 0'); }
-        $fileTypes = (clone $query)->select('files.fileable_type')->distinct()->pluck('files.fileable_type')->all();
+        $fileTypeQuery = (clone $query)->select('files.fileable_type')->distinct()->toBase();
+        $fileTypes = $this->finishAclDiscovery($query, $fileTypeQuery)->pluck('fileable_type')->all();
         $fileClasses = array_map(static fn ($type): string => \Illuminate\Database\Eloquent\Relations\Relation::getMorphedModel((string) $type) ?? (string) $type, $fileTypes);
         app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter::class)->applyFileScope($query, $user, $organizationId, $this);
         return $query->where(function (Builder $files) use ($user, $organizationId, $fileClasses): void {
@@ -557,7 +608,8 @@ final class AssistantDataAccessPolicy
         if (! Schema::hasColumn('ai_assistant_documents', 'file_id')) {
             return $query->whereRaw('1 = 0');
         }
-        $documentTypes = (clone $query)->select('parent_entity_type')->distinct()->pluck('parent_entity_type')->all();
+        $documentTypeQuery = (clone $query)->select('parent_entity_type')->distinct()->toBase();
+        $documentTypes = $this->finishAclDiscovery($query, $documentTypeQuery)->pluck('parent_entity_type')->all();
         return $query->where(function (Builder $parents) use ($user, $organizationId, $documentTypes): void {
             $parents->whereRaw('1 = 0');
             if (array_intersect($documentTypes, \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileMetadata::types()) !== []) {
@@ -614,13 +666,25 @@ final class AssistantDataAccessPolicy
     public function entityQuery(User $user, int $organizationId, string $type): ?Builder
     {
         $this->currentCheckpoint?->__invoke();
-        if ($this->aclCompiler === null) {
-            return $this->compileAcl($user, $organizationId, fn (): ?Builder => $this->entityQuery($user, $organizationId, $type));
-        }
-        if (! $this->aclCompiler->accepts((int) $user->id, $organizationId)) { return null; }
+        if ($this->aclCompiler !== null && ! $this->aclCompiler->accepts((int) $user->id, $organizationId)) { return null; }
         if (AssistantExtendedDomainRegistry::retrievalMode($type) === 'unavailable') { return null; }
         if (count($this->entityQueryPath) >= 16 || in_array($type, $this->entityQueryPath, true)) { return null; }
-        if ($this->aclCompiler->has($type)) { return $this->aclCompiler->reference($type, $this->entityQueryPath); }
+        if ($this->aclCompiler !== null && $this->aclCompiler->has($type)) { return $this->aclCompiler->reference($type, $this->entityQueryPath); }
+        $templateKey = null;
+        if ($this->aclCompiler === null && $this->entityQueryPath === [] && $this->batchIdentity === [(int) $user->id, $organizationId]) {
+            $surface = $this->trustedSurface ?? (request()->is('api/v1/mobile/*') ? KnowledgeSurface::MOBILE
+                : (request()->is('api/v1/admin/*') ? KnowledgeSurface::ADMIN : KnowledgeSurface::LK));
+            $templateKey = implode(':', [(int) $user->id, $organizationId, $surface->value, $type]);
+            if (isset($this->batchEntityQueries[$templateKey])) {
+                return $this->belongsToOrganization($user, $organizationId) ? clone $this->batchEntityQueries[$templateKey] : null;
+            }
+        }
+        if ($this->aclCompiler === null) {
+            $query = $this->compileAcl($user, $organizationId, fn (): ?Builder => $this->entityQuery($user, $organizationId, $type));
+            if ($templateKey !== null && $query !== null) { $this->batchEntityQueries[$templateKey] = clone $query; }
+
+            return $query;
+        }
         $this->entityQueryPath[] = $type;
         try {
             $query = $this->buildEntityQuery($user, $organizationId, $type);
@@ -649,6 +713,15 @@ final class AssistantDataAccessPolicy
         }
     }
 
+    private function finishAclDiscovery(Builder $query, QueryBuilder $discovery): QueryBuilder
+    {
+        if ($this->aclCompiler === null) { return $discovery; }
+        $table = $query->getModel()->getTable();
+        $wrapped = $query->getModel()->newQueryWithoutScopes()->fromSub($discovery, $table)->select($table.'.*');
+
+        return $this->aclCompiler->finish($wrapped)->toBase();
+    }
+
     private function compileAcl(User $user, int $organizationId, callable $callback): ?Builder
     {
         $this->currentCheckpoint?->__invoke();
@@ -673,8 +746,16 @@ final class AssistantDataAccessPolicy
     {
         $load = fn (): Builder => $this->projectAccess->queryAccessibleProjects($user, $organizationId);
         $query = $this->rememberCurrent($user, $organizationId, 'projects', $load);
+        if ($this->aclCompiler === null) { return clone $query; }
+        if (! $this->aclCompiler->accepts((int) $user->id, $organizationId)) { return Project::query()->whereRaw('1 = 0'); }
+        if ($this->aclCompiler->has('__assistant_project_visibility')) {
+            $query = $this->aclCompiler->reference('__assistant_project_visibility') ?? Project::query()->whereRaw('1 = 0');
+        } else {
+            $query = $this->aclCompiler->register('__assistant_project_visibility', clone $query, []);
+        }
+        $query->getQuery()->columns = null;
 
-        return clone $query;
+        return $query;
     }
 
     private function schemaColumns(string $table): array
@@ -787,8 +868,12 @@ final class AssistantDataAccessPolicy
         }
         $aggregate = AssistantExtendedDomainRegistry::values('organizationAggregates')[$type] ?? false;
         $restrictedAggregate = $aggregate && $this->rememberCurrent($user, $organizationId, 'restricted-project-scope',
-            fn (): bool => Project::query()->where('organization_id', $organizationId)->whereNotIn('id',
-                $this->accessibleProjects($user, $organizationId)->select('projects.id'))->exists());
+            function () use ($user, $organizationId): bool {
+                $projects = Project::query()->where('organization_id', $organizationId)->whereNotIn('id',
+                    $this->accessibleProjects($user, $organizationId)->select('projects.id'));
+
+                return $this->finishAclDiscovery($projects, $projects->toBase())->exists();
+            });
         if ($restrictedAggregate && $aggregate === true) { return null; }
         if ($type === 'user') {
             return User::query()->where('users.is_active', true)->whereHas('organizations', static fn (Builder $organizations): Builder => $organizations->where('organizations.id', $organizationId)->where('organization_user.is_active', true));
@@ -1021,9 +1106,10 @@ final class AssistantDataAccessPolicy
         $bindings = [];
         $this->currentCheckpoint?->__invoke();
         $candidateReferences = $query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])->selectRaw($refsColumn.' AS candidate_refs');
-        $referenceTypes = \Illuminate\Support\Facades\DB::query()->fromSub($candidateReferences, 'candidate_reports')
+        $referenceTypeQuery = \Illuminate\Support\Facades\DB::query()->fromSub($candidateReferences, 'candidate_reports')
             ->crossJoin(\Illuminate\Support\Facades\DB::raw("LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(candidate_reports.candidate_refs) = 'array' THEN candidate_reports.candidate_refs ELSE '[]'::jsonb END) AS ref"))
-            ->distinct()->selectRaw("ref->>'entity_type' AS entity_type")->pluck('entity_type')->all();
+            ->distinct()->selectRaw("ref->>'entity_type' AS entity_type");
+        $referenceTypes = $this->finishAclDiscovery($query, $referenceTypeQuery)->pluck('entity_type')->all();
         foreach ($this->entities() as $type => $definition) {
             if (! in_array($type, $referenceTypes, true)) { continue; }
             if ($type === 'project_pulse_report' || \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revision($type) !== null) {
