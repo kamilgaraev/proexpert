@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Documents;
 
 use PhpOffice\PhpSpreadsheet\IOFactory as SpreadsheetIOFactory;
-use PhpOffice\PhpWord\IOFactory as WordIOFactory;
 use Smalot\PdfParser\Parser as PdfParser;
 use Throwable;
 
@@ -193,22 +192,45 @@ final class DocumentTextExtractor
         $path = $this->temporary($content, $extension);
         try {
             $this->assertArchiveBounded($path, $extension);
-            $document = WordIOFactory::load($path); $units = []; $index = 0;
-            foreach ($document->getSections() as $section) foreach ($this->wordTexts($section->getElements()) as $text) {
-                if ($text !== '') $units[] = ['type' => 'paragraph', 'index' => ++$index, 'text' => $text, 'provenance' => ['paragraph' => $index]];
+
+            $archive = new \ZipArchive;
+            if ($archive->open($path, \ZipArchive::RDONLY) !== true) {
+                throw new \RuntimeException('document_archive_invalid');
             }
-            return $units === [] ? $this->result('ready', 'empty', '', []) : $this->result('ready', 'full', implode("\n", array_column($units, 'text')), $units);
+
+            try {
+                $ooxml = (new DocxOoxmlTextExtractor)->extract($archive);
+            } finally {
+                $archive->close();
+            }
+
+            if ($ooxml['unsafe']) {
+                return $this->result('damaged', 'unavailable', '', []);
+            }
+
+            $units = $ooxml['units'];
+            $text = implode("\n", array_column($units, 'text'));
+
+            if ($ooxml['has_supported_image'] && $units === []) {
+                return $this->result('ocr_quote_required', 'image_ocr_required', '', []) + ['page_count' => 1];
+            }
+
+            if (! $ooxml['parsed']) {
+                return $this->result('ocr_quote_required', 'partial', $text, $units);
+            }
+
+            if ($ooxml['has_supported_image']) {
+                return $this->result('ocr_quote_required', 'image_ocr_required', $text, $units);
+            }
+
+            if ($ooxml['partial']) {
+                return $this->result('ocr_quote_required', 'partial', $text, $units);
+            }
+
+            return $units === [] ? $this->result('ready', 'empty', '', []) : $this->result('ready', 'full', $text, $units);
         } catch (Throwable) { return $this->result('damaged', 'unavailable', '', []); } finally { @unlink($path); }
     }
 
-    private function wordTexts(array $elements): iterable
-    {
-        foreach ($elements as $element) {
-            if (method_exists($element, 'getElements')) yield from $this->wordTexts($element->getElements());
-            elseif (method_exists($element, 'getRows')) foreach ($element->getRows() as $row) foreach ($row->getCells() as $cell) yield from $this->wordTexts($cell->getElements());
-            elseif (method_exists($element, 'getText')) yield $this->safeText((string) $element->getText());
-        }
-    }
     private function assertArchiveBounded(string $path, string $extension): void
     {
         if (! in_array($extension, ['docx', 'xlsx'], true)) return;
