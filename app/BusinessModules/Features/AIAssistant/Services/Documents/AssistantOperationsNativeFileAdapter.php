@@ -12,6 +12,8 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\User;
+use App\Services\Storage\DTO\StoredFile;
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\FileService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -27,7 +29,12 @@ final class AssistantOperationsNativeFileAdapter
     {
         if (! $this->supports($type)) { return null; }
         $source = $this->source($organizationId, $type, $id);
-        AssistantOperationsNativeFileMetadata::assertSource($type, $source);
+        $legacyPhoto = self::isLegacyQualityDefectPhoto($type, $source);
+        if ($legacyPhoto) {
+            AssistantOperationsNativeFileMetadata::assertLegacyQualityDefectPhotoSource($organizationId, $source);
+        } else {
+            AssistantOperationsNativeFileMetadata::assertSource($type, $source);
+        }
         $approved = AssistantDocumentSettings::query()->where('organization_id', $organizationId)->value('approved_by');
         foreach (array_unique(array_filter([(int) ($source['actor_user_id'] ?? 0), (int) $approved])) as $actorId) {
             $actor = User::query()->find($actorId);
@@ -37,6 +44,7 @@ final class AssistantOperationsNativeFileAdapter
                 if ($exception->getMessage() === 'ai_assistant_document_access_denied') { continue; }
                 throw $exception;
             }
+            if ($legacyPhoto) { $source = $this->verifyLegacyQualityDefectPhoto($actor, $organizationId, $source); }
             return $this->mapSource($actor, $organizationId, $type, $source);
         }
         return null;
@@ -56,7 +64,18 @@ final class AssistantOperationsNativeFileAdapter
         } else { $source = $this->sourceForActor($actor, $organizationId, $type, $id); }
         $this->assertAccess($actor, $organizationId, $type, $source);
         if ($requestedPath !== null && $requestedPath !== $source['storage_path']) { throw new RuntimeException('ai_assistant_document_native_source_invalid'); }
+        if (self::isLegacyQualityDefectPhoto($type, $source)) {
+            AssistantOperationsNativeFileMetadata::assertLegacyQualityDefectPhotoSource($organizationId, $source);
+            $source = $this->verifyLegacyQualityDefectPhoto($actor, $organizationId, $source);
+        }
+
         return $this->mapSource($actor, $organizationId, $type, $source);
+    }
+
+    private static function isLegacyQualityDefectPhoto(string $type, array $source): bool
+    {
+        return $type === 'quality_defect_photo'
+            && ! AssistantOperationsNativeFileMetadata::isStorageIdentityVerified($source['storage_identity_verified'] ?? null);
     }
 
     private function mapSource(User $actor, int $organizationId, string $type, array $source): AIAssistantDocument
@@ -97,6 +116,81 @@ final class AssistantOperationsNativeFileAdapter
             }
             return $document;
         });
+    }
+
+    private function verifyLegacyQualityDefectPhoto(User $actor, int $organizationId, array $source): array
+    {
+        AssistantOperationsNativeFileMetadata::assertLegacyQualityDefectPhotoSource($organizationId, $source);
+        $this->assertAccess($actor, $organizationId, 'quality_defect_photo', $source);
+        $path = (string) $source['storage_path'];
+        try {
+            $stored = $this->storage->headCurrent($path, AssistantOperationsNativeFileMetadata::MAX_BYTES);
+        } catch (VersionedObjectIntegrityException $exception) {
+            throw new RuntimeException('ai_assistant_document_native_source_invalid', 0, $exception);
+        }
+        $this->assertCurrentPhotoIdentity($source, $stored);
+
+        return DB::transaction(function () use ($actor, $organizationId, $source, $stored): array {
+            $current = $this->source($organizationId, 'quality_defect_photo', $source['id'], true);
+            $this->assertAccess($actor, $organizationId, 'quality_defect_photo', $current);
+            if (AssistantOperationsNativeFileMetadata::isStorageIdentityVerified($current['storage_identity_verified'] ?? null)) {
+                AssistantOperationsNativeFileMetadata::assertSource('quality_defect_photo', $current);
+                if (! self::sameStoredPhotoIdentity($current, $stored)) {
+                    throw new RuntimeException('ai_assistant_document_native_source_invalid');
+                }
+
+                return $current;
+            }
+
+            AssistantOperationsNativeFileMetadata::assertLegacyQualityDefectPhotoSource($organizationId, $current);
+            if (AssistantOperationsNativeFileMetadata::versionData('quality_defect_photo', $current)
+                !== AssistantOperationsNativeFileMetadata::versionData('quality_defect_photo', $source)) {
+                throw new RuntimeException('ai_assistant_document_native_source_invalid');
+            }
+
+            $updated = DB::table('quality_defect_photos')->where('id', $source['id'])
+                ->where('organization_id', $organizationId)->where('quality_defect_id', $source['quality_defect_id'])
+                ->where('url', $stored->organizationPath)->where('storage_identity_verified', false)
+                ->whereNull('storage_etag')->whereNull('storage_sha256')->whereNull('size_bytes')->whereNull('mime_type')
+                ->update([
+                    'storage_identity_verified' => true,
+                    'storage_etag' => $stored->etag,
+                    'storage_sha256' => $stored->sha256,
+                    'size_bytes' => $stored->sizeBytes,
+                    'mime_type' => $stored->mime,
+                    'updated_at' => now(),
+                ]);
+            if ($updated !== 1) {
+                throw new RuntimeException('ai_assistant_document_native_source_invalid');
+            }
+
+            $current = $this->source($organizationId, 'quality_defect_photo', $source['id'], true);
+            $this->assertAccess($actor, $organizationId, 'quality_defect_photo', $current);
+            AssistantOperationsNativeFileMetadata::assertSource('quality_defect_photo', $current);
+
+            return $current;
+        });
+    }
+
+    private function assertCurrentPhotoIdentity(array $source, StoredFile $stored): void
+    {
+        $path = (string) $source['storage_path'];
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $expectedMime = AssistantOperationsNativeFileMetadata::formats()[$extension] ?? null;
+        if ($stored->organizationPath !== $path || $stored->sizeBytes > AssistantOperationsNativeFileMetadata::MAX_BYTES
+            || $expectedMime === null || $stored->mime !== $expectedMime
+            || ! preg_match('/^[a-f0-9]{64}$/D', $stored->sha256)) {
+            throw new RuntimeException('ai_assistant_document_native_source_invalid');
+        }
+    }
+
+    private static function sameStoredPhotoIdentity(array $source, StoredFile $stored): bool
+    {
+        return (string) ($source['storage_path'] ?? '') === $stored->organizationPath
+            && (string) ($source['storage_etag'] ?? '') === $stored->etag
+            && (string) ($source['expected_sha256'] ?? '') === $stored->sha256
+            && (int) ($source['size_bytes'] ?? 0) === $stored->sizeBytes
+            && (string) ($source['mime_type'] ?? '') === $stored->mime;
     }
 
     public function assertCurrent(AIAssistantDocument $document): void
@@ -221,6 +315,7 @@ final class AssistantOperationsNativeFileAdapter
         if (! is_array($left) || ! is_array($right)) { return false; }
         ksort($left, SORT_STRING);
         ksort($right, SORT_STRING);
+
         return $left === $right;
     }
 

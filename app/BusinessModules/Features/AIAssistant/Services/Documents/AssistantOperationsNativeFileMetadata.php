@@ -104,6 +104,33 @@ final class AssistantOperationsNativeFileMetadata
     public static function fingerprint(array $version): string { return hash('sha256', json_encode($version, JSON_THROW_ON_ERROR)); }
     public static function filename(array $source): string { return basename((string) $source['storage_path']); }
     public static function projectId(array $source): ?int { return isset($source['parent_project_id']) && (int) $source['parent_project_id'] > 0 ? (int) $source['parent_project_id'] : null; }
+    public static function isStorageIdentityVerified(mixed $value): bool { return in_array($value, [true, 'true', 't', 1, '1'], true); }
+
+    public static function assertLegacyQualityDefectPhotoSource(int $organizationId, array $source): void
+    {
+        $organization = (int) ($source['organization_id'] ?? 0);
+        $photoId = (string) ($source['id'] ?? '');
+        $defectId = (string) ($source['quality_defect_id'] ?? '');
+        $path = (string) ($source['storage_path'] ?? '');
+        $unverified = $source['storage_identity_verified'] ?? null;
+        $legacyUnverified = in_array($unverified, [false, 'false', 'f', 0, '0'], true);
+        $uuid = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
+
+        if ($organizationId < 1 || $organization !== $organizationId
+            || ! preg_match('/^[1-9][0-9]*$/D', $photoId)
+            || ! preg_match('/^[1-9][0-9]*$/D', $defectId)
+            || (string) ($source['native_parent_id'] ?? '') !== $photoId
+            || ($source['native_file_id'] ?? null) !== null
+            || ! $legacyUnverified
+            || ($source['storage_etag'] ?? null) !== null
+            || ($source['expected_sha256'] ?? null) !== null
+            || ($source['size_bytes'] ?? null) !== null
+            || ($source['mime_type'] ?? null) !== null
+            || strlen($path) > 1024
+            || ! preg_match('#^org-'.$organization.'/quality-control/defects/'.$defectId.'/'.$uuid.'\.(?:png|jpe?g|webp)$#Di', $path)) {
+            throw new RuntimeException('ai_assistant_document_native_source_invalid');
+        }
+    }
 
     public static function assertSource(string $type, array $source): void
     {
@@ -122,7 +149,9 @@ final class AssistantOperationsNativeFileMetadata
         }
         $uuid = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
         if ($type === 'quality_defect_photo') {
-            if (($source['native_file_id'] ?? null) !== null || (string) $source['native_parent_id'] !== (string) $source['id'] || ! in_array($source['storage_identity_verified'] ?? null, [true, 'true', 1, '1'], true) || $hash === null
+            $etag = $source['storage_etag'] ?? null;
+            if (($source['native_file_id'] ?? null) !== null || (string) $source['native_parent_id'] !== (string) $source['id'] || ! self::isStorageIdentityVerified($source['storage_identity_verified'] ?? null) || $hash === null
+                || ! is_string($etag) || $etag === '' || strlen($etag) > 255 || preg_match('/[\x00-\x1F\x7F]/', $etag)
                 || ! preg_match('#^org-'.$org.'/quality-control/defects/'.(int) ($source['quality_defect_id'] ?? 0).'/'.$uuid.'\.(?:png|jpe?g|webp)$#Di', $path)) {
                 throw new RuntimeException('ai_assistant_document_native_source_invalid');
             }
