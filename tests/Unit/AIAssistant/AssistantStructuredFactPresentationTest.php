@@ -141,6 +141,64 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertFalse($result['needs_clarification']);
     }
 
+    public function test_complete_first_composition_page_does_not_claim_that_completeness_is_unconfirmed(): void
+    {
+        $payload = AssistantStructuredFactFormatter::payload($this->compositionRows(10), '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 10, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'Состав позиции показан полностью.', [$payload],
+        );
+
+        $this->assertFalse($result['needs_clarification']);
+        $this->assertCount(12, $result['source_refs']);
+        $this->assertStringContainsString('Всего ресурсов: 10.', $result['text']);
+        $this->assertStringNotContainsString('Полнота списка и общие итоги не подтверждены', $result['text']);
+        $this->assertStringNotContainsString('Остальные можно посмотреть', $result['text']);
+    }
+
+    public function test_empty_page_beyond_composition_total_does_not_claim_that_more_resources_are_available(): void
+    {
+        $payload = AssistantStructuredFactFormatter::payload($this->compositionRows(0), '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 10, 'page' => 2,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'На второй странице есть ресурсы.', [$payload],
+        );
+
+        $this->assertFalse($result['needs_clarification']);
+        $this->assertCount(2, $result['source_refs']);
+        $this->assertStringContainsString('Всего ресурсов в позиции: 10.', $result['text']);
+        $this->assertStringContainsString('На странице 2 ресурсы не найдены.', $result['text']);
+        $this->assertStringNotContainsString('Показаны 0 из 10 найденных ресурсов.', $result['text']);
+        $this->assertStringNotContainsString('Остальные можно посмотреть', $result['text']);
+        $this->assertStringNotContainsString('На второй странице есть ресурсы.', $result['text']);
+    }
+
+    public function test_genuinely_empty_first_composition_page_is_presented_as_complete(): void
+    {
+        $payload = AssistantStructuredFactFormatter::payload($this->compositionRows(0), '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 0, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'Состав пустой.', [$payload],
+        );
+
+        $this->assertFalse($result['needs_clarification']);
+        $this->assertStringContainsString('Состав позиции проверен полностью. Всего ресурсов: 0.', $result['text']);
+        $this->assertStringNotContainsString('На странице 1 ресурсы не найдены.', $result['text']);
+        $this->assertStringNotContainsString('Полнота списка и общие итоги не подтверждены', $result['text']);
+    }
+
     public function test_unreviewed_normalized_resource_is_not_trusted_as_composition(): void
     {
         $estimate = $this->payload('estimate', ['name' => 'Смета'], 100, ['project_id' => 16]);
