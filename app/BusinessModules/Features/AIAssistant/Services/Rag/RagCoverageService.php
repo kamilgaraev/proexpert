@@ -62,6 +62,7 @@ final class RagCoverageService
             }
         }
         $catalog = [];
+        $catalogLabels = array_column($this->registry->sourceCatalog(), 'display_label', 'type');
         $stored = 0;
         $indexed = 0;
         $chunks = 0;
@@ -73,8 +74,10 @@ final class RagCoverageService
             $stored += $typeStored;
             $indexed += $typeIndexed;
             $chunks += (int) ($count->chunk_count ?? 0);
-            $catalog[] = ['type' => $type, 'enabled' => true, 'expected_count' => null, 'indexed_count' => $typeIndexed,
+            $source = ['type' => $type, 'enabled' => true, 'expected_count' => null, 'indexed_count' => $typeIndexed,
                 'stored_count' => $typeStored, 'stale_count' => null, 'pending_count' => null, 'error' => null];
+            if (isset($catalogLabels[$type])) { $source['display_label'] = $catalogLabels[$type]; }
+            $catalog[] = $source;
         }
         $enabled = (bool) config('ai-assistant.rag.enabled', true);
         $status = ['enabled' => $enabled, 'ready' => $enabled && $indexed > 0,

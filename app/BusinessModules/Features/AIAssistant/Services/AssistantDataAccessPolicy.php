@@ -257,6 +257,11 @@ final class AssistantDataAccessPolicy
             return app(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantSalesParentProjection::class)
                 ->canReadReference($user, $organizationId, $reference);
         }
+        if (in_array($type, ['estimate', 'estimate_item', 'estimate_item_resource'], true)
+            && ! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class)
+                ->canReadReference($user, $organizationId, $reference)) {
+            return false;
+        }
         if (($reference['content_scope'] ?? null) === 'structured') {
             $fields = $reference['checked_fields'] ?? null;
             $permissions = $reference['required_permissions'] ?? null;

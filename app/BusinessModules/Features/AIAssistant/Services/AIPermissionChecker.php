@@ -143,7 +143,10 @@ class AIPermissionChecker
                 return false;
             }
 
-            if ($toolName === 'resolve_estimate' || ($toolName === 'get_estimate_answer' && ($params['estimate_id'] ?? null) === null)) {
+            if ($toolName === 'resolve_estimate' || ($toolName === 'get_estimate_answer' && ($params['estimate_id'] ?? null) === null)
+                || ($toolName === 'get_estimate_positions' && ($params['estimate_id'] ?? null) === null
+                    && is_string($params['estimate_selector'] ?? null) && trim($params['estimate_selector']) !== ''
+                    && $policy->canCurrentPermission($user, $organizationId, 'budget-estimates.finance.view'))) {
                 return true;
             }
 

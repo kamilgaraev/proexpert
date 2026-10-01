@@ -165,6 +165,75 @@ final class AssistantPresentationPlanner
         return AssistantStructuredFactFormatter::renderVerifiedRows($sets, $plan);
     }
 
+    public function renderPaymentFallback(array $toolResults): ?string
+    {
+        $sets = $this->trustedSets($toolResults);
+        if ($sets === []) {
+            return null;
+        }
+
+        $rows = [];
+        $commonFields = null;
+        $hasVerifiedCurrency = false;
+        foreach ($sets as $set) {
+            foreach ($set['rows'] as $row) {
+                if (($row['entity_type'] ?? null) !== 'payment_document') {
+                    return null;
+                }
+                $fields = $row['_presentation_fields'];
+                $commonFields = $commonFields === null ? $fields : array_values(array_intersect($commonFields, $fields));
+                $hasVerifiedCurrency = $hasVerifiedCurrency || (in_array('currency', $fields, true)
+                    && is_string($row['fields']['currency'] ?? null) && trim($row['fields']['currency']) !== '');
+                $rows[] = $row;
+            }
+        }
+        if ($rows === [] || $commonFields === null) {
+            return null;
+        }
+
+        $identity = in_array('document_number', $commonFields, true) ? 'document_number'
+            : (in_array('number', $commonFields, true) ? 'number' : null);
+        $columns = $identity === null ? [] : [$identity];
+        if (in_array('amount', $commonFields, true)) {
+            $columns[] = 'amount';
+        }
+        if ($hasVerifiedCurrency) {
+            $columns[] = 'currency';
+        }
+        foreach (['status', 'due_date', 'paid_at'] as $field) {
+            if (in_array($field, $commonFields, true)) {
+                $columns[] = $field;
+            }
+        }
+        if ($columns === []) {
+            return null;
+        }
+
+        $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
+        $entityLabel = $entityLabels['payment_document'] ?? trans_message('ai_assistant_facts.entities.payment_document');
+        $headers = [trans_message('ai_assistant_facts.record')];
+        foreach ($columns as $field) {
+            $headers[] = trans_message('ai_assistant_facts.fields.'.$field);
+        }
+        $lines = [trans_message('ai_assistant_facts.returned_scope'), '', '| '.implode(' | ', $headers).' |',
+            '| '.implode(' | ', array_fill(0, count($headers), '---')).' |'];
+        foreach ($rows as $row) {
+            $cells = [$entityLabel];
+            foreach ($columns as $field) {
+                $value = $row['fields'][$field] ?? null;
+                if ($field === 'currency' && (! is_string($value) || trim($value) === '')) {
+                    $cells[] = '';
+                } else {
+                    $cells[] = $value === null ? trans_message('ai_assistant_facts.unknown')
+                        : AssistantStructuredFactFormatter::displayPresentationField($row, $field, $value);
+                }
+            }
+            $lines[] = '| '.implode(' | ', $cells).' |';
+        }
+
+        return implode("\n", $lines);
+    }
+
     private function trustedSets(array $toolResults): array
     {
         $sets = [];

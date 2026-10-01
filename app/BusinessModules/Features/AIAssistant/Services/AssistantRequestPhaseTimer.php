@@ -15,6 +15,7 @@ final class AssistantRequestPhaseTimer
         'job_startup', 'service_graph', 'attachment_prepare', 'image_parts', 'request_permission', 'conversation',
         'request_context', 'access_context', 'task_plan', 'preparation', 'messages', 'catalog',
         'tool_definitions', 'provider_prepare', 'tool', 'stock_read', 'final_verification', 'request_complete', 'summary_publish', 'greeting',
+        'read_permit_wait', 'read_permit_hold',
     ];
 
     private readonly int $started;
@@ -46,6 +47,36 @@ final class AssistantRequestPhaseTimer
             throw $exception;
         } finally {
             $timer->finish($failure, $result);
+        }
+    }
+
+    public static function recordDuration(
+        ?string $requestId,
+        string $phase,
+        float $durationMs,
+        bool $success,
+        ?string $exceptionClass = null,
+    ): void {
+        $timer = self::start($requestId, $phase);
+        if ($timer->requestId === null || ! in_array($phase, ['read_permit_wait', 'read_permit_hold'], true)
+            || ! is_finite($durationMs) || $durationMs < 0) {
+            return;
+        }
+
+        try {
+            $logger = Log::getFacadeRoot();
+            if ($logger === null || ($logger instanceof LogManager && ! is_string(config('logging.default')))) {
+                return;
+            }
+
+            Log::info('ai.assistant.request_phase_completed', [
+                'request_id' => $timer->requestId,
+                'phase' => $phase,
+                'duration_ms' => round($durationMs, 2),
+                'success' => $success,
+                'exception_class' => $exceptionClass,
+            ]);
+        } catch (Throwable) {
         }
     }
 

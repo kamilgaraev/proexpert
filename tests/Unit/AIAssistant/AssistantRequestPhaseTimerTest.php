@@ -83,6 +83,29 @@ final class AssistantRequestPhaseTimerTest extends TestCase
         $this->assertSame([], $logger->records);
     }
 
+    public function test_read_permit_durations_emit_only_fixed_content_free_metadata(): void
+    {
+        $logger = $this->logger();
+        AssistantRequestPhaseTimer::recordDuration(self::REQUEST_ID, 'read_permit_wait', 247.18, true);
+        AssistantRequestPhaseTimer::recordDuration(self::REQUEST_ID, 'read_permit_hold', 32.7, false, RuntimeException::class);
+        AssistantRequestPhaseTimer::recordDuration('private_invalid_id_fixture', 'read_permit_hold', 1, true);
+        AssistantRequestPhaseTimer::recordDuration(self::REQUEST_ID, 'provider_prepare', 1, true);
+
+        $this->assertCount(2, $logger->records);
+        $wait = $logger->records[0]['context'];
+        $hold = $logger->records[1]['context'];
+        $this->assertSame(['request_id', 'phase', 'duration_ms', 'success', 'exception_class'], array_keys($wait));
+        $this->assertSame(self::REQUEST_ID, $wait['request_id']);
+        $this->assertSame('read_permit_wait', $wait['phase']);
+        $this->assertSame(247.18, $wait['duration_ms']);
+        $this->assertTrue($wait['success']);
+        $this->assertNull($wait['exception_class']);
+        $this->assertSame('read_permit_hold', $hold['phase']);
+        $this->assertFalse($hold['success']);
+        $this->assertSame(RuntimeException::class, $hold['exception_class']);
+        $this->assertStringNotContainsString('private_', json_encode($logger->records, JSON_THROW_ON_ERROR));
+    }
+
     public function test_tool_outcome_is_allowlisted_without_exposing_other_result_fields(): void
     {
         $logger = $this->logger();
