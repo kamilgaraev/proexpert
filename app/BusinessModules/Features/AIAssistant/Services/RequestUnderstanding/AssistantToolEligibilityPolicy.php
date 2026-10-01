@@ -25,6 +25,11 @@ final class AssistantToolEligibilityPolicy
         'generate_operational_pdf_report', 'generate_rag_pdf_report',
     ];
 
+    private const PAYMENT_ONLY_TOOLS = [
+        'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
+        'approve_payment_request', 'generate_contract_payments_report',
+    ];
+
     private const MUTATION_TOOLS = [
         'approve_payment_request', 'create_schedule_task', 'update_schedule_task_status', 'send_project_notification',
         'create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units',
@@ -109,9 +114,14 @@ final class AssistantToolEligibilityPolicy
             && $understanding->requestedEntities[0] === 'payment';
     }
 
+    public function isAllowedForPaymentOnlyRequest(string $toolName): bool
+    {
+        return in_array($toolName, self::PAYMENT_ONLY_TOOLS, true);
+    }
+
     private function blocksPaymentOnlyTool(string $toolName, bool $execute, array $arguments): bool
     {
-        if (in_array($toolName, ['get_contract_snapshot', 'get_project_snapshot'], true)) {
+        if (! $this->isAllowedForPaymentOnlyRequest($toolName)) {
             return true;
         }
 

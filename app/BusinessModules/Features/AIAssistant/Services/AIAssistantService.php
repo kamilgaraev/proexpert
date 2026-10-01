@@ -3285,6 +3285,13 @@ class AIAssistantService
             'assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_estimate_answer', 'get_material_stock',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence']);
 
+        if ($paymentOnlyRequest) {
+            $toolNames = array_values(array_filter(
+                $toolNames,
+                fn (string $toolName): bool => $this->toolEligibilityPolicy->isAllowedForPaymentOnlyRequest($toolName)
+            ));
+        }
+
         return array_values(array_unique(array_filter(
             $toolNames,
             static fn (mixed $toolName): bool => is_string($toolName) && $toolName !== ''
@@ -3293,6 +3300,10 @@ class AIAssistantService
 
     protected function buildDomainCapabilityHints(array $taskPlan): array
     {
+        if ($this->toolEligibilityPolicy->isPaymentOnlyRequest($this->requestUnderstandingFromPlan($taskPlan))) {
+            return [];
+        }
+
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $actor = $this->activeActor;
         $tool = $this->toolRegistry->getTool('assistant_domain_discover_capabilities');
