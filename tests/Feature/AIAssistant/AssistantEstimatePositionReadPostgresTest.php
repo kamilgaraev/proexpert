@@ -11,7 +11,9 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionC
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\SearchEstimatePositionsTool;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -64,6 +66,208 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
             ->andReturnUsing(fn (User $actor, int $organizationId) => Project::query()->where('organization_id', $organizationId)
                 ->whereNotIn('id', Estimate::query()->whereIn('id', $this->deniedEstimateIds)->select('project_id')));
         $this->app->forgetInstance(AssistantDataAccessPolicy::class);
+    }
+
+    public function test_cross_estimate_search_finds_positions_without_selector_and_filters_acl_before_returning_matches(): void
+    {
+        $firstEstimate = $this->estimate('SM-BETON-1', 'Фундамент');
+        $secondEstimate = $this->estimate('SM-BETON-2', 'Наружные работы');
+        $firstItem = $this->item($firstEstimate, '1.1', 'Бетонирование основания');
+        $secondItem = $this->item($secondEstimate, '3', 'Бетонирование перекрытия');
+
+        $deniedProject = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
+        $deniedEstimate = $this->estimate('SM-BETON-DENIED', 'Закрытый проект', $this->organization, $deniedProject);
+        $deniedItem = $this->item($deniedEstimate, '1', 'Бетонирование недоступного проекта');
+        $this->financeDeniedProjectIds[] = (int) $deniedProject->id;
+
+        $foreignOrganization = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $foreignEstimate = $this->estimate('SM-BETON-FOREIGN', 'Чужая смета', $foreignOrganization, $foreignProject);
+        $foreignItem = $this->item($foreignEstimate, '1', 'Бетонирование чужой организации');
+
+        self::assertTrue(app(AIPermissionChecker::class)->canExecuteTool($this->actor, 'search_estimate_positions', [
+            'query' => 'бетонирование',
+        ]));
+        $result = app(SearchEstimatePositionsTool::class)->execute([
+            'query' => 'Есть ли у нас в сметах бетонировании?',
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($result);
+        self::assertSame('all_accessible_estimates', $result['search_scope']);
+        self::assertSame('matches', $result['search_status']);
+        self::assertTrue($result['search_complete']);
+        self::assertFalse($result['has_more']);
+        self::assertSame([$firstItem->id, $secondItem->id], array_column(array_column($result['matches'], 'position'), 'id'));
+        self::assertNotContains($deniedItem->id, array_column(array_column($result['matches'], 'position'), 'id'));
+        self::assertNotContains($foreignItem->id, array_column(array_column($result['matches'], 'position'), 'id'));
+        self::assertTrue((new AssistantStructuredFactVerifier)->trustedEvidence($result['structured_fact_evidence']));
+        self::assertCount(4, $result['source_refs']);
+        foreach ($result['source_refs'] as $reference) {
+            self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadReference(
+                $this->actor, (int) $this->organization->id, $reference,
+            ));
+        }
+    }
+
+    public function test_cross_estimate_search_matches_an_exact_normative_code(): void
+    {
+        $estimate = $this->estimate('SM-CODES', 'Нормативные позиции');
+        $expected = $this->item($estimate, '1', 'Устройство покрытия', ['normative_rate_code' => 'ГЭСН08-02-002-05']);
+        $this->item($estimate, '2', 'Другая работа', ['normative_rate_code' => 'ГЭСН08-02-002-06']);
+
+        $result = app(SearchEstimatePositionsTool::class)->execute([
+            'query' => 'ГЭСН08-02-002-05',
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($result);
+        self::assertSame([(int) $expected->id], array_column(array_column($result['matches'], 'position'), 'id'));
+        self::assertSame('ГЭСН08-02-002-05', $result['matches'][0]['position']['normative_rate_code']);
+        $positionSource = array_values(array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item'))[0];
+        self::assertContains('normative_rate_code', $positionSource['checked_fields']);
+    }
+
+    public function test_latest_estimate_request_ignores_context_and_returns_highest_accounted_position(): void
+    {
+        $olderEstimate = $this->estimate('SM-OLD', 'Старая смета');
+        $earlierTie = $this->estimate('SM-TIE-A', 'Одинаковое время, меньший ID');
+        $latestEstimate = $this->estimate('SM-TIE-B', 'Последняя доступная смета');
+        $deniedProject = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
+        $deniedLatest = $this->estimate('SM-DENIED-LATEST', 'Недоступная последняя смета', $this->organization, $deniedProject);
+        $foreignOrganization = Organization::factory()->create();
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignOrganization->id]);
+        $this->estimate('SM-FOREIGN-LATEST', 'Чужая последняя смета', $foreignOrganization, $foreignProject)
+            ->forceFill(['created_at' => now()->addDay()])->saveQuietly();
+
+        $tieTime = now()->subHour();
+        $olderEstimate->forceFill(['created_at' => now()->subDays(2)])->saveQuietly();
+        $earlierTie->forceFill(['created_at' => $tieTime])->saveQuietly();
+        $latestEstimate->forceFill(['created_at' => $tieTime])->saveQuietly();
+        $deniedLatest->forceFill(['created_at' => now()])->saveQuietly();
+
+        $this->item($latestEstimate, '1', 'Обычная позиция', ['total_amount' => '100.00']);
+        $highest = $this->item($latestEstimate, '2', 'Максимальная учитываемая позиция', ['total_amount' => '900.00']);
+        $parent = $this->item($latestEstimate, '3', 'Родительская работа', ['total_amount' => '50.00']);
+        $this->item($latestEstimate, '3.1', 'Вложенная позиция', ['parent_work_id' => $parent->id, 'total_amount' => '5000.00']);
+        $this->item($latestEstimate, '4', 'Исключённая позиция', ['is_not_accounted' => true, 'total_amount' => '7000.00']);
+        $this->financeDeniedProjectIds[] = (int) $deniedProject->id;
+
+        $result = app(GetEstimateAnswerTool::class)->executeForSelection([
+            'query' => 'Покажи самую дорогую позицию в последней смете',
+        ], $this->actor, $this->organization, ['estimate_id' => (int) $olderEstimate->id, 'position_filter' => [], 'position_numbers' => []]);
+
+        self::assertIsArray($result);
+        self::assertSame('resolved', $result['status']);
+        self::assertSame((int) $latestEstimate->id, $result['selection']['estimate_id']);
+        self::assertSame('SM-TIE-B', $result['financial_evidence']['estimate']['number']);
+        self::assertStringContainsString('Самая дорогая учитываемая позиция', $result['server_formatted_answer']);
+        self::assertStringContainsString('Максимальная учитываемая позиция', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('Обычная позиция', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('Вложенная позиция', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('Исключённая позиция', $result['server_formatted_answer']);
+        self::assertSame([(int) $highest->id], array_column(array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item'), 'entity_id'));
+    }
+
+    public function test_estimate_answer_uses_the_current_selected_estimate_when_query_has_no_selector(): void
+    {
+        $selected = $this->estimate('SM-SELECTED', 'Смета из контекста');
+        $later = $this->estimate('SM-LATER', 'Более поздняя смета');
+        $this->item($selected, '1', 'Работа из контекста');
+        $this->item($later, '1', 'Работа из более поздней сметы');
+
+        $result = app(GetEstimateAnswerTool::class)->executeForSelection([
+            'query' => 'Покажи позиции в этой смете', 'estimate_id' => (int) $later->id,
+        ], $this->actor, $this->organization, ['estimate_id' => (int) $selected->id, 'position_filter' => [], 'position_numbers' => []]);
+
+        self::assertIsArray($result);
+        self::assertSame('resolved', $result['status']);
+        self::assertSame((int) $selected->id, $result['selection']['estimate_id']);
+        self::assertSame('SM-SELECTED', $result['financial_evidence']['estimate']['number']);
+    }
+
+    public function test_cross_estimate_search_uses_cursor_for_bounded_pages(): void
+    {
+        $estimate = $this->estimate('SM-BETON-PAGES', 'Много бетона');
+        for ($index = 1; $index <= 14; $index++) {
+            $this->item($estimate, (string) $index, 'Бетонирование участка '.$index);
+        }
+
+        $tool = app(SearchEstimatePositionsTool::class);
+        $first = $tool->execute(['query' => 'бетонировании', 'per_page' => 12], $this->actor, $this->organization);
+        self::assertIsArray($first);
+        self::assertCount(12, $first['matches']);
+        self::assertTrue($first['has_more']);
+        self::assertFalse($first['search_complete']);
+        self::assertIsString($first['next_cursor']);
+        self::assertLessThanOrEqual(25, count($first['structured_fact_evidence']['rows']));
+
+        $second = $tool->execute(['query' => 'бетонировании', 'per_page' => 12, 'cursor' => $first['next_cursor']],
+            $this->actor, $this->organization);
+        self::assertIsArray($second);
+        self::assertCount(2, $second['matches']);
+        self::assertFalse($second['has_more']);
+        self::assertTrue($second['search_complete']);
+        self::assertSame([], array_intersect(
+            array_column(array_column($first['matches'], 'position'), 'id'),
+            array_column(array_column($second['matches'], 'position'), 'id'),
+        ));
+
+        $this->expectException(ValidationException::class);
+        $tool->execute(['query' => 'арматура', 'per_page' => 12, 'cursor' => $first['next_cursor']], $this->actor, $this->organization);
+    }
+
+    public function test_cross_estimate_search_distinguishes_empty_search_from_no_search_terms(): void
+    {
+        $tool = app(SearchEstimatePositionsTool::class);
+        $empty = $tool->execute(['query' => 'несуществующее бетонирование'], $this->actor, $this->organization);
+        self::assertIsArray($empty);
+        self::assertSame('no_matches', $empty['search_status']);
+        self::assertTrue($empty['search_complete']);
+        self::assertSame([], $empty['matches']);
+        self::assertSame([], $empty['source_refs']);
+
+        $fillerOnly = $tool->execute(['query' => 'Есть ли у нас в сметах?'], $this->actor, $this->organization);
+        self::assertIsArray($fillerOnly);
+        self::assertSame('no_search_terms', $fillerOnly['search_status']);
+        self::assertFalse($fillerOnly['search_complete']);
+        self::assertSame([], $fillerOnly['matches']);
+        self::assertSame([], $fillerOnly['source_refs']);
+    }
+
+    public function test_cross_estimate_search_continues_past_project_finance_denials_without_claiming_empty(): void
+    {
+        $deniedProject = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
+        $deniedEstimate = $this->estimate('SM-BETON-DENIED-MANY', 'Закрытый проект', $this->organization, $deniedProject);
+        $now = now();
+        $rows = [];
+        for ($index = 1; $index <= 201; $index++) {
+            $rows[] = ['estimate_id' => $deniedEstimate->id, 'position_number' => (string) $index,
+                'name' => 'Бетонирование закрытого проекта '.$index, 'item_type' => 'work', 'quantity' => '1.0000',
+                'quantity_total' => '1.0000', 'unit_price' => '1.00', 'direct_costs' => '1.00',
+                'overhead_amount' => '0.00', 'profit_amount' => '0.00', 'total_amount' => '1.00',
+                'is_manual' => true, 'is_not_accounted' => false, 'created_at' => $now, 'updated_at' => $now];
+        }
+        foreach (array_chunk($rows, 100) as $chunk) {
+            EstimateItem::query()->insert($chunk);
+        }
+        $this->financeDeniedProjectIds[] = (int) $deniedProject->id;
+        $visibleEstimate = $this->estimate('SM-BETON-VISIBLE', 'Доступный проект');
+        $visibleItem = $this->item($visibleEstimate, '1', 'Бетонирование доступного проекта');
+
+        $tool = app(SearchEstimatePositionsTool::class);
+        $first = $tool->execute(['query' => 'бетонирование'], $this->actor, $this->organization);
+        self::assertIsArray($first);
+        self::assertSame([], $first['matches']);
+        self::assertFalse($first['search_complete']);
+        self::assertTrue($first['has_more']);
+        self::assertIsString($first['next_cursor']);
+
+        $second = $tool->execute(['query' => 'бетонирование', 'cursor' => $first['next_cursor']], $this->actor, $this->organization);
+        self::assertIsArray($second);
+        self::assertTrue($second['search_complete']);
+        self::assertSame([(int) $visibleItem->id], array_column(array_column($second['matches'], 'position'), 'id'));
+        self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadReference(
+            $this->actor, (int) $this->organization->id, $second['source_refs'][1],
+        ));
     }
 
     public function test_selector_search_hydrates_only_page_and_returns_bounded_resource_composition(): void
@@ -271,8 +475,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertIsArray($result);
         self::assertSame(1, $result['composition']['total']);
         self::assertSame(['Самостоятельный нормализованный ресурс'], array_column($result['composition']['items'], 'name'));
-        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool =>
-            ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
+        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
         self::assertStringNotContainsString('Зеркало удалённого дочернего ресурса', json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         self::assertStringNotContainsString('Непроверенное зеркало удалённого дочернего ресурса', json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
     }
@@ -306,8 +509,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame([], $unknown['composition']['items']);
         self::assertTrue($unknown['needs_clarification']);
         self::assertArrayNotHasKey('composition_page', $unknown['structured_fact_evidence']);
-        self::assertCount(0, array_filter($unknown['source_refs'], static fn (array $reference): bool =>
-            ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
+        self::assertCount(0, array_filter($unknown['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
         self::assertStringNotContainsString('Непроверенное зеркало ресурса', json_encode($unknown, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
 
         $emptyEstimate = $this->estimate('SM-EMPTY-COMPOSITION', 'Пустой состав');
@@ -375,10 +577,8 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame(2, $result['composition']['total']);
         self::assertSame(['Живой дочерний ресурс', 'Явная независимая строка'], array_column($result['composition']['items'], 'name'));
         self::assertTrue((new AssistantStructuredFactVerifier)->trustedEvidence($result['structured_fact_evidence']));
-        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool =>
-            ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
-        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool =>
-            ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
+        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
+        self::assertCount(1, array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
 
         $firstPage = app(GetEstimatePositionsTool::class)->execute([
             'estimate_id' => $estimate->id,
@@ -551,8 +751,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame('1354.65', $result['composition']['items'][0]['total_amount']);
         self::assertStringNotContainsString('currency', json_encode($result['composition'], JSON_THROW_ON_ERROR));
 
-        $childReferences = array_values(array_filter($result['source_refs'], static fn (array $reference): bool =>
-            ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
+        $childReferences = array_values(array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
         self::assertCount(5, $childReferences);
         foreach ($childReferences as $reference) {
             self::assertSame($reference['entity_id'], $reference['estimate_item_id']);

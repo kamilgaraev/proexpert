@@ -18,6 +18,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanne
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -1657,7 +1658,7 @@ class AIAssistantService
     {
         return in_array($toolName, [
             'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
-            'resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot',
+            'resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
             'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
             'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
@@ -1790,7 +1791,7 @@ class AIAssistantService
             $this->progress($progressCode, 'started');
             $pureDatabaseRead = in_array($toolName, [
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
-                'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'get_estimate_financial_snapshot',
+                'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
                 'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
@@ -3282,7 +3283,11 @@ class AIAssistantService
     {
         $taskType = (string) ($taskPlan['task_type'] ?? 'summary');
         $capabilityId = $taskPlan['capability']['id'] ?? null;
-        if (AssistantEstimateCompositionIntent::matches((string) ($taskPlan['request']['message'] ?? ''), $capabilityId === 'estimates')) {
+        $query = (string) ($taskPlan['request']['message'] ?? '');
+        if (AssistantEstimateCrossSearchIntent::matches($query)) {
+            return ['search_estimate_positions'];
+        }
+        if (AssistantEstimateCompositionIntent::matches($query, $capabilityId === 'estimates')) {
             return ['get_estimate_positions'];
         }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
@@ -3297,7 +3302,7 @@ class AIAssistantService
             'schedules' => ['get_schedule_snapshot', 'search_projects', 'create_schedule_task', 'update_schedule_task_status'],
             'procurement' => ['get_procurement_snapshot', 'get_project_snapshot', 'search_materials', 'search_contractors'],
             'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
-            'estimates' => ['resolve_estimate', 'get_estimate_positions', 'get_estimate_financial_snapshot'],
+            'estimates' => ['resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'],
             'measurement_units' => ['create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units'],
             default => [],
         };

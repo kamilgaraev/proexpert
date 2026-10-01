@@ -48,6 +48,25 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         self::assertNotContains('get_material_stock', $names);
     }
 
+    public function test_broad_estimate_question_exposes_cross_estimate_position_search(): void
+    {
+        $query = 'Есть ли у нас в сметах бетонирование?';
+
+        foreach (['estimates', 'warehouse'] as $capabilityId) {
+            self::assertSame(['search_estimate_positions'], $this->toolNames($query, $capabilityId));
+        }
+    }
+
+    public function test_latest_estimate_financial_question_keeps_the_estimate_answer_tool(): void
+    {
+        self::assertContains('get_estimate_answer', $this->toolNames(
+            'Покажи самую дорогую позицию в последней смете', 'estimates',
+        ));
+        self::assertContains('get_estimate_answer', $this->toolNames(
+            'Покажи позиции в этой смете', 'estimates',
+        ));
+    }
+
     #[DataProvider('permissionDecisions')]
     public function test_composition_schema_exposure_keeps_the_current_permission_gate(bool $allowed): void
     {

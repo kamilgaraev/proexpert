@@ -10,7 +10,11 @@ use LogicException;
 final class AssistantEstimateStructuredFacts
 {
     private const IDENTITY_FIELDS = ['number', 'name', 'status', 'estimate_date'];
+
     private const POSITION_FIELDS = ['position_number', 'name', 'quantity', 'total_amount'];
+
+    private const SEARCH_POSITION_FIELDS = ['position_number', 'name', 'normative_rate_code'];
+
     private const PERMISSIONS = ['budget-estimates.view', 'budget-estimates.finance.view'];
 
     public static function identity(array $evidence, int $organizationId): array
@@ -54,6 +58,52 @@ final class AssistantEstimateStructuredFacts
         ];
 
         return $payload;
+    }
+
+    public static function crossEstimatePositions(array $matches, int $organizationId, string $fetchedAt): array
+    {
+        $rows = [];
+        $seenEstimates = [];
+        foreach ($matches as $match) {
+            $estimate = $match['estimate'] ?? null;
+            $position = $match['position'] ?? null;
+            if (! is_array($estimate) || ! is_array($position)
+                || ($estimate['id'] ?? null) !== ($position['estimate_id'] ?? null)
+                || ($position['version'] ?? null) === null) {
+                throw new LogicException('estimate_search_evidence_incomplete');
+            }
+
+            $estimateId = (int) $estimate['id'];
+            $projectId = $estimate['project_id'] === null ? null : (int) $estimate['project_id'];
+            if (! isset($seenEstimates[$estimateId])) {
+                $estimateSource = [
+                    'source_type' => 'estimate', 'entity_type' => 'estimate', 'entity_id' => $estimateId,
+                    'organization_id' => $organizationId, 'project_id' => $projectId,
+                    'version' => hash('sha256', json_encode([$estimateId, $estimate['number'], $estimate['name'], $match['estimate_updated_at'] ?? null], JSON_THROW_ON_ERROR)),
+                    'fetched_at' => $fetchedAt, 'content_scope' => 'structured',
+                    'checked_fields' => ['number', 'name'], 'required_permissions' => self::PERMISSIONS,
+                    'required_domains' => ['estimates'], 'source_version' => (string) ($match['estimate_updated_at'] ?? ''),
+                    'navigation' => ['url' => '/estimates/'.$estimateId],
+                ];
+                $rows[] = self::row('estimate', $estimateId,
+                    ['number' => (string) $estimate['number'], 'name' => (string) $estimate['name']], $estimateSource);
+                $seenEstimates[$estimateId] = true;
+            }
+
+            $positionId = (int) $position['id'];
+            $positionSource = [
+                'source_type' => 'estimate', 'entity_type' => 'estimate_item', 'entity_id' => $positionId,
+                'estimate_id' => $estimateId, 'organization_id' => $organizationId, 'project_id' => $projectId,
+                'version' => $position['version'], 'fetched_at' => $fetchedAt, 'content_scope' => 'structured',
+                'checked_fields' => self::SEARCH_POSITION_FIELDS, 'required_permissions' => self::PERMISSIONS,
+                'required_domains' => ['estimates'], 'source_version' => (string) ($match['position_updated_at'] ?? ''),
+                'navigation' => ['url' => '/estimates/'.$estimateId.'?position_id='.$positionId],
+            ];
+            $rows[] = self::row('estimate_item', $positionId,
+                array_intersect_key($position, array_fill_keys(self::SEARCH_POSITION_FIELDS, true)), $positionSource);
+        }
+
+        return AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
     }
 
     private static function identityRow(array $evidence, int $organizationId): array

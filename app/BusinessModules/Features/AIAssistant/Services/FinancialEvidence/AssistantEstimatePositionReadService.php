@@ -12,14 +12,22 @@ use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
+use JsonException;
 
 final class AssistantEstimatePositionReadService
 {
     private const SELECTOR_LIMIT = 20;
+
+    private const CROSS_ESTIMATE_PAGE_SIZE = 12;
+
+    private const CROSS_ESTIMATE_CANDIDATE_LIMIT = 200;
 
     private const POSITION_SCALES = [
         'unit_price' => 4,
@@ -92,6 +100,178 @@ final class AssistantEstimatePositionReadService
                 return $this->resolution($options, count($options));
             }, true);
         });
+    }
+
+    public function searchAcrossEstimates(
+        string $search,
+        int $organizationId,
+        User $actor,
+        int $perPage = self::CROSS_ESTIMATE_PAGE_SIZE,
+        ?string $cursor = null,
+    ): array {
+        $search = trim($search);
+        Validator::make(compact('search', 'organizationId', 'perPage', 'cursor'), [
+            'search' => ['required', 'string', 'max:200'],
+            'organizationId' => ['required', 'integer', 'min:1'],
+            'perPage' => ['required', 'integer', 'between:1,'.self::CROSS_ESTIMATE_PAGE_SIZE],
+            'cursor' => ['nullable', 'string', 'max:2048'],
+        ])->validate();
+        $searchTerms = AssistantEstimateCrossSearchIntent::normalizeSearchTerms($search);
+        $exactCode = AssistantEstimateCrossSearchIntent::exactPositionCode($search);
+
+        return DB::transaction(function () use ($searchTerms, $exactCode, $organizationId, $actor, $perPage, $cursor): array {
+            if (DB::transactionLevel() === 1) {
+                DB::connection()->getPdo()->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+            }
+
+            return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use (
+                $searchTerms, $exactCode, $organizationId, $actor, $perPage, $cursor,
+            ): array {
+                if (! $this->access->canReadDomain($actor, $organizationId, 'estimates')
+                    || ! $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view')) {
+                    throw new AuthorizationException;
+                }
+
+                $fetchedAt = now()->toIso8601String();
+                if ($searchTerms === null && $exactCode === null) {
+                    if ($cursor !== null) {
+                        throw ValidationException::withMessages(['cursor' => [trans_message('ai_assistant_financial.unverified_claim')]]);
+                    }
+
+                    return ['matches' => [], 'fetched_at' => $fetchedAt, 'search_status' => 'no_search_terms',
+                        'search_complete' => false, 'has_more' => false, 'next_cursor' => null];
+                }
+
+                $searchIdentity = $exactCode === null ? (string) $searchTerms : 'code:'.$exactCode;
+                $afterPositionId = $this->decodeSearchCursor($cursor, $searchIdentity, $organizationId, $actor);
+                $estimateScope = $this->access->entityQuery($actor, $organizationId, 'estimate');
+                if ($estimateScope === null) {
+                    return ['matches' => [], 'fetched_at' => $fetchedAt, 'search_status' => 'no_matches',
+                        'search_complete' => true, 'has_more' => false, 'next_cursor' => null];
+                }
+
+                $candidates = EstimateItem::query()
+                    ->join('estimates', 'estimates.id', '=', 'estimate_items.estimate_id')
+                    ->where('estimates.organization_id', $organizationId)
+                    ->where(static function (Builder $scope) use ($organizationId): void {
+                        $scope->whereNull('estimates.project_id')->orWhereExists(static function ($projects) use ($organizationId): void {
+                            $projects->selectRaw('1')->from('projects')->whereColumn('projects.id', 'estimates.project_id')
+                                ->where('projects.organization_id', $organizationId);
+                        });
+                    })
+                    ->whereIn('estimates.id', $estimateScope->select('estimates.id'))
+                    ->where('estimate_items.id', '>', $afterPositionId ?? 0)
+                    ->where(function (Builder $searchQuery) use ($searchTerms, $exactCode): void {
+                        if ($exactCode !== null) {
+                            $searchQuery->whereRaw('upper(estimate_items.normative_rate_code) = ?', [$exactCode]);
+
+                            return;
+                        }
+
+                        $searchQuery->whereRaw("to_tsvector('russian', COALESCE(estimate_items.name, '')) @@ plainto_tsquery('russian', ?)", [$searchTerms]);
+                    })
+                    ->select([
+                        'estimate_items.id as position_id', 'estimate_items.estimate_id',
+                        'estimate_items.position_number', 'estimate_items.name as position_name',
+                        'estimate_items.normative_rate_code as position_code',
+                        'estimate_items.updated_at as position_updated_at',
+                        'estimates.number as estimate_number', 'estimates.name as estimate_name',
+                        'estimates.project_id', 'estimates.updated_at as estimate_updated_at',
+                    ])
+                    ->orderBy('estimate_items.id')
+                    ->sharedLock()
+                    ->limit(self::CROSS_ESTIMATE_CANDIDATE_LIMIT + 1)
+                    ->toBase()
+                    ->get();
+
+                $matches = [];
+                $projectFinance = [];
+                $lastScannedPositionId = $afterPositionId ?? 0;
+                $scanned = 0;
+                $knownMore = false;
+                foreach ($candidates as $candidate) {
+                    if ($scanned >= self::CROSS_ESTIMATE_CANDIDATE_LIMIT) {
+                        break;
+                    }
+
+                    $projectId = $candidate->project_id === null ? null : (int) $candidate->project_id;
+                    $canReadProject = $projectId === null;
+                    if ($projectId !== null) {
+                        $projectFinance[$projectId] ??= $this->canReadProjectFinance($authorization, $actor, $organizationId, $projectId);
+                        $canReadProject = $projectFinance[$projectId];
+                    }
+
+                    if ($canReadProject && count($matches) >= $perPage) {
+                        $knownMore = true;
+                        break;
+                    }
+
+                    $lastScannedPositionId = (int) $candidate->position_id;
+                    $scanned++;
+                    if (! $canReadProject) {
+                        continue;
+                    }
+
+                    $estimateId = (int) $candidate->estimate_id;
+                    $positionId = (int) $candidate->position_id;
+                    $estimate = ['id' => $estimateId, 'number' => (string) $candidate->estimate_number,
+                        'name' => (string) $candidate->estimate_name, 'project_id' => $projectId];
+                    $position = ['id' => $positionId, 'estimate_id' => $estimateId,
+                        'position_number' => (string) $candidate->position_number, 'name' => (string) $candidate->position_name,
+                        'normative_rate_code' => $candidate->position_code === null ? null : (string) $candidate->position_code];
+                    $position['version'] = hash('sha256', json_encode([
+                        'estimate_id' => $estimateId, 'position' => $position,
+                        'updated_at' => (string) $candidate->position_updated_at,
+                    ], JSON_THROW_ON_ERROR));
+
+                    $matches[] = ['estimate' => $estimate, 'position' => $position,
+                        'estimate_updated_at' => (string) $candidate->estimate_updated_at,
+                        'position_updated_at' => (string) $candidate->position_updated_at];
+                }
+
+                $searchComplete = ! $knownMore && $candidates->count() <= $scanned;
+                $hasMore = ! $searchComplete;
+                $nextCursor = $hasMore
+                    ? $this->encodeSearchCursor($lastScannedPositionId, $searchIdentity, $organizationId, $actor)
+                    : null;
+
+                return ['matches' => $matches, 'fetched_at' => $fetchedAt,
+                    'search_status' => $searchComplete ? ($matches === [] ? 'no_matches' : 'matches') : 'partial',
+                    'search_complete' => $searchComplete, 'has_more' => $hasMore, 'next_cursor' => $nextCursor];
+            }, true);
+        });
+    }
+
+    private function encodeSearchCursor(int $positionId, string $searchTerms, int $organizationId, User $actor): string
+    {
+        return Crypt::encryptString(json_encode([
+            'position_id' => $positionId,
+            'search_hash' => hash('sha256', $searchTerms),
+            'organization_id' => $organizationId,
+            'actor_id' => (int) $actor->id,
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    private function decodeSearchCursor(?string $cursor, string $searchTerms, int $organizationId, User $actor): ?int
+    {
+        if ($cursor === null) {
+            return null;
+        }
+
+        try {
+            $payload = json_decode(Crypt::decryptString($cursor), true, 16, JSON_THROW_ON_ERROR);
+        } catch (DecryptException|JsonException) {
+            throw ValidationException::withMessages(['cursor' => [trans_message('ai_assistant_financial.unverified_claim')]]);
+        }
+
+        if (! is_array($payload) || ! is_int($payload['position_id'] ?? null) || $payload['position_id'] < 0
+            || ($payload['search_hash'] ?? null) !== hash('sha256', $searchTerms)
+            || ($payload['organization_id'] ?? null) !== $organizationId
+            || ($payload['actor_id'] ?? null) !== (int) $actor->id) {
+            throw ValidationException::withMessages(['cursor' => [trans_message('ai_assistant_financial.unverified_claim')]]);
+        }
+
+        return $payload['position_id'];
     }
 
     public function canReadReference(User $actor, int $organizationId, array $reference): bool

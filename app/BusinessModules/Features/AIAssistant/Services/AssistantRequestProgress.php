@@ -15,27 +15,28 @@ final class AssistantRequestProgress
 
     public static function sanitize(mixed $events): array
     {
-        if (!is_array($events)) {
+        if (! is_array($events)) {
             return [];
         }
         $safe = [];
         $previousId = 0;
         foreach ($events as $event) {
-            if (!is_array($event) || !is_int($event['id'] ?? null) || $event['id'] <= $previousId
-                || !in_array($event['code'] ?? null, self::CODES, true)
-                || !in_array($event['state'] ?? null, ['started', 'completed'], true)) {
+            if (! is_array($event) || ! is_int($event['id'] ?? null) || $event['id'] <= $previousId
+                || ! in_array($event['code'] ?? null, self::CODES, true)
+                || ! in_array($event['state'] ?? null, ['started', 'completed'], true)) {
                 continue;
             }
             $previousId = $event['id'];
             $safe[] = ['id' => $event['id'], 'code' => $event['code'], 'state' => $event['state']];
         }
+
         return array_slice($safe, -self::MAX_EVENTS);
     }
 
     public static function append(mixed $events, string $code, string $state): array
     {
         $safe = self::sanitize($events);
-        if (!in_array($code, self::CODES, true) || !in_array($state, ['started', 'completed'], true)) {
+        if (! in_array($code, self::CODES, true) || ! in_array($state, ['started', 'completed'], true)) {
             throw new \InvalidArgumentException('Invalid assistant progress event');
         }
         $last = $safe === [] ? null : $safe[array_key_last($safe)];
@@ -43,6 +44,7 @@ final class AssistantRequestProgress
             return $safe;
         }
         $safe[] = ['id' => ($last['id'] ?? 0) + 1, 'code' => $code, 'state' => $state];
+
         return array_slice($safe, -self::MAX_EVENTS);
     }
 
@@ -56,10 +58,11 @@ final class AssistantRequestProgress
                 default => null,
             };
         }
+
         return match ($toolName) {
             'search_assistant_documents' => 'rag_search',
             'get_estimate_answer' => 'estimates',
-            'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions' => 'estimates',
+            'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions', 'search_estimate_positions' => 'estimates',
             'search_warehouse', 'get_material_stock' => 'warehouse',
             'search_projects', 'get_project_snapshot' => 'projects',
             'get_contract_snapshot' => 'contracts',
@@ -74,13 +77,14 @@ final class AssistantRequestProgress
 
     public static function toolCompleted(mixed $result): bool
     {
-        if (!is_array($result) || $result === [] || !empty($result['error'])
+        if (! is_array($result) || $result === [] || ! empty($result['error'])
             || ($result['success'] ?? true) === false || ($result['useful'] ?? true) === false) {
             return false;
         }
         if (isset($result['status'])) {
             return in_array($result['status'], ['success', 'resolved', 'completed'], true);
         }
-        return is_array($result['results'] ?? null) || !empty($result['source_refs']) || !empty($result['financial_evidence']);
+
+        return is_array($result['results'] ?? null) || ! empty($result['source_refs']) || ! empty($result['financial_evidence']);
     }
 }

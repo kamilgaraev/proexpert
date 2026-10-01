@@ -33,8 +33,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanne
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
-use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantMemoryService;
@@ -63,14 +63,19 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilde
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ChangeManagementRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CommercialProcessRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ConstructionJournalRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CrmRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateReferenceRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\HandoverAcceptanceRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\KnowledgeHubRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\MachineryRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PaymentRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PeopleRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PerformanceActRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProcurementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProductionLaborRagSource;
@@ -80,14 +85,9 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\QualityAndExec
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SafetyRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\TimeTrackingRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WarehouseRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WorkCompletionRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CommercialProcessRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CrmRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\KnowledgeHubRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PeopleRagSource;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\TimeTrackingRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantRagReportSourceRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposer;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
@@ -239,6 +239,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'resolve_estimate' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
                 'get_estimate_answer' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class,
                 'get_estimate_positions' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool::class,
+                'search_estimate_positions' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\SearchEstimatePositionsTool::class,
                 'get_estimate_financial_snapshot' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateFinancialSnapshotTool::class,
                 'create_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\CreateMeasurementUnitTool::class,
                 'update_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\UpdateMeasurementUnitTool::class,

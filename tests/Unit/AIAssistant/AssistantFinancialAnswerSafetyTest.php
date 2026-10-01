@@ -25,7 +25,8 @@ final class AssistantFinancialAnswerSafetyTest extends TestCase
         parent::setUp();
         $this->previousFacadeApplication = Facade::getFacadeApplication();
         $container = new Container;
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -87,7 +88,8 @@ final class AssistantFinancialAnswerSafetyTest extends TestCase
             'Что такое смета?', 'Как изменить статус сметы?', 'Оцени статус сметы'] as $query) {
             self::assertFalse($this->answers()->supports($query, 7), $query);
         }
-        foreach (['Сумма сметы', 'Покажи позиции сметы', 'SM-2026', 'Смета №SM-2026', 'По деньгам'] as $query) {
+        foreach (['Сумма сметы', 'Покажи позиции сметы', 'Покажи самую дорогую позицию в последней смете',
+            'SM-2026', 'Смета №SM-2026', 'По деньгам'] as $query) {
             self::assertTrue($this->answers()->supports($query, 7), $query);
         }
     }
@@ -127,6 +129,24 @@ final class AssistantFinancialAnswerSafetyTest extends TestCase
         self::assertSame(60, $sources[0]['position_count']);
         self::assertSame($evidence['version'], $sources[0]['version']);
         self::assertSame($evidence['aggregation'], $sources[0]['aggregation']);
+    }
+
+    public function test_highest_cost_position_uses_accounted_amounts_and_returns_all_ties(): void
+    {
+        $evidence = $this->evidence(4);
+        $evidence['positions'][0]['total_amount'] = '10.00';
+        $evidence['positions'][1]['total_amount'] = '100.00';
+        $evidence['positions'][2]['total_amount'] = '100.00';
+        $evidence['positions'][3]['total_amount'] = '9999.00';
+        $evidence['positions'][3]['included_in_total'] = false;
+
+        $answer = $this->answers()->format('Покажи самую дорогую позицию', $evidence);
+
+        self::assertStringContainsString('Максимальная сумма совпадает у этих учитываемых позиций', $answer);
+        self::assertStringContainsString('Позиция 2 — Работа 2', $answer);
+        self::assertStringContainsString('Позиция 3 — Работа 3', $answer);
+        self::assertStringNotContainsString('Позиция 1 — Работа 1', $answer);
+        self::assertStringNotContainsString('Позиция 4 — Работа 4', $answer);
     }
 
     public function test_proof_contains_only_shown_positions_with_authoritative_versions_and_generated_navigation(): void
