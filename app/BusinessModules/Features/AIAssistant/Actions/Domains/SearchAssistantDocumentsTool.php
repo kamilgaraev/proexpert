@@ -5,15 +5,20 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Actions\Domains;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Throwable;
 
 final readonly class SearchAssistantDocumentsTool implements AIToolInterface
 {
@@ -23,6 +28,7 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         private AssistantDataAccessPolicy $access,
         private AIPermissionChecker $permissions,
         private AssistantToolArgumentValidator $arguments,
+        private AssistantDocumentCoverageService $coverage,
     ) {}
 
     public function getName(): string
@@ -61,6 +67,21 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         }
         $context = array_filter(array_intersect_key($arguments, array_flip(['project_id', 'source_types', 'limit'])),
             static fn (mixed $value): bool => $value !== null);
+        $coverage = fn (): array => $this->coverage->coverage((int) $organization->id, $user,
+            $execution === null ? null : $execution->assertCanContinue(...),
+            $execution === null ? null : fn (): int => $execution->remainingMilliseconds());
+        try {
+            $coverageResult = $execution === null ? $coverage() : $execution->withDatabaseStatementTimeout(
+                fn (): array => $execution->withOperationBudget($coverage, 30_000, 'pgsql'));
+        } catch (AssistantRequestCancelled|AssistantRequestDeadlineExceeded|AuthorizationException|AccessDeniedHttpException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            return self::responseForIncompleteCorpus();
+        }
+        if (! AssistantDocumentCoverageService::isCompleteForAnswer($coverageResult)) {
+            return self::responseForIncompleteCorpus();
+        }
+
         $search = fn (): array => $this->retriever->searchWithDiagnostics($arguments['query'], (int) $organization->id, $user, $context,
             $execution === null ? null : $execution->assertCanContinue(...),
             $execution === null ? null : fn (callable $read): mixed => $execution->withOperationBudget($read, 30_000, 'pgsql'),
@@ -70,24 +91,42 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         return self::responseForSearch($this->prompts->build('', $searchResult['results']), $searchResult['diagnostics']);
     }
 
+    public static function hasCompleteDocumentCoverage(array $coverage): bool
+    {
+        return AssistantDocumentCoverageService::isCompleteForAnswer($coverage);
+    }
+
+    public static function responseForIncompleteCorpus(): array
+    {
+        return [
+            'status' => 'corpus_incomplete',
+            'reason' => 'document_corpus_incomplete',
+            'error' => trans_message('ai_assistant.document_corpus_incomplete'),
+            'source_refs' => [],
+            'fetched_at' => now()->toISOString(),
+        ];
+    }
+
     public static function responseForSearch(array $documentContext, array $diagnostics): array
     {
         $available = ($diagnostics['status'] ?? null) === 'available';
-        $partial = ($diagnostics['status'] ?? null) === 'partial' && ($documentContext['metadata']['sources'] ?? []) !== [];
-        $status = $available ? 'success' : ($partial ? 'partial' : 'unavailable');
+        $status = $available ? 'success' : (($diagnostics['status'] ?? null) === 'partial' ? 'partial' : 'unavailable');
         $safeDiagnostics = ['semantic_available' => ($diagnostics['semantic_available'] ?? false) === true,
             'lexical_used' => ($diagnostics['lexical_used'] ?? false) === true];
         if (!$available) {
             $safeDiagnostics['error_code'] = 'rag_query_embedding_unavailable';
         }
         unset($documentContext['metadata']['query']);
-        if ($status === 'unavailable') {
-            return ['status' => $status, 'reason' => 'rag_search_unavailable', 'error' => trans_message('ai_assistant.document_search_unavailable'),
-                'search_diagnostics' => $safeDiagnostics, 'source_refs' => [], 'fetched_at' => now()->toISOString()];
+        if ($status !== 'success') {
+            $noticeKey = $status === 'partial' ? 'ai_assistant.document_search_partial' : 'ai_assistant.document_search_unavailable';
+            return ['status' => $status, 'reason' => $status === 'partial' ? 'rag_search_partial' : 'rag_search_unavailable',
+                'error' => trans_message($noticeKey),
+                'search_notice' => trans_message($noticeKey), 'search_diagnostics' => $safeDiagnostics,
+                'source_refs' => [], 'fetched_at' => now()->toISOString()];
         }
 
         return ['status' => $status, 'document_context' => $documentContext['prompt'],
-            'search_diagnostics' => $safeDiagnostics, 'search_notice' => $partial ? trans_message('ai_assistant.document_search_partial') : null,
+            'search_diagnostics' => $safeDiagnostics, 'search_notice' => null,
             'rag_context' => $documentContext['metadata'], 'source_refs' => array_map(
                 static fn (array $source): array => array_diff_key($source, array_flip(['excerpt', 'score', 'content', 'metadata'])),
                 $documentContext['metadata']['sources']),

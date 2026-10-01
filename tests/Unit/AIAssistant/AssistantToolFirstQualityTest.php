@@ -660,7 +660,56 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame('service_error', $response['message']['metadata']['outcome']);
     }
 
-    public function test_partial_document_search_preserves_sources_and_exposes_search_limit(): void
+    public function test_incomplete_document_corpus_replaces_document_only_summary_with_deterministic_notice(): void
+    {
+        $incomplete = ['status' => 'corpus_incomplete', 'document_context' => 'private_partial_document_summary',
+            'rag_context' => ['sources' => [['entity_type' => 'file_document', 'entity_id' => '12']]],
+            'source_refs' => [['entity_type' => 'file_document', 'entity_id' => '12', 'organization_id' => 15]]];
+        $service = $this->service(['search_assistant_documents' => $incomplete], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('search_assistant_documents')]],
+            ['content' => 'Вот частичное резюме из документов.'],
+        ]);
+
+        $response = $service->ask('Перескажи условия из загруженных документов.', 15, $this->actor(), 7);
+
+        $metadata = $response['message']['metadata'];
+        $this->assertSame(trans_message('ai_assistant.document_corpus_incomplete'), $response['message']['content']);
+        $this->assertSame([], $metadata['source_refs']);
+        $this->assertFalse($metadata['rag_context']['used']);
+        $this->assertSame([], $metadata['rag_context']['sources']);
+        $this->assertTrue($metadata['degraded_mode']);
+        $this->assertStringNotContainsString('private_partial_document_summary', $response['message']['content']);
+    }
+
+    public function test_incomplete_document_corpus_preserves_only_verified_non_document_answer(): void
+    {
+        $stockAnswer = 'Остатки бетона проверены.';
+        $stockRef = ['entity_type' => 'warehouse_balance', 'entity_id' => 41, 'organization_id' => 15];
+        $incomplete = ['status' => 'corpus_incomplete', 'document_context' => 'private_partial_document_summary',
+            'rag_context' => ['sources' => [['entity_type' => 'file_document', 'entity_id' => '12']]],
+            'source_refs' => [['entity_type' => 'file_document', 'entity_id' => '12', 'organization_id' => 15]]];
+        $service = $this->service([
+            'search_assistant_documents' => $incomplete,
+            'get_material_stock' => ['status' => 'success', 'source_refs' => [$stockRef], 'stock_evidence' => ['version' => 'stock-v1']],
+        ], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('search_assistant_documents'), $this->toolCall('get_material_stock')]],
+            ['content' => 'В документах найдено правило; складские остатки равны 0.'],
+        ]);
+        $service->verifiedStock = ['text' => $stockAnswer, 'validation_status' => 'verified', 'source_refs' => [$stockRef],
+            'replaced' => true, 'needs_clarification' => false];
+
+        $response = $service->ask('Найди правило по бетону в документах и проверь остатки.', 15, $this->actor(), 7);
+
+        $metadata = $response['message']['metadata'];
+        $this->assertSame($stockAnswer."\n\n".trans_message('ai_assistant.document_corpus_incomplete'), $response['message']['content']);
+        $this->assertSame([$stockRef], $metadata['source_refs']);
+        $this->assertFalse($metadata['rag_context']['used']);
+        $this->assertSame([], $metadata['rag_context']['sources']);
+        $this->assertStringNotContainsString('private_partial_document_summary', $response['message']['content']);
+        $this->assertStringNotContainsString('В документах найдено правило', $response['message']['content']);
+    }
+
+    public function test_partial_document_search_returns_notice_without_document_excerpts(): void
     {
         $source = ['entity_type' => 'knowledge_article', 'entity_id' => '11', 'excerpt' => 'Проверьте комплектность.'];
         $partial = SearchAssistantDocumentsTool::responseForSearch(['prompt' => 'Проверьте комплектность.',
@@ -671,10 +720,11 @@ final class AssistantToolFirstQualityTest extends TestCase
 
         $response = $service->ask('Перескажи правила из статьи.', 15, $this->actor(), 7);
 
-        $this->assertStringContainsString('Проверьте комплектность [1].', $response['message']['content']);
-        $this->assertStringContainsString(trans_message('ai_assistant.document_search_partial'), $response['message']['content']);
-        $this->assertSame('11', $response['message']['metadata']['source_refs'][0]['entity_id']);
-        $this->assertTrue($response['message']['metadata']['rag_context']['used']);
+        $this->assertSame(trans_message('ai_assistant.document_search_partial'), $response['message']['content']);
+        $this->assertSame([], $response['message']['metadata']['source_refs']);
+        $this->assertFalse($response['message']['metadata']['rag_context']['used']);
+        $this->assertSame([], $response['message']['metadata']['rag_context']['sources']);
+        $this->assertStringNotContainsString('Проверьте комплектность', $response['message']['content']);
         $this->assertTrue($response['message']['metadata']['degraded_mode']);
     }
 
