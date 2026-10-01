@@ -87,7 +87,8 @@ class ProjectPulseContractFactSource implements ProjectPulseFactSourceInterface
         }
 
         return $this->table($context, 'contract_performance_acts')
-            ->whereIn('contract_performance_acts.status', ['draft', 'pending', 'approval_pending', 'waiting_signature'])
+            ->where('contract_performance_acts.is_approved', false)
+            ->whereIn('contract_performance_acts.status', ['draft', 'pending_approval', 'pending', 'approval_pending', 'waiting_signature'])
             ->limit($this->limit())
             ->get($columns)
             ->map(fn ($row) => new ProjectPulseFact(

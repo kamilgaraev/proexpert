@@ -344,6 +344,9 @@ final class AssistantRequestLifecycle
             $this->assertActive($current, $actor);
             $reservation = $this->reservation($current);
             $spent = $this->credits->successfulCostMicroRub($reservation);
+            if ($reservation->status !== 'reserved') {
+                throw new AssistantRequestCancelled();
+            }
             $next = $this->credits->costMicroRub($inputTokens, $outputTokens, $reservation);
             if ($current->calls_used >= $current->max_calls || $spent + $next > $this->credits->approvedCostMicroRub($reservation)
                 || in_array($current->error_code, ['token_calibration_unavailable', 'token_input_limit_exceeded'], true)) {
@@ -384,6 +387,17 @@ final class AssistantRequestLifecycle
     public function limits(AssistantRequest $request): array
     {
         return $this->credits->limits($this->reservation($request));
+    }
+
+    public function assertReservedBudget(AssistantRequest $request, User $actor): void
+    {
+        $this->assertActive($request, $actor);
+        $reservation = $this->reservation($request);
+        if ($reservation->status !== 'reserved' || (int) $reservation->organization_id !== (int) $request->organization_id
+            || (int) $reservation->user_id !== (int) $actor->id || $request->approved_max_minor <= 0
+            || (int) $request->approved_max_minor !== $this->credits->approvedMaximumMinor($reservation)) {
+            throw new AssistantRequestCancelled();
+        }
     }
 
     public function complete(AssistantRequest $request, User $actor, array $response, bool $useful = true, ?callable $onPublished = null): array
@@ -443,7 +457,7 @@ final class AssistantRequestLifecycle
     {
         if (!AssistantRequest::query()->where('request_id', $requestId)->where('organization_id', $organizationId)->where('user_id', $actor->id)->exists()) {
             $quote = $this->ownedQuote($requestId, $actor, $organizationId);
-            return ['request_id' => $requestId, 'conversation_id' => null, 'status' => 'queued', 'stage' => 'queued', 'calls_used' => 0, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0), 'progress' => []];
+            return ['request_id' => $requestId, 'conversation_id' => null, 'status' => 'not_submitted', 'stage' => 'not_submitted', 'quote_expires_at' => $quote->expires_at->toAtomString(), 'calls_used' => 0, 'max_calls' => (int) ($quote->limits['max_calls'] ?? 0), 'progress' => []];
         }
         $request = $this->ownedRequest($requestId, $actor, $organizationId);
         $this->assertSurface($request, $surface);
@@ -571,6 +585,23 @@ final class AssistantRequestLifecycle
         return AssistantRequest::query()->whereNotNull('payload')->where('status', '!=', 'running')
             ->where('created_at', '<=', now()->subDays(90))->orderBy('id')->limit($batch)
             ->get()->each(fn (AssistantRequest $request) => $request->forceFill(['payload' => null])->save())->count();
+    }
+
+    public function recoverQueued(int $batch = 100): int
+    {
+        $count = 0;
+        $requests = AssistantRequest::query()->where('status', 'running')->where('stage', 'queued')
+            ->whereNull('started_at')->whereNull('cancel_requested_at')->whereNotNull('payload')
+            ->where('lease_expires_at', '>', now())->orderBy('id')->limit($batch)->get();
+        foreach ($requests as $request) {
+            try {
+                \App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob::dispatch((int) $request->id)->afterCommit();
+                $count++;
+            } catch (Throwable $exception) {
+                Log::warning('ai.assistant.queue_recovery_failed', ['request_id' => $request->request_id, 'exception_class' => $exception::class]);
+            }
+        }
+        return $count;
     }
 
     private function assertActive(AssistantRequest $request, User $actor): void

@@ -11,10 +11,12 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseR
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 class ProjectPulseAiSynthesizerTest extends TestCase
 {
-    public function test_empty_ai_recommendations_do_not_hide_rule_recommendations(): void
+    #[DataProvider('fallbackModes')]
+    public function test_empty_ai_recommendations_do_not_hide_rule_recommendations(bool $useAi, bool $available, string $status): void
     {
         $container = new Container();
         $container->instance('config', new Repository([
@@ -46,11 +48,16 @@ class ProjectPulseAiSynthesizerTest extends TestCase
                 nextAction: 'Обновить график, ответственного и следующий контрольный срок.',
             ),
         ]);
+        for ($index = 0; $index < 12; $index++) {
+            $facts->prepend(new ProjectPulseFact(id: 'warning-'.$index, type: 'schedule_task', priority: 'warning',
+                title: 'Предупреждение', text: 'Проверить срок', category: 'schedule', source: 'schedule', nextAction: 'Проверить'));
+        }
 
         $ruleEngine = new ProjectPulseRuleEngine();
         $ruleRecommendations = $ruleEngine->recommendations($facts);
         $synthesizer = new ProjectPulseAiSynthesizer(
-            new class implements LLMProviderInterface {
+            new class($available) implements LLMProviderInterface {
+                public function __construct(private bool $available) {}
                 public function chat(array $messages, array $options = []): array
                 {
                     return [
@@ -71,7 +78,7 @@ class ProjectPulseAiSynthesizerTest extends TestCase
 
                 public function isAvailable(): bool
                 {
-                    return true;
+                    return $this->available;
                 }
 
                 public function getModel(): string
@@ -85,15 +92,22 @@ class ProjectPulseAiSynthesizerTest extends TestCase
         $result = $synthesizer->synthesize(
             $facts,
             $ruleRecommendations,
-            true,
+            $useAi,
             [],
             [],
             null,
         );
 
         self::assertNotEmpty($result['recommendations']);
+        self::assertCount(12, $result['recommendations']);
+        self::assertSame($status, $result['ai_mode']['status']);
         self::assertSame('rules:schedule_task:56:overdue', $result['recommendations'][0]['id']);
         self::assertSame('Обновить график, ответственного и следующий контрольный срок.', $result['recommendations'][0]['action']);
+    }
+
+    public static function fallbackModes(): array
+    {
+        return [[true, true, 'active'], [false, true, 'rules_only'], [true, false, 'unavailable']];
     }
 
     protected function tearDown(): void

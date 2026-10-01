@@ -276,6 +276,20 @@ class AssistantActionService
         if ($entity === null) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.tool_access_denied', 'Недостаточно прав для выполнения действия.'));
         }
+        if ($toolName === 'create_schedule_task') {
+            if ((int) $entity->project_id !== (int) ($arguments['project_id'] ?? 0)) {
+                throw new AuthorizationException(trans_message('ai_assistant.tool_access_denied'));
+            }
+            if (isset($arguments['parent_task_id'])) {
+                $parent = \App\Models\ScheduleTask::query()->whereKey($arguments['parent_task_id'])
+                    ->where('organization_id', $organizationId)->where('schedule_id', $entity->id)
+                    ->whereIn('task_type', ['summary', 'container'])->lockForUpdate()->first();
+                if ($parent === null) {
+                    throw new AuthorizationException(trans_message('ai_assistant.tool_access_denied'));
+                }
+                return ['schedule' => $entity->getAttributes(), 'parent' => $parent->getAttributes()];
+            }
+        }
         return $entity->getAttributes();
     }
 

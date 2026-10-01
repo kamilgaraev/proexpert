@@ -175,7 +175,7 @@ class AIPermissionChecker
                 return false;
             }
         }
-        foreach (['project_id' => 'project', 'contract_id' => 'contract', 'task_id' => 'schedule_task', 'schedule_id' => 'schedule', 'payment_document_id' => 'payment_document', 'measurement_unit_id' => 'measurement_unit', 'measurement_id' => 'measurement_unit', 'warehouse_id' => 'warehouse', 'material_id' => 'material', 'user_id' => 'user'] as $key => $type) {
+        foreach (['project_id' => 'project', 'contract_id' => 'contract', 'task_id' => 'schedule_task', 'parent_task_id' => 'schedule_task', 'schedule_id' => 'schedule', 'payment_document_id' => 'payment_document', 'measurement_unit_id' => 'measurement_unit', 'measurement_id' => 'measurement_unit', 'warehouse_id' => 'warehouse', 'material_id' => 'material', 'user_id' => 'user'] as $key => $type) {
             if (isset($params[$key]) && ! $policy->canReadEntity($user, $organizationId, $type, (string) $params[$key])) {
                 return false;
             }
@@ -189,6 +189,14 @@ class AIPermissionChecker
         if (isset($params['schedule_id'], $params['project_id'])) {
             $schedule = $policy->entityQuery($user, $organizationId, 'schedule');
             if ($schedule === null || ! $schedule->whereKey($params['schedule_id'])->where('project_id', $params['project_id'])->exists()) {
+                return false;
+            }
+        }
+        if ($toolName === 'create_schedule_task' && isset($params['parent_task_id'])) {
+            $parent = $policy->entityQuery($user, $organizationId, 'schedule_task');
+            if (! isset($params['schedule_id'], $params['project_id']) || $parent === null
+                || ! $parent->whereKey($params['parent_task_id'])->where('schedule_id', $params['schedule_id'])
+                    ->whereIn('task_type', ['summary', 'container'])->exists()) {
                 return false;
             }
         }

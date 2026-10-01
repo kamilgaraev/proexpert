@@ -20,6 +20,7 @@ final class AssistantActionPreviewRequest extends FormRequest
             'action' => ['required', 'array'],
             'action.tool_name' => ['required', 'string', 'max:120'],
             'action.arguments' => ['required', 'array'],
+            'action.origin_request_id' => ['sometimes', 'nullable', 'uuid'],
         ];
     }
 }

@@ -121,15 +121,24 @@ class GetProjectSnapshotTool extends AbstractReadOnlyTool
     private function contractSummary(Organization $organization, int $projectId, User $user): array
     {
         if (!$this->hasTable('contracts')) {
-            return ['count' => 0, 'total_amount' => 0.0];
+            return ['count' => 0, 'total_amount' => 0.0, 'currency' => null, 'amounts_by_currency' => []];
         }
 
         $query = $this->withoutDeleted($this->actorTable($user, 'contracts', $organization), 'contracts')
             ->where('contracts.project_id', $projectId);
 
+        $currency = $this->hasColumn('contracts', 'currency') ? "UPPER(NULLIF(TRIM(contracts.currency), ''))" : 'NULL';
+        $amounts = (clone $query)->selectRaw("{$currency} AS currency, SUM(contracts.total_amount) AS total_amount")
+            ->groupByRaw($currency)->orderBy('currency')->get()->map(static fn ($row): array => [
+                'currency' => $row->currency,
+                'total_amount' => round((float) $row->total_amount, 2),
+            ])->all();
+
         return [
             'count' => (clone $query)->count(),
-            'total_amount' => round((float) (clone $query)->sum('total_amount'), 2),
+            'total_amount' => count($amounts) <= 1 ? ($amounts[0]['total_amount'] ?? 0.0) : null,
+            'currency' => count($amounts) === 1 ? $amounts[0]['currency'] : null,
+            'amounts_by_currency' => $amounts,
         ];
     }
 

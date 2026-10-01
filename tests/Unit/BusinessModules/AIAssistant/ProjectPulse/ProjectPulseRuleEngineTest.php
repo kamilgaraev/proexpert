@@ -10,6 +10,18 @@ use PHPUnit\Framework\TestCase;
 
 class ProjectPulseRuleEngineTest extends TestCase
 {
+    public function test_critical_recommendation_precedes_limit_after_twelve_warnings(): void
+    {
+        $facts = collect();
+        for ($index = 0; $index < 13; $index++) {
+            $facts->push(new ProjectPulseFact(id: 'fact:'.$index, type: 'risk', priority: $index === 12 ? 'critical' : 'warning',
+                title: 'Риск', text: 'Проверить риск', source: 'schedule', category: 'schedule', nextAction: 'Проверить сроки'));
+        }
+        $recommendations = (new ProjectPulseRuleEngine)->recommendations($facts);
+        self::assertCount(12, $recommendations);
+        self::assertSame('rules:fact:12', $recommendations->first()->id);
+        self::assertSame('high', $recommendations->first()->priority);
+    }
     public function test_engine_builds_categories_groups_and_next_actions(): void
     {
         $facts = collect([
