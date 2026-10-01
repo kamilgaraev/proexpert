@@ -62,7 +62,9 @@ final class AssistantStructuredFactFormatter
         $attributes = $model->attributesToArray();
         $values = [];
         foreach (array_intersect($returnedFields, array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'))) as $field) {
-            if (in_array($field, ['description', 'notes', 'content_plain_text'], true)) { continue; }
+            if (in_array($field, ['description', 'notes', 'content_plain_text'], true)) {
+                continue;
+            }
             if (! array_key_exists($field, $attributes)) {
                 continue;
             }
@@ -134,7 +136,7 @@ final class AssistantStructuredFactFormatter
         return ['structured_fact_evidence' => $evidence, 'server_formatted_facts' => implode("\n", $lines), 'validation_status' => 'partial'];
     }
 
-    public static function presentation(array $rows, ?string $query = null): string
+    public static function presentation(array $rows, ?string $query = null, bool $compositionScopeResolved = false): string
     {
         $requestedFields = [];
         foreach (AssistantFactIntentClassifier::requirements($query ?? '') as $fields) {
@@ -152,7 +154,7 @@ final class AssistantStructuredFactFormatter
         $allowedFields = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
         $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
         $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
-        $lines = [trans_message('ai_assistant_facts.returned_scope')];
+        $lines = $compositionScopeResolved ? [] : [trans_message('ai_assistant_facts.returned_scope')];
         $presentationRows = array_slice($rows, 0, self::MAX_ROWS);
         foreach ($presentationRows as $row) {
             $fields = $row['fields'];
