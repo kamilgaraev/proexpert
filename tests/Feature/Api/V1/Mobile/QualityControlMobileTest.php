@@ -13,6 +13,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Mobile\MobileDashboardService;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -220,20 +221,54 @@ final class QualityControlMobileTest extends TestCase
         $defect = $this->createDefect($context, $project, 'in_progress', 'minor', [
             'inspection_required' => false,
         ]);
-        $storedPath = "org-{$context->organization->id}/quality-control/defects/{$defect->id}/result.jpg";
         $previewUrl = 'https://storage.example/signed/quality-result.jpg';
+        $file = UploadedFile::fake()->image('result.jpg', 120, 90);
+        $contents = (string) $file->get();
+        $mime = $file->getMimeType();
+        $sha256 = hash('sha256', $contents);
+        $etag = hash('md5', $contents);
+        $storedPath = null;
 
-        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath, $previewUrl): void {
-            $mock->shouldReceive('upload')
+        $this->mock(FileService::class, function (MockInterface $mock) use (
+            $contents,
+            $etag,
+            $mime,
+            $previewUrl,
+            $sha256,
+            &$storedPath,
+        ): void {
+            $mock->shouldNotReceive('upload');
+            $mock->shouldReceive('putPrivate')
                 ->once()
-                ->andReturn($storedPath);
+                ->withArgs(function (string $key, mixed $stream, string $actualMime, string $actualSha256) use (
+                    $contents,
+                    $mime,
+                    $sha256,
+                    &$storedPath,
+                ): bool {
+                    self::assertTrue(is_resource($stream));
+                    self::assertSame($contents, stream_get_contents($stream));
+                    rewind($stream);
+                    self::assertSame($mime, $actualMime);
+                    self::assertSame($sha256, $actualSha256);
+                    $storedPath = $key;
+
+                    return true;
+                })
+                ->andReturnUsing(static function (
+                    string $key,
+                    mixed $stream,
+                    string $actualMime,
+                    string $actualSha256,
+                ) use ($contents, $etag): CurrentStoredFile {
+                    return new CurrentStoredFile($key, $etag, strlen($contents), $actualSha256, $actualMime);
+                });
             $mock->shouldReceive('temporaryUrl')
                 ->atLeast()
                 ->once()
                 ->andReturn($previewUrl);
         });
 
-        $file = UploadedFile::fake()->image('result.jpg', 120, 90);
         $headers = [
             ...$context->mobileAuthHeaders(),
             'Idempotency-Key' => 'quality-resolve-photo-20260928',
@@ -481,13 +516,48 @@ final class QualityControlMobileTest extends TestCase
         $defect = $this->createDefect($context, $project, 'in_progress', 'critical', [
             'inspection_required' => true,
         ]);
-        $storedPath = "org-{$context->organization->id}/quality-control/defects/{$defect->id}/result.jpg";
         $previewUrl = 'https://storage.example/signed/quality-result.jpg';
+        $file = UploadedFile::fake()->image('result.jpg');
+        $contents = (string) $file->get();
+        $mime = $file->getMimeType();
+        $sha256 = hash('sha256', $contents);
+        $etag = hash('md5', $contents);
+        $storedPath = null;
 
-        $this->mock(FileService::class, function (MockInterface $mock) use ($storedPath, $previewUrl): void {
-            $mock->shouldReceive('upload')
+        $this->mock(FileService::class, function (MockInterface $mock) use (
+            $contents,
+            $etag,
+            $mime,
+            $previewUrl,
+            $sha256,
+            &$storedPath,
+        ): void {
+            $mock->shouldNotReceive('upload');
+            $mock->shouldReceive('putPrivate')
                 ->once()
-                ->andReturn($storedPath);
+                ->withArgs(function (string $key, mixed $stream, string $actualMime, string $actualSha256) use (
+                    $contents,
+                    $mime,
+                    $sha256,
+                    &$storedPath,
+                ): bool {
+                    self::assertTrue(is_resource($stream));
+                    self::assertSame($contents, stream_get_contents($stream));
+                    rewind($stream);
+                    self::assertSame($mime, $actualMime);
+                    self::assertSame($sha256, $actualSha256);
+                    $storedPath = $key;
+
+                    return true;
+                })
+                ->andReturnUsing(static function (
+                    string $key,
+                    mixed $stream,
+                    string $actualMime,
+                    string $actualSha256,
+                ) use ($contents, $etag): CurrentStoredFile {
+                    return new CurrentStoredFile($key, $etag, strlen($contents), $actualSha256, $actualMime);
+                });
             $mock->shouldReceive('temporaryUrl')
                 ->atLeast()
                 ->once()
@@ -499,7 +569,7 @@ final class QualityControlMobileTest extends TestCase
                 'photos' => [
                     [
                         'type' => 'after',
-                        'file' => UploadedFile::fake()->image('result.jpg'),
+                        'file' => $file,
                     ],
                 ],
             ]);
