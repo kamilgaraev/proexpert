@@ -167,6 +167,35 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertStringNotContainsString('Непроверенное зеркало', $result['text']);
     }
 
+    public function test_unknown_estimate_composition_returns_clarification_without_claiming_empty(): void
+    {
+        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100, ['project_id' => 16]);
+        $position = $this->payload('estimate_item', ['name' => 'Монтаж оборудования', 'position_number' => '1'], 200,
+            ['estimate_id' => 100, 'project_id' => 16]);
+        $rows = [
+            $estimate['structured_fact_evidence']['rows'][0],
+            $position['structured_fact_evidence']['rows'][0],
+        ];
+        $resultPayload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $resultPayload['composition'] = [
+            'status' => 'unknown',
+            'scope' => 'resources',
+            'position_id' => 200,
+            'total' => null,
+            'items' => [],
+        ];
+        $resultPayload['needs_clarification'] = true;
+
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'Состав пустой.', [$resultPayload],
+        );
+
+        $this->assertSame(trans_message('ai_assistant_facts.composition_unverified'), $result['text']);
+        $this->assertTrue($result['needs_clarification']);
+        $this->assertSame([], $result['source_refs']);
+        $this->assertTrue($result['replaced']);
+    }
+
     public function test_estimate_composition_requires_live_proof_for_resource_requests(): void
     {
         $result = (new AssistantStructuredFactVerifier)->guard(

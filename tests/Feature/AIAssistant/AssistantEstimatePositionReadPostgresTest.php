@@ -274,6 +274,56 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertStringNotContainsString('Непроверенное зеркало удалённого дочернего ресурса', json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
     }
 
+    public function test_unreviewed_only_composition_is_unknown_but_genuinely_empty_composition_is_confirmed_empty(): void
+    {
+        $unreviewedEstimate = $this->estimate('SM-UNREVIEWED-ONLY', 'Непроверенный состав');
+        $unreviewedPosition = $this->item($unreviewedEstimate, '1', 'Монтаж оборудования');
+        EstimateItemResource::query()->create([
+            'estimate_item_id' => $unreviewedPosition->id,
+            'resource_type' => 'material',
+            'name' => 'Непроверенное зеркало ресурса',
+            'measurement_unit_id' => null,
+            'quantity_per_unit' => '1.0000',
+            'total_quantity' => '2.0000',
+            'unit_price' => '5.00',
+            'total_amount' => '10.00',
+            'finance_representation' => 'unreviewed',
+            'represented_by_item_id' => null,
+        ]);
+
+        $unknown = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $unreviewedEstimate->id,
+            'position_id' => $unreviewedPosition->id,
+            'include_composition' => true,
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($unknown);
+        self::assertSame('unknown', $unknown['composition']['status']);
+        self::assertNull($unknown['composition']['total']);
+        self::assertSame([], $unknown['composition']['items']);
+        self::assertTrue($unknown['needs_clarification']);
+        self::assertArrayNotHasKey('composition_page', $unknown['structured_fact_evidence']);
+        self::assertCount(0, array_filter($unknown['source_refs'], static fn (array $reference): bool =>
+            ($reference['entity_type'] ?? null) === 'estimate_item_resource'));
+        self::assertStringNotContainsString('Непроверенное зеркало ресурса', json_encode($unknown, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+
+        $emptyEstimate = $this->estimate('SM-EMPTY-COMPOSITION', 'Пустой состав');
+        $emptyPosition = $this->item($emptyEstimate, '1', 'Монтаж оборудования');
+        $empty = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $emptyEstimate->id,
+            'position_id' => $emptyPosition->id,
+            'include_composition' => true,
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($empty);
+        self::assertSame('returned', $empty['composition']['status']);
+        self::assertSame(0, $empty['composition']['total']);
+        self::assertSame([], $empty['composition']['items']);
+        self::assertFalse($empty['needs_clarification']);
+        self::assertSame(0, $empty['structured_fact_evidence']['composition_page']['total']);
+        self::assertTrue((new AssistantStructuredFactVerifier)->trustedEvidence($empty['structured_fact_evidence']));
+    }
+
     public function test_live_children_include_only_explicit_independent_normalized_resources(): void
     {
         $estimate = $this->estimate('SM-MIXED-RESOURCES', 'Состав с независимым ресурсом');

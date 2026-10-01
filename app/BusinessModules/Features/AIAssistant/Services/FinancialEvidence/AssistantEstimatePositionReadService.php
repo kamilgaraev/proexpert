@@ -587,6 +587,24 @@ final class AssistantEstimatePositionReadService
             ->whereNull('represented_by_item_id')
             ->whereHas('item', static fn (Builder $parent): Builder => $parent->where('estimate_id', $estimate->id));
         $total = (clone $query)->count();
+        if ($total === 0 && EstimateItemResource::query()->where('estimate_item_id', $item->id)
+            ->where('finance_representation', 'unreviewed')
+            ->whereHas('item', static fn (Builder $parent): Builder => $parent->where('estimate_id', $estimate->id))
+            ->exists()) {
+            return [
+                'status' => 'unknown',
+                'scope' => 'resources',
+                'position_id' => (int) $item->id,
+                'items' => [],
+                'total' => null,
+                'page' => $page,
+                'per_page' => $perPage,
+                'has_more' => null,
+                'next_page' => null,
+                'source_refs' => [],
+                'fact_rows' => [],
+            ];
+        }
         $rows = $query->with(['measurementUnit' => static fn (BelongsTo $units): BelongsTo => $units->where('organization_id', $organizationId)])
             ->orderBy('id')->sharedLock()
             ->offset(($page - 1) * $perPage)->limit($perPage + 1)->get();

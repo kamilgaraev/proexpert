@@ -19,6 +19,13 @@ final class AssistantStructuredFactVerifier
             && ! $compositionIntent) {
             return ['text' => $text, 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => false, 'needs_clarification' => false];
         }
+        if ($compositionIntent && $this->hasUnknownComposition($toolResults)) {
+            $clarification = trans_message('ai_assistant_facts.composition_unverified');
+
+            return ['text' => $clarification, 'validation_status' => 'partial', 'source_refs' => [],
+                'replaced' => $text !== $clarification, 'needs_clarification' => true];
+        }
+
         return $this->verifiedResults($query, $text, $toolResults);
     }
 
@@ -360,6 +367,17 @@ final class AssistantStructuredFactVerifier
                 if (is_array($row) && ($row['entity_type'] ?? null) === 'estimate') {
                     return true;
                 }
+            }
+        }
+
+        return false;
+    }
+
+    private function hasUnknownComposition(array $toolResults): bool
+    {
+        foreach ($toolResults as $result) {
+            if (is_array($result) && ($result['composition']['status'] ?? null) === 'unknown') {
+                return true;
             }
         }
 

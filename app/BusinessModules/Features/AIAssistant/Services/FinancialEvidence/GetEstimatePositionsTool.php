@@ -135,6 +135,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
             'server_formatted_facts' => $facts['server_formatted_facts'],
             'structured_fact_evidence' => $facts['structured_fact_evidence'],
             'fetched_at' => $evidence['fetched_at'], 'validation_status' => $evidence['validation_status'],
-            'validation_scope' => $evidence['validation_scope'], 'needs_clarification' => false];
+            'validation_scope' => $evidence['validation_scope'],
+            'needs_clarification' => ($composition['status'] ?? null) === 'unknown'];
     }
 }
