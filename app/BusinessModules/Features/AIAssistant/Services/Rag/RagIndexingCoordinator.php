@@ -196,11 +196,16 @@ class RagIndexingCoordinator
     public function recoverExpiredRuns(): int
     {
         $cutoff = now();
-        $recoverQueued = RagQueueBacklog::isEmpty();
+        $queueName = (string) config('ai-assistant.rag.queue', 'ai-rag');
+        $liveQueueName = (string) config('ai-assistant.rag.live_queue', 'ai-rag-live');
+        $recoverBulkQueued = RagQueueBacklog::isQueueEmpty($queueName);
+        $recoverLiveQueued = $liveQueueName === $queueName
+            ? $recoverBulkQueued
+            : RagQueueBacklog::isQueueEmpty($liveQueueName);
         $runs = RagIndexRun::query()
             ->whereIn('status', [RagIndexRun::STATUS_QUEUED, RagIndexRun::STATUS_RUNNING])
-            ->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
-                $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued);
+            ->where(function (Builder $query) use ($cutoff, $recoverBulkQueued, $recoverLiveQueued): void {
+                $this->applyRecoveryEligibility($query, $cutoff, $recoverBulkQueued, $recoverLiveQueued);
             })
             ->orderBy('id')
             ->limit(25)
@@ -210,16 +215,18 @@ class RagIndexingCoordinator
         foreach ($runs as $run) {
             $updated = RagIndexRun::query()->whereKey($run->id)->where('updated_at', $run->updated_at)->where('status', $run->status)
                 ->where('last_error', $run->last_error)->where('lease_token', $run->lease_token)
-                ->where(function (Builder $query) use ($cutoff, $recoverQueued): void { $this->applyRecoveryEligibility($query, $cutoff, $recoverQueued); })->update([
-                'status' => RagIndexRun::STATUS_QUEUED,
-                'queued_at' => now(),
-                'started_at' => null,
-                'heartbeat_at' => null,
-                'lease_expires_at' => null,
-                'lease_token' => null,
-                'last_error' => RagDispatchIntent::pending(),
-                'updated_at' => now(),
-            ]);
+                ->where(function (Builder $query) use ($cutoff, $recoverBulkQueued, $recoverLiveQueued): void {
+                    $this->applyRecoveryEligibility($query, $cutoff, $recoverBulkQueued, $recoverLiveQueued);
+                })->update([
+                    'status' => RagIndexRun::STATUS_QUEUED,
+                    'queued_at' => now(),
+                    'started_at' => null,
+                    'heartbeat_at' => null,
+                    'lease_expires_at' => null,
+                    'lease_token' => null,
+                    'last_error' => RagDispatchIntent::pending(),
+                    'updated_at' => now(),
+                ]);
 
             if ($updated === 1) {
                 $recovered++;
@@ -557,24 +564,51 @@ class RagIndexingCoordinator
         return max(1, (int) config('ai-assistant.rag.lease_minutes', 15));
     }
 
-    private function applyRecoveryEligibility(Builder $query, Carbon $cutoff, bool $recoverQueued): void
+    private function applyRecoveryEligibility(Builder $query, Carbon $cutoff, bool $recoverBulkQueued, bool $recoverLiveQueued): void
     {
         $retryMinutes = max(1, min(4, (int) config('ai-assistant.rag.queued_retry_minutes', 2)));
-        $query->where(function (Builder $queued) use ($cutoff, $retryMinutes, $recoverQueued): void {
+        $query->where(function (Builder $states) use ($cutoff, $retryMinutes, $recoverBulkQueued, $recoverLiveQueued): void {
             $retryCutoff = $cutoff->copy()->subMinutes($retryMinutes);
-            $queued->where('status', RagIndexRun::STATUS_QUEUED)
-                ->when(! $recoverQueued, static function (Builder $query): void { RagDispatchIntent::scopePending($query); })
-                ->where(function (Builder $activity) use ($retryCutoff): void {
-                $activity->where('queued_at', '<=', $retryCutoff)->orWhere(function (Builder $legacy) use ($retryCutoff): void {
-                    $legacy->whereNull('queued_at');
-                    $this->applyLegacyActivityCutoff($legacy, $retryCutoff);
-                });
-            });
-        })->orWhere(function (Builder $running) use ($cutoff): void {
-            $running->where('status', RagIndexRun::STATUS_RUNNING)->where(function (Builder $lease) use ($cutoff): void {
-                $lease->where('lease_expires_at', '<=', $cutoff)->orWhere(function (Builder $legacy) use ($cutoff): void {
-                    $legacy->whereNull('lease_expires_at');
-                    $this->applyLegacyActivityCutoff($legacy, $cutoff->copy()->subMinutes($this->leaseMinutes()));
+            $states->where(function (Builder $queued) use ($retryCutoff, $recoverBulkQueued, $recoverLiveQueued): void {
+                $queued->where('status', RagIndexRun::STATUS_QUEUED)
+                    ->where(function (Builder $targetQueue) use ($recoverBulkQueued, $recoverLiveQueued): void {
+                        $targetQueue->where(function (Builder $bulkQueue) use ($recoverBulkQueued): void {
+                            $bulkQueue->where(function (Builder $target): void {
+                                $target->whereNull('entity_type')->orWhere(function (Builder $scheduled): void {
+                                    $scheduled->where('source_type', 'file_document')
+                                        ->where('entity_type', 'file')
+                                        ->where('mode', RagIndexRun::MODE_SCHEDULED);
+                                });
+                            });
+                            if (! $recoverBulkQueued) {
+                                RagDispatchIntent::scopePending($bulkQueue);
+                            }
+                        })->orWhere(function (Builder $liveQueue) use ($recoverLiveQueued): void {
+                            $liveQueue->whereNotNull('entity_type')
+                                ->where(function (Builder $notScheduled): void {
+                                    $notScheduled->whereNull('source_type')
+                                        ->orWhere('source_type', '!=', 'file_document')
+                                        ->orWhere('entity_type', '!=', 'file')
+                                        ->orWhereNull('mode')
+                                        ->orWhere('mode', '!=', RagIndexRun::MODE_SCHEDULED);
+                                });
+                            if (! $recoverLiveQueued) {
+                                RagDispatchIntent::scopePending($liveQueue);
+                            }
+                        });
+                    })
+                    ->where(function (Builder $activity) use ($retryCutoff): void {
+                        $activity->where('queued_at', '<=', $retryCutoff)->orWhere(function (Builder $legacy) use ($retryCutoff): void {
+                            $legacy->whereNull('queued_at');
+                            $this->applyLegacyActivityCutoff($legacy, $retryCutoff);
+                        });
+                    });
+            })->orWhere(function (Builder $running) use ($cutoff): void {
+                $running->where('status', RagIndexRun::STATUS_RUNNING)->where(function (Builder $lease) use ($cutoff): void {
+                    $lease->where('lease_expires_at', '<=', $cutoff)->orWhere(function (Builder $legacy) use ($cutoff): void {
+                        $legacy->whereNull('lease_expires_at');
+                        $this->applyLegacyActivityCutoff($legacy, $cutoff->copy()->subMinutes($this->leaseMinutes()));
+                    });
                 });
             });
         });

@@ -110,7 +110,7 @@ final class GlobalRagQueue
     public function recoverPending(): int
     {
         $cutoff = now();
-        $recoverQueued = RagQueueBacklog::isEmpty();
+        $recoverQueued = RagQueueBacklog::isQueueEmpty((string) config('ai-assistant.rag.live_queue', 'ai-rag-live'));
         $events = RagGlobalIndexEvent::query()->where(function (Builder $query) use ($cutoff, $recoverQueued): void {
             $this->recoveryScope($query, $cutoff, $recoverQueued);
         })->orderBy('id')->limit(25)->get();

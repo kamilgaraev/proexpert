@@ -42,6 +42,26 @@ final class RagDispatchIntentRecoveryTest extends TestCase
         return [['bulk'], ['live'], ['unavailable']];
     }
 
+    public static function recoveryQueueMappings(): array
+    {
+        return [['scheduled_file', 'bulk', 'live'], ['live_file', 'live', 'bulk']];
+    }
+
+    public static function recoveryQueueKinds(): array
+    {
+        return [['scheduled_file'], ['live_file']];
+    }
+
+    public static function targetQueueMappings(): array
+    {
+        return [['scheduled_file', 'bulk'], ['live_file', 'live']];
+    }
+
+    public static function globalQueueRecoveryScenarios(): array
+    {
+        return [['bulk', 1], ['live', 0], ['unavailable', 0]];
+    }
+
     #[DataProvider('busyQueues')]
     public function test_unsent_run_and_global_event_recover_while_other_queues_are_busy(string $busy): void
     {
@@ -78,16 +98,20 @@ final class RagDispatchIntentRecoveryTest extends TestCase
         self::assertSame(1, RagIndexRun::query()->where('organization_id', $organization->id)->count());
         self::assertSame(1, RagGlobalIndexEvent::query()->where('entity_id', (string) self::ENTITY_ID)->count());
         $this->travel(3)->minutes();
-        self::assertSame(0, $coordinator->recoverExpiredRuns());
-        self::assertSame(0, $global->recoverPending());
-        self::assertSame(4, $attempts);
+        $expectedRunRecovery = $busy === 'bulk' ? 1 : 0;
+        $expectedGlobalRecovery = $busy === 'bulk' ? 1 : 0;
+        self::assertSame($expectedRunRecovery, $coordinator->recoverExpiredRuns());
+        self::assertSame($expectedGlobalRecovery, $global->recoverPending());
+        self::assertSame(4 + $expectedRunRecovery + $expectedGlobalRecovery, $attempts);
     }
 
     #[DataProvider('busyQueues')]
-    public function test_accepted_jobs_and_worker_retries_do_not_bypass_busy_queue_guard(string $busy): void
+    public function test_accepted_jobs_and_worker_retries_respect_their_target_queue_guard(string $busy): void
     {
+        $expectedRunRecovery = $busy === 'bulk' ? 1 : 0;
+        $expectedGlobalRecovery = $busy === 'bulk' ? 1 : 0;
         $bus = $this->createMock(Dispatcher::class);
-        $bus->expects($this->exactly(2))->method('dispatch')->willReturn('accepted');
+        $bus->expects($this->exactly(2 + (($expectedRunRecovery + $expectedGlobalRecovery) * 2)))->method('dispatch')->willReturn('accepted');
         [$coordinator, $global, $organization] = $this->services($bus);
         $run = $coordinator->queueEntity($organization->id, null, 'estimate', 'estimate_item', self::ENTITY_ID);
         $event = $global->record('knowledge', 'knowledge_article', self::ENTITY_ID);
@@ -95,8 +119,8 @@ final class RagDispatchIntentRecoveryTest extends TestCase
         self::assertNull($event->fresh()->last_error);
         $this->busy($busy);
         $this->travel(3)->minutes();
-        self::assertSame(0, $coordinator->recoverExpiredRuns());
-        self::assertSame(0, $global->recoverPending());
+        self::assertSame($expectedRunRecovery, $coordinator->recoverExpiredRuns());
+        self::assertSame($expectedGlobalRecovery, $global->recoverPending());
         $claimed = $coordinator->markRunning($run->id);
         self::assertNotNull($claimed);
         $coordinator->releaseForRetry($run->id, $claimed->lease_token, new \RuntimeException('Worker retry'));
@@ -106,8 +130,8 @@ final class RagDispatchIntentRecoveryTest extends TestCase
         self::assertSame(\RuntimeException::class, $run->fresh()->last_error);
         self::assertSame(\RuntimeException::class, $event->fresh()->last_error);
         $this->travel(3)->minutes();
-        self::assertSame(0, $coordinator->recoverExpiredRuns());
-        self::assertSame(0, $global->recoverPending());
+        self::assertSame($expectedRunRecovery, $coordinator->recoverExpiredRuns());
+        self::assertSame($expectedGlobalRecovery, $global->recoverPending());
     }
 
     public function test_dispatch_marker_is_saved_before_commit_and_rolls_back_with_intent(): void
@@ -166,6 +190,74 @@ final class RagDispatchIntentRecoveryTest extends TestCase
         self::assertNotSame($oldEventMarker, $event->fresh()->last_error);
         self::assertSame(0, $coordinator->recoverExpiredRuns());
         self::assertSame(0, $global->recoverPending());
+    }
+
+    #[DataProvider('recoveryQueueMappings')]
+    public function test_stale_accepted_run_recovers_when_only_the_other_rag_queue_is_busy(string $runKind, string $targetQueue, string $busyQueue): void
+    {
+        $expectedQueueName = (string) config($targetQueue === 'bulk' ? 'ai-assistant.rag.queue' : 'ai-assistant.rag.live_queue');
+        $bus = $this->createMock(Dispatcher::class);
+        $bus->expects($this->once())->method('dispatch')->with(self::callback(static fn ($job): bool => $job instanceof IndexRagSourceJob && $job->queue === $expectedQueueName))->willReturn('accepted');
+        [$coordinator, , $organization] = $this->services($bus);
+        $run = $this->acceptedFileRun($organization->id, $runKind);
+        $this->busy($busyQueue);
+        $this->travel(3)->minutes();
+
+        self::assertSame(1, $coordinator->recoverExpiredRuns());
+        self::assertNull($run->fresh()->last_error);
+    }
+
+    #[DataProvider('targetQueueMappings')]
+    public function test_stale_accepted_run_stays_queued_when_its_target_queue_is_busy(string $runKind, string $targetQueue): void
+    {
+        $bus = $this->createMock(Dispatcher::class);
+        $bus->expects($this->never())->method('dispatch');
+        [$coordinator, , $organization] = $this->services($bus);
+        $run = $this->acceptedFileRun($organization->id, $runKind);
+        $this->busy($targetQueue);
+        $this->travel(3)->minutes();
+
+        self::assertSame(0, $coordinator->recoverExpiredRuns());
+        self::assertSame(RagIndexRun::STATUS_QUEUED, $run->fresh()->status);
+        self::assertNull($run->fresh()->last_error);
+    }
+
+    #[DataProvider('recoveryQueueKinds')]
+    public function test_queue_probe_exception_keeps_stale_accepted_run_queued(string $runKind): void
+    {
+        $bus = $this->createMock(Dispatcher::class);
+        $bus->expects($this->never())->method('dispatch');
+        [$coordinator, , $organization] = $this->services($bus);
+        $run = $this->acceptedFileRun($organization->id, $runKind);
+        Queue::partialMock()->shouldReceive('connection')->andThrow(new \RuntimeException('Queue probe unavailable'));
+        $this->travel(3)->minutes();
+
+        self::assertSame(0, $coordinator->recoverExpiredRuns());
+        self::assertSame(RagIndexRun::STATUS_QUEUED, $run->fresh()->status);
+        self::assertNull($run->fresh()->last_error);
+    }
+
+    #[DataProvider('globalQueueRecoveryScenarios')]
+    public function test_stale_accepted_global_event_recovers_only_when_live_queue_is_empty(string $busy, int $expectedRecovery): void
+    {
+        $expectedQueueName = (string) config('ai-assistant.rag.live_queue', 'ai-rag-live');
+        $bus = $this->createMock(Dispatcher::class);
+        if ($expectedRecovery === 1) {
+            $bus->expects($this->once())->method('dispatch')->with(self::callback(static fn ($job): bool =>
+                $job instanceof IndexGlobalRagEntityJob && $job->queue === $expectedQueueName))->willReturn('accepted');
+        } else {
+            $bus->expects($this->never())->method('dispatch');
+        }
+        [, $global, $organization] = $this->services($bus);
+        $event = RagGlobalIndexEvent::query()->create(['source_type' => 'knowledge', 'entity_type' => 'knowledge_article',
+            'entity_id' => (string) self::ENTITY_ID, 'revision' => 1, 'after_organization_id' => $organization->id,
+            'status' => RagGlobalIndexEvent::STATUS_QUEUED, 'queued_at' => now()]);
+        $this->busy($busy);
+        $this->travel(3)->minutes();
+
+        self::assertSame($expectedRecovery, $global->recoverPending());
+        self::assertSame(RagGlobalIndexEvent::STATUS_QUEUED, $event->fresh()->status);
+        self::assertNull($event->fresh()->last_error);
     }
 
     public function test_old_success_acknowledgment_cannot_clear_new_global_revision_marker(): void
@@ -317,6 +409,15 @@ final class RagDispatchIntentRecoveryTest extends TestCase
         $logger = $this->createMock(LoggerInterface::class);
         return [new RagIndexingCoordinator(app(RagIndexer::class), new RagJobDispatcher($bus, $logger)),
             new GlobalRagQueue(new RagSourceRegistry([new KnowledgeHubRagSource()]), $bus, $logger), $organization];
+    }
+
+    private function acceptedFileRun(int $organizationId, string $runKind): RagIndexRun
+    {
+        $scheduled = $runKind === 'scheduled_file';
+
+        return RagIndexRun::query()->create(['organization_id' => $organizationId, 'source_type' => 'file_document',
+            'entity_type' => 'file', 'entity_id' => (string) self::ENTITY_ID, 'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => $scheduled ? RagIndexRun::MODE_SCHEDULED : RagIndexRun::MODE_ASYNC, 'queued_at' => now()]);
     }
 
     private function busy(string $kind): void
