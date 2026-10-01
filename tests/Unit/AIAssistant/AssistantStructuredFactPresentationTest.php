@@ -84,6 +84,7 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertStringContainsString('| ПЛ\-7 | 100.07 |', $text);
         $this->assertStringNotContainsString('RUB', $text);
         $this->assertStringNotContainsString('не указано', $text);
+        $this->assertGreaterThan(strrpos($text, '|'), strpos($text, 'Полнота списка и общие итоги не подтверждены.'));
     }
 
     public function test_payment_currency_is_rendered_only_for_rows_with_verified_nonempty_currency(): void

@@ -162,7 +162,21 @@ final class AssistantPresentationPlanner
             return null;
         }
 
-        return AssistantStructuredFactFormatter::renderVerifiedRows($sets, $plan);
+        $rendered = AssistantStructuredFactFormatter::renderVerifiedRows($sets, $plan);
+        $hasPaymentRows = false;
+        foreach ($sets as $set) {
+            foreach ($set['rows'] as $row) {
+                if (($row['entity_type'] ?? null) === 'payment_document') {
+                    $hasPaymentRows = true;
+                    break 2;
+                }
+            }
+        }
+        if ($hasPaymentRows) {
+            $rendered .= "\n\n".trans_message('ai_assistant_facts.returned_scope');
+        }
+
+        return $rendered;
     }
 
     public function renderPaymentFallback(array $toolResults): ?string
@@ -215,7 +229,7 @@ final class AssistantPresentationPlanner
         foreach ($columns as $field) {
             $headers[] = trans_message('ai_assistant_facts.fields.'.$field);
         }
-        $lines = [trans_message('ai_assistant_facts.returned_scope'), '', '| '.implode(' | ', $headers).' |',
+        $lines = ['| '.implode(' | ', $headers).' |',
             '| '.implode(' | ', array_fill(0, count($headers), '---')).' |'];
         foreach ($rows as $row) {
             $cells = [$entityLabel];
@@ -230,6 +244,8 @@ final class AssistantPresentationPlanner
             }
             $lines[] = '| '.implode(' | ', $cells).' |';
         }
+        $lines[] = '';
+        $lines[] = trans_message('ai_assistant_facts.returned_scope');
 
         return implode("\n", $lines);
     }

@@ -70,6 +70,21 @@ final class AssistantPresentationPlannerTest extends TestCase
         $this->assertStringNotContainsString('12', $validQuantity);
     }
 
+    public function test_valid_payment_plan_places_partial_scope_notice_after_all_rendered_rows(): void
+    {
+        $payment = $this->payload(901, 'payment_document', ['number' => 'ПЛ-901', 'amount' => '245.50', 'currency' => 'EUR']);
+        $related = $this->payload(902, 'project', ['name' => 'Северный корпус']);
+        $plan = $this->plan([$payment, $related], [['number', 'amount', 'currency'], ['name']], 'table');
+
+        $result = (new AssistantStructuredFactVerifier)->guard('Что с платежами?', $plan, [$payment, $related]);
+        $noticeOffset = strpos($result['text'], 'Полнота списка и общие итоги не подтверждены.');
+
+        $this->assertNotFalse($noticeOffset);
+        $this->assertStringContainsString('EUR', $result['text']);
+        $this->assertGreaterThan(strrpos($result['text'], '|'), $noticeOffset);
+        $this->assertGreaterThan(strpos($result['text'], 'Северный корпус'), $noticeOffset);
+    }
+
     public function test_money_selection_requires_current_financial_receipt_for_every_selected_row_and_org(): void
     {
         $money = $this->payload(31, 'payment_document', ['amount' => '10.25', 'currency' => 'RUB']);
