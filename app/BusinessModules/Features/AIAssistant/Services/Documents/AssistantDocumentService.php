@@ -271,7 +271,7 @@ final class AssistantDocumentService
             if ($document === null) {
                 return;
             }
-            $this->settleOcrReservationAndBudget($document);
+            $this->releaseOcrReservationAndBackgroundBudget($document);
             if (! $this->isNativeSourceMissing($document)) {
                 $document->update(['status' => AIAssistantDocument::STATUS_FAILED,
                     'coverage_status' => 'needs_access_review', 'last_error' => 'native_source_missing']);
@@ -334,6 +334,15 @@ final class AssistantDocumentService
             $this->credits->finalize($reservation, 0, false);
         }
         $this->settleBackgroundBudget($document, $budgetCharge);
+    }
+
+    private function releaseOcrReservationAndBackgroundBudget(AIAssistantDocument $document): void
+    {
+        $reservation = AICreditReservation::query()->find($document->ocr_reservation_id);
+        if ($reservation !== null && $reservation->status === 'reserved') {
+            $this->credits->finalize($reservation, 0, false);
+        }
+        $this->settleBackgroundBudget($document, 0);
     }
 
     private function isNativeSourceMissing(AIAssistantDocument $document): bool

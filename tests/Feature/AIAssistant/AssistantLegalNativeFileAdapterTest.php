@@ -17,6 +17,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeA
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentBudgetService;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentOcrClient;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentOcrRenderer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService;
 use App\Jobs\ProcessAssistantDocumentOcr;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
@@ -455,6 +457,74 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertNotSame('reserved', AICreditReservation::query()->findOrFail($reservationId)->status);
         self::assertSame(0, $credits->balance($fixture->organization)['reserved_minor']);
         self::assertSame(0, (int) $settings->fresh()->reserved_minor);
+    }
+
+    public function test_native_source_missing_after_ocr_response_releases_background_budget_without_charge(): void
+    {
+        $imageContent = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true)
+            ?: throw new RuntimeException('fixture_png_unavailable');
+        [$fixture, $version] = $this->fixture(false, $imageContent, 'image/png', 'png');
+        LegalDocumentAccessGrant::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $version->document_id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => $fixture->organization->id,
+            'subject_user_id' => $fixture->owner->id,
+            'abilities' => ['view'],
+            'granted_by_user_id' => $fixture->owner->id,
+        ]);
+        config(['cache.default' => 'array', 'ai-assistant-credits.enforce' => true,
+            'ai-assistant.llm.timeweb.api_key' => 'test-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://example.test/v1']);
+        Cache::clearResolvedInstances();
+        Queue::fake();
+
+        $adapter = $this->adapter();
+        $credits = new AICreditService;
+        $credits->grant($fixture->organization, 1_000_000, 'purchase', null, 'native-missing-after-ocr-'.$fixture->organization->id);
+        $documents = app(AssistantDocumentService::class);
+        $budgets = new AssistantDocumentBudgetService($documents);
+        $budgets->approve($fixture->owner, $fixture->organization->id, true, 1_000_000, 'archive');
+
+        $file = $adapter->map($fixture->member, $fixture->organization->id, 'legal_document_version', $version->id);
+        $document = $documents->registerFile($file, $fixture->member);
+        $document->update([
+            'status' => AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
+            'coverage_status' => 'ocr_quote_required',
+            'metadata' => array_merge($document->metadata ?? [], ['page_count' => 1]),
+        ]);
+        self::assertTrue($budgets->authorizeBackground($document->refresh()));
+        $document->refresh();
+        $reservation = AICreditReservation::query()->findOrFail($document->ocr_reservation_id);
+
+        Http::fake(['*' => Http::response(['choices' => [['finish_reason' => 'stop', 'message' => ['content' => 'Recognized page text']]],
+            'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 10]])]);
+        $client = new AssistantDocumentOcrClient(new AssistantDocumentOcrRenderer, $credits);
+        self::assertTrue($client->recognize($document, $reservation, $imageContent, static fn (): bool => true));
+        self::assertSame('reserved', $reservation->fresh()->status);
+        self::assertSame('Recognized page text', AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->sole()->text);
+
+        $this->storageFailure = $this->s3Exception('NoSuchKey', 404);
+        try {
+            $adapter->mapForIndexing($fixture->organization->id, $version->id);
+            self::fail('The missing native source must invalidate the OCR result.');
+        } catch (S3Exception $exception) {
+            self::assertSame('NoSuchKey', $exception->getAwsErrorCode());
+        }
+
+        $document->refresh();
+        self::assertSame(AIAssistantDocument::STATUS_FAILED, $document->status);
+        self::assertSame('needs_access_review', $document->coverage_status);
+        self::assertSame('native_source_missing', $document->last_error);
+        $reservation->refresh();
+        self::assertNotSame('reserved', $reservation->status);
+        self::assertSame(0, (int) $reservation->consumed_minor);
+        self::assertSame(0, $credits->balance($fixture->organization)['reserved_minor']);
+        $settings = $budgets->settings($fixture->owner, $fixture->organization->id);
+        self::assertSame(0, (int) $settings->reserved_minor);
+        self::assertSame(0, (int) $settings->spent_minor);
+        $usage = AICreditProviderUsage::query()->where('ai_credit_reservation_id', $reservation->id)->where('operation', 'ocr')->sole();
+        self::assertSame($credits->costMicroRub(100, 10, $reservation), (int) $usage->cost_micro_rub);
+        self::assertTrue($usage->is_successful);
     }
 
     public function test_native_source_missing_during_ocr_provider_call_suppresses_late_page_and_budget_charge(): void
