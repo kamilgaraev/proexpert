@@ -169,14 +169,26 @@ final class AssistantStructuredFactPresentationTest extends TestCase
             ['estimate_id' => 100, 'project_id' => 16]);
         $rows = array_merge($estimate['structured_fact_evidence']['rows'], $position['structured_fact_evidence']['rows']);
         for ($id = 1; $id <= 10; $id++) {
-            $resource = $this->payload('estimate_item_resource', [
-                'name' => 'Ресурс '.$id,
-                'quantity' => '4.23500000',
-                'material_unit' => 'чел-ч',
+            $name = match ($id) {
+                1 => 'Ресурс 1 (агрегат ЭМ)',
+                2 => 'Ресурс 2 (агрегат М)',
+                3 => 'Ресурс 3 (кран)',
+                4 => 'Ресурс 4 (вода)',
+                5 => 'Ресурс 5 (древесина)',
+                default => 'Ресурс '.$id,
+            };
+            $resourceFields = [
+                'name' => $name,
+                'quantity' => $id === 1 ? null : ($id === 2 ? '' : '4.23500000'),
                 'unit_price' => '1354.6500',
                 'total_amount' => '1354.65',
-            ], 1000 + $id, ['estimate_id' => 100, 'estimate_item_id' => 200, 'composition_scope' => 'resources',
-                'finance_representation' => 'independent', 'project_id' => 16]);
+            ];
+            if ($id >= 3) {
+                $resourceFields['material_unit'] = $id === 3 ? 'маш-ч' : (in_array($id, [4, 5], true) ? 'м³' : 'чел-ч');
+            }
+            $resource = $this->payload('estimate_item_resource', $resourceFields, 1000 + $id,
+                ['estimate_id' => 100, 'estimate_item_id' => 200, 'composition_scope' => 'resources',
+                    'finance_representation' => 'independent', 'project_id' => 16]);
             $rows[] = $resource['structured_fact_evidence']['rows'][0];
         }
         $payload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
@@ -189,8 +201,25 @@ final class AssistantStructuredFactPresentationTest extends TestCase
             'Покажи ресурсный состав сметы СМ-2026-0009', 'Найдено десять ресурсов.', [$payload],
         );
         $html = (string) (new GithubFlavoredMarkdownConverter)->convert($result['text']);
+        preg_match_all('/<tr>.*?<\/tr>/s', $html, $tableRows);
+        $resourceRows = array_values(array_filter($tableRows[0], static fn (string $line): bool => str_contains($line, 'Ресурс позиции: Ресурс 1 (агрегат ЭМ)')
+            || str_contains($line, 'Ресурс позиции: Ресурс 2 (агрегат М)')));
 
         $this->assertStringContainsString('<table>', $html);
+        $this->assertSame(11, substr_count($html, '<tr>'));
+        $this->assertCount(2, $resourceRows);
+        foreach ($resourceRows as $resourceRow) {
+            $resourceRowText = html_entity_decode(strip_tags($resourceRow), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $this->assertSame(2, substr_count($resourceRowText, 'не указано'));
+            $this->assertStringNotContainsString('4.23500000', $resourceRowText);
+            $this->assertStringNotContainsString('чел-ч', $resourceRowText);
+            $this->assertStringNotContainsString('маш-ч', $resourceRowText);
+        }
+        $this->assertGreaterThanOrEqual(4, substr_count($html, 'не указано'));
+        $this->assertStringContainsString('Единица материала', $html);
+        $this->assertStringContainsString('маш-ч', $html);
+        $this->assertStringContainsString('м³', $html);
+        $this->assertStringContainsString('чел-ч', $html);
         $this->assertStringContainsString('Ресурс позиции: Ресурс 1', $html);
         $this->assertStringContainsString('4.23500000', $html);
         $this->assertStringContainsString('1354.6500', $html);

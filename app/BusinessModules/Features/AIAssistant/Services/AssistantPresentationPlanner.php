@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 final class AssistantPresentationPlanner
 {
     private const MAX_PLAN_BYTES = 16_384;
+
     private const MAX_COLUMNS = 12;
 
     public static function isPlanCandidate(string $text): bool
@@ -102,18 +103,21 @@ final class AssistantPresentationPlanner
             return null;
         }
 
-        $commonFields = null;
-        foreach ($evidence['rows'] as $index => $row) {
-            $fields = AssistantStructuredFactFormatter::presentationFields($row);
-            $commonFields = $commonFields === null ? $fields : array_values(array_intersect($commonFields, $fields));
+        $fields = [];
+        foreach ($evidence['rows'] as $row) {
+            foreach (AssistantStructuredFactFormatter::presentationFields($row) as $field) {
+                if (! in_array($field, $fields, true)) {
+                    $fields[] = $field;
+                }
+            }
         }
-        if ($evidence['rows'] === [] || $commonFields === []) {
+        if ($evidence['rows'] === [] || $fields === []) {
             return null;
         }
 
         return ['kind' => 'verified_rows', 'version' => 1,
             'result_set' => 's_'.substr(hash('sha256', $evidence['version'].'|'.$evidence['fetched_at']), 0, 24),
-            'fields' => $commonFields];
+            'fields' => $fields];
     }
 
     public function render(string $text, array $toolResults, ?string $query = null): ?string
@@ -270,7 +274,9 @@ final class AssistantPresentationPlanner
             }
             $rows = [];
             foreach ($evidence['rows'] as $index => $proofRow) {
-                if (! is_array($proofRow)) { return []; }
+                if (! is_array($proofRow)) {
+                    return [];
+                }
                 $rowRef = 'r'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
                 $fields = AssistantStructuredFactFormatter::presentationFields($proofRow);
                 $rows[$rowRef] = $proofRow;
@@ -294,12 +300,17 @@ final class AssistantPresentationPlanner
         if (count(array_unique($columns, SORT_REGULAR)) !== count($columns)) {
             return false;
         }
+        $availableFields = [];
         foreach ($set['rows'] as $row) {
-            foreach ($columns as $column) {
-                if (! is_string($column) || ! in_array($column, $row['_presentation_fields'], true)
-                    || ! array_key_exists($column, $row['fields'])) {
-                    return false;
+            foreach ($row['_presentation_fields'] as $field) {
+                if (array_key_exists($field, $row['fields'])) {
+                    $availableFields[$field] = true;
                 }
+            }
+        }
+        foreach ($columns as $column) {
+            if (! is_string($column) || ! isset($availableFields[$column])) {
+                return false;
             }
         }
 

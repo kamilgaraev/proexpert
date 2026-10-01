@@ -181,7 +181,8 @@ final class AssistantStructuredFactFormatter
                         && ! ($financial && in_array($field, $moneyFields, true)))) {
                     continue;
                 }
-                $display = $value === null ? trans_message('ai_assistant_facts.unknown')
+                $display = $value === null || (is_string($value) && trim($value) === '')
+                    ? trans_message('ai_assistant_facts.unknown')
                     : (is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
                         : AssistantStructuredFactLabels::display($entityType, $field, (string) $value));
                 $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\d+(?:\.\d+)?$/D', $display);
@@ -204,18 +205,18 @@ final class AssistantStructuredFactFormatter
                 $end++;
             }
             $group = array_slice($records, $offset, $end - $offset);
-            $fieldKeys = array_keys($group[0]['fields']);
-            $sortedFieldKeys = $fieldKeys;
-            sort($sortedFieldKeys);
-            $homogeneous = count($group) > 1;
-            foreach (array_slice($group, 1) as $record) {
-                $recordFieldKeys = array_keys($record['fields']);
-                sort($recordFieldKeys);
-                if ($recordFieldKeys !== $sortedFieldKeys) {
-                    $homogeneous = false;
-                    break;
+            $fieldKeys = [];
+            $fieldKeySet = [];
+            foreach ($group as $record) {
+                foreach (array_keys($record['fields']) as $field) {
+                    if (isset($fieldKeySet[$field])) {
+                        continue;
+                    }
+                    $fieldKeySet[$field] = true;
+                    $fieldKeys[] = $field;
                 }
             }
+            $homogeneous = count($group) > 1;
             if ($homogeneous) {
                 if ($lines !== [] && end($lines) !== '') {
                     $lines[] = '';
@@ -229,7 +230,7 @@ final class AssistantStructuredFactFormatter
                 foreach ($group as $record) {
                     $cells = [self::presentationRecordTitle($record)];
                     foreach ($fieldKeys as $field) {
-                        $cells[] = $record['fields'][$field];
+                        $cells[] = $record['fields'][$field] ?? trans_message('ai_assistant_facts.unknown');
                     }
                     $lines[] = '| '.implode(' | ', $cells).' |';
                 }
