@@ -250,6 +250,17 @@ final class AssistantDocumentService
         });
     }
 
+    public function settleMissingNativeSourceOcr(int $documentId): void
+    {
+        DB::transaction(function () use ($documentId): void {
+            $document = AIAssistantDocument::query()->whereKey($documentId)->lockForUpdate()->first();
+            if ($document === null) {
+                return;
+            }
+            $this->settleOcrReservationAndBudget($document);
+        });
+    }
+
     public function failOcr(int $documentId): void
     {
         DB::transaction(function () use ($documentId): void {
@@ -257,13 +268,10 @@ final class AssistantDocumentService
             if ($document === null) {
                 return;
             }
-            $reservation = AICreditReservation::query()->find($document->ocr_reservation_id);
-            $budgetCharge = $reservation !== null && $this->credits->successfulCostMicroRub($reservation) > 0
-                ? $this->credits->calculatedChargeMinor($reservation) : 0;
-            if ($reservation !== null && $reservation->status === 'reserved') {
-                $this->credits->finalize($reservation, 0, false);
+            $this->settleOcrReservationAndBudget($document);
+            if ($document->status === AIAssistantDocument::STATUS_FAILED && $document->last_error === 'native_source_missing') {
+                return;
             }
-            $this->settleBackgroundBudget($document, $budgetCharge);
             if ($document->status === AIAssistantDocument::STATUS_READY) {
                 return;
             }
@@ -297,6 +305,17 @@ final class AssistantDocumentService
             ->where('organization_id', $document->organization_id)->lockForUpdate()->firstOrFail();
         $settings->update(['reserved_minor' => max(0, $settings->reserved_minor - $reserved), 'spent_minor' => $settings->spent_minor + min($charged, $reserved)]);
         $document->update(['metadata' => array_diff_key($document->metadata ?? [], ['background_budget_minor' => true])]);
+    }
+
+    private function settleOcrReservationAndBudget(AIAssistantDocument $document): void
+    {
+        $reservation = AICreditReservation::query()->find($document->ocr_reservation_id);
+        $budgetCharge = $reservation !== null && $this->credits->successfulCostMicroRub($reservation) > 0
+            ? $this->credits->calculatedChargeMinor($reservation) : 0;
+        if ($reservation !== null && $reservation->status === 'reserved') {
+            $this->credits->finalize($reservation, 0, false);
+        }
+        $this->settleBackgroundBudget($document, $budgetCharge);
     }
 
     private function assertOcrRequired(AIAssistantDocument $document): void

@@ -16,7 +16,9 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNa
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentBudgetService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService;
+use App\Jobs\ProcessAssistantDocumentOcr;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentApprovedList;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocumentSet;
@@ -28,6 +30,8 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentAccessGrant;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\Project;
+use App\Models\Credits\AICreditReservation;
+use App\Services\Credits\AICreditService;
 use App\Services\Storage\FileService;
 use Aws\Command;
 use Aws\S3\Exception\S3Exception;
@@ -319,6 +323,135 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertArrayNotHasKey('path', $context);
         self::assertArrayNotHasKey('filename', $context);
         self::assertArrayNotHasKey('exception_message', $context);
+    }
+
+    public function test_missing_native_object_releases_ocr_and_background_reservations_and_late_failure_preserves_marker_and_units(): void
+    {
+        [$fixture, $version] = $this->fixture();
+        LegalDocumentAccessGrant::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $version->document_id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => $fixture->organization->id,
+            'subject_user_id' => $fixture->owner->id,
+            'abilities' => ['view'],
+            'granted_by_user_id' => $fixture->owner->id,
+        ]);
+        config(['cache.default' => 'array', 'ai-assistant-credits.enforce' => true,
+            'ai-assistant.llm.timeweb.api_key' => 'test-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://example.test/v1']);
+        Cache::clearResolvedInstances();
+        Queue::fake();
+
+        $adapter = $this->adapter();
+        $credits = new AICreditService;
+        $credits->grant($fixture->organization, 1_000_000, 'purchase', null, 'native-missing-ocr-'.$fixture->organization->id);
+        $documents = app(AssistantDocumentService::class);
+        $budgets = new AssistantDocumentBudgetService($documents);
+        $budgets->approve($fixture->owner, $fixture->organization->id, true, 1_000_000, 'archive');
+
+        $file = $adapter->map($fixture->member, $fixture->organization->id, 'legal_document_version', $version->id);
+        $document = $documents->registerFile($file, $fixture->member);
+        $previousText = 'Previously recognized legal text.';
+        $document->update([
+            'status' => AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
+            'coverage_status' => 'ocr_quote_required',
+            'metadata' => array_merge($document->metadata ?? [], ['page_count' => 1]),
+            'extracted_text' => $previousText,
+            'processed_at' => now(),
+        ]);
+        $unit = AIAssistantDocumentUnit::query()->create([
+            'document_id' => $document->id,
+            'unit_type' => 'ocr_page',
+            'unit_index' => 0,
+            'text' => $previousText,
+            'checksum' => hash('sha256', $previousText),
+        ]);
+        $unrelatedProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $unrelatedPath = 'org-'.$fixture->organization->id.'/assistant-test/unrelated.pdf';
+        $unrelatedText = 'Unrelated document text.';
+        $unrelatedFile = File::withoutEvents(fn () => File::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'fileable_type' => $unrelatedProject->getMorphClass(),
+            'fileable_id' => $unrelatedProject->id,
+            'user_id' => $fixture->member->id,
+            'name' => 'unrelated.pdf',
+            'original_name' => 'unrelated.pdf',
+            'path' => $unrelatedPath,
+            'mime_type' => 'application/pdf',
+            'size' => strlen($unrelatedText),
+            'disk' => 's3',
+            'type' => 'document',
+            'category' => 'ai_assistant',
+        ]));
+        $unrelatedDocument = AIAssistantDocument::withoutEvents(fn () => AIAssistantDocument::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'project_id' => $unrelatedProject->id,
+            'file_id' => $unrelatedFile->id,
+            'parent_entity_type' => 'project',
+            'parent_entity_id' => (string) $unrelatedProject->id,
+            'storage_path' => $unrelatedPath,
+            'filename' => 'unrelated.pdf',
+            'mime_type' => 'application/pdf',
+            'checksum' => hash('sha256', $unrelatedText),
+            'size_bytes' => strlen($unrelatedText),
+            'status' => AIAssistantDocument::STATUS_READY,
+            'coverage_status' => 'ready',
+            'extracted_text' => $unrelatedText,
+        ]));
+        $unrelatedUnit = AIAssistantDocumentUnit::query()->create([
+            'document_id' => $unrelatedDocument->id,
+            'unit_type' => 'text_chunk',
+            'unit_index' => 0,
+            'text' => $unrelatedText,
+            'checksum' => hash('sha256', $unrelatedText),
+        ]);
+        self::assertTrue($budgets->authorizeBackground($document->refresh()));
+        $document->refresh();
+        $reservationId = (int) $document->ocr_reservation_id;
+        $settings = $budgets->settings($fixture->owner, $fixture->organization->id);
+        self::assertGreaterThan(0, $credits->balance($fixture->organization)['reserved_minor']);
+        self::assertGreaterThan(0, $settings->reserved_minor);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'source_type' => 'legal_business',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_ASYNC,
+            'queued_at' => now(),
+        ]);
+        $queue = app(AssistantNativeAttachmentPreparationQueue::class);
+        self::assertTrue($queue->dispatchQueuedRun($run));
+        $job = Queue::pushed(PrepareAssistantNativeAttachmentsJob::class)->first();
+        self::assertInstanceOf(PrepareAssistantNativeAttachmentsJob::class, $job);
+        $missing = $this->s3Exception('NoSuchKey', 404);
+        $storage = Mockery::mock(FileService::class)->makePartial();
+        $storage->shouldReceive('readCurrentBounded')->andThrow($missing);
+        $this->app->instance(FileService::class, $storage);
+
+        $job->handle(app(AssistantLegalNativeFileIndexer::class), app(AssistantOperationsNativeFileIndexer::class), $queue);
+
+        $reservation = AICreditReservation::query()->findOrFail($reservationId);
+        self::assertNotSame('reserved', $reservation->status);
+        self::assertSame(0, (int) $reservation->consumed_minor);
+        self::assertSame(0, $credits->balance($fixture->organization)['reserved_minor']);
+        self::assertSame(0, (int) $settings->fresh()->reserved_minor);
+        self::assertArrayNotHasKey('background_budget_minor', $document->fresh()->metadata ?? []);
+
+        (new ProcessAssistantDocumentOcr((int) $document->id))->failed(new RuntimeException('OCR retries exhausted'));
+
+        $document->refresh();
+        self::assertSame(AIAssistantDocument::STATUS_FAILED, $document->status);
+        self::assertSame('needs_access_review', $document->coverage_status);
+        self::assertSame('native_source_missing', $document->last_error);
+        self::assertSame($previousText, $document->extracted_text);
+        self::assertTrue(AIAssistantDocumentUnit::query()->whereKey($unit->id)->exists());
+        self::assertSame(AIAssistantDocument::STATUS_READY, $unrelatedDocument->fresh()->status);
+        self::assertSame($unrelatedText, $unrelatedDocument->fresh()->extracted_text);
+        self::assertTrue(AIAssistantDocumentUnit::query()->whereKey($unrelatedUnit->id)->exists());
+        self::assertSame(1, File::query()->whereKey($unrelatedFile->id)->count());
+        self::assertNotSame('reserved', AICreditReservation::query()->findOrFail($reservationId)->status);
+        self::assertSame(0, $credits->balance($fixture->organization)['reserved_minor']);
+        self::assertSame(0, (int) $settings->fresh()->reserved_minor);
     }
 
     private function fixture(bool $nonfinancial = false): array
