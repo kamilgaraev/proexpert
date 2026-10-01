@@ -208,7 +208,7 @@ final class AssistantDocumentService
     {
         return Cache::lock('assistant-document:'.$documentId, 180)->block(5, function () use ($documentId): AIAssistantDocument {
             $document = AIAssistantDocument::query()->findOrFail($documentId);
-            if ($document->status === AIAssistantDocument::STATUS_READY) {
+            if ($this->isNativeSourceMissing($document) || $document->status === AIAssistantDocument::STATUS_READY) {
                 return $document;
             }
             $reservation = AICreditReservation::query()->findOrFail($document->ocr_reservation_id);
@@ -219,34 +219,63 @@ final class AssistantDocumentService
                 || (int) $reservation->organization_id !== (int) $document->organization_id || (int) $reservation->user_id !== (int) $actor->id) {
                 throw new RuntimeException('ai_assistant_document_ocr_not_authorized');
             }
-            $complete = $this->ocr->recognize($document, $reservation, $this->documentContent($document), function () use ($document, $actor): void {
-                $this->assertReadable($actor, (int) $document->organization_id, $document);
+            $complete = $this->ocr->recognize($document, $reservation, $this->documentContent($document), function () use ($document, $actor): bool {
+                $current = AIAssistantDocument::query()->find((int) $document->id);
+                if ($current === null || $this->isNativeSourceMissing($current)
+                    || $current->status !== AIAssistantDocument::STATUS_OCR_APPROVED) {
+                    return false;
+                }
+                $this->assertReadable($actor, (int) $current->organization_id, $current);
                 $this->assertOwner($actor, (int) $document->organization_id);
-                if ((int) ($document->metadata['background_budget_minor'] ?? 0) > 0) {
+                if ((int) ($current->metadata['background_budget_minor'] ?? 0) > 0) {
                     $enabled = \App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings::query()
-                        ->where('organization_id', $document->organization_id)->where('background_ocr_enabled', true)->where('approved_by', $actor->id)->exists();
+                        ->where('organization_id', $current->organization_id)->where('background_ocr_enabled', true)->where('approved_by', $actor->id)->exists();
                     if (! $enabled) {
                         throw new RuntimeException('ai_assistant_document_background_ocr_revoked');
                     }
                 }
+                return true;
             });
             if (! $complete) {
                 \App\Jobs\ProcessAssistantDocumentOcr::dispatch((int) $document->id)->afterCommit();
                 return $document->refresh();
             }
-            return DB::transaction(function () use ($document, $reservation): AIAssistantDocument {
-                $units = AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->orderBy('unit_index')->get();
+            return DB::transaction(function () use ($document): AIAssistantDocument {
+                $current = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                if ($this->isNativeSourceMissing($current) || $current->status !== AIAssistantDocument::STATUS_OCR_APPROVED) {
+                    return $current;
+                }
+                $reservation = AICreditReservation::query()->findOrFail($current->ocr_reservation_id);
+                if ($reservation->status !== 'reserved') {
+                    return $current;
+                }
+                $units = AIAssistantDocumentUnit::query()->where('document_id', $current->id)->where('unit_type', 'ocr_page')->orderBy('unit_index')->get();
                 $useful = $units->contains(static fn ($unit): bool => trim($unit->text) !== '');
                 $budgetCharge = $this->credits->successfulCostMicroRub($reservation) > 0 ? $this->credits->calculatedChargeMinor($reservation) : 0;
                 $this->credits->finalize($reservation, 0, $useful);
-                $this->settleBackgroundBudget($document, $budgetCharge);
-                AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', '!=', 'ocr_page')->delete();
-                $document->update(['status' => $useful ? AIAssistantDocument::STATUS_READY : AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
+                $this->settleBackgroundBudget($current, $budgetCharge);
+                AIAssistantDocumentUnit::query()->where('document_id', $current->id)->where('unit_type', '!=', 'ocr_page')->delete();
+                $current->update(['status' => $useful ? AIAssistantDocument::STATUS_READY : AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
                     'coverage_status' => $useful ? 'ocr' : 'empty', 'extracted_text' => $units->pluck('text')->implode("\n"), 'processed_at' => now(), 'last_error' => $useful ? null : 'ocr_empty',
-                    'metadata' => $useful ? $document->metadata : array_diff_key($document->metadata ?? [], ['ocr_request_id' => true])]);
+                    'metadata' => $useful ? $current->metadata : array_diff_key($current->metadata ?? [], ['ocr_request_id' => true])]);
 
-                return $document->refresh();
+                return $current->refresh();
             });
+        });
+    }
+
+    public function markNativeSourceMissing(int $documentId): void
+    {
+        DB::transaction(function () use ($documentId): void {
+            $document = AIAssistantDocument::query()->whereKey($documentId)->lockForUpdate()->first();
+            if ($document === null) {
+                return;
+            }
+            $this->releaseOcrReservationAndBackgroundBudget($document);
+            if (! $this->isNativeSourceMissing($document)) {
+                $document->update(['status' => AIAssistantDocument::STATUS_FAILED,
+                    'coverage_status' => 'needs_access_review', 'last_error' => 'native_source_missing']);
+            }
         });
     }
 
@@ -257,13 +286,10 @@ final class AssistantDocumentService
             if ($document === null) {
                 return;
             }
-            $reservation = AICreditReservation::query()->find($document->ocr_reservation_id);
-            $budgetCharge = $reservation !== null && $this->credits->successfulCostMicroRub($reservation) > 0
-                ? $this->credits->calculatedChargeMinor($reservation) : 0;
-            if ($reservation !== null && $reservation->status === 'reserved') {
-                $this->credits->finalize($reservation, 0, false);
+            $this->settleOcrReservationAndBudget($document);
+            if ($this->isNativeSourceMissing($document)) {
+                return;
             }
-            $this->settleBackgroundBudget($document, $budgetCharge);
             if ($document->status === AIAssistantDocument::STATUS_READY) {
                 return;
             }
@@ -297,6 +323,33 @@ final class AssistantDocumentService
             ->where('organization_id', $document->organization_id)->lockForUpdate()->firstOrFail();
         $settings->update(['reserved_minor' => max(0, $settings->reserved_minor - $reserved), 'spent_minor' => $settings->spent_minor + min($charged, $reserved)]);
         $document->update(['metadata' => array_diff_key($document->metadata ?? [], ['background_budget_minor' => true])]);
+    }
+
+    private function settleOcrReservationAndBudget(AIAssistantDocument $document): void
+    {
+        $reservation = AICreditReservation::query()->find($document->ocr_reservation_id);
+        $budgetCharge = $reservation !== null && $this->credits->successfulCostMicroRub($reservation) > 0
+            ? $this->credits->calculatedChargeMinor($reservation) : 0;
+        if ($reservation !== null && $reservation->status === 'reserved') {
+            $this->credits->finalize($reservation, 0, false);
+        }
+        $this->settleBackgroundBudget($document, $budgetCharge);
+    }
+
+    private function releaseOcrReservationAndBackgroundBudget(AIAssistantDocument $document): void
+    {
+        $reservation = AICreditReservation::query()->find($document->ocr_reservation_id);
+        if ($reservation !== null && $reservation->status === 'reserved') {
+            $this->credits->finalize($reservation, 0, false);
+        }
+        $this->settleBackgroundBudget($document, 0);
+    }
+
+    private function isNativeSourceMissing(AIAssistantDocument $document): bool
+    {
+        return $document->status === AIAssistantDocument::STATUS_FAILED
+            && $document->coverage_status === 'needs_access_review'
+            && $document->last_error === 'native_source_missing';
     }
 
     private function assertOcrRequired(AIAssistantDocument $document): void

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Documents;
 
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
+use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
@@ -13,6 +14,7 @@ use App\Services\Storage\FileService;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use Aws\S3\Exception\S3Exception;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -50,17 +52,32 @@ final class AssistantLegalNativeFileAdapter
     public function map(User $actor,int $organizationId,string $type,string|int $id,?string $requestedPath = null): File
     {
         $this->assertAccess($actor,$organizationId,$type,$id);
-        return DB::transaction(function () use ($actor,$organizationId,$type,$id,$requestedPath): File {
+        $missingObjectException = null;
+        $missingSourcePath = null;
+        $missingSourceMorph = null;
+        $file = DB::transaction(function () use ($actor,$organizationId,$type,$id,$requestedPath,&$missingObjectException,&$missingSourcePath,&$missingSourceMorph): ?File {
             $this->assertAccess($actor,$organizationId,$type,$id);
             $source = $this->source($organizationId,$type,$id,true);
             AssistantLegalNativeFileMetadata::assertSource($type,$source);
             $path = (string)$source[AssistantLegalNativeFileMetadata::definitions()[$type]['path']];
             if ($requestedPath !== null && $requestedPath !== $path) { throw new RuntimeException('ai_assistant_document_native_source_invalid'); }
-            [$checksum,$size] = $this->checksum($type,$source);
+            $model = new (AssistantLegalNativeFileMetadata::definitions()[$type]['model']);
+            try {
+                [$checksum,$size] = $this->checksum($type,$source);
+            } catch (S3Exception $exception) {
+                if ($exception->getStatusCode() === 404 && $exception->getAwsErrorCode() === 'NoSuchKey') {
+                    $missingObjectException = $exception;
+                    $missingSourcePath = $path;
+                    $missingSourceMorph = $model->getMorphClass();
+
+                    return null;
+                }
+
+                throw $exception;
+            }
             $this->assertAccess($actor,$organizationId,$type,$id);
             $version = AssistantLegalNativeFileMetadata::versionData($type,$source);
             $fingerprint = AssistantLegalNativeFileMetadata::fingerprint($version);
-            $model = new (AssistantLegalNativeFileMetadata::definitions()[$type]['model']);
             $mapping = ['organization_id'=>$organizationId,'fileable_type'=>$model->getMorphClass(),'fileable_id'=>(int)$id,'disk'=>'s3','path'=>$path];
             $file = File::query()->where($mapping)->where('additional_info->assistant_native_source',AssistantLegalNativeFileMetadata::SOURCE)
                 ->where('additional_info->native_source_version',$fingerprint)->where('additional_info->native_source_sha256',$checksum)->first();
@@ -77,6 +94,39 @@ final class AssistantLegalNativeFileAdapter
             $this->assertMapping($file);
             return $file;
         });
+
+        if ($missingObjectException instanceof S3Exception) {
+            if (is_string($missingSourcePath) && is_string($missingSourceMorph)) {
+                $this->invalidateMissingMapping($organizationId,$type,$id,$missingSourcePath,$missingSourceMorph);
+            }
+
+            throw $missingObjectException;
+        }
+        if (! $file instanceof File) { throw new RuntimeException('ai_assistant_document_native_source_invalid'); }
+
+        return $file;
+    }
+
+    private function invalidateMissingMapping(int $organizationId,string $type,string|int $id,string $path,string $morphType): void
+    {
+        $definition = AssistantLegalNativeFileMetadata::definitions()[$type];
+        $fileableTypes = [$definition['model'],$morphType];
+        $files = File::query()->where('organization_id',$organizationId)->whereIn('fileable_type',$fileableTypes)
+            ->where('fileable_id',(int)$id)->where('disk','s3')->where('path',$path)
+            ->where('additional_info->assistant_native_source',AssistantLegalNativeFileMetadata::SOURCE)
+            ->where('additional_info->native_entity_type',$type)->get();
+
+        foreach ($files as $file) {
+            DB::transaction(function () use ($file,$organizationId,$type,$id,$path): void {
+                $documents = AIAssistantDocument::query()->where('organization_id',$organizationId)->where('file_id',$file->id)
+                    ->where('parent_entity_type',$type)->where('parent_entity_id',(string)$id)->where('storage_path',$path)->get();
+                foreach ($documents as $document) {
+                    app(AssistantDocumentService::class)->markNativeSourceMissing((int)$document->id);
+                }
+
+                $file->deleteQuietly();
+            });
+        }
     }
 
     public function assertMapping(File $file): void

@@ -38,15 +38,32 @@ final class AssistantDocumentOcrClient
         }
         $completedPages = AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->pluck('unit_index')->map(static fn ($index): int => (int) $index)->all();
         foreach ($this->renderer->pages($content, $document->mime_type, $pageCount, $completedPages) as $page => $image) {
-            $assertAuthorized();
+            if ($assertAuthorized() === false) {
+                return true;
+            }
             if (AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->where('unit_index', $page)->exists()) {
                 continue;
             }
-            $attempt = (int) ($document->metadata['ocr_attempt'] ?? 0) + 1;
-            if ($attempt > $maxCalls * 3) {
-                throw new RuntimeException('ai_assistant_document_ocr_call_limit');
+            $attempt = DB::transaction(function () use ($document, $maxCalls): ?int {
+                $current = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                if ($current->status !== AIAssistantDocument::STATUS_OCR_APPROVED || $this->isNativeSourceMissing($current)) {
+                    return null;
+                }
+                $reservation = AICreditReservation::query()->findOrFail($current->ocr_reservation_id);
+                if ($reservation->status !== 'reserved') {
+                    return null;
+                }
+                $attempt = (int) ($current->metadata['ocr_attempt'] ?? 0) + 1;
+                if ($attempt > $maxCalls * 3) {
+                    throw new RuntimeException('ai_assistant_document_ocr_call_limit');
+                }
+                $current->update(['metadata' => array_merge($current->metadata ?? [], ['ocr_attempt' => $attempt])]);
+
+                return $attempt;
+            }, 3);
+            if ($attempt === null) {
+                return true;
             }
-            $document->update(['metadata' => array_merge($document->metadata ?? [], ['ocr_attempt' => $attempt])]);
             $attemptMetadata = ['usage_key' => 'document:'.$document->id.':reservation:'.$reservation->id.':attempt:'.$attempt,
                 'request_id' => $reservation->request_id, 'document_id' => $document->id, 'page' => $page, 'attempt' => $attempt];
             try {
@@ -67,23 +84,42 @@ final class AssistantDocumentOcrClient
             $cost = $evidence['cost_available'] ? $this->credits->costMicroRub($input, $output, $reservation) : 0;
             $valid = $response->successful() && $evidence['cost_available'] && is_string($text) && ($payload['choices'][0]['finish_reason'] ?? '') === 'stop'
                 && $input > 0 && $output > 0 && $input <= $maxInput && $output <= $maxOutput;
-            $this->credits->recordProviderCost($reservation, $cost, 'timeweb', LunaModelPolicy::TIMEWEB, 'ocr',
-                $attemptMetadata + $evidence + ['http_status' => $response->status(), 'is_successful' => $valid], $valid);
-            if (! $response->successful()) throw new RuntimeException('ai_assistant_document_ocr_provider_failed');
-            DB::transaction(function () use ($document, $page, $valid, $text): void {
-                if ($valid) {
-                    AIAssistantDocumentUnit::query()->create(['document_id' => $document->id, 'unit_type' => 'ocr_page', 'unit_index' => $page,
+            $shouldContinue = DB::transaction(function () use ($document, $reservation, $page, $valid, $text, $cost, $attemptMetadata, $evidence, $response, $completedPages): bool {
+                $current = AIAssistantDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                $this->credits->recordProviderCost($reservation, $cost, 'timeweb', LunaModelPolicy::TIMEWEB, 'ocr',
+                    $attemptMetadata + $evidence + ['http_status' => $response->status(), 'is_successful' => $valid], $valid);
+                if ($current->status !== AIAssistantDocument::STATUS_OCR_APPROVED || $this->isNativeSourceMissing($current)) {
+                    return false;
+                }
+                if (! $valid) {
+                    return true;
+                }
+                if (! AIAssistantDocumentUnit::query()->where('document_id', $current->id)->where('unit_type', 'ocr_page')->where('unit_index', $page)->exists()) {
+                    AIAssistantDocumentUnit::query()->create(['document_id' => $current->id, 'unit_type' => 'ocr_page', 'unit_index' => $page,
                         'text' => $text, 'checksum' => hash('sha256', $text), 'provenance' => ['page' => $page, 'kind' => 'ocr', 'provider' => 'timeweb', 'model' => LunaModelPolicy::TIMEWEB]]);
                 }
-            });
+                $current->update(['metadata' => array_merge($current->metadata ?? [], ['ocr_completed_pages' => count($completedPages) + 1])]);
+
+                return true;
+            }, 3);
+            if (! $shouldContinue) {
+                return true;
+            }
+            if (! $response->successful()) throw new RuntimeException('ai_assistant_document_ocr_provider_failed');
             if (! $valid) {
                 throw new RuntimeException('ai_assistant_document_ocr_response_invalid');
             }
-            $document->update(['metadata' => array_merge($document->metadata ?? [], ['ocr_completed_pages' => count($completedPages) + 1])]);
             return count($completedPages) + 1 >= $pageCount;
         }
 
         return count($completedPages) >= $pageCount;
+    }
+
+    private function isNativeSourceMissing(AIAssistantDocument $document): bool
+    {
+        return $document->status === AIAssistantDocument::STATUS_FAILED
+            && $document->coverage_status === 'needs_access_review'
+            && $document->last_error === 'native_source_missing';
     }
 
     private function payload(int $page, array $image, int $maxOutput): array
