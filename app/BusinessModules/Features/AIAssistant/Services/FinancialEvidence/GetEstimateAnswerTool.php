@@ -42,10 +42,12 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
         $actor = $this->actor($user);
         $arguments = $this->validate($arguments, ['query' => ['required', 'string', 'max:4000'], 'estimate_id' => ['nullable', 'integer', 'min:1']]);
         if ((int) $actor->current_organization_id !== (int) $organization->id
-            || !$this->permissions->canExecuteTool($actor, $this->getName(), $arguments)) {
+            || ! $this->permissions->canExecuteTool($actor, $this->getName(), $arguments)) {
             throw new AuthorizationException;
         }
-        $estimateId = $arguments['estimate_id'] ?? null;
+        $contextEstimateId = is_int($selection['estimate_id'] ?? null) && $selection['estimate_id'] > 0
+            ? $selection['estimate_id'] : null;
+        $estimateId = $contextEstimateId ?? $arguments['estimate_id'] ?? null;
         $selection = $estimateId !== null && ($selection['estimate_id'] ?? null) === $estimateId ? $selection : null;
         $answer = $this->answers->answer($arguments['query'], (int) $organization->id, $actor, $estimateId, $selection);
         $execution?->assertCanContinue();
@@ -73,7 +75,7 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
     public static function receipt(array $answer): ?array
     {
         $evidence = $answer['financial_evidence'] ?? null;
-        if (!is_array($evidence)) {
+        if (! is_array($evidence)) {
             return null;
         }
         $receipt = array_intersect_key($evidence, array_flip(['estimate', 'totals', 'stored_totals', 'position_count', 'fetched_at', 'version',
@@ -88,6 +90,7 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
         $receipt['positions'] = array_slice(array_values(array_filter($evidence['positions'] ?? [],
             static fn (array $position): bool => isset($shownIds[(string) $position['id']]))), 0, 50);
         $receipt['source_refs'] = $references;
+
         return $receipt;
     }
 }

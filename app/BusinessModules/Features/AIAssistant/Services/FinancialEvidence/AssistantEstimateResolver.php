@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Estimate;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 
 final class AssistantEstimateResolver
@@ -22,6 +24,9 @@ final class AssistantEstimateResolver
             return $this->result('forbidden');
         }
         $selector = $this->selector($query);
+        if ($selector === null && $this->isLatestEstimateRequest($query)) {
+            return $this->latestEstimate($organizationId, $actor);
+        }
         $candidates = [];
         $exact = [];
         foreach (Estimate::query()->where('organization_id', $organizationId)->orderBy('id')->lazyById(100) as $estimate) {
@@ -53,6 +58,52 @@ final class AssistantEstimateResolver
         }
 
         return $this->result(count($options) === 1 ? 'resolved' : ($options === [] ? 'not_found' : 'ambiguous'), array_slice($options, 0, 20), $selector !== null || $exact !== []);
+    }
+
+    private function latestEstimate(int $organizationId, User $actor): array
+    {
+        return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $actor): array {
+            $scope = $this->access->entityQuery($actor, $organizationId, 'estimate');
+            if ($scope === null) {
+                return $this->result('not_found');
+            }
+
+            $organizationFinance = $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view');
+            $projectFinance = [];
+            $estimates = Estimate::query()->where('estimates.organization_id', $organizationId)
+                ->where(static function (Builder $projectScope) use ($organizationId): void {
+                    $projectScope->whereNull('estimates.project_id')->orWhereExists(static function ($projects) use ($organizationId): void {
+                        $projects->selectRaw('1')->from('projects')->whereColumn('projects.id', 'estimates.project_id')
+                            ->where('projects.organization_id', $organizationId);
+                    });
+                })
+                ->whereIn('estimates.id', $scope->select('estimates.id'))
+                ->select(['estimates.id', 'estimates.number', 'estimates.name', 'estimates.project_id'])
+                ->orderByDesc('estimates.created_at')
+                ->orderByDesc('estimates.id')
+                ->cursor();
+
+            foreach ($estimates as $estimate) {
+                $projectId = $estimate->project_id === null ? null : (int) $estimate->project_id;
+                $canReadFinance = $projectId === null
+                    ? $organizationFinance
+                    : ($projectFinance[$projectId] ??= $authorization->canCurrent($actor, 'budget-estimates.finance.view', [
+                        'context_type' => 'project', 'project_id' => $projectId, 'organization_id' => $organizationId,
+                    ]));
+                if (! $canReadFinance) {
+                    continue;
+                }
+
+                return $this->result('resolved', [$this->option($estimate)], false);
+            }
+
+            return $this->result('not_found');
+        }, true);
+    }
+
+    private function isLatestEstimateRequest(string $query): bool
+    {
+        return preg_match('/(?<![\\pL\\pN])последн[а-яё]*\\s+смет[а-яё]*(?![\\pL\\pN])/iu', $query) === 1;
     }
 
     private function selector(string $query): ?string

@@ -13,9 +13,13 @@ class AIPermissionChecker
     private ?AuthorizationService $batchAuthorization = null;
 
     public function __construct(private readonly ?AuthorizationService $authorization = null) {}
+
     private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
+
     private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
-    private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'get_estimate_financial_snapshot'];
+
+    private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'];
+
     private const TOOL_PERMISSION_MAP = [
         'generate_profitability_report' => ['reports.view', 'admin.reports.view'],
         'generate_work_completion_report' => ['reports.view', 'admin.reports.view'],
@@ -67,6 +71,7 @@ class AIPermissionChecker
         }
 
         $policy = app(AssistantDataAccessPolicy::class);
+
         return $policy->withCurrentChecks($user, $organizationId,
             fn (): bool => $policy->canReadDomain($user, $organizationId, 'assistant'), $fresh);
     }
@@ -109,6 +114,7 @@ class AIPermissionChecker
     public function canExecuteTool(User $user, string $toolName, array $params = [], bool $fresh = true): bool
     {
         $organizationId = (int) $user->current_organization_id;
+
         return app(AssistantDataAccessPolicy::class)->withCurrentChecks($user, $organizationId, function (AuthorizationService $authorization) use ($user, $toolName, $params, $organizationId, $fresh): bool {
             $previous = $this->batchAuthorization;
             $this->batchAuthorization = $fresh
@@ -135,7 +141,10 @@ class AIPermissionChecker
             return $policy->canReadDomain($user, $organizationId, 'assistant');
         }
         if (in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)) {
-            $domain = match ((string) ($params['domain'] ?? '')) { 'works' => 'projects', 'acts' => 'contracts', default => (string) ($params['domain'] ?? '') };
+            $domain = match ((string) ($params['domain'] ?? '')) {
+                'works' => 'projects', 'acts' => 'contracts', default => (string) ($params['domain'] ?? '')
+            };
+
             return $policy->canReadDomain($user, $organizationId, $domain);
         }
         if (in_array($toolName, self::ESTIMATE_TOOLS, true)) {
@@ -144,6 +153,8 @@ class AIPermissionChecker
             }
 
             if ($toolName === 'resolve_estimate' || ($toolName === 'get_estimate_answer' && ($params['estimate_id'] ?? null) === null)
+                || ($toolName === 'search_estimate_positions'
+                    && $policy->canCurrentPermission($user, $organizationId, 'budget-estimates.finance.view'))
                 || ($toolName === 'get_estimate_positions' && ($params['estimate_id'] ?? null) === null
                     && is_string($params['estimate_selector'] ?? null) && trim($params['estimate_selector']) !== ''
                     && $policy->canCurrentPermission($user, $organizationId, 'budget-estimates.finance.view'))) {
@@ -169,17 +180,25 @@ class AIPermissionChecker
                 return false;
             }
         }
-        $idType = match ($toolName) { 'update_measurement_unit', 'delete_measurement_unit' => 'measurement_unit', default => null };
-        if ($requireEntityAuthorization && $idType !== null && (! isset($params['id']) || ! $policy->canReadEntity($user, $organizationId, $idType, (string) $params['id']))) { return false; }
+        $idType = match ($toolName) {
+            'update_measurement_unit', 'delete_measurement_unit' => 'measurement_unit', default => null
+        };
+        if ($requireEntityAuthorization && $idType !== null && (! isset($params['id']) || ! $policy->canReadEntity($user, $organizationId, $idType, (string) $params['id']))) {
+            return false;
+        }
         if (isset($params['schedule_id'], $params['project_id'])) {
             $schedule = $policy->entityQuery($user, $organizationId, 'schedule');
-            if ($schedule === null || ! $schedule->whereKey($params['schedule_id'])->where('project_id', $params['project_id'])->exists()) { return false; }
+            if ($schedule === null || ! $schedule->whereKey($params['schedule_id'])->where('project_id', $params['project_id'])->exists()) {
+                return false;
+            }
         }
         if ($this->isReportTool($toolName) && ! $policy->canReadDomain($user, $organizationId, 'reports')) {
             return false;
         }
         if (in_array($toolName, ['generate_contract_payments_report', 'generate_contractor_settlements_report'], true)
-            && ! $this->canCurrent($user, 'payments.invoice.view', $organizationId) && ! $this->canCurrent($user, 'payments.invoice.view_all', $organizationId)) { return false; }
+            && ! $this->canCurrent($user, 'payments.invoice.view', $organizationId) && ! $this->canCurrent($user, 'payments.invoice.view_all', $organizationId)) {
+            return false;
+        }
         $mutationPermission = match ($toolName) {
             'create_schedule_task', 'update_schedule_task_status' => 'schedule-management.edit',
             'send_project_notification' => 'projects.edit',
@@ -188,6 +207,7 @@ class AIPermissionChecker
             'update_measurement_unit' => 'measurement_units.edit', 'delete_measurement_unit' => 'measurement_units.delete',
             default => null,
         };
+
         return $mutationPermission === null || $this->canCurrent($user, $mutationPermission, $organizationId);
     }
 
@@ -206,8 +226,9 @@ class AIPermissionChecker
         $toolName = $this->normalizeToolName($toolName);
         $organizationId = (int) $user->current_organization_id;
         $policy = app(AssistantDataAccessPolicy::class);
+
         return $policy->withCurrentChecks($user, $organizationId, function (AuthorizationService $authorization) use ($user, $toolName, $organizationId, $policy): bool {
-            if (!$policy->canReadDomain($user, $organizationId, 'assistant')) {
+            if (! $policy->canReadDomain($user, $organizationId, 'assistant')) {
                 return false;
             }
             if (in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true) || in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)) {
