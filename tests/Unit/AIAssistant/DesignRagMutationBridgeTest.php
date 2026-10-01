@@ -66,7 +66,10 @@ final class DesignRagMutationBridgeTest extends TestCase
     {
         $previous = Facade::getFacadeApplication();
         Facade::setFacadeApplication(new Container);
-        DB::swap(new class { public function transaction(callable $operation): void { throw new RuntimeException('synthetic_queue_failure'); } });
+        DB::swap(new class {
+            public function transactionLevel(): int { return 0; }
+            public function transaction(callable $operation): void { throw new RuntimeException('synthetic_queue_failure'); }
+        });
         try {
             self::assertNull((new DesignRagMutationBridge)->ifcRows([]));
         } finally {
@@ -78,5 +81,6 @@ final class DesignRagMutationBridgeTest extends TestCase
 
 final class DesignMutationPureTransactions
 {
+    public function transactionLevel(): int { return 0; }
     public function transaction(callable $operation): mixed { return $operation(); }
 }

@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\DesignRagMutationBridg
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagJobDispatcher;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagDispatchIntent;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision;
@@ -26,15 +27,99 @@ use App\BusinessModules\Features\DesignManagement\Services\LegacyDesignCompositi
 use App\Models\Project;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
+use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Queue\Factory;
+use Illuminate\Contracts\Queue\Queue as QueueContract;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use ReflectionClass;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
+use Psr\Log\LoggerInterface;
 
 final class DesignRagMutationTest extends TestCase
 {
+    public function test_ifc_batch_queues_all_elements_with_bounded_database_queries(): void
+    {
+        [$fixture, , $version, , $derivative] = $this->fixture();
+        Queue::fake([IndexRagSourceJob::class]);
+        $path = tempnam(sys_get_temp_dir(), 'most-ifc-performance-');
+        self::assertIsString($path);
+        $lines = [];
+        for ($index = 1; $index <= 120; $index++) {
+            $lines[] = json_encode(['express_id' => $index, 'name' => 'Element '.$index], JSON_THROW_ON_ERROR);
+        }
+        file_put_contents($path, implode("\n", $lines)."\n");
+        DB::enableQueryLog();
+        try {
+            (new DesignIfcElementIndexer)->index($version, $derivative, $path, ['indexed_element_count' => 120]);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+            unlink($path);
+        }
+
+        self::assertSame(120, DesignIfcModelElement::query()->where('version_id', $version->id)->count());
+        self::assertSame(120, $this->runs($fixture->organization->id, 'design_ifc_model_element')->count());
+        self::assertLessThan(50, count($queries), 'IFC indexing must persist and dispatch RAG intents in batches.');
+    }
+
+    public function test_ifc_bulk_outage_preserves_committed_elements_and_pending_intents(): void
+    {
+        [$fixture, , $version, , $derivative] = $this->fixture();
+        $queue = $this->createMock(QueueContract::class);
+        $queue->expects(self::once())->method('bulk')->willThrowException(new \RuntimeException('Queue unavailable'));
+        $factory = $this->createMock(Factory::class);
+        $factory->method('connection')->willReturn($queue);
+        Queue::swap($factory);
+        $this->app->instance(RagJobDispatcher::class, new RagJobDispatcher(
+            $this->app->make(Dispatcher::class), $this->app->make(LoggerInterface::class),
+        ));
+        DB::beginTransaction();
+        $this->index($version, $derivative);
+        DB::commit();
+
+        self::assertSame(2, DesignIfcModelElement::query()->where('version_id', $version->id)->count());
+        $runs = $this->runs($fixture->organization->id, 'design_ifc_model_element')->get();
+        self::assertCount(2, $runs);
+        foreach ($runs as $run) {
+            self::assertSame(RagIndexRun::STATUS_QUEUED, $run->status);
+            self::assertTrue(RagDispatchIntent::isPending($run->last_error));
+            self::assertSame(\RuntimeException::class, RagDispatchIntent::publicError($run->last_error));
+        }
+    }
+
+    public function test_ifc_batch_keeps_previous_organization_source_for_cleanup(): void
+    {
+        [$fixture, , $version, $other, $derivative] = $this->fixture();
+        [$previousFixture, $previousPackage] = $this->fixture();
+        [$element] = $this->elements($version, $other, $derivative);
+        RagSource::query()->create([
+            'organization_id' => $previousFixture->organization->id,
+            'project_id' => $previousPackage->project_id,
+            'source_type' => 'design_additional',
+            'entity_type' => 'design_ifc_model_element',
+            'entity_id' => (string) $element->id,
+            'title' => 'Previous source',
+            'checksum' => hash('sha256', 'previous-ifc-source'),
+            'metadata' => [],
+        ]);
+        Queue::fake([IndexRagSourceJob::class]);
+        DB::beginTransaction();
+        $this->index($version, $derivative);
+        $this->index($version, $derivative);
+        DB::commit();
+
+        self::assertSame(2, $this->runs($fixture->organization->id, 'design_ifc_model_element')->count());
+        $previous = $this->runs($previousFixture->organization->id, 'design_ifc_model_element')->sole();
+        self::assertSame((string) $element->id, $previous->entity_id);
+        self::assertSame($previousPackage->project_id, $previous->project_id);
+        self::assertCount(3, Queue::pushed(IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->entityType === 'design_ifc_model_element'));
+    }
+
     public function test_ifc_upsert_queues_real_old_and_new_row_ids_after_commit_without_unrelated_express_ids(): void
     {
         [$fixture, $package, $version, $other, $derivative] = $this->fixture();
@@ -213,6 +298,16 @@ final class DesignMutationSqlFailureCoordinator extends RagIndexingCoordinator
 {
     public int $failures = 0;
     public ?string $sqlState = null;
+
+    public function queueEntities(int $organizationId, ?int $projectId, string $sourceType, string $entityType, array $entityIds): void
+    {
+        if ($entityType === 'design_ifc_model_element') {
+            $this->failures++;
+            try { DB::select('SELECT 1 / 0'); }
+            catch (QueryException $exception) { $this->sqlState = $exception->errorInfo[0] ?? null; throw $exception; }
+        }
+        parent::queueEntities($organizationId, $projectId, $sourceType, $entityType, $entityIds);
+    }
 
     public function queueEntity(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId): RagIndexRun
     {

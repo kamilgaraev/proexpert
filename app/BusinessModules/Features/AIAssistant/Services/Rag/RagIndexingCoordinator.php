@@ -247,6 +247,55 @@ class RagIndexingCoordinator
         return $this->queueEntityRun($organizationId, $projectId, $sourceType, $entityType, $entityId, RagIndexRun::MODE_ASYNC);
     }
 
+    public function queueEntities(int $organizationId, ?int $projectId, string $sourceType, string $entityType, array $entityIds): void
+    {
+        if ($entityIds === []) {
+            return;
+        }
+        if (count($entityIds) > 500) {
+            throw new \InvalidArgumentException('RAG entity batch exceeds 500 items.');
+        }
+        $entityIds = array_values(array_unique(array_map(static fn (string|int $id): string => (string) $id, $entityIds)));
+
+        DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityIds): void {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            $pending = RagIndexRun::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
+                ->where('entity_type', $entityType)->whereIn('entity_id', $entityIds)
+                ->where('status', RagIndexRun::STATUS_QUEUED)->get(['id', 'entity_id', 'mode']);
+            $newIds = array_diff($entityIds, $pending->pluck('entity_id')->all());
+            $scheduledIds = $pending->where('mode', RagIndexRun::MODE_SCHEDULED)->pluck('id')->all();
+            $marker = RagDispatchIntent::pending();
+            $timestamp = now();
+            if ($newIds !== []) {
+                RagIndexRun::query()->insert(array_map(static fn (string $id): array => [
+                    'organization_id' => $organizationId,
+                    'project_id' => $projectId,
+                    'source_type' => $sourceType,
+                    'entity_type' => $entityType,
+                    'entity_id' => $id,
+                    'status' => RagIndexRun::STATUS_QUEUED,
+                    'mode' => RagIndexRun::MODE_ASYNC,
+                    'queued_at' => $timestamp,
+                    'last_error' => $marker,
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ], array_values($newIds)));
+            }
+            if ($scheduledIds !== []) {
+                RagIndexRun::query()->whereIn('id', $scheduledIds)->update([
+                    'mode' => RagIndexRun::MODE_ASYNC,
+                    'last_error' => $marker,
+                    'queued_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ]);
+            }
+            $this->invalidateCoverageAfterCommit($organizationId);
+            if ($newIds !== [] || $scheduledIds !== []) {
+                $this->dispatchEntityBatchAfterCommit($organizationId, $marker);
+            }
+        });
+    }
+
     public function queueFileRegistration(int $organizationId, int $fileId, bool $archive = false): RagIndexRun
     {
         return $this->queueEntityRun($organizationId, null, 'file_document', 'file', $fileId,
@@ -674,6 +723,43 @@ class RagIndexingCoordinator
             } catch (Throwable $exception) {
                 try {
                     Log::warning('ai_assistant.rag.dispatch_setup_failed', ['run_id' => $runId, 'exception_class' => $exception::class]);
+                } catch (Throwable) {
+                }
+            }
+        });
+    }
+
+    private function dispatchEntityBatchAfterCommit(int $organizationId, string $marker): void
+    {
+        DB::afterCommit(function () use ($organizationId, $marker): void {
+            try {
+                $runs = RagIndexRun::query()->where('organization_id', $organizationId)
+                    ->where('status', RagIndexRun::STATUS_QUEUED)->where('last_error', $marker)->get();
+                if ($runs->isEmpty()) {
+                    return;
+                }
+                $runIds = $runs->pluck('id')->all();
+                $jobs = $runs->map(static fn (RagIndexRun $run): IndexRagSourceJob => new IndexRagSourceJob(
+                    $run->organization_id, $run->project_id, $run->source_type, $run->id, $run->entity_type, $run->entity_id,
+                ))->all();
+                $dispatcher = $this->dispatcher ?? app(RagJobDispatcher::class);
+                $accepted = $dispatcher->dispatchMany($jobs, static function (Throwable $exception) use ($runIds, $marker): void {
+                    RagIndexRun::query()->whereIn('id', $runIds)->where('status', RagIndexRun::STATUS_QUEUED)
+                        ->where('last_error', $marker)->update([
+                            'last_error' => RagDispatchIntent::failed($marker, $exception),
+                            'updated_at' => now(),
+                        ]);
+                });
+                if ($accepted) {
+                    RagIndexRun::query()->whereIn('id', $runIds)->where('status', RagIndexRun::STATUS_QUEUED)
+                        ->where('last_error', $marker)->update(['last_error' => null, 'updated_at' => now()]);
+                }
+            } catch (Throwable $exception) {
+                try {
+                    Log::warning('ai_assistant.rag.batch_dispatch_setup_failed', [
+                        'organization_id' => $organizationId,
+                        'exception_class' => $exception::class,
+                    ]);
                 } catch (Throwable) {
                 }
             }
