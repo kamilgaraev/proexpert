@@ -15,7 +15,37 @@ use RuntimeException;
 
 final class AssistantOperationsNativeFileIndexer
 {
+    private const LEGACY_QUALITY_PHOTO_PAGE_SIZE = 5;
+
     public function __construct(private readonly AssistantOperationsNativeFileAdapter $native) {}
+
+    public function prepareLegacyQualityDefectPhotoPage(int $organizationId, ?string $afterSourceId = null): ?string
+    {
+        if ($organizationId < 1 || ($afterSourceId !== null && ! preg_match('/^[1-9][0-9]*$/D', $afterSourceId))) { return null; }
+
+        $query = AssistantOperationsNativeFileMetadata::sourceQuery('quality_defect_photo', $organizationId)
+            ->where(static fn (QueryBuilder $identity) => $identity->whereNull('native_source.storage_identity_verified')
+                ->orWhere('native_source.storage_identity_verified', false));
+        if ($afterSourceId !== null) { $query->where('native_source.id', '>', $afterSourceId); }
+
+        $ids = $query->select('native_source.id')->orderBy('native_source.id')->limit(self::LEGACY_QUALITY_PHOTO_PAGE_SIZE + 1)->pluck('id');
+        $hasMore = $ids->count() > self::LEGACY_QUALITY_PHOTO_PAGE_SIZE;
+        $page = $ids->take(self::LEGACY_QUALITY_PHOTO_PAGE_SIZE);
+        foreach ($page as $sourceId) {
+            try {
+                $document = $this->native->mapForIndexing($organizationId, (string) $sourceId, 'quality_defect_photo');
+            } catch (RuntimeException $exception) {
+                if ($exception->getMessage() !== 'ai_assistant_document_native_source_invalid') { throw $exception; }
+                $document = null;
+            }
+            if ($document instanceof AIAssistantDocument && $document->status === AIAssistantDocument::STATUS_QUEUED) {
+                $documentId = (int) $document->id;
+                DB::afterCommit(static fn () => ProcessAssistantDocument::dispatch($documentId));
+            }
+        }
+
+        return $hasMore ? (string) $page->last() : null;
+    }
 
     public function prepare(int $organizationId, ?int $projectId = null, ?string $entityType = null, string|int|null $entityId = null, ?callable $heartbeat = null): void
     {

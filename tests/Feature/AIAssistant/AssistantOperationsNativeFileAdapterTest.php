@@ -22,11 +22,14 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Jobs\ProcessAssistantDocument;
+use App\Jobs\ScanAssistantDocuments;
 use App\Models\File;
 use App\Models\Material;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Modules\PackageCatalogService;
+use App\Services\Storage\DTO\StoredFile;
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\FileService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
@@ -41,6 +44,9 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
 {
     private string $body = 'Current clinical examination: fit for work.';
     private int $reads = 0;
+    private int $heads = 0;
+    private ?VersionedObjectIntegrityException $headFailure = null;
+    private ?\Closure $duringHead = null;
 
     public function test_actual_medical_full_view_processes_without_invented_medical_or_hr_permission_and_revocation_precedes_storage(): void
     {
@@ -148,6 +154,111 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         self::assertSame(0, $query->count());
     }
 
+    public function test_legacy_quality_photo_gets_current_storage_identity_before_mapping_and_reuses_document(): void
+    {
+        [$fixture, $actor, $project] = $this->fixture('quality-control', 'quality-control.view');
+        $defect = QualityDefect::withoutEvents(fn () => QualityDefect::query()->create(['organization_id' => $fixture->organization->id,
+            'project_id' => $project->id, 'defect_number' => 'NATIVE-'.Str::uuid(), 'title' => 'Дефект', 'severity' => 'major', 'status' => 'open']));
+        $photo = $this->legacyQualityPhoto((int) $fixture->organization->id, (int) $defect->id, (int) $actor->id);
+        $adapter = $this->adapter();
+
+        $document = $adapter->mapForIndexing($fixture->organization->id, $photo->id, 'quality_defect_photo');
+        self::assertNotNull($document);
+        self::assertSame(1, $this->heads);
+        self::assertSame(hash('md5', $this->body), $photo->fresh()->storage_etag);
+        self::assertSame(hash('sha256', $this->body), $photo->fresh()->storage_sha256);
+        self::assertSame(strlen($this->body), $photo->fresh()->size_bytes);
+        self::assertSame('image/png', $photo->fresh()->mime_type);
+        self::assertTrue($photo->fresh()->storage_identity_verified);
+        self::assertSame(hash('sha256', $this->body), $document->checksum);
+
+        $same = $adapter->mapForIndexing($fixture->organization->id, $photo->id, 'quality_defect_photo');
+        self::assertSame($document->id, $same?->id);
+        self::assertSame(1, AIAssistantDocument::query()->where('metadata->native_source_id', (string) $photo->id)->count());
+        self::assertSame(1, $this->heads);
+    }
+
+    public function test_missing_current_object_keeps_legacy_photo_unverified_and_unmapped(): void
+    {
+        [$fixture, $actor, $project] = $this->fixture('quality-control', 'quality-control.view');
+        $defect = QualityDefect::withoutEvents(fn () => QualityDefect::query()->create(['organization_id' => $fixture->organization->id,
+            'project_id' => $project->id, 'defect_number' => 'NATIVE-'.Str::uuid(), 'title' => 'Дефект', 'severity' => 'major', 'status' => 'open']));
+        $photo = $this->legacyQualityPhoto((int) $fixture->organization->id, (int) $defect->id, (int) $actor->id);
+        $this->headFailure = new VersionedObjectIntegrityException('s3_pinned_object_unavailable');
+        $adapter = $this->adapter();
+
+        $this->denied(fn () => $adapter->mapForIndexing($fixture->organization->id, $photo->id, 'quality_defect_photo'), 'ai_assistant_document_native_source_invalid');
+
+        self::assertSame(1, $this->heads);
+        self::assertSame(0, $this->reads);
+        self::assertFalse($photo->fresh()->storage_identity_verified);
+        self::assertNull($photo->fresh()->storage_sha256);
+        self::assertSame(0, AIAssistantDocument::query()->where('metadata->native_source_id', (string) $photo->id)->count());
+    }
+
+    public function test_concurrent_photo_path_change_cannot_receive_identity_for_previous_object(): void
+    {
+        [$fixture, $actor, $project] = $this->fixture('quality-control', 'quality-control.view');
+        $defect = QualityDefect::withoutEvents(fn () => QualityDefect::query()->create(['organization_id' => $fixture->organization->id,
+            'project_id' => $project->id, 'defect_number' => 'NATIVE-'.Str::uuid(), 'title' => 'Дефект', 'severity' => 'major', 'status' => 'open']));
+        $photo = $this->legacyQualityPhoto((int) $fixture->organization->id, (int) $defect->id, (int) $actor->id);
+        $this->duringHead = static function () use ($photo, $fixture, $defect): void {
+            $photo->withoutEvents(fn () => $photo->update([
+                'url' => 'org-'.$fixture->organization->id.'/quality-control/defects/'.$defect->id.'/'.Str::uuid().'.png',
+            ]));
+        };
+        $adapter = $this->adapter();
+
+        $this->denied(fn () => $adapter->mapForIndexing($fixture->organization->id, $photo->id, 'quality_defect_photo'), 'ai_assistant_document_native_source_invalid');
+
+        self::assertSame(1, $this->heads);
+        self::assertFalse($photo->fresh()->storage_identity_verified);
+        self::assertNull($photo->fresh()->storage_sha256);
+        self::assertSame(0, AIAssistantDocument::query()->where('metadata->native_source_id', (string) $photo->id)->count());
+    }
+
+    public function test_cross_organization_and_inaccessible_parent_photos_never_reach_storage(): void
+    {
+        [$fixture, $actor, $project] = $this->fixture('quality-control', 'quality-control.view');
+        $foreignProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]));
+        $foreignDefect = QualityDefect::withoutEvents(fn () => QualityDefect::query()->create(['organization_id' => $fixture->foreignOrganization->id,
+            'project_id' => $foreignProject->id, 'defect_number' => 'NATIVE-'.Str::uuid(), 'title' => 'Дефект', 'severity' => 'major', 'status' => 'open']));
+        $foreignPhoto = $this->legacyQualityPhoto((int) $fixture->foreignOrganization->id, (int) $foreignDefect->id, (int) $fixture->foreignOwner->id);
+        $hiddenProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $hiddenDefect = QualityDefect::withoutEvents(fn () => QualityDefect::query()->create(['organization_id' => $fixture->organization->id,
+            'project_id' => $hiddenProject->id, 'defect_number' => 'NATIVE-'.Str::uuid(), 'title' => 'Закрытый дефект', 'severity' => 'major', 'status' => 'open']));
+        $hiddenPhoto = $this->legacyQualityPhoto((int) $fixture->organization->id, (int) $hiddenDefect->id, (int) $actor->id);
+        $adapter = $this->adapter();
+
+        $this->denied(fn () => $adapter->mapForIndexing($fixture->organization->id, $foreignPhoto->id, 'quality_defect_photo'), 'ai_assistant_document_native_source_invalid');
+        $this->denied(fn () => $adapter->map($actor, $fixture->organization->id, 'quality_defect_photo', $hiddenPhoto->id), 'ai_assistant_document_access_denied');
+
+        self::assertSame(0, $this->heads);
+        self::assertFalse($foreignPhoto->fresh()->storage_identity_verified);
+        self::assertFalse($hiddenPhoto->fresh()->storage_identity_verified);
+    }
+
+    public function test_scheduled_document_scan_recovers_legacy_quality_photos_without_duplicate_documents_or_runs(): void
+    {
+        [$fixture, $actor, $project] = $this->fixture('quality-control', 'quality-control.view');
+        $defect = QualityDefect::withoutEvents(fn () => QualityDefect::query()->create(['organization_id' => $fixture->organization->id,
+            'project_id' => $project->id, 'defect_number' => 'NATIVE-'.Str::uuid(), 'title' => 'Дефект', 'severity' => 'major', 'status' => 'open']));
+        $photo = $this->legacyQualityPhoto((int) $fixture->organization->id, (int) $defect->id, (int) $actor->id);
+        $this->adapter();
+
+        (new ScanAssistantDocuments((int) $fixture->organization->id))->handle();
+        $documents = AIAssistantDocument::query()->where('metadata->native_source_id', (string) $photo->id);
+        self::assertSame(1, $documents->count());
+        self::assertSame(1, $this->heads);
+        $runCount = RagIndexRun::query()->where('organization_id', $fixture->organization->id)->count();
+
+        (new ScanAssistantDocuments((int) $fixture->organization->id))->handle();
+
+        self::assertSame(1, $documents->count());
+        self::assertSame($runCount, RagIndexRun::query()->where('organization_id', $fixture->organization->id)->count());
+        self::assertSame(1, $this->heads);
+    }
+
     public function test_all_63_gallery_files_keep_distinct_real_file_identity_queue_after_commit_and_deleted_file_reconciles_durably(): void
     {
         [$fixture, $actor, $project] = $this->fixture('basic-warehouse', 'warehouse.view');
@@ -241,6 +352,16 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
     private function adapter(): AssistantOperationsNativeFileAdapter
     {
         $storage = $this->createMock(FileService::class);
+        $storage->method('headCurrent')->willReturnCallback(function (string $path, int $maxBytes): StoredFile {
+            $this->heads++;
+            if ($this->headFailure !== null) { throw $this->headFailure; }
+            if ($this->duringHead !== null) {
+                $duringHead = $this->duringHead;
+                $this->duringHead = null;
+                $duringHead();
+            }
+            return new StoredFile($path, hash('md5', $this->body), strlen($this->body), hash('sha256', $this->body), 'image/png');
+        });
         $storage->method('readCurrentBounded')->willReturnCallback(function () {
             $this->reads++;
             $stream = fopen('php://temp', 'w+b');
@@ -253,6 +374,21 @@ final class AssistantOperationsNativeFileAdapterTest extends TestCase
         $adapter = new AssistantOperationsNativeFileAdapter(app(AssistantDataAccessPolicy::class), app(AuthorizationService::class), $storage);
         $this->app->instance(AssistantOperationsNativeFileAdapter::class, $adapter);
         return $adapter;
+    }
+    private function legacyQualityPhoto(int $organizationId, int $defectId, int $uploadedBy): QualityDefectPhoto
+    {
+        return QualityDefectPhoto::withoutEvents(fn () => QualityDefectPhoto::query()->create([
+            'organization_id' => $organizationId,
+            'quality_defect_id' => $defectId,
+            'uploaded_by' => $uploadedBy,
+            'type' => 'before',
+            'url' => 'org-'.$organizationId.'/quality-control/defects/'.$defectId.'/'.Str::uuid().'.png',
+            'storage_identity_verified' => false,
+            'storage_etag' => null,
+            'storage_sha256' => null,
+            'size_bytes' => null,
+            'mime_type' => null,
+        ]));
     }
 
     private function medical(AssistantRealAuthorizationFixture $fixture, User $actor, Project $project): array

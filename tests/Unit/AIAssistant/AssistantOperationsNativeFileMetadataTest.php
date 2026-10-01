@@ -35,7 +35,7 @@ final class AssistantOperationsNativeFileMetadataTest extends TestCase
             ['storage_path' => 'org-1/quality-control/defects/8/11111111-1111-4111-8111-111111111111.png'],
             ['storage_path' => 'org-1/quality-control/defects/7/../private.png'],
             ['storage_identity_verified' => false], ['expected_sha256' => null], ['expected_sha256' => 'abc'],
-            ['size_bytes' => Metadata::MAX_BYTES + 1], ['mime_type' => 'text/plain'], ['native_file_id' => 123], ['native_parent_id' => 9],
+            ['storage_etag' => ''], ['size_bytes' => Metadata::MAX_BYTES + 1], ['mime_type' => 'text/plain'], ['native_file_id' => 123], ['native_parent_id' => 9],
         ];
         foreach ($bad as $changes) {
             try { Metadata::assertSource('quality_defect_photo', array_replace($source, $changes)); self::fail('Invalid storage identity was accepted.'); }
@@ -75,6 +75,6 @@ final class AssistantOperationsNativeFileMetadataTest extends TestCase
     {
         return ['id' => 2, 'organization_id' => 1, 'native_parent_id' => 2, 'native_file_id' => null, 'quality_defect_id' => 7,
             'storage_path' => 'org-1/quality-control/defects/7/11111111-1111-4111-8111-111111111111.png', 'storage_identity_verified' => true,
-            'expected_sha256' => str_repeat('a', 64), 'size_bytes' => 20, 'mime_type' => 'image/png', 'actor_user_id' => 4, 'parent_project_id' => 9];
+            'storage_etag' => 'etag', 'expected_sha256' => str_repeat('a', 64), 'size_bytes' => 20, 'mime_type' => 'image/png', 'actor_user_id' => 4, 'parent_project_id' => 9];
     }
 }

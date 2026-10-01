@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\Models\File;
 use App\Models\Organization;
 use Illuminate\Bus\Queueable;
@@ -60,6 +61,15 @@ final class ScanAssistantDocuments implements ShouldQueue, ShouldBeUnique
                     ProcessAssistantDocumentOcr::dispatch((int) $document->id)->afterCommit();
                 }
             });
+
+            $cursorKey = 'assistant-native-quality-photo-recovery:'.$this->organizationId;
+            $cursor = Cache::get($cursorKey);
+            $afterSourceId = (is_int($cursor) || is_string($cursor)) && preg_match('/^[1-9][0-9]*$/D', (string) $cursor)
+                ? (string) $cursor
+                : null;
+            $nextSourceId = app(AssistantOperationsNativeFileIndexer::class)
+                ->prepareLegacyQualityDefectPhotoPage($this->organizationId, $afterSourceId);
+            Cache::forever($cursorKey, $nextSourceId ?? '0');
         });
     }
 }
