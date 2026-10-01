@@ -1870,17 +1870,69 @@ class AIAssistantService
             $message = trans_message('ai_assistant.tool_execute_failed');
             $toolFailures[] = $message;
 
-            $this->logging->technical('ai.tool.error', [
+            $technicalContext = [
                 'tool' => $toolName,
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
                 'exception_class' => $exception::class,
-            ], 'error');
+            ];
+            if ($exception instanceof QueryException) {
+                $technicalContext += $this->queryExceptionDiagnosticMetadata($exception);
+            }
+            $this->logging->technical('ai.tool.error', $technicalContext, 'error');
             if ($exception instanceof QueryException && (string) ($exception->errorInfo[0] ?? $exception->getCode()) === '57014') {
                 return ['status' => 'unavailable', 'reason' => 'read_timed_out', 'error' => trans_message('ai_assistant.data_read_timed_out')];
             }
             return ['error' => $message];
         }
+    }
+
+    private function queryExceptionDiagnosticMetadata(QueryException $exception): array
+    {
+        $metadata = ['sql_fingerprint' => hash('sha256', $exception->getSql())];
+        $sqlState = null;
+        foreach ([$exception->errorInfo[0] ?? null, $exception->getCode()] as $candidate) {
+            if (!is_string($candidate) && !is_int($candidate)) {
+                continue;
+            }
+
+            $candidate = (string) $candidate;
+            if (preg_match('/\\A[A-Z0-9]{5}\\z/', $candidate) === 1) {
+                $sqlState = $candidate;
+                break;
+            }
+        }
+
+        if ($sqlState === null) {
+            return $metadata;
+        }
+
+        $metadata['sqlstate'] = $sqlState;
+        $objectType = match ($sqlState) {
+            '42703' => 'column',
+            '42P01' => 'relation',
+            default => null,
+        };
+        $driverMessage = $exception->errorInfo[2] ?? null;
+        if ($objectType === null || !is_string($driverMessage) || strlen($driverMessage) > 2048) {
+            return $metadata;
+        }
+
+        $identifierPart = '[A-Za-z_][A-Za-z0-9_]{0,62}';
+        $pattern = '/\\AERROR:[ \\t]+'
+            . preg_quote($objectType, '/')
+            . '[ \\t]+"('
+            . $identifierPart
+            . '(?:\\.'
+            . $identifierPart
+            . ')*)"[ \\t]+does not exist'
+            . '(?: at character [0-9]+)?'
+            . '(?:\\r?\\nLINE [0-9]+:[^\\r\\n]*\\r?\\n[ \\t]*\\^[ \\t]*)?\\z/';
+        if (preg_match($pattern, $driverMessage, $matches) === 1) {
+            $metadata['database_identifier'] = $matches[1];
+        }
+
+        return $metadata;
     }
 
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
