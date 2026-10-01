@@ -9,8 +9,11 @@ use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Models\Estimate;
+use App\Models\Module;
 use App\Models\Organization;
+use App\Models\OrganizationPackageSubscription;
 use App\Models\Project;
+use App\Services\Modules\PackageCatalogService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
@@ -22,6 +25,8 @@ use Throwable;
 
 class RagIndexingCoordinator
 {
+    private const ASSISTANT_MODULE_SLUG = 'ai-assistant';
+
     public function __construct(
         private readonly RagIndexer $indexer,
         private readonly ?RagJobDispatcher $dispatcher = null
@@ -689,6 +694,48 @@ class RagIndexingCoordinator
         $query = Organization::query()
             ->select(['id'])
             ->when(! $includeInactive, static fn (Builder $query): Builder => $query->where('is_active', true));
+
+        $packageCatalog = app(PackageCatalogService::class);
+        $packageSlugs = array_column($packageCatalog->allPackages(), 'slug');
+        $packageSlugs = array_merge($packageSlugs, $packageCatalog->retiredEntryPackageSlugs());
+        $eligiblePackageSlugs = [];
+
+        foreach ($packageSlugs as $packageSlug) {
+            if (! is_string($packageSlug)) {
+                continue;
+            }
+
+            if (in_array(self::ASSISTANT_MODULE_SLUG, $packageCatalog->tierModules($packageSlug, 'standard'), true)) {
+                $eligiblePackageSlugs[] = $packageSlug;
+            }
+        }
+
+        if ($eligiblePackageSlugs === []) {
+            return collect();
+        }
+
+        $organizationTable = (new Organization)->getTable();
+        $moduleTable = (new Module)->getTable();
+        $packageSubscriptions = OrganizationPackageSubscription::query()
+            ->select('organization_id')
+            ->whereIn('package_slug', array_values(array_unique($eligiblePackageSlugs)))
+            ->whereHas('commercialAccount', static function (Builder $account): void {
+                $account->whereColumn(
+                    'organization_commercial_accounts.organization_id',
+                    'organization_package_subscriptions.organization_id',
+                );
+            })
+            ->active();
+
+        $query
+            ->whereIn("{$organizationTable}.id", $packageSubscriptions)
+            ->whereExists(static function (QueryBuilder $moduleQuery) use ($moduleTable): void {
+                $moduleQuery
+                    ->selectRaw('1')
+                    ->from($moduleTable)
+                    ->where("{$moduleTable}.slug", self::ASSISTANT_MODULE_SLUG)
+                    ->where("{$moduleTable}.is_active", true);
+            });
 
         if ($staleOnly) {
             $freshnessWindow = max(1, $staleAfterHours ?? (int) config('ai-assistant.rag.stale_after_hours', 24));
