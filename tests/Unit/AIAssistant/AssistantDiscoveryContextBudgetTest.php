@@ -111,6 +111,61 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $this->assertLessThanOrEqual(8192, $prepared['input_tokens']);
     }
 
+    public function test_payment_only_hints_contain_only_the_acl_checked_payment_document(): void
+    {
+        app()->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/ai-assistant'));
+        $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $service = $this->service(true, $catalog, true);
+        $query = 'Что с платежами?';
+        $plan = ['task_type' => 'summary', 'capability' => ['id' => 'payments', 'domain' => 'finance'],
+            'request' => ['message' => $query, 'allow_actions' => false, 'context' => []],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query, [])->toArray()];
+
+        $messages = $service->messages($plan);
+        $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
+        $hints = $references['registered_domain_capabilities'];
+
+        $this->assertSame([
+            ['domain' => 'finance', 'primary_entity_type' => 'payment_document', 'entity_type_count' => 1, 'operations' => ['search', 'read', 'navigation']],
+        ], $hints['domains']);
+        $this->assertArrayNotHasKey('details_tool', $hints);
+        $this->assertSame('checked_on_read', $hints['record_access']);
+    }
+
+    public function test_payment_only_hints_omit_payment_document_when_finance_acl_denies_it(): void
+    {
+        app()->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/ai-assistant'));
+        $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $service = $this->service(true, $catalog, false);
+        $query = 'Что с платежами?';
+        $plan = ['task_type' => 'summary', 'capability' => ['id' => 'payments', 'domain' => 'finance'],
+            'request' => ['message' => $query, 'allow_actions' => false, 'context' => []],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query, [])->toArray()];
+
+        $messages = $service->messages($plan);
+        $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
+        $hints = $references['registered_domain_capabilities'] ?? [];
+
+        $this->assertSame([], $hints['domains'] ?? []);
+    }
+
+    public function test_payment_only_hints_omit_payment_document_when_invoice_access_denies_it(): void
+    {
+        app()->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/ai-assistant'));
+        $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $service = $this->service(true, $catalog, true, false);
+        $query = 'Что с платежами?';
+        $plan = ['task_type' => 'summary', 'capability' => ['id' => 'payments', 'domain' => 'finance'],
+            'request' => ['message' => $query, 'allow_actions' => false, 'context' => []],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query, [])->toArray()];
+
+        $messages = $service->messages($plan);
+        $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
+        $hints = $references['registered_domain_capabilities'] ?? [];
+
+        $this->assertSame([], $hints['domains'] ?? []);
+    }
+
     private function plan(): array
     {
         return ['task_type' => 'summary', 'capability' => ['id' => 'projects', 'domain' => 'projects'],
@@ -118,7 +173,12 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
             'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Покажи проект', [])->toArray()];
     }
 
-    private function service(bool $allowed, ?AssistantDomainCatalog $catalog = null): DiscoveryContextAssistantService
+    private function service(
+        bool $allowed,
+        ?AssistantDomainCatalog $catalog = null,
+        bool $financeAllowed = false,
+        bool $paymentDocumentAllowed = true
+    ): DiscoveryContextAssistantService
     {
         $fields = ['id', 'name', 'secret_amount', ...array_map(static fn (int $number): string => 'field_'.$number, range(1, 24))];
         $catalog ??= new AssistantDomainCatalog([new AssistantDomainDefinition('projects', 'projects', 'project', ['projects.view'], $fields, [], ['search', 'read', 'navigation'], '/projects', 'projects', ['project'], ['secret_amount' => ['finance.view']])]);
@@ -129,13 +189,22 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $resolver->method('connection')->willReturn($connection);
         Model::setConnectionResolver($resolver);
         $schema = $this->getMockBuilder(PostgresBuilder::class)->setConstructorArgs([$connection])->onlyMethods(['getColumnListing'])->getMock();
-        $schema->method('getColumnListing')->willReturnCallback(static fn (string $table): array => $table === 'projects' ? ['id', 'organization_id', 'name', 'deleted_at'] : []);
+        $schema->method('getColumnListing')->willReturnCallback(static fn (string $table): array => match ($table) {
+            'projects' => ['id', 'organization_id', 'name', 'deleted_at'],
+            'payment_documents' => ['id', 'organization_id', 'project_id', 'deleted_at'],
+            default => [],
+        });
         app()->instance('db.schema', $schema);
         $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('canCurrent')->willReturnCallback(static fn (User $actor, string $permission): bool => $permission !== 'finance.view' && ($permission !== 'projects.view' || $allowed));
+        $authorization->method('canCurrent')->willReturnCallback(static fn (User $actor, string $permission): bool => match ($permission) {
+            'finance.view' => $financeAllowed,
+            'projects.view' => $allowed,
+            'payments.invoice.view', 'payments.invoice.view_all' => $paymentDocumentAllowed,
+            default => true,
+        });
         $authorization->method('forCurrentChecks')->willReturnSelf();
         $modules = $this->createMock(OrganizationEntitlementService::class);
-        $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'project-management'])]));
+        $modules->method('getEffectiveModules')->willReturn(collect([new Module(['slug' => 'ai-assistant']), new Module(['slug' => 'project-management']), new Module(['slug' => 'payments'])]));
         $projects = $this->createMock(UserProjectAccessService::class);
         $projects->method('queryAccessibleProjects')->willReturnCallback(static fn (User $actor, int $organizationId): Builder => Project::query()->where('projects.organization_id', $organizationId));
         $policy = new AssistantDataAccessPolicy($authorization, $projects, $modules);
