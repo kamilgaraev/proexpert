@@ -115,7 +115,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
             'input' => $text,
         ];
 
-        if (str_contains($this->model, 'text-embedding-3') && $this->dimensions > 0) {
+        if ((str_contains($this->model, 'text-embedding-3') || str_contains($this->model, 'text-embedding-v4')) && $this->dimensions > 0) {
             $parameters['dimensions'] = $this->dimensions;
         }
 

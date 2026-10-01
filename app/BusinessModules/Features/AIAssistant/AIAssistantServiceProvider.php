@@ -58,6 +58,7 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
@@ -147,6 +148,9 @@ class AIAssistantServiceProvider extends ServiceProvider
                 default => throw new InvalidArgumentException('ai_rag_embedding_provider_invalid'),
             };
         });
+        $this->app->singleton(RagEmbeddingProviderRegistry::class, fn ($app) => new RagEmbeddingProviderRegistry(
+            $app->make(RagEmbeddingProviderInterface::class),
+        ));
         $this->app->singleton(RagSourceRegistry::class, function ($app): RagSourceRegistry {
             return new RagSourceRegistry([
                 $app->make(ProjectRagSource::class),
