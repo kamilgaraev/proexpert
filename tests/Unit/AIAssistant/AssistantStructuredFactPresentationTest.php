@@ -141,6 +141,53 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertFalse($result['needs_clarification']);
     }
 
+    public function test_estimate_composition_requires_live_proof_for_resource_requests(): void
+    {
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'Пять найденных ресурсов.', [],
+        );
+
+        $this->assertTrue($result['needs_clarification']);
+        $this->assertSame([], $result['source_refs']);
+        $this->assertStringNotContainsString('Пять найденных ресурсов.', $result['text']);
+    }
+
+    public function test_child_composition_requires_exact_parent_and_estimate_organization_project_scope(): void
+    {
+        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100, ['project_id' => 16]);
+        $position = $this->payload('estimate_item', ['name' => 'Работа', 'position_number' => '1'], 200,
+            ['estimate_id' => 100, 'project_id' => 16]);
+        $child = $this->payload('estimate_item', ['name' => 'Ресурс', 'position_number' => '1.1',
+            'resource_type' => 'material', 'quantity' => '4.23500000', 'material_unit' => 'кг', 'total_amount' => '1354.65'], 201,
+            ['estimate_id' => 100, 'estimate_item_id' => 201, 'parent_work_id' => 200, 'composition_scope' => 'resources', 'project_id' => 16]);
+        $rows = [
+            $estimate['structured_fact_evidence']['rows'][0],
+            $position['structured_fact_evidence']['rows'][0],
+            $child['structured_fact_evidence']['rows'][0],
+        ];
+        $payload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 1, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $verifier = new AssistantStructuredFactVerifier;
+        $this->assertTrue($verifier->trustedEvidence($payload['structured_fact_evidence']));
+        $result = $verifier->guard('Покажи состав позиции', 'Непроверенный ресурс.', [$payload]);
+        $this->assertFalse($result['needs_clarification']);
+        $this->assertStringContainsString('Позиция сметы: Работа', $result['text']);
+        $this->assertStringContainsString('Ресурс', $result['text']);
+        $this->assertStringContainsString('Ресурс позиции', $result['text']);
+        $this->assertStringNotContainsString('Позиция сметы: Ресурс', $result['text']);
+        $this->assertStringContainsString('4.23500000', $result['text']);
+        $this->assertStringNotContainsString('1354.65 ₽', $result['text']);
+
+        foreach (['estimate_item_id' => 200, 'parent_work_id' => 202, 'estimate_id' => 101, 'organization_id' => 16, 'project_id' => 17] as $field => $value) {
+            $invalid = $this->tamperCompositionReference($payload, $field, $value);
+            $this->assertFalse($verifier->trustedEvidence($invalid['structured_fact_evidence']), $field);
+        }
+    }
+
     public function test_conflicting_composition_pages_use_unknown_resources_footer(): void
     {
         $firstPage = AssistantStructuredFactFormatter::payload($this->compositionRows(20), '2026-09-30T12:00:00Z');
@@ -204,15 +251,29 @@ final class AssistantStructuredFactPresentationTest extends TestCase
 
     private function compositionRows(int $resourceCount, int $firstResourceId = 1): array
     {
-        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100);
-        $position = $this->payload('estimate_item', ['name' => 'Позиция'], 200, ['estimate_id' => 100]);
+        $estimate = $this->payload('estimate', ['name' => 'Смета'], 100, ['project_id' => 16]);
+        $position = $this->payload('estimate_item', ['name' => 'Позиция'], 200, ['estimate_id' => 100, 'project_id' => 16]);
         $rows = array_merge($estimate['structured_fact_evidence']['rows'], $position['structured_fact_evidence']['rows']);
         for ($id = $firstResourceId; $id < $firstResourceId + $resourceCount; $id++) {
             $resource = $this->payload('estimate_item_resource', ['name' => 'Ресурс '.$id], 1000 + $id,
-                ['estimate_id' => 100, 'estimate_item_id' => 200]);
+                ['estimate_id' => 100, 'estimate_item_id' => 200, 'project_id' => 16]);
             $rows[] = $resource['structured_fact_evidence']['rows'][0];
         }
 
         return $rows;
+    }
+
+    private function tamperCompositionReference(array $payload, string $field, int $value): array
+    {
+        $evidence = $payload['structured_fact_evidence'];
+        $evidence['rows'][2]['source_ref'][$field] = $value;
+        $row = $evidence['rows'][2];
+        unset($row['version']);
+        $evidence['rows'][2]['version'] = hash('sha256', json_encode($row, JSON_THROW_ON_ERROR));
+        $evidence['source_refs'][2] = $evidence['rows'][2]['source_ref'];
+        $evidence['version'] = hash('sha256', json_encode($evidence['rows'], JSON_THROW_ON_ERROR));
+        $payload['structured_fact_evidence'] = $evidence;
+
+        return $payload;
     }
 }

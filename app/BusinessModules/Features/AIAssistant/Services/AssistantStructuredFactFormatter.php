@@ -110,14 +110,15 @@ final class AssistantStructuredFactFormatter
         $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
         $allowedFields = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
         foreach ($rows as $row) {
-            $lines[] = trans_message('ai_assistant_facts.entity', ['type' => $entityLabels[$row['entity_type']] ?? (in_array($row['entity_type'], self::ENTITY_TYPES, true) ? trans_message('ai_assistant_facts.entities.'.$row['entity_type']) : trans_message('ai_assistant_facts.record')),
+            $entityType = self::presentationEntityType($row, $rows);
+            $lines[] = trans_message('ai_assistant_facts.entity', ['type' => $entityLabels[$entityType] ?? (in_array($entityType, self::ENTITY_TYPES, true) ? trans_message('ai_assistant_facts.entities.'.$entityType) : trans_message('ai_assistant_facts.record')),
                 'id' => self::markdownText((string) $row['entity_id'])]);
             foreach ($row['fields'] as $field => $value) {
                 if (! in_array($field, $allowedFields, true)) {
                     continue;
                 }
                 $display = $value === null ? trans_message('ai_assistant_facts.unknown')
-                    : (is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no')) : AssistantStructuredFactLabels::display($row['entity_type'], $field, (string) $value));
+                    : (is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no')) : AssistantStructuredFactLabels::display($entityType, $field, (string) $value));
                 $numeric = in_array($field, array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields')), true) && preg_match('/^-?\d+(?:\.\d+)?$/D', $display);
                 $label = in_array($field, self::FIELDS, true) ? trans_message('ai_assistant_facts.fields.'.$field)
                     : ($fieldLabels[$field] ?? trans_message('ai_assistant_facts.fields.'.$field));
@@ -152,10 +153,12 @@ final class AssistantStructuredFactFormatter
         $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
         $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
         $lines = [trans_message('ai_assistant_facts.returned_scope')];
-        foreach (array_slice($rows, 0, self::MAX_ROWS) as $row) {
+        $presentationRows = array_slice($rows, 0, self::MAX_ROWS);
+        foreach ($presentationRows as $row) {
             $fields = $row['fields'];
-            $entityLabel = $entityLabels[$row['entity_type']] ?? (in_array($row['entity_type'], self::ENTITY_TYPES, true)
-                ? trans_message('ai_assistant_facts.entities.'.$row['entity_type']) : trans_message('ai_assistant_facts.record'));
+            $entityType = self::presentationEntityType($row, $presentationRows);
+            $entityLabel = $entityLabels[$entityType] ?? (in_array($entityType, self::ENTITY_TYPES, true)
+                ? trans_message('ai_assistant_facts.entities.'.$entityType) : trans_message('ai_assistant_facts.record'));
             $titleField = null;
             foreach ($titles as $field) {
                 if (is_string($fields[$field] ?? null) && trim($fields[$field]) !== '') {
@@ -164,7 +167,7 @@ final class AssistantStructuredFactFormatter
                 }
             }
             $lines[] = $entityLabel.($titleField === null ? ':' : ': '.self::markdownText($fields[$titleField]));
-            $financial = in_array($row['entity_type'], ['estimate', 'estimate_item', 'estimate_item_resource', 'contract', 'payment_document',
+            $financial = in_array($entityType, ['estimate', 'estimate_item', 'estimate_item_resource', 'contract', 'payment_document',
                 'performance_act', 'performance_act_line', 'production_labor_payroll_accrual'], true);
             foreach ($fields as $field => $value) {
                 $requested = in_array($field, $requestedFields, true);
@@ -178,7 +181,7 @@ final class AssistantStructuredFactFormatter
                 }
                 $display = $value === null ? trans_message('ai_assistant_facts.unknown')
                     : (is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
-                        : AssistantStructuredFactLabels::display($row['entity_type'], $field, (string) $value));
+                        : AssistantStructuredFactLabels::display($entityType, $field, (string) $value));
                 $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\d+(?:\.\d+)?$/D', $display);
                 $label = in_array($field, self::FIELDS, true) ? trans_message('ai_assistant_facts.fields.'.$field)
                     : ($fieldLabels[$field] ?? trans_message('ai_assistant_facts.fields.'.$field));
@@ -209,6 +212,12 @@ final class AssistantStructuredFactFormatter
     {
         $fieldLabels = AssistantExtendedDomainRegistry::values('fieldLabels');
         $entityLabels = AssistantExtendedDomainRegistry::values('entityLabels');
+        $allRows = [];
+        foreach ($sets as $set) {
+            if (is_array($set['rows'] ?? null)) {
+                $allRows = array_merge($allRows, $set['rows']);
+            }
+        }
         $rows = [];
         foreach ($plan['result_sets'] as $setPlan) {
             $set = $sets[$setPlan['result_set']];
@@ -231,12 +240,13 @@ final class AssistantStructuredFactFormatter
         };
         foreach ($rows as $item) {
             $row = $item['row'];
-            $entityLabel = $entityLabels[$row['entity_type']] ?? (in_array($row['entity_type'], self::ENTITY_TYPES, true)
-                ? trans_message('ai_assistant_facts.entities.'.$row['entity_type']) : trans_message('ai_assistant_facts.record'));
+            $entityType = self::presentationEntityType($row, $allRows);
+            $entityLabel = $entityLabels[$entityType] ?? (in_array($entityType, self::ENTITY_TYPES, true)
+                ? trans_message('ai_assistant_facts.entities.'.$entityType) : trans_message('ai_assistant_facts.record'));
             $group = $item['group_by'];
             if ($group !== null) {
                 $rawGroupValue = $row['fields'][$group] ?? null;
-                $groupValue = $rawGroupValue === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $group, $rawGroupValue);
+                $groupValue = $rawGroupValue === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $group, $rawGroupValue, $allRows);
                 $groupKey = $group.'|'.json_encode($rawGroupValue, JSON_THROW_ON_ERROR);
                 if ($currentGroup !== $groupKey) {
                     $appendBlank();
@@ -263,7 +273,7 @@ final class AssistantStructuredFactFormatter
                 $cells = [$entityLabel];
                 foreach ($item['columns'] as $field) {
                     $value = $row['fields'][$field] ?? null;
-                    $cells[] = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value);
+                    $cells[] = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value, $allRows);
                 }
                 $rendered[] = '| '.implode(' | ', $cells).' |';
             } else {
@@ -271,7 +281,7 @@ final class AssistantStructuredFactFormatter
                 $rendered[] = $entityLabel.':';
                 foreach ($item['columns'] as $field) {
                     $value = $row['fields'][$field] ?? null;
-                    $display = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value);
+                    $display = $value === null ? trans_message('ai_assistant_facts.unknown') : self::displayPresentationField($row, $field, $value, $allRows);
                     $rendered[] = self::presentationFieldLabel($field, $fieldLabels).': '.$display;
                 }
                 $currentBlock = 'list|'.implode('|', $item['columns']);
@@ -281,10 +291,11 @@ final class AssistantStructuredFactFormatter
         return implode("\n", $rendered);
     }
 
-    public static function displayPresentationField(array $row, string $field, mixed $value): string
+    public static function displayPresentationField(array $row, string $field, mixed $value, array $rows = []): string
     {
+        $entityType = self::presentationEntityType($row, $rows);
         $display = is_bool($value) ? trans_message('ai_assistant_facts.'.($value ? 'yes' : 'no'))
-            : AssistantStructuredFactLabels::display($row['entity_type'], $field, (string) $value);
+            : AssistantStructuredFactLabels::display($entityType, $field, (string) $value);
         $numericFields = array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields'));
         $numeric = in_array($field, $numericFields, true) && preg_match('/^-?\\d+(?:\\.\\d+)?$/D', $display);
 
@@ -295,6 +306,44 @@ final class AssistantStructuredFactFormatter
     {
         return in_array($field, self::FIELDS, true) ? trans_message('ai_assistant_facts.fields.'.$field)
             : ($fieldLabels[$field] ?? trans_message('ai_assistant_facts.fields.'.$field));
+    }
+
+    private static function presentationEntityType(array $row, array $rows): string
+    {
+        if (($row['entity_type'] ?? null) !== 'estimate_item') {
+            return (string) ($row['entity_type'] ?? '');
+        }
+        $reference = $row['source_ref'] ?? null;
+        if (! is_array($reference)) {
+            return 'estimate_item';
+        }
+        $parentId = $reference['parent_work_id'] ?? null;
+        $childId = filter_var($row['entity_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (! is_int($parentId) || $parentId < 1 || $childId === false
+            || ($reference['entity_id'] ?? null) !== $childId || ($reference['estimate_item_id'] ?? null) !== $childId
+            || ($reference['composition_scope'] ?? null) !== 'resources'
+            || ! is_int($reference['organization_id'] ?? null) || ! is_int($reference['estimate_id'] ?? null)
+            || ! array_key_exists('project_id', $reference)) {
+            return 'estimate_item';
+        }
+        foreach ($rows as $parent) {
+            if (! is_array($parent) || ($parent['entity_type'] ?? null) !== 'estimate_item'
+                || (string) ($parent['entity_id'] ?? '') !== (string) $parentId) {
+                continue;
+            }
+            $parentReference = $parent['source_ref'] ?? null;
+            if (! is_array($parentReference) || array_key_exists('parent_work_id', $parentReference)
+                || ($parentReference['organization_id'] ?? null) !== $reference['organization_id']
+                || ($parentReference['estimate_id'] ?? null) !== $reference['estimate_id']
+                || ! array_key_exists('project_id', $parentReference)
+                || ($parentReference['project_id'] ?? null) !== $reference['project_id']) {
+                continue;
+            }
+
+            return 'estimate_item_resource';
+        }
+
+        return 'estimate_item';
     }
 
     private static function boundedText(string $value): string

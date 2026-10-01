@@ -322,6 +322,94 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame('NORM-12-03', $byCode['positions'][0]['normative_rate_code']);
     }
 
+    public function test_exact_position_number_and_rate_code_return_only_proven_child_composition(): void
+    {
+        $estimate = $this->estimate('СМ-2026-0009', 'Ресурсный состав');
+        $target = $this->item($estimate, '1', 'Монтаж труб', ['normative_rate_code' => 'ГЭСН08-02-002-05']);
+        $this->item($estimate, '83', 'Иная позиция с тем же шифром', ['normative_rate_code' => 'ГЭСН08-02-002-05']);
+        $sameCode = $this->item($estimate, '109', 'Ещё одна позиция с тем же шифром', ['normative_rate_code' => 'ГЭСН08-02-002-05']);
+        $this->item($estimate, '110', 'Соседняя строка без родителя', ['item_type' => 'material']);
+
+        $children = [
+            ['ОТ(ЗТ)', 'labor', '4.23500000', '1354.65'],
+            ['Кран', 'equipment', '0.14385000', '147.63'],
+            ['ОТм', 'labor', '0.14385000', '69.60'],
+            ['Вода', 'material', '0.01050000', '0.30'],
+            ['Бруски', 'material', '0.00056000', '6.55'],
+        ];
+        foreach ($children as $index => [$name, $type, $quantity, $amount]) {
+            $this->item($estimate, '1.'.($index + 1), $name, [
+                'parent_work_id' => $target->id,
+                'item_type' => $type,
+                'quantity' => $quantity,
+                'quantity_total' => $quantity,
+                'unit_price' => $amount,
+                'total_amount' => $amount,
+            ]);
+        }
+        $this->item($estimate, '109.1', 'Чужой ресурс', [
+            'parent_work_id' => $sameCode->id,
+            'item_type' => 'material',
+        ]);
+
+        $result = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_selector' => 'СМ-2026-0009',
+            'query' => 'ГЭСН08-02-002-05',
+            'position_number' => '1',
+            'include_composition' => true,
+        ], $this->actor, $this->organization);
+
+        self::assertIsArray($result);
+        self::assertSame([(int) $target->id], array_column($result['positions'], 'id'));
+        self::assertSame('resources', $result['composition']['scope']);
+        self::assertSame((int) $target->id, $result['composition']['position_id']);
+        self::assertSame(5, $result['composition']['total']);
+        self::assertSame(['ОТ(ЗТ)', 'Кран', 'ОТм', 'Вода', 'Бруски'], array_column($result['composition']['items'], 'name'));
+        self::assertSame(['4.23500000', '0.14385000', '0.14385000', '0.01050000', '0.00056000'], array_column($result['composition']['items'], 'quantity'));
+        self::assertSame(['1354.65', '147.63', '69.60', '0.30', '6.55'], array_column($result['composition']['items'], 'total_amount'));
+        self::assertSame('1354.65', $result['composition']['items'][0]['total_amount']);
+        self::assertStringNotContainsString('currency', json_encode($result['composition'], JSON_THROW_ON_ERROR));
+
+        $childReferences = array_values(array_filter($result['source_refs'], static fn (array $reference): bool =>
+            ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
+        self::assertCount(5, $childReferences);
+        foreach ($childReferences as $reference) {
+            self::assertSame($reference['entity_id'], $reference['estimate_item_id']);
+            self::assertSame((int) $target->id, $reference['parent_work_id']);
+            self::assertSame((int) $estimate->id, $reference['estimate_id']);
+            self::assertSame((int) $this->organization->id, $reference['organization_id']);
+            self::assertSame((int) $this->project->id, $reference['project_id']);
+            self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $reference));
+        }
+        $tamperedReference = $childReferences[0];
+        $tamperedReference['estimate_item_id'] = (int) $target->id;
+        self::assertFalse(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $tamperedReference));
+        $tamperedReference = $childReferences[0];
+        $tamperedReference['entity_id'] = (int) $target->id;
+        $tamperedReference['estimate_item_id'] = (int) $target->id;
+        self::assertFalse(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $tamperedReference));
+        $tamperedReference = $childReferences[0];
+        $tamperedReference['parent_work_id'] = (int) $sameCode->id;
+        self::assertFalse(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $tamperedReference));
+        $tamperedReference = $childReferences[0];
+        $tamperedReference['estimate_id'] = (int) $this->estimate('СМ-ИНОЙ', 'Иная смета')->id;
+        self::assertFalse(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $tamperedReference));
+        $tamperedReference = $childReferences[0];
+        $tamperedReference['organization_id'] = (int) Organization::factory()->create()->id;
+        self::assertFalse(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $tamperedReference));
+        $otherProject = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
+        $tamperedReference = $childReferences[0];
+        $tamperedReference['project_id'] = (int) $otherProject->id;
+        self::assertFalse(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $tamperedReference));
+
+        $guarded = (new AssistantStructuredFactVerifier)->guard('Покажи состав позиции', 'Рядом стоящий ресурс', [$result]);
+        self::assertFalse($guarded['needs_clarification']);
+        self::assertStringContainsString('ОТ', $guarded['text']);
+        self::assertStringContainsString('4.23500000', $guarded['text']);
+        self::assertStringNotContainsString('Чужой ресурс', $guarded['text']);
+        self::assertStringNotContainsString('валют', mb_strtolower($guarded['text']));
+    }
+
     public function test_reader_rejects_unbounded_direct_calls(): void
     {
         $estimate = $this->estimate('SM-BOUNDS', 'Границы страницы');

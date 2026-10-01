@@ -27,7 +27,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
     public function getDescription(): string
     {
         return trans_message('ai_assistant_financial.positions_description')
-            .' Можно найти позиции по точному номеру или полному названию сметы, словам из названия позиции или шифру расценки. Поиск сметы по фрагменту не поддерживается. Если название неоднозначно или превышен лимит вариантов, попроси точный номер сметы. Для одной найденной позиции можно прочитать её ресурсы с отдельной пагинацией. Проверяй has_more и читай next_page, если нужен полный состав. Соседние позиции не являются доказанными ресурсами этой позиции. Общий итог сметы не подтверждается страницей позиций.';
+            .' Можно найти позиции по точному номеру или полному названию сметы, словам из названия позиции или шифру расценки. Если известен точный номер позиции, передай его в position_number отдельно от шифра или поисковых слов в query. Поиск сметы по фрагменту не поддерживается. Если название неоднозначно или превышен лимит вариантов, попроси точный номер сметы. Для одной найденной позиции можно прочитать её ресурсы с отдельной пагинацией. Проверяй has_more и читай next_page, если нужен полный состав. Соседние позиции не являются доказанными ресурсами этой позиции. Общий итог сметы не подтверждается страницей позиций.';
     }
 
     public function getParametersSchema(): array
@@ -38,6 +38,8 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
                 'description' => 'Точный номер или полное название сметы из запроса. При неоднозначности названия уточни точный номер. Используй либо это поле, либо estimate_id.'],
             'query' => ['type' => ['string', 'null'], 'maxLength' => 200,
                 'description' => 'Слова из названия позиции, номер позиции или шифр расценки. Передавай отдельный поисковый текст, без инструкции и номера сметы.'],
+            'position_number' => ['type' => ['string', 'null'], 'minLength' => 1, 'maxLength' => 50,
+                'description' => 'Точный номер одной позиции сметы. Применяется дополнительным фильтром вместе с query.'],
             'position_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
             'page' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 1000000],
             'per_page' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 100],
@@ -69,6 +71,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
             'estimate_id' => ['nullable', 'integer', 'min:1'],
             'estimate_selector' => ['nullable', 'string', 'min:1', 'max:255'],
             'query' => ['nullable', 'string', 'max:200'],
+            'position_number' => ['nullable', 'string', 'min:1', 'max:50'],
             'position_id' => ['nullable', 'integer', 'min:1'],
             'page' => ['sometimes', 'integer', 'between:1,1000000'],
             'per_page' => ['sometimes', 'integer', 'between:1,100'],
@@ -100,7 +103,8 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
         $result = $this->reader->page($estimateId, (int) $organization->id, $actor, $page, $perPage,
             $arguments['query'] ?? null, isset($arguments['position_id']) ? (int) $arguments['position_id'] : null,
             (bool) ($arguments['include_composition'] ?? false), (int) ($arguments['composition_page'] ?? 1),
-            (int) ($arguments['composition_per_page'] ?? 20));
+            (int) ($arguments['composition_per_page'] ?? 20),
+            isset($arguments['position_number']) ? trim($arguments['position_number']) : null);
         $evidence = $result['evidence'];
         $positions = $evidence['positions'];
         $facts = AssistantEstimateStructuredFacts::positions($evidence, $positions, (int) $organization->id);
