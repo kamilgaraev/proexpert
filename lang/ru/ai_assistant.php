@@ -112,6 +112,7 @@ return [
     'capability_open' => 'Открыть :module',
     'eligibility_navigation_disabled' => 'Переходы отключены в текущем запросе.',
     'eligibility_mutation_disabled' => 'Изменения отключены в текущем запросе.',
+    'eligibility_payment_scope_disabled' => 'Инструмент выходит за границы запроса о платежах.',
     'eligibility_unknown_tool' => 'Этот инструмент недоступен помощнику.',
     'eligibility_report_format_disabled' => 'Выбранный формат ответа не предусматривает создание отчёта.',
     'eligibility_report_explicit_only' => 'Создание отчёта требует явного запроса пользователя.',

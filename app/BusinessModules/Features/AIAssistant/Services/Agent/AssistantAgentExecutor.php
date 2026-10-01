@@ -45,7 +45,7 @@ final class AssistantAgentExecutor
         $understanding = $this->normalizeRequestUnderstanding($requestUnderstanding);
         if ($understanding instanceof AssistantRequestUnderstanding) {
             $eligibility = ($this->toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy)
-                ->canExecuteTool($toolName, $understanding);
+                ->canExecuteTool($toolName, $understanding, false, $arguments);
 
             if (! $eligibility->allowed) {
                 return $this->errorResult($toolName, $arguments, [
