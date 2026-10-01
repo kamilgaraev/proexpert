@@ -7,13 +7,18 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantDocumentSettings;
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentBudgetService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentFileResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentOcrClient;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentOcrRenderer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\DocumentTextExtractor;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Jobs\AuthorizeBackgroundAssistantDocumentOcr;
@@ -32,6 +37,7 @@ use App\Services\Logging\LoggingService;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -453,6 +459,82 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertSame(0, AICreditReservation::query()->count());
     }
 
+    public function test_document_search_fails_closed_when_accessible_corpus_is_incomplete(): void
+    {
+        $this->file('unsupported.wav', 'audio', null, 'audio/wav');
+        $coverage = app(AssistantDocumentCoverageService::class);
+        $summary = $coverage->coverage($this->organization->id, $this->owner);
+        self::assertSame(1, $summary['document_coverage']['unsupported']);
+
+        $result = $this->searchTool($coverage)->execute($this->searchArguments(), $this->owner, $this->organization);
+
+        self::assertSame('corpus_incomplete', $result['status']);
+        self::assertSame([], $result['source_refs']);
+        self::assertArrayNotHasKey('document_context', $result);
+        self::assertArrayNotHasKey('rag_context', $result);
+    }
+
+    public function test_document_search_allows_a_complete_empty_accessible_corpus(): void
+    {
+        $coverage = app(AssistantDocumentCoverageService::class);
+        $summary = $coverage->coverage($this->organization->id, $this->owner);
+        self::assertSame(0, $summary['document_coverage']['total']);
+        self::assertFalse($summary['archive_scan']['processing']);
+
+        $result = $this->searchTool($coverage)->execute($this->searchArguments(), $this->owner, $this->organization);
+
+        self::assertSame('success', $result['status']);
+        self::assertSame([], $result['source_refs']);
+    }
+
+    public function test_document_search_fails_closed_when_coverage_is_unavailable(): void
+    {
+        $coverage = app(AssistantDocumentCoverageService::class);
+        $probeFailed = false;
+        $probeEnabled = true;
+        DB::listen(static function (QueryExecuted $query) use (&$probeFailed, &$probeEnabled): void {
+            if ($probeEnabled && str_contains($query->sql, 'ai_assistant_documents')) {
+                $probeFailed = true;
+                throw new RuntimeException('private coverage failure');
+            }
+        });
+
+        try {
+            $result = $this->searchTool($coverage)->execute($this->searchArguments(), $this->owner, $this->organization);
+        } finally {
+            $probeEnabled = false;
+        }
+
+        self::assertTrue($probeFailed);
+        self::assertSame('corpus_incomplete', $result['status']);
+        self::assertSame([], $result['source_refs']);
+        self::assertArrayNotHasKey('document_context', $result);
+        self::assertArrayNotHasKey('rag_context', $result);
+        self::assertStringNotContainsString('private coverage failure', json_encode($result, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_document_search_checks_assistant_rights_before_coverage(): void
+    {
+        $coverage = app(AssistantDocumentCoverageService::class);
+        $coverageAttempted = false;
+        $coverageProbeEnabled = true;
+        DB::listen(static function (QueryExecuted $query) use (&$coverageAttempted, &$coverageProbeEnabled): void {
+            if ($coverageProbeEnabled && str_contains($query->sql, 'ai_assistant_documents')) {
+                $coverageAttempted = true;
+            }
+        });
+        $this->allowed = false;
+
+        try {
+            $this->searchTool($coverage)->execute($this->searchArguments(), $this->owner, $this->organization);
+            self::fail('Assistant permission must be checked before document corpus coverage.');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+        } finally {
+            $coverageProbeEnabled = false;
+        }
+        self::assertFalse($coverageAttempted);
+    }
+
     public function test_coverage_counts_readable_unsupported_storage_and_formats_without_exposing_unknown_parents(): void
     {
         $local = $this->file('local.txt', 'local');
@@ -709,5 +791,16 @@ final class AssistantDocumentIngestionTest extends TestCase
     protected function tearDown(): void
     {
         parent::tearDown();
+    }
+
+    private function searchArguments(): array
+    {
+        return ['query' => 'Найди правила.', 'project_id' => null, 'source_types' => null, 'limit' => null];
+    }
+
+    private function searchTool(AssistantDocumentCoverageService $coverage): SearchAssistantDocumentsTool
+    {
+        return new SearchAssistantDocumentsTool(app(RagRetriever::class), app(RagPromptContextBuilder::class), $this->policy,
+            app(AIPermissionChecker::class), new AssistantToolArgumentValidator, $coverage);
     }
 }

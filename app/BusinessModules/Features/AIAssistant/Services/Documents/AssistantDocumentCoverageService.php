@@ -19,6 +19,40 @@ final class AssistantDocumentCoverageService
 {
     public function __construct(private readonly AssistantDataAccessPolicy $policy, private readonly AssistantDocumentService $documents) {}
 
+    public static function isCompleteForAnswer(array $coverage): bool
+    {
+        $documents = $coverage['document_coverage'] ?? null;
+        $scan = $coverage['archive_scan'] ?? null;
+        if (! is_array($documents) || ! is_array($scan) || ($scan['processing'] ?? null) !== false) {
+            return false;
+        }
+
+        foreach (['total', 'ready', 'pending', 'ocr_required', 'ocr_processing', 'failed', 'unsupported', 'empty'] as $key) {
+            if (! is_int($documents[$key] ?? null) || $documents[$key] < 0) {
+                return false;
+            }
+        }
+        foreach (['expected_file_count', 'scanned_file_count'] as $key) {
+            if (! is_int($scan[$key] ?? null) || $scan[$key] < 0) {
+                return false;
+            }
+        }
+        if (array_key_exists('needs_access_review', $documents)
+            && (! is_int($documents['needs_access_review']) || $documents['needs_access_review'] < 0)) {
+            return false;
+        }
+
+        return $documents['ready'] === $documents['total']
+            && $documents['pending'] === 0
+            && $documents['ocr_required'] === 0
+            && $documents['ocr_processing'] === 0
+            && $documents['failed'] === 0
+            && $documents['unsupported'] === 0
+            && $documents['empty'] === 0
+            && ($documents['needs_access_review'] ?? 0) === 0
+            && $scan['expected_file_count'] === $scan['scanned_file_count'];
+    }
+
     public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null): array
     {
         $guard = $checkDeadline ?? $checkpoint;

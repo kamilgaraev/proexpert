@@ -17,6 +17,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecut
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
@@ -36,6 +37,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Log\LogManager;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Throwable;
 
 class AIAssistantService
@@ -134,6 +136,8 @@ class AIAssistantService
 
     private array $currentImageParts = [];
 
+    private bool $documentContextBlocked = false;
+
     private ?array $precomputedCapabilityHints = null;
 
     private bool $preparationMetadataFrameActive = false;
@@ -165,6 +169,7 @@ class AIAssistantService
         private readonly ?AssistantDataAccessPolicy $dataAccess = null,
         private readonly AssistantStructuredFactVerifier $structuredFacts = new AssistantStructuredFactVerifier(),
         private readonly ?AssistantLegacyLiveEvidenceAdapter $legacyLiveEvidence = null,
+        private readonly ?AssistantDocumentCoverageService $documentCoverageService = null,
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -196,6 +201,7 @@ class AIAssistantService
         $this->activeActor = $user;
         $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
         $this->activeToolResults = [];
+        $this->documentContextBlocked = false;
         $this->pendingSummary = null;
         $this->requestOutcome = null;
         $this->estimateResolutionAttempted = false;
@@ -210,6 +216,7 @@ class AIAssistantService
             } finally {
                 $this->activeActor = null;
                 $this->activeToolResults = [];
+                $this->documentContextBlocked = false;
             }
         }
 
@@ -234,6 +241,7 @@ class AIAssistantService
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
+            $this->documentContextBlocked = false;
         }
     }
 
@@ -252,6 +260,7 @@ class AIAssistantService
         $this->activeActor = $user;
         $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
         $this->activeToolResults = [];
+        $this->documentContextBlocked = false;
         $this->pendingSummary = null;
         $this->requestOutcome = null;
         $this->estimateResolutionAttempted = false;
@@ -282,6 +291,116 @@ class AIAssistantService
             $this->pendingSummary = null;
             $this->currentAttachmentIds = [];
             $this->currentImageParts = [];
+            $this->documentContextBlocked = false;
+        }
+    }
+
+    private function shouldCheckDocumentCorpus(string $query, array $conversationContext): bool
+    {
+        if ($this->isDocumentKnowledgeRequest($query)) {
+            return true;
+        }
+
+        if ($this->isLiveFinancialContinuation($query) || ! $this->isDetailContinuation($query)) {
+            return false;
+        }
+
+        $lastRagContext = is_array($conversationContext['last_rag_context'] ?? null)
+            ? $conversationContext['last_rag_context'] : [];
+        foreach ($lastRagContext['sources'] ?? [] as $source) {
+            if (is_array($source) && (($source['source_type'] ?? null) === 'file_document'
+                || ($source['entity_type'] ?? null) === 'assistant_document')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isLiveFinancialContinuation(string $query): bool
+    {
+        $normalized = mb_strtolower(trim($query));
+
+        return $this->containsAnyText($normalized, [
+            'по деньгам', 'деньгам', 'платеж', 'платёж', 'оплат', 'сумм', 'смет', 'счет', 'счёт',
+        ]);
+    }
+
+    private function suppressDocumentContinuationContext(array $conversationContext): array
+    {
+        unset($conversationContext['last_rag_context']);
+
+        foreach (['last_request', 'last_request_context'] as $key) {
+            if (! is_array($conversationContext[$key] ?? null)) {
+                continue;
+            }
+
+            $requestContext = $key === 'last_request'
+                ? (is_array($conversationContext[$key]['context'] ?? null) ? $conversationContext[$key]['context'] : [])
+                : $conversationContext[$key];
+            $uiState = is_array($requestContext['ui_state'] ?? null) ? $requestContext['ui_state'] : [];
+            unset($uiState['assistant_follow_up_query']);
+            $requestContext['ui_state'] = $uiState;
+            if ($key === 'last_request') {
+                $conversationContext[$key]['context'] = $requestContext;
+            } else {
+                $conversationContext[$key] = $requestContext;
+            }
+        }
+
+        return $conversationContext;
+    }
+
+    private function isDocumentKnowledgeRequest(string $query): bool
+    {
+        $normalized = mb_strtolower(trim($query));
+        if ($this->containsAnyText($normalized, [
+            'база знаний', 'базы знаний', 'базе знаний', 'фрагмент', 'фрагменты',
+        ])) {
+            return true;
+        }
+
+        if (preg_match('/(?:загруженн\p{L}*|прикрепл\p{L}*|вложенн\p{L}*)\s+(?:[\p{L}-]+\s+){0,2}(?:документ\p{L}*|файл\p{L}*|договор\p{L}*)/u', $normalized) === 1) {
+            return true;
+        }
+
+        $mentionsDocument = preg_match('/(?:документ\p{L}*|файл\p{L}*|договор\p{L}*|стать\p{L}*|инструкц\p{L}*|регламент\p{L}*|методич\p{L}*|руководств\p{L}*)/u', $normalized) === 1;
+        if (! $mentionsDocument) {
+            $financialRequest = $this->containsAnyText($normalized, [
+                'платеж', 'платёж', 'оплат', 'сумм', 'смет', 'счет', 'счёт', 'склад', 'остатк',
+            ]);
+
+            return ! $financialRequest && $this->containsAnyText($normalized, ['источник', 'источники']);
+        }
+
+        return $this->containsAnyText($normalized, [
+            'что написано', 'что в документ', 'что в стать', 'что в инструкц', 'что в регламент',
+            'содержание', 'текст', 'перескаж', 'прочитай', 'прочт', 'изучи', 'проанализируй', 'услови',
+            'пункт', 'правил', 'требован', 'неустойк', 'гаранти', 'ответственност', 'расторжен',
+        ]);
+    }
+
+    private function documentCorpusIsComplete(int $organizationId, User $actor): bool
+    {
+        try {
+            $coverageService = $this->documentCoverageService ?? app(AssistantDocumentCoverageService::class);
+            $execution = app()->bound(AssistantRequestExecutionContext::class)
+                ? app(AssistantRequestExecutionContext::class) : null;
+            $coverage = fn (): array => $coverageService->coverage(
+                $organizationId,
+                $actor,
+                $execution === null ? null : $execution->assertCanContinue(...),
+                $execution === null ? null : fn (): int => $execution->remainingMilliseconds()
+            );
+            $result = $execution === null ? $coverage() : $execution->withDatabaseStatementTimeout(
+                fn (): array => $execution->withOperationBudget($coverage, 30_000, 'pgsql')
+            );
+
+            return AssistantDocumentCoverageService::isCompleteForAnswer($result);
+        } catch (AssistantRequestCancelled|AssistantRequestDeadlineExceeded|AuthorizationException|AccessDeniedHttpException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            return false;
         }
     }
 
@@ -315,7 +434,21 @@ class AIAssistantService
             return $this->measurePhase('greeting', fn (): array => $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload));
         }
         $navigationRequestContext = $requestPayload['context'] ?? [];
-        $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
+        $continuationContext = $conversation->context ?? [];
+        if ($this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
+            $this->documentContextBlocked = ! $this->documentCorpusIsComplete($organizationId, $user);
+            if ($this->documentContextBlocked) {
+                $continuationContext = $this->suppressDocumentContinuationContext($continuationContext);
+            }
+        }
+        $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $continuationContext);
+        if ($this->documentContextBlocked && is_array($requestPayload['context'] ?? null)) {
+            $requestContext = $requestPayload['context'];
+            $uiState = is_array($requestContext['ui_state'] ?? null) ? $requestContext['ui_state'] : [];
+            unset($uiState['assistant_follow_up_query']);
+            $requestContext['ui_state'] = $uiState;
+            $requestPayload['context'] = $requestContext;
+        }
         $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
         $this->activeEstimateSelection = null;
         $selection = $conversation->context['selected_estimate'] ?? null;
@@ -679,11 +812,26 @@ class AIAssistantService
                 $toolFailures,
                 static fn (mixed $value): bool => is_string($value) && trim($value) !== ''
             )));
-            $ragMetadata = $this->ragMetadataFromToolResults($query, $this->activeToolResults);
+            $hasCurrentChatImages = $this->currentAttachmentIds !== [];
+            $documentCorpusIncomplete = ! $hasCurrentChatImages && $this->documentContextBlocked;
+            $documentSearchPartial = false;
+            foreach ($this->activeToolResults as $toolResult) {
+                if ($hasCurrentChatImages || ($toolResult['_tool_name'] ?? null) !== 'search_assistant_documents') {
+                    continue;
+                }
+                $documentCorpusIncomplete = $documentCorpusIncomplete || ($toolResult['status'] ?? null) === 'corpus_incomplete';
+                $documentSearchPartial = $documentSearchPartial || ($toolResult['status'] ?? null) === 'partial';
+            }
+            $verificationToolResults = $documentCorpusIncomplete || $documentSearchPartial
+                ? array_values(array_filter($this->activeToolResults,
+                    static fn (array $toolResult): bool => ! in_array($toolResult['_tool_name'] ?? null,
+                        ['search_assistant_documents', 'generate_rag_pdf_report'], true)))
+                : $this->activeToolResults;
+            $ragMetadata = $this->ragMetadataFromToolResults($query, $verificationToolResults);
 
             $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
-            $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $this->activeToolResults, $query) : null;
+            $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $verificationToolResults, $query) : null;
             $rawPresentationPlan = $plannedPresentation !== null
                 ? $assistantContent : null;
             $this->stage('verifying');
@@ -697,21 +845,21 @@ class AIAssistantService
             ]);
             $assistantContent = $this->softenUnsupportedCriticalClaims($assistantContent, $ragMetadata);
 
-            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $this->activeToolResults);
+            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults);
             if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
                 $assistantContent = $financialCheck['text'];
             }
             $rejectedFinancialPlan = $rawPresentationPlan !== null && AssistantPresentationPlanner::hasFinancialSelection($rawPresentationPlan)
                 && (!in_array($financialCheck['validation_status'] ?? null, ['verified', 'partial'], true)
                     || ($financialCheck['source_refs'] ?? []) === []
-                    || !(new AssistantPresentationPlanner)->financialSelectionCovered($rawPresentationPlan, $this->activeToolResults, $financialCheck['source_refs'] ?? []));
+                    || !(new AssistantPresentationPlanner)->financialSelectionCovered($rawPresentationPlan, $verificationToolResults, $financialCheck['source_refs'] ?? []));
             if ($rejectedFinancialPlan) {
                 $rawPresentationPlan = null;
             }
             $structuredCheck = $proposedActions === []
                 ? ($rejectedFinancialPlan ? ($financialCheck ?? ['text' => trans_message('ai_assistant_financial.unverified_claim'),
                     'validation_status' => 'partial', 'source_refs' => []])
-                    : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $this->activeToolResults))
+                    : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $verificationToolResults))
                 : null;
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
@@ -755,7 +903,7 @@ class AIAssistantService
                                 }
                             }
                         }
-                        $otherFacts = $this->structuredFacts->confirmedResults(array_values(array_filter($this->activeToolResults,
+                        $otherFacts = $this->structuredFacts->confirmedResults(array_values(array_filter($verificationToolResults,
                             static fn (array $result): bool => !in_array($result['_tool_name'] ?? null, ['get_material_stock', 'get_estimate_answer'], true))), $query);
                         if ($otherFacts['source_refs'] !== []) {
                             $assistantContent .= "\n\n".$otherFacts['text'];
@@ -785,7 +933,7 @@ class AIAssistantService
             $documentNotices = [];
             $documentUnavailable = false;
             foreach ($this->activeToolResults as $toolResult) {
-                if (($toolResult['_tool_name'] ?? null) !== 'search_assistant_documents') {
+                if ($hasCurrentChatImages || ($toolResult['_tool_name'] ?? null) !== 'search_assistant_documents') {
                     continue;
                 }
                 if (($toolResult['status'] ?? null) === 'unavailable') {
@@ -795,7 +943,29 @@ class AIAssistantService
                     $documentNotices[] = trans_message('ai_assistant.document_search_partial');
                 }
             }
-            if ($documentNotices !== []) {
+            if ($documentCorpusIncomplete || $documentSearchPartial) {
+                $documentNotice = trans_message($documentCorpusIncomplete
+                    ? 'ai_assistant.document_corpus_incomplete' : 'ai_assistant.document_search_partial');
+                $serverVerifiedText = null;
+                $serverVerifiedRefs = [];
+                if (is_array($structuredCheck) && (($structuredCheck['source_refs'] ?? []) !== []
+                    || ($stockDomainResolved && ($structuredCheck['validation_status'] ?? null) === 'verified'))
+                    && is_string($structuredCheck['text'] ?? null) && trim($structuredCheck['text']) !== '') {
+                    $serverVerifiedText = trim($structuredCheck['text']);
+                    $serverVerifiedRefs = $structuredCheck['source_refs'];
+                } elseif (is_array($financialCheck) && ($financialCheck['source_refs'] ?? []) !== []
+                    && is_string($financialCheck['text'] ?? null) && trim($financialCheck['text']) !== '') {
+                    $serverVerifiedText = trim($financialCheck['text']);
+                    $serverVerifiedRefs = $financialCheck['source_refs'];
+                }
+                $assistantContent = $serverVerifiedText === null
+                    ? $documentNotice
+                    : $serverVerifiedText."\n\n".$documentNotice;
+                $structuredCheck = ['text' => $assistantContent, 'validation_status' => 'partial',
+                    'source_refs' => $serverVerifiedRefs, 'replaced' => true, 'needs_clarification' => false];
+                $ragMetadata = ['enabled' => true, 'used' => false, 'query' => $query, 'sources' => [], 'limits' => ['returned' => 0]];
+                $degradedMode = true;
+            } elseif ($documentNotices !== []) {
                 $degradedMode = true;
                 $notice = implode("\n", array_unique($documentNotices));
                 $hasProof = ($structuredCheck['source_refs'] ?? []) !== [] || ($financialCheck['source_refs'] ?? []) !== []
@@ -2908,6 +3078,10 @@ class AIAssistantService
             self::HISTORY_ASSISTANT_MESSAGE_CHARS,
             $this->activeActor,
         );
+        if ($this->documentContextBlocked) {
+            $history = array_values(array_filter($history,
+                static fn (array $message): bool => ($message['role'] ?? null) === 'user'));
+        }
         $currentQuery ??= (string) ($taskPlan['request']['message'] ?? '');
         if ($history !== [] && end($history)['role'] === 'user' && ($currentQuery === '' || end($history)['content'] === $currentQuery)) {
             $last = array_pop($history);
@@ -2931,8 +3105,10 @@ class AIAssistantService
             $references['registered_domain_capabilities'] = $capabilityHints;
         }
         if ($this->activeActor !== null) {
-            $references['conversation_summary'] = $this->conversationManager->getSummary($conversation, $this->activeActor);
-            $references['personal_memory'] = $this->memoryService?->forContext($this->activeActor, (int) $conversation->organization_id) ?? [];
+            if (! $this->documentContextBlocked) {
+                $references['conversation_summary'] = $this->conversationManager->getSummary($conversation, $this->activeActor);
+                $references['personal_memory'] = $this->memoryService?->forContext($this->activeActor, (int) $conversation->organization_id) ?? [];
+            }
         }
         $messages[] = ['role' => 'user', 'content' => json_encode($references, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
         if ($currentQuery !== '') {
@@ -3211,6 +3387,10 @@ class AIAssistantService
     {
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
+        if ($this->documentContextBlocked) {
+            $toolNames = array_values(array_filter($toolNames,
+                static fn (string $toolName): bool => ! in_array($toolName, ['search_assistant_documents', 'generate_rag_pdf_report'], true)));
+        }
         if ($this->activeActor !== null) {
             if (! $metadataFrameActive) {
                 $this->executionCheckpoint();
