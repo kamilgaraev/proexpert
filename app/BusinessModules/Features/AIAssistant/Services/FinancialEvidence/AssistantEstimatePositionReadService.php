@@ -46,7 +46,7 @@ final class AssistantEstimatePositionReadService
 
         return DB::transaction(function () use ($selector, $organizationId, $actor): array {
             if (DB::transactionLevel() === 1) {
-                DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+                DB::connection()->getPdo()->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
             }
 
             return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($selector, $organizationId, $actor): array {
@@ -225,7 +225,7 @@ final class AssistantEstimatePositionReadService
             $positionNumber,
         ): array {
             if (DB::transactionLevel() === 1) {
-                DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+                DB::connection()->getPdo()->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
             }
 
             return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use (

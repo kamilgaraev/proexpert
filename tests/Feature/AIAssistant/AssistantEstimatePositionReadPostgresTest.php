@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool;
@@ -600,6 +603,49 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
             } catch (ValidationException $exception) {
                 self::assertArrayHasKey(array_key_first($arguments), $exception->errors());
             }
+        }
+    }
+
+    public function test_reader_sets_transaction_isolation_before_execution_context_statement_guard(): void
+    {
+        $originalConnectionName = DB::getDefaultConnection();
+        $guardedConnectionName = 'assistant_tx_isolation_test';
+        config(['database.connections.'.$guardedConnectionName => config('database.connections.'.$originalConnectionName)]);
+        DB::purge($guardedConnectionName);
+        DB::setDefaultConnection($guardedConnectionName);
+
+        $executionContext = new AssistantRequestExecutionContext(
+            app(AssistantRequestLifecycle::class),
+            new AssistantRequest,
+            $this->actor,
+            5000,
+        );
+        $this->app->instance(AssistantRequestExecutionContext::class, $executionContext);
+
+        try {
+            $executionContext->activate();
+            $reader = app(AssistantEstimatePositionReadService::class);
+
+            $selectorDenied = false;
+            try {
+                $reader->resolveSelector('SM-ISOLATION', $this->organization->id, $this->actor);
+            } catch (AuthorizationException) {
+                $selectorDenied = true;
+            }
+            self::assertTrue($selectorDenied, 'Selector read did not enforce current membership');
+
+            $positionsDenied = false;
+            try {
+                $reader->page(1, $this->organization->id, $this->actor);
+            } catch (AuthorizationException) {
+                $positionsDenied = true;
+            }
+            self::assertTrue($positionsDenied, 'Position read did not enforce current membership');
+        } finally {
+            $executionContext->restoreDatabaseStatementTimeouts();
+            $this->app->forgetInstance(AssistantRequestExecutionContext::class);
+            DB::purge($guardedConnectionName);
+            DB::setDefaultConnection($originalConnectionName);
         }
     }
 
