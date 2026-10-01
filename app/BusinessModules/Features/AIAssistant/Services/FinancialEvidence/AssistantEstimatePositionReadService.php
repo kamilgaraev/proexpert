@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Validator;
 
 final class AssistantEstimatePositionReadService
 {
+    private const SELECTOR_LIMIT = 20;
+
     private const POSITION_SCALES = [
         'unit_price' => 4,
         'current_unit_price' => 4,
@@ -56,46 +58,38 @@ final class AssistantEstimatePositionReadService
                 if ($scoped === null) {
                     return $this->resolution([], 0);
                 }
-                $needle = mb_strtolower($selector);
-                $matching = (clone $scoped)->where(function (Builder $exact) use ($needle): void {
-                    $exact->whereRaw('LOWER(BTRIM(estimates.number)) = ?', [$needle])
-                        ->orWhereRaw('LOWER(BTRIM(estimates.name)) = ?', [$needle]);
-                });
-                $projectIds = (clone $matching)->select('estimates.project_id')->distinct()->pluck('estimates.project_id')->all();
-                $exact = $projectIds !== [];
-                if (! $exact) {
-                    $matching = (clone $scoped)->where(function (Builder $partial) use ($needle): void {
-                        $partial->whereRaw('STRPOS(LOWER(estimates.number), ?) > 0', [$needle])
-                            ->orWhereRaw('STRPOS(LOWER(estimates.name), ?) > 0', [$needle]);
-                    });
-                    $projectIds = (clone $matching)->select('estimates.project_id')->distinct()->pluck('estimates.project_id')->all();
+                $numberId = Estimate::query()->where('organization_id', $organizationId)->where('number', $selector)->toBase()->value('id');
+                $matching = Estimate::query()->where('organization_id', $organizationId)
+                    ->whereIn('estimates.id', $scoped->select('estimates.id'));
+                if ($numberId === null) {
+                    $matching->where('estimates.name', $selector);
+                } else {
+                    $matching->whereKey((int) $numberId);
                 }
-                $allowedProjects = [];
-                $allowProjectless = false;
-                foreach ($projectIds as $projectId) {
-                    if ($projectId === null) {
-                        $allowProjectless = true;
-                    } elseif ($this->canReadProjectFinance($authorization, $actor, $organizationId, (int) $projectId)) {
-                        $allowedProjects[] = (int) $projectId;
-                    }
+                $candidates = $matching->select(['estimates.id', 'estimates.number', 'estimates.name', 'estimates.project_id'])
+                    ->orderBy('estimates.id')->limit(self::SELECTOR_LIMIT + 1)->get();
+                if ($candidates->count() > self::SELECTOR_LIMIT) {
+                    return $this->resolution([], null, true);
                 }
-                $matching->where(function (Builder $financial) use ($allowedProjects, $allowProjectless): void {
-                    $financial->whereIn('estimates.project_id', $allowedProjects);
-                    if ($allowProjectless) {
-                        $financial->orWhereNull('estimates.project_id');
-                    }
-                });
-                $total = (clone $matching)->count();
-                if ($exact && $total === 0) {
-                    throw new AuthorizationException;
-                }
-                $options = $matching->select(['estimates.id', 'estimates.number', 'estimates.name', 'estimates.project_id'])
-                    ->orderBy('estimates.id')->limit(20)->get()
-                    ->map(static fn (Estimate $estimate): array => ['id' => (int) $estimate->id,
-                        'number' => (string) $estimate->number, 'name' => (string) $estimate->name,
-                        'project_id' => $estimate->project_id === null ? null : (int) $estimate->project_id])->all();
+                $projectFinance = [];
+                $options = [];
+                foreach ($candidates as $estimate) {
+                    $projectId = $estimate->project_id === null ? null : (int) $estimate->project_id;
+                    if ($projectId !== null) {
+                        $projectFinance[$projectId] ??= $this->canReadProjectFinance($authorization, $actor, $organizationId, $projectId);
+                        if (! $projectFinance[$projectId]) {
+                            if ($numberId !== null) {
+                                throw new AuthorizationException;
+                            }
 
-                return $this->resolution($options, $total);
+                            continue;
+                        }
+                    }
+                    $options[] = ['id' => (int) $estimate->id, 'number' => (string) $estimate->number,
+                        'name' => (string) $estimate->name, 'project_id' => $projectId];
+                }
+
+                return $this->resolution($options, count($options));
             }, true);
         });
     }
@@ -146,11 +140,13 @@ final class AssistantEstimatePositionReadService
         });
     }
 
-    private function resolution(array $options, int $total): array
+    private function resolution(array $options, ?int $total, bool $limited = false): array
     {
-        return ['status' => $total === 1 ? 'resolved' : ($total === 0 ? 'not_found' : 'ambiguous'),
+        return ['status' => $limited ? 'ambiguous' : ($total === 1 ? 'resolved' : ($total === 0 ? 'not_found' : 'ambiguous')),
             'estimate_id' => $total === 1 ? $options[0]['id'] : null,
-            'options' => $options, 'total' => $total, 'has_more' => $total > count($options), 'explicit_selection' => true];
+            'options' => $options, 'total' => $total, 'has_more' => false, 'limited' => $limited,
+            'explicit_selection' => true,
+            'message' => $total === 1 ? null : trans_message($total === 0 ? 'ai_assistant_financial.not_found' : 'ai_assistant_financial.ambiguous')];
     }
 
     private function canReadProjectFinance(AuthorizationService $authorization, User $actor, int $organizationId, int $projectId): bool

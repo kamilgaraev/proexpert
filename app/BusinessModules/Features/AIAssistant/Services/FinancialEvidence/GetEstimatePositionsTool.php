@@ -27,7 +27,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
     public function getDescription(): string
     {
         return trans_message('ai_assistant_financial.positions_description')
-            .' Можно найти позиции по номеру или названию сметы, словам из названия позиции или шифру расценки. Для одной найденной позиции можно прочитать её ресурсы с отдельной пагинацией. Проверяй has_more и читай next_page, если нужен полный состав. Соседние позиции не являются доказанными ресурсами этой позиции. Общий итог сметы не подтверждается страницей позиций.';
+            .' Можно найти позиции по точному номеру или полному названию сметы, словам из названия позиции или шифру расценки. Поиск сметы по фрагменту не поддерживается. Если название неоднозначно или превышен лимит вариантов, попроси точный номер сметы. Для одной найденной позиции можно прочитать её ресурсы с отдельной пагинацией. Проверяй has_more и читай next_page, если нужен полный состав. Соседние позиции не являются доказанными ресурсами этой позиции. Общий итог сметы не подтверждается страницей позиций.';
     }
 
     public function getParametersSchema(): array
@@ -35,7 +35,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
         return ['type' => 'object', 'properties' => [
             'estimate_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
             'estimate_selector' => ['type' => ['string', 'null'], 'minLength' => 1, 'maxLength' => 255,
-                'description' => 'Номер или название сметы из запроса. Используй либо это поле, либо estimate_id.'],
+                'description' => 'Точный номер или полное название сметы из запроса. При неоднозначности названия уточни точный номер. Используй либо это поле, либо estimate_id.'],
             'query' => ['type' => ['string', 'null'], 'maxLength' => 200,
                 'description' => 'Слова из названия позиции, номер позиции или шифр расценки. Передавай отдельный поисковый текст, без инструкции и номера сметы.'],
             'position_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
@@ -86,6 +86,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
             $resolution = $this->reader->resolveSelector($selector, (int) $organization->id, $actor);
             if ($resolution['status'] !== 'resolved') {
                 return ['status' => $resolution['status'], 'estimate' => null, 'positions' => [],
+                    'message' => $resolution['message'],
                     'meta' => ['page' => 1, 'per_page' => count($resolution['options']), 'total' => $resolution['total'],
                         'has_more' => $resolution['has_more'], 'next_page' => null],
                     'source_refs' => [], 'validation_status' => 'partial', 'needs_clarification' => true,

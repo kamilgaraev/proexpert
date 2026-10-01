@@ -470,6 +470,49 @@ class AIAssistantService
                     $selection = is_array($serverResult) ? ($serverResult['selection'] ?? null) : null;
                     $estimateEvidence = is_array($financialEvidence) ? ($financialEvidence['estimate'] ?? null) : null;
                     $stockEvidence = is_array($serverResult) ? ($serverResult['stock_evidence'] ?? null) : null;
+                    $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+                    $requestPlan = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
+                    $requestMessage = is_string($requestPlan['message'] ?? null) ? $requestPlan['message'] : '';
+                    $expectedEntity = match ($toolName) {
+                        'get_material_stock' => 'warehouse',
+                        'get_estimate_answer' => 'estimate',
+                        default => null,
+                    };
+                    $expectedDomains = match ($toolName) {
+                        'get_material_stock' => ['warehouse', 'operations_warehouse'],
+                        'get_estimate_answer' => ['estimates', 'core_estimates'],
+                        default => [],
+                    };
+                    $understandingEvidence = $requestUnderstanding?->evidence ?? [];
+                    $understoodEntities = array_values(array_unique(array_map(
+                        static fn (array $item): string => (string) ($item['value'] ?? ''),
+                        array_filter($understandingEvidence, static fn (mixed $item): bool => is_array($item) && ($item['type'] ?? null) === 'entity')
+                    )));
+                    $understoodDomains = array_values(array_unique(array_map(
+                        static fn (array $item): string => (string) ($item['value'] ?? ''),
+                        array_filter($understandingEvidence, static fn (mixed $item): bool => is_array($item) && ($item['type'] ?? null) === 'primary_domain')
+                    )));
+                    $classifiedIntent = $requestMessage === '' ? null : $this->intentRecognizer->recognize($requestMessage);
+                    $intentMatchesTool = match ($toolName) {
+                        'get_material_stock' => $classifiedIntent === 'material_stock',
+                        'get_estimate_answer' => $classifiedIntent === 'general',
+                        default => false,
+                    };
+                    $singleIntentRequest = $requestUnderstanding !== null
+                        && $expectedEntity !== null
+                        && $requestUnderstanding->primaryIntent === 'question'
+                        && $requestUnderstanding->outputFormat === 'text'
+                        && $requestUnderstanding->actionPolicy === 'read_only'
+                        && $requestUnderstanding->constraints === []
+                        && $requestUnderstanding->confidence >= 0.65
+                        && $requestUnderstanding->requestedEntities === [$expectedEntity]
+                        && $understoodEntities === [$expectedEntity]
+                        && count($understoodDomains) === 1
+                        && in_array($understoodDomains[0], $expectedDomains, true)
+                        && in_array($this->businessDataDomain($taskPlan), $expectedDomains, true)
+                        && in_array($requestPlan['goal'] ?? null, [null, ''], true)
+                        && in_array($requestPlan['desired_mode'] ?? null, [null, ''], true)
+                        && $intentMatchesTool;
                     if (
                         $loopCount === 0
                         && is_array($response['tool_calls'] ?? null)
@@ -477,6 +520,7 @@ class AIAssistantService
                         && count($this->activeToolResults) === 1
                         && $toolName === 'get_material_stock'
                         && $this->isTerminalReadOnlyTool($toolName)
+                        && $singleIntentRequest
                         && $executedAction === null
                         && $proposedActions === []
                         && $toolFailures === []
@@ -517,6 +561,7 @@ class AIAssistantService
                         && count($this->activeToolResults) === 1
                         && $toolName === 'get_estimate_answer'
                         && $this->isTerminalReadOnlyTool($toolName)
+                        && $singleIntentRequest
                         && $executedAction === null
                         && $proposedActions === []
                         && $toolFailures === []

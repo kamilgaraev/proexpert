@@ -41,6 +41,8 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
 
     private array $financeDeniedProjectIds = [];
 
+    private int $projectFinanceChecks = 0;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -272,18 +274,17 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
 
     public function test_selector_filters_ambiguous_options_by_project_financial_permission(): void
     {
-        $allowed = $this->estimate('SM-DUP-A', 'Доступная смета');
+        $allowed = $this->estimate('SM-DUP-A', 'Одинаковое точное имя');
         $deniedProject = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
-        $this->estimate('SM-DUP-B', 'Закрытая финансовая смета', project: $deniedProject);
+        $this->estimate('SM-DUP-B', 'Одинаковое точное имя', project: $deniedProject);
         $this->financeDeniedProjectIds = [$deniedProject->id];
 
-        $result = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'SM-DUP'], $this->actor, $this->organization);
+        $result = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'Одинаковое точное имя'], $this->actor, $this->organization);
         self::assertIsArray($result);
         self::assertSame($allowed->id, $result['estimate']['id']);
-        self::assertStringNotContainsString('Закрытая финансовая смета', json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
 
         $this->financeDeniedProjectIds[] = $this->project->id;
-        $denied = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'SM-DUP'], $this->actor, $this->organization);
+        $denied = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'Одинаковое точное имя'], $this->actor, $this->organization);
         self::assertIsArray($denied);
         self::assertSame('not_found', $denied['status']);
         self::assertSame([], $denied['resolution']['options']);
@@ -361,31 +362,67 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         });
     }
 
-    public function test_review_selector_keeps_ambiguity_when_allowed_estimates_follow_the_first_twenty_options(): void
+    public function test_review_selector_cap_requires_refinement_without_unreachable_pagination(): void
     {
         $deniedProject = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
         for ($index = 1; $index <= 19; $index++) {
-            $this->estimate('SM-WINDOW-'.str_pad((string) $index, 2, '0', STR_PAD_LEFT), 'Закрытая смета '.$index, project: $deniedProject);
+            $this->estimate('SM-WINDOW-'.str_pad((string) $index, 2, '0', STR_PAD_LEFT), 'Повторяющееся точное имя', project: $deniedProject);
         }
-        $first = $this->estimate('SM-WINDOW-20', 'Первая доступная смета');
-        $second = $this->estimate('SM-WINDOW-21', 'Вторая доступная смета');
+        $first = $this->estimate('SM-WINDOW-20', 'Повторяющееся точное имя');
+        $this->estimate('SM-WINDOW-21', 'Повторяющееся точное имя');
         $this->financeDeniedProjectIds = [$deniedProject->id];
 
-        $result = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'SM-WINDOW'], $this->actor, $this->organization);
+        $result = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'Повторяющееся точное имя'], $this->actor, $this->organization);
         self::assertIsArray($result);
         self::assertSame('ambiguous', $result['status']);
-        self::assertSame(2, $result['meta']['total']);
-        self::assertSame([$first->id, $second->id], array_column($result['resolution']['options'], 'id'));
+        self::assertTrue($result['needs_clarification']);
+        self::assertNull($result['meta']['total']);
+        self::assertFalse($result['meta']['has_more']);
+        self::assertNull($result['meta']['next_page']);
+        self::assertTrue($result['resolution']['limited']);
+        self::assertSame([], $result['resolution']['options']);
+        self::assertSame(trans_message('ai_assistant_financial.ambiguous'), $result['message']);
         self::assertSame([], $result['positions']);
         self::assertSame([], $result['source_refs']);
 
         $this->financeDeniedProjectIds = [];
-        $all = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'SM-WINDOW'], $this->actor, $this->organization);
+        $all = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'Повторяющееся точное имя'], $this->actor, $this->organization);
         self::assertIsArray($all);
         self::assertSame('ambiguous', $all['status']);
-        self::assertSame(21, $all['meta']['total']);
-        self::assertCount(20, $all['resolution']['options']);
-        self::assertTrue($all['resolution']['has_more']);
+        self::assertNull($all['meta']['total']);
+        self::assertSame([], $all['resolution']['options']);
+        self::assertFalse($all['resolution']['has_more']);
+
+        $exact = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => $first->number], $this->actor, $this->organization);
+        self::assertIsArray($exact);
+        self::assertSame($first->id, $exact['estimate']['id']);
+    }
+
+    public function test_review_selector_caps_many_project_checks_and_refuses_partial_search(): void
+    {
+        for ($index = 1; $index <= 30; $index++) {
+            $project = Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]);
+            $this->estimate('SM-PROJECT-CAP-'.$index, 'Много проектов с одним именем', project: $project);
+        }
+        $hydrated = 0;
+        Event::listen('eloquent.retrieved: '.Estimate::class, function () use (&$hydrated): void {
+            $hydrated++;
+        });
+        $result = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'Много проектов с одним именем'], $this->actor, $this->organization);
+        self::assertIsArray($result);
+        self::assertSame('ambiguous', $result['status']);
+        self::assertTrue($result['needs_clarification']);
+        self::assertLessThanOrEqual(20, $this->projectFinanceChecks);
+        self::assertLessThanOrEqual(21, $hydrated);
+        self::assertSame([], $result['resolution']['options']);
+
+        $this->projectFinanceChecks = 0;
+        $partial = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => 'SM-PROJECT-CAP'], $this->actor, $this->organization);
+        self::assertIsArray($partial);
+        self::assertSame('not_found', $partial['status']);
+        self::assertTrue($partial['needs_clarification']);
+        self::assertSame([], $partial['resolution']['options']);
+        self::assertSame(0, $this->projectFinanceChecks);
     }
 
     public function test_review_exact_selector_does_not_hydrate_or_authorize_every_estimate(): void
@@ -396,12 +433,14 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         $target = $this->estimate('SM-EXACT', 'Точная смета');
         $hydrated = 0;
         $queries = 0;
+        $estimateSql = [];
         Event::listen('eloquent.retrieved: '.Estimate::class, function () use (&$hydrated): void {
             $hydrated++;
         });
-        DB::listen(function (QueryExecuted $query) use (&$queries): void {
+        DB::listen(function (QueryExecuted $query) use (&$queries, &$estimateSql): void {
             if (str_contains($query->sql, '"estimates"')) {
                 $queries++;
+                $estimateSql[] = $query->sql;
             }
         });
 
@@ -410,6 +449,58 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame($target->id, $result['estimate']['id']);
         self::assertLessThanOrEqual(2, $hydrated);
         self::assertLessThanOrEqual(8, $queries);
+        self::assertStringNotContainsString('LOWER(', implode("\n", $estimateSql));
+        self::assertStringNotContainsString('STRPOS(', implode("\n", $estimateSql));
+        self::assertTrue(collect($estimateSql)->contains(static fn (string $sql): bool => str_contains($sql, '"number" = ?')));
+    }
+
+    public function test_review_exact_name_selection_uses_the_active_composite_index(): void
+    {
+        $index = DB::selectOne(
+            'SELECT pg_get_indexdef(indexrelid) AS definition, CASE WHEN indisvalid THEN 1 ELSE 0 END AS valid '.
+            "FROM pg_index WHERE indexrelid = to_regclass(?) AND indrelid = 'estimates'::regclass",
+            ['estimates_active_org_name_id_idx'],
+        );
+        self::assertNotNull($index);
+        self::assertSame(1, (int) $index->valid);
+        self::assertStringContainsString('(organization_id, name, id)', $index->definition);
+        self::assertStringContainsString('deleted_at IS NULL', $index->definition);
+        $rows = [];
+        for ($index = 1; $index <= 500; $index++) {
+            $rows[] = ['organization_id' => $this->organization->id, 'project_id' => $this->project->id,
+                'number' => 'SM-NAME-INDEX-'.$index, 'name' => 'Другое точное имя '.$index, 'estimate_date' => '2026-09-29'];
+        }
+        Estimate::query()->insert($rows);
+        $target = $this->estimate('SM-NAME-INDEX-TARGET', 'Целевое точное имя');
+        DB::statement('ANALYZE estimates');
+        $nameQuery = null;
+        DB::listen(function (QueryExecuted $query) use (&$nameQuery): void {
+            if (str_starts_with($query->sql, 'select') && str_contains($query->sql, '"estimates"."name" = ?')) {
+                $nameQuery = $query;
+            }
+        });
+        $result = app(GetEstimatePositionsTool::class)->execute(['estimate_selector' => $target->name], $this->actor, $this->organization);
+        self::assertIsArray($result);
+        self::assertSame($target->id, $result['estimate']['id']);
+        self::assertInstanceOf(QueryExecuted::class, $nameQuery);
+        $explained = DB::select('EXPLAIN (FORMAT JSON) '.$nameQuery->sql, $nameQuery->bindings);
+        $plan = json_decode($explained[0]->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR);
+        self::assertTrue($this->planUsesNameIndex($plan), json_encode($plan, JSON_THROW_ON_ERROR));
+    }
+
+    private function planUsesNameIndex(array $plan): bool
+    {
+        if (($plan['Index Name'] ?? null) === 'estimates_active_org_name_id_idx'
+            && str_contains((string) ($plan['Index Cond'] ?? ''), 'name')) {
+            return true;
+        }
+        foreach ($plan as $child) {
+            if (is_array($child) && $this->planUsesNameIndex($child)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function test_review_resource_reference_rechecks_project_finance_after_it_is_revoked(): void
@@ -457,6 +548,10 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
 
     private function permission(string $permission, ?array $context = null): bool
     {
+        if ($permission === 'budget-estimates.finance.view' && isset($context['project_id'])) {
+            $this->projectFinanceChecks++;
+        }
+
         return $permission !== 'budget-estimates.finance.view' || ($this->financeAllowed
             && ! in_array($context['project_id'] ?? null, $this->financeDeniedProjectIds, true));
     }

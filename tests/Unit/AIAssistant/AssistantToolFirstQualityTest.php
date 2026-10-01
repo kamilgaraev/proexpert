@@ -372,7 +372,7 @@ final class AssistantToolFirstQualityTest extends TestCase
             'source_refs' => [$source]];
         $service = $this->service(['get_estimate_answer' => $result, 'search_assistant_documents' => ['status' => 'success']], [
             ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_answer')]],
-        ]);
+        ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer);
 
         $response = $service->ask('Какова сумма сметы?', 15, $this->actor(), 7);
 
@@ -746,7 +746,8 @@ final class AssistantToolFirstQualityTest extends TestCase
             'stock_evidence' => ['scope' => 'warehouse_balance_sum', 'quantity_scope' => $quantityScope, 'organization_id' => 15,
                 'actor_id' => 7, 'filters' => ['query' => 'арматура', 'material_ids' => null, 'project_id' => null, 'warehouse_id' => null],
                 'rows' => [], 'fetched_at' => now()->toISOString(), 'validation_status' => 'verified', 'version' => 'checked-empty-scope']]],
-            [['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]]]);
+            [['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]]], navigationPermissions: [[]],
+            intentRecognizer: new IntentRecognizer);
         $service->verifiedStock = ['text' => $emptyText, 'validation_status' => 'verified', 'source_refs' => [],
             'replaced' => true, 'needs_clarification' => false];
 
@@ -783,7 +784,7 @@ final class AssistantToolFirstQualityTest extends TestCase
             $service = $this->service(['get_material_stock' => $result], [
                 ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]],
                 ['content' => 'Проверка остатков выполнена.'],
-            ]);
+            ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer);
             $callCount = count($this->providerCalls);
             $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
                 'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
@@ -799,7 +800,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         ], [
             ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock'), $this->toolCall('assistant_domain_search')]],
             ['content' => 'Проверка остатков выполнена.'],
-        ]);
+        ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer);
         $callCount = count($this->providerCalls);
         $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
             'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
@@ -807,6 +808,58 @@ final class AssistantToolFirstQualityTest extends TestCase
         $service->ask('Сколько арматуры на складе?', 15, $this->actor(), 7);
 
         $this->assertCount($callCount + 2, $this->providerCalls, 'multiple tool calls');
+    }
+
+    public function test_compound_stock_and_deliveries_request_keeps_second_provider_call_when_only_stock_tool_was_emitted(): void
+    {
+        $quantityScope = ['kind' => 'warehouse_balance', 'project_id' => null, 'project_allocation_quantity_calculated' => false,
+            'on_site_quantity_calculated' => false, 'free_for_allocation_calculated' => false];
+        $stock = ['status' => 'empty', 'stock' => [], 'server_formatted_answer' => trans_message('ai_assistant.material_stock_empty'),
+            'validation_status' => 'verified', 'source_refs' => [], 'quantity_scope' => $quantityScope,
+            'stock_evidence' => ['scope' => 'warehouse_balance_sum', 'quantity_scope' => $quantityScope, 'organization_id' => 15,
+                'actor_id' => 7, 'filters' => ['query' => 'бетон', 'material_ids' => null, 'project_id' => null, 'warehouse_id' => null],
+                'rows' => [], 'fetched_at' => now()->toISOString(), 'validation_status' => 'verified', 'version' => 'checked-empty-scope']];
+        $service = $this->service(['get_material_stock' => $stock], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]],
+            ['content' => 'Остатки проверены; отдельно проверю поставки и потребность по бетону.'],
+        ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer);
+        $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
+            'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
+
+        $response = $service->ask('Что у нас по остаткам и поставкам/потребности по бетону?', 15, $this->actor(), 7);
+
+        $this->assertCount(2, $this->providerCalls);
+        $this->assertSame('verified', $response['message']['metadata']['validation_status']);
+    }
+
+    public function test_single_tool_shortcut_requires_clear_single_entity_text_request_plan(): void
+    {
+        $quantityScope = ['kind' => 'warehouse_balance', 'project_id' => null, 'project_allocation_quantity_calculated' => false,
+            'on_site_quantity_calculated' => false, 'free_for_allocation_calculated' => false];
+        $stock = ['status' => 'empty', 'stock' => [], 'server_formatted_answer' => trans_message('ai_assistant.material_stock_empty'),
+            'validation_status' => 'verified', 'source_refs' => [], 'quantity_scope' => $quantityScope,
+            'stock_evidence' => ['scope' => 'warehouse_balance_sum', 'quantity_scope' => $quantityScope, 'organization_id' => 15,
+                'actor_id' => 7, 'filters' => ['query' => 'арматура', 'material_ids' => null, 'project_id' => null, 'warehouse_id' => null],
+                'rows' => [], 'fetched_at' => now()->toISOString(), 'validation_status' => 'verified', 'version' => 'checked-empty-scope']];
+        $cases = [
+            'json output' => 'Сколько арматуры на складе? Только JSON.',
+            'additional entity' => 'Какова сумма сметы и какие остатки арматуры на складе?',
+            'unclear entity' => 'Что у нас по бетону?',
+        ];
+
+        foreach ($cases as $case => $query) {
+            $service = $this->service(['get_material_stock' => $stock], [
+                ['content' => '', 'tool_calls' => [$this->toolCall('get_material_stock')]],
+                ['content' => 'Проверка остатков выполнена.'],
+            ], navigationPermissions: [[]], intentRecognizer: new IntentRecognizer);
+            $callCount = count($this->providerCalls);
+            $service->verifiedStock = ['text' => trans_message('ai_assistant.material_stock_empty'), 'validation_status' => 'verified',
+                'source_refs' => [], 'replaced' => true, 'needs_clarification' => false];
+
+            $service->ask($query, 15, $this->actor(), 7);
+
+            $this->assertCount($callCount + 2, $this->providerCalls, $case);
+        }
     }
 
     public function test_resolved_estimate_without_current_access_does_not_become_selected_while_answer_sources_remain_for_fresh_verification(): void
@@ -1069,7 +1122,7 @@ final class AssistantToolFirstQualityTest extends TestCase
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
-        ?AssistantFinancialAnswerService $financialAnswers = null): ToolFirstStubService
+        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null): ToolFirstStubService
     {
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
@@ -1131,7 +1184,7 @@ final class AssistantToolFirstQualityTest extends TestCase
             });
             $orchestrator = new AssistantTaskOrchestrator(new AssistantCapabilityRegistry, $accessResolver);
         }
-        $service = new ToolFirstStubService($provider, $manager, $context, $this->createMock(IntentRecognizer::class), $usage,
+        $service = new ToolFirstStubService($provider, $manager, $context, $intentRecognizer ?? $this->createMock(IntentRecognizer::class), $usage,
             $this->createMock(LoggingService::class), $registry, $permissions, $accessResolver, $orchestrator,
             new AssistantAgentStateStore, new AssistantAgentPlanner(new AssistantCapabilityCatalog, new AssistantPeriodResolver),
             new AssistantAgentExecutor($registry, $permissions, new AssistantArtifactNormalizer), new AssistantResponseVerifier,
