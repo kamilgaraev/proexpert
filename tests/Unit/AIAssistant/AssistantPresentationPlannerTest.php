@@ -57,6 +57,8 @@ final class AssistantPresentationPlannerTest extends TestCase
 
         $this->assertStringContainsString('9007199254740993.17', $validMoney['text']);
         $this->assertStringContainsString('RUB', $validMoney['text']);
+        $this->assertStringContainsString("- Платёжный документ:\n  - Сумма: 9007199254740993.17", $validMoney['text']);
+        $this->assertStringContainsString('<ul>', (string) (new GithubFlavoredMarkdownConverter)->convert($validMoney['text']));
         $this->assertSame('partial', $validMoney['validation_status']);
 
         $missingCurrency = $this->renderPlan([$money], [['amount']], 'list');
@@ -170,7 +172,7 @@ final class AssistantPresentationPlannerTest extends TestCase
         $mixedPlan = $this->planObject([$receipts[0], $receipts[2]], [['name', 'unit'], ['name', 'unit']], 'table');
         $mixedPlan['result_sets'][1]['layout'] = 'list';
         $mixed = (new AssistantPresentationPlanner)->render(json_encode($mixedPlan, JSON_THROW_ON_ERROR), [$receipts[0], $receipts[2]], 'Покажи данные');
-        $this->assertStringContainsString("| Запись | Название | Единица |\n| --- | --- | --- |\n| Проект | А | м³ |\n\nПроект:", $mixed);
+        $this->assertStringContainsString("| Запись | Название | Единица |\n| --- | --- | --- |\n| Проект | А | м³ |\n\n- Проект:", $mixed);
     }
 
     private function renderPlan(array $receipts, array $columnsByReceipt, string $layout): string

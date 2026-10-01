@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
 use Illuminate\Database\Eloquent\Model;
+use League\CommonMark\GithubFlavoredMarkdownConverter;
 use PHPUnit\Framework\TestCase;
 
 final class AssistantStructuredFactPresentationTest extends TestCase
@@ -148,6 +149,7 @@ final class AssistantStructuredFactPresentationTest extends TestCase
             'scope' => 'resources', 'position_id' => 200, 'total' => 10, 'page' => 1,
             'per_page' => 20, 'has_more' => false, 'next_page' => null,
         ];
+        $this->assertTrue((new AssistantStructuredFactVerifier)->trustedEvidence($payload['structured_fact_evidence']));
 
         $result = (new AssistantStructuredFactVerifier)->guard(
             'Покажи ресурсный состав сметы СМ-2026-0009', 'Состав позиции показан полностью.', [$payload],
@@ -158,6 +160,69 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertStringContainsString('Всего ресурсов: 10.', $result['text']);
         $this->assertStringNotContainsString('Полнота списка и общие итоги не подтверждены', $result['text']);
         $this->assertStringNotContainsString('Остальные можно посмотреть', $result['text']);
+    }
+
+    public function test_invalid_plan_fallback_formats_homogeneous_resources_as_readable_table_once_with_footer_and_links(): void
+    {
+        $estimate = $this->payload('estimate', ['name' => 'Смета СМ-2026-0009'], 100, ['project_id' => 16]);
+        $position = $this->payload('estimate_item', ['name' => 'Кладка перегородок'], 200,
+            ['estimate_id' => 100, 'project_id' => 16]);
+        $rows = array_merge($estimate['structured_fact_evidence']['rows'], $position['structured_fact_evidence']['rows']);
+        for ($id = 1; $id <= 10; $id++) {
+            $resource = $this->payload('estimate_item_resource', [
+                'name' => 'Ресурс '.$id,
+                'quantity' => '4.23500000',
+                'material_unit' => 'чел-ч',
+                'unit_price' => '1354.6500',
+                'total_amount' => '1354.65',
+            ], 1000 + $id, ['estimate_id' => 100, 'estimate_item_id' => 200, 'composition_scope' => 'resources',
+                'finance_representation' => 'independent', 'project_id' => 16]);
+            $rows[] = $resource['structured_fact_evidence']['rows'][0];
+        }
+        $payload = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 10, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'Найдено десять ресурсов.', [$payload],
+        );
+        $html = (string) (new GithubFlavoredMarkdownConverter)->convert($result['text']);
+
+        $this->assertStringContainsString('<table>', $html);
+        $this->assertStringContainsString('Ресурс позиции: Ресурс 1', $html);
+        $this->assertStringContainsString('4.23500000', $html);
+        $this->assertStringContainsString('1354.6500', $html);
+        $this->assertStringContainsString('чел-ч', $html);
+        $this->assertSame(12, substr_count($html, 'href="/records?entity_id='));
+        foreach (range(1, 10) as $id) {
+            $renderedNameCount = preg_match_all('/Ресурс '.preg_quote((string) $id, '/').'(?=\s|<)/u', $html);
+            $this->assertSame(1, $renderedNameCount, 'Resource '.$id.' should be rendered exactly once.');
+        }
+        $this->assertSame(1, substr_count($html, 'Всего ресурсов: 10.'));
+        $this->assertGreaterThan(strpos($html, '</table>'), strpos($html, 'Всего ресурсов: 10.'));
+        $this->assertSame(12, count($result['source_refs']));
+    }
+
+    public function test_invalid_plan_fallback_uses_markdown_list_for_single_composition_resource(): void
+    {
+        $payload = AssistantStructuredFactFormatter::payload($this->compositionRows(1), '2026-09-30T12:00:00Z');
+        $payload['structured_fact_evidence']['composition_page'] = [
+            'scope' => 'resources', 'position_id' => 200, 'total' => 1, 'page' => 1,
+            'per_page' => 20, 'has_more' => false, 'next_page' => null,
+        ];
+
+        $result = (new AssistantStructuredFactVerifier)->guard(
+            'Покажи ресурсный состав сметы СМ-2026-0009', 'Вот ресурс.', [$payload],
+        );
+        $html = (string) (new GithubFlavoredMarkdownConverter)->convert($result['text']);
+
+        $this->assertStringContainsString('<ul>', $html);
+        $this->assertStringContainsString('Ресурс позиции: Ресурс 1', $html);
+        $this->assertStringContainsString('href="/records?entity_id=1001"', $html);
+        $this->assertStringContainsString('Всего ресурсов: 1.', $html);
+        $this->assertStringNotContainsString('<table>', $html);
     }
 
     public function test_empty_page_beyond_composition_total_does_not_claim_that_more_resources_are_available(): void
