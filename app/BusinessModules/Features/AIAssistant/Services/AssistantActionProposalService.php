@@ -23,7 +23,11 @@ final class AssistantActionProposalService
             if (isset($candidate['origin_request_id']) && $candidate['origin_request_id'] !== $requestId) {
                 continue;
             }
-            foreach ($metadata['proposed_actions'] ?? [] as $proposal) {
+            $proposals = array_merge($metadata['proposed_actions'] ?? [], array_values(array_filter(
+                $metadata['next_actions'] ?? [], static fn (mixed $action): bool => is_array($action)
+                    && ($action['type'] ?? null) === 'act' && ($action['requires_confirmation'] ?? false)
+            )));
+            foreach ($proposals as $proposal) {
                 if (!is_array($proposal) || !hash_equals($this->fingerprint($proposal), $fingerprint)) {
                     continue;
                 }

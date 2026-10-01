@@ -102,6 +102,9 @@ class AssistantTaskOrchestrator
             'evidence' => $this->buildEvidence($plan, $options),
             'missing_data' => $missingData,
             'next_actions' => $nextActions,
+            'proposed_actions' => array_values(array_filter($nextActions, static fn (array $action): bool =>
+                isset($action['tool_name'], $action['arguments']) && ($action['type'] ?? null) === 'act'
+                && ($action['requires_confirmation'] ?? false))),
             'navigation_target' => $navigationTarget,
             'wizard' => $wizard,
             'executed_actions' => $executedActions,

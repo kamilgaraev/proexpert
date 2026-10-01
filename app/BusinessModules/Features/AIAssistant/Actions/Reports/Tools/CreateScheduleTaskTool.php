@@ -76,62 +76,47 @@ class CreateScheduleTaskTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        if (!$user) {
-            return ['status' => 'error', 'message' => 'Пользователь не аутентифицирован'];
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)
+                ->canExecuteTool($user, $this->getName(), $arguments)) {
+            return ['status' => 'error', 'message' => trans_message('ai_assistant.tool_access_denied')];
         }
-
-        $projectId = $arguments['project_id'];
-        $scheduleId = $arguments['schedule_id'];
-
-        $schedule = ProjectSchedule::where('id', $scheduleId)
-            ->where('project_id', $projectId)
-            ->where('organization_id', $organization->id)
-            ->first();
-
-        if (!$schedule) {
-            return [
-                'status' => 'error',
-                'message' => "График с ID {$scheduleId} для проекта {$projectId} не найден."
-            ];
-        }
-
-        $data = [
-            'schedule_id' => $schedule->id,
-            'organization_id' => $organization->id,
-            'created_by_user_id' => $user->id,
-            'name' => $arguments['name'],
-            'planned_start_date' => $arguments['planned_start_date'],
-            'planned_end_date' => $arguments['planned_end_date'],
-            'parent_task_id' => $arguments['parent_task_id'] ?? null,
-            'quantity' => $arguments['quantity'] ?? 0,
-            'measurement_unit_id' => $arguments['measurement_unit_id'] ?? null,
-            'task_type' => 'task',
-            'status' => 'not_started',
-            'priority' => 'normal',
-        ];
 
         try {
-            return DB::transaction(function () use ($data, $schedule) {
-                // Вычисляем sort_order
-                $data['sort_order'] = $this->taskService->getNextSortOrder(
-                    $schedule->id,
-                    $data['parent_task_id']
-                );
+            return DB::transaction(function () use ($arguments, $user, $organization): array {
+                $schedule = ProjectSchedule::query()->whereKey($arguments['schedule_id'] ?? null)
+                    ->where('project_id', $arguments['project_id'] ?? null)
+                    ->where('organization_id', $organization->id)->lockForUpdate()->first();
+                if ($schedule === null) {
+                    return ['status' => 'error', 'message' => trans_message('ai_assistant.tool_access_denied')];
+                }
+                $parentId = $arguments['parent_task_id'] ?? null;
+                if ($parentId !== null && ! ScheduleTask::query()->whereKey($parentId)
+                    ->where('organization_id', $organization->id)->where('schedule_id', $schedule->id)
+                    ->whereIn('task_type', ['summary', 'container'])->lockForUpdate()->first()) {
+                    return ['status' => 'error', 'message' => trans_message('ai_assistant.tool_access_denied')];
+                }
+                $task = ScheduleTask::create([
+                    'schedule_id' => $schedule->id,
+                    'organization_id' => $organization->id,
+                    'created_by_user_id' => $user->id,
+                    'name' => $arguments['name'],
+                    'planned_start_date' => $arguments['planned_start_date'],
+                    'planned_end_date' => $arguments['planned_end_date'],
+                    'parent_task_id' => $parentId,
+                    'quantity' => $arguments['quantity'] ?? 0,
+                    'measurement_unit_id' => $arguments['measurement_unit_id'] ?? null,
+                    'task_type' => 'task',
+                    'status' => 'not_started',
+                    'priority' => 'normal',
+                    'sort_order' => $this->taskService->getNextSortOrder($schedule->id, $parentId),
+                ]);
 
-                $task = ScheduleTask::create($data);
-
-                return [
-                    'status' => 'success',
-                    'message' => "Задача '{$task->name}' успешно создана в графике.",
-                    'task_id' => $task->id
-                ];
+                return ['status' => 'success', 'message' => trans_message('ai_assistant.action_executed'), 'task_id' => $task->id];
             });
-        } catch (\Exception $e) {
-            Log::error('AI Tool Error (CreateScheduleTaskTool): ' . $e->getMessage());
-            return [
-                'status' => 'error',
-                'message' => 'Ошибка при создании задачи: ' . $e->getMessage()
-            ];
+        } catch (\Throwable $exception) {
+            Log::error('ai.assistant.schedule_task.failed', ['organization_id' => $organization->id, 'schedule_id' => $arguments['schedule_id'] ?? null, 'exception' => $exception::class]);
+            return ['status' => 'error', 'message' => trans_message('ai_assistant.action_invalid')];
         }
     }
 }

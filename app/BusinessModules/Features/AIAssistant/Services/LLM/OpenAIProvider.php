@@ -42,7 +42,7 @@ final class OpenAIProvider implements LLMProviderInterface
         }
 
         $budgetService = new TokenBudgetService(calibrationModel: LunaModelPolicy::OPENAI);
-        $prepared = $budgetService->prepare($messages, (array) ($options['tools'] ?? []), (string) ($options['budget_profile'] ?? $options['profile'] ?? 'normal'), array_key_exists('budget_limits', $options) ? (array) $options['budget_limits'] : null);
+        $prepared = $budgetService->resolvePrepared($options['_prepared_token_budget'] ?? null, $messages, (array) ($options['tools'] ?? []), (string) ($options['budget_profile'] ?? $options['profile'] ?? 'normal'), array_key_exists('budget_limits', $options) ? (array) $options['budget_limits'] : null);
         $messages = $prepared['messages'];
         $model = LunaModelPolicy::assert((string) ($options['model'] ?? $this->model));
         $maxTokens = min(

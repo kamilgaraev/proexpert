@@ -50,7 +50,7 @@ final class TimewebProvider implements LLMProviderInterface
         }
 
         $budgetService = new TokenBudgetService();
-        $prepared = $budgetService->prepare($messages, (array) ($options['tools'] ?? []), (string) ($options['budget_profile'] ?? $options['profile'] ?? 'normal'), array_key_exists('budget_limits', $options) ? (array) $options['budget_limits'] : null);
+        $prepared = $budgetService->resolvePrepared($options['_prepared_token_budget'] ?? null, $messages, (array) ($options['tools'] ?? []), (string) ($options['budget_profile'] ?? $options['profile'] ?? 'normal'), array_key_exists('budget_limits', $options) ? (array) $options['budget_limits'] : null);
         $messages = $prepared['messages'];
         $profile = $this->profile($options);
         $profileConfig = $this->profileConfig($profile);

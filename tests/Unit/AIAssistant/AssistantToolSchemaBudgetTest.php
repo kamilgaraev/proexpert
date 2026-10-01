@@ -80,21 +80,33 @@ final class AssistantToolSchemaBudgetTest extends TestCase
             $types = array_unique(array_merge(...array_map(static fn ($definition): array => $definition->entityTypes, $definitions)));
             $measurements[$name] = ['types' => count($types), 'tools' => count($tools), 'original_schema_tokens' => $counter->tools($original), 'serialized_schema_tokens' => $counter->tools($tools), 'relevance' => []];
             $this->assertLessThan($counter->tools($original), $counter->tools($tools));
-            $this->assertLessThan(6500, $counter->tools($tools));
-            foreach (['summary', 'find', 'reports', 'estimates'] as $intent) {
+            foreach (['summary', 'find', 'reports', 'estimates', 'payments'] as $intent) {
                 $service = (new ReflectionClass(AIAssistantService::class))->newInstanceWithoutConstructor();
-                $names = (new ReflectionClass(AIAssistantService::class))->getMethod('resolveRelevantToolNames')->invoke($service, ['task_type' => $intent === 'find' ? 'find' : 'summary', 'capability' => ['id' => $intent]]);
-                $relevant = $registry->getToolsDefinitions($names);
+                $reflection = new ReflectionClass(AIAssistantService::class);
+                $reflection->getProperty('toolRegistry')->setValue($service, $registry);
+                $reflection->getProperty('toolEligibilityPolicy')->setValue($service, new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy);
+                $reflection->getProperty('logging')->setValue($service, $this->createMock(\App\Services\Logging\LoggingService::class));
+                $queryText = match ($intent) {
+                    'find' => 'Найди проекты и договоры', 'reports' => 'Подготовь отчёт по проекту',
+                    'estimates' => 'Покажи данные сметы', 'payments' => 'Покажи платежи проекта', default => 'Проверь текущие данные проекта',
+                };
+                $understanding = (new \App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver)->resolve($queryText, []);
+                $plan = ['task_type' => $intent === 'find' ? 'find' : 'summary', 'capability' => ['id' => $intent],
+                    'request' => ['message' => $queryText, 'allow_actions' => false], 'request_understanding' => $understanding->toArray()];
+                $names = $reflection->getMethod('resolveRelevantToolNames')->invoke($service, $plan);
+                $relevant = $reflection->getMethod('resolveToolDefinitions')->invoke($service, $plan);
+                $this->assertLessThan(6500, $counter->tools($relevant), $name.':'.$intent);
                 $before = array_values(array_filter($original, static fn (array $tool): bool => in_array($tool['function']['name'], $names, true)));
                 $query = mb_substr(str_repeat('Проверь актуальные итоги проекта, сравни договорные суммы и сроки выполнения работ, укажи документы и точные источники. ', 50), 0, 4000);
                 $this->assertSame(4000, mb_strlen($query));
                 $messages = [['role' => 'system', 'content' => str_repeat('Сохраняй полный вопрос и соблюдай права организации. ', 40)], ['role' => 'user', 'content' => $query]];
-                foreach (['short', 'normal'] as $profile) {
+                foreach (['short', 'normal', 'detailed'] as $profile) {
                     $prepared = (new TokenBudgetService($counter))->prepare($messages, $relevant, $profile);
                     $this->assertSame($messages, $prepared['messages']);
                     $this->assertLessThanOrEqual(TokenBudgetService::limits($profile)['input'], $prepared['input_tokens']);
+                    $measurements[$name]['relevance'][$intent]['profiles'][$profile] = $prepared['input_tokens'];
                 }
-                $measurements[$name]['relevance'][$intent] = ['before' => $counter->tools($before), 'after' => $counter->tools($relevant), 'preserved_message_tokens' => $counter->messages($messages)];
+                $measurements[$name]['relevance'][$intent] += ['before' => $counter->tools($before), 'after' => $counter->tools($relevant), 'tools' => count($relevant), 'preserved_message_tokens' => $counter->messages($messages)];
             }
             foreach ($registry->getTools() as $tool) {
                 if (! $tool instanceof AssistantDomainTool) { continue; }

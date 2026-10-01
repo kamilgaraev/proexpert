@@ -74,6 +74,24 @@ final class TokenBudgetService
         return $this->prepare($messages, $tools, $profile, $snapshotLimits);
     }
 
+    public function calibrationModel(): string
+    {
+        return $this->calibrationModel;
+    }
+
+    public function resolvePrepared(mixed $candidate, array $messages, array $tools = [], string $profile = 'normal', ?array $snapshotLimits = null): array
+    {
+        $profile = self::normalizeProfile($profile);
+        $configured = app()->bound('config') ? config("ai-assistant-credits.profiles.{$profile}") : null;
+        $limits = $this->normalizeLimits($snapshotLimits ?? $configured ?? self::limits($profile));
+        if ($candidate instanceof PreparedTokenBudget
+            && $candidate->matches($messages, $tools, $profile, $limits, $this->calibrationModel)
+            && $candidate->prepared['safety_factor'] >= $this->safetyFactor()) {
+            return $candidate->prepared;
+        }
+        return $this->prepare($messages, $tools, $profile, $snapshotLimits);
+    }
+
     public function count(string $text): int
     {
         return $this->counter->text($text);
@@ -229,7 +247,7 @@ final class TokenBudgetService
         return null;
     }
 
-    private static function normalizeProfile(string $profile): string
+    public static function normalizeProfile(string $profile): string
     {
         return match ($profile) {
             'fast', 'short' => 'short',

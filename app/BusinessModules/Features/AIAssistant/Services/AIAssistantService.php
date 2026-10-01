@@ -122,6 +122,8 @@ class AIAssistantService
 
     private array $activeToolResults = [];
 
+    private array $providerUsageAttempts = [];
+
     private ?array $pendingSummary = null;
 
     private ?string $requestOutcome = null;
@@ -406,6 +408,7 @@ class AIAssistantService
 
     private function performAsk(string $query, int $organizationId, User $user, ?int $conversationId, array $requestPayload): array
     {
+        $this->providerUsageAttempts = [];
         if (! $this->measurePhase('request_permission', fn (): bool => $this->permissionChecker->canUseAssistant($user, $organizationId))) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.access_denied', 'Недостаточно прав для работы с AI-ассистентом.'));
         }
@@ -417,7 +420,9 @@ class AIAssistantService
         ]);
 
         $standaloneGreeting = $this->isStandaloneGreeting($query, $requestPayload);
-        if (!$standaloneGreeting && ! $this->usageTracker->canMakeRequest($organizationId)) {
+        if (! $standaloneGreeting && $this->activeRequest !== null) {
+            $this->requestLifecycle?->assertReservedBudget($this->activeRequest, $user);
+        } elseif (!$standaloneGreeting && ! $this->usageTracker->canMakeRequest($organizationId)) {
             throw new RuntimeException($this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'));
         }
 
@@ -1005,6 +1010,11 @@ class AIAssistantService
                 $assistantPayload['structured_evidence_truncated'] = true;
             }
             $assistantPayload['request_id'] = $requestPayload['request_id'] ?? null;
+            foreach (['next_actions', 'proposed_actions'] as $key) {
+                $assistantPayload[$key] = array_map(static fn (array $action): array =>
+                    isset($action['tool_name']) ? array_merge($action, ['origin_request_id' => $requestPayload['request_id'] ?? null]) : $action,
+                    $assistantPayload[$key] ?? []);
+            }
             $assistantPayload['actor_user_id'] = (int) $user->id;
             $assistantPayload['fetched_at'] = now()->toISOString();
             $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
@@ -1020,27 +1030,21 @@ class AIAssistantService
                 'user_decisions' => [['request_id' => $assistantPayload['request_id'], 'user_request' => $query]],
             ];
 
+            $tokensUsed = (int) array_sum(array_column($this->providerUsageAttempts, 'tokens'));
+            $cost = (float) array_sum(array_column($this->providerUsageAttempts, 'cost'));
             $assistantMessage = $this->conversationManager->addMessage(
                 $conversation,
                 'assistant',
                 $assistantContent,
-                (int) ($response['tokens_used'] ?? 0),
+                $tokensUsed,
                 (string) ($response['model'] ?? $this->llmProvider->getModel()),
                 $assistantPayload
-            );
-
-            $cost = $this->usageTracker->calculateCost(
-                (int) ($response['tokens_used'] ?? 0),
-                (string) ($response['model'] ?? $this->llmProvider->getModel()),
-                isset($response['input_tokens']) ? (int) $response['input_tokens'] : null,
-                isset($response['output_tokens']) ? (int) $response['output_tokens'] : null,
-                isset($response['provider']) ? (string) $response['provider'] : null
             );
 
             $this->usageTracker->trackRequest(
                 $organizationId,
                 $user,
-                (int) ($response['tokens_used'] ?? 0),
+                $tokensUsed,
                 $cost
             );
 
@@ -1048,7 +1052,7 @@ class AIAssistantService
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
                 'conversation_id' => $conversation->id,
-                'tokens_used' => (int) ($response['tokens_used'] ?? 0),
+                'tokens_used' => $tokensUsed,
                 'cost_rub' => $cost,
                 'provider' => $response['provider'] ?? null,
                 'model' => $response['model'] ?? null,
@@ -1063,11 +1067,11 @@ class AIAssistantService
                     'id' => $assistantMessage->id,
                     'role' => 'assistant',
                     'content' => $assistantContent,
-                    'tokens_used' => (int) ($response['tokens_used'] ?? 0),
+                    'tokens_used' => $tokensUsed,
                     'metadata' => $assistantPayload,
                     'created_at' => $assistantMessage->created_at?->toISOString(),
                 ],
-                'tokens_used' => (int) ($response['tokens_used'] ?? 0),
+                'tokens_used' => $tokensUsed,
                 'usage' => $this->usageTracker->getUsageStats($organizationId),
             ];
 
@@ -2209,6 +2213,14 @@ class AIAssistantService
             $outputTokens = max(0, (int) ($response['output_tokens'] ?? 0));
             $totalTokens = max(0, (int) ($response['tokens_used'] ?? ($inputTokens + $outputTokens)));
             $usageAvailable = ($response['provider_usage_available'] ?? true) !== false && isset($response['input_tokens'], $response['output_tokens']);
+
+            $key = $this->activeRequest !== null && $attempt !== null ? $attempt : count($this->providerUsageAttempts);
+            $this->providerUsageAttempts[$key] = [
+                'tokens' => $usageAvailable ? $totalTokens : 0,
+                'cost' => $usageAvailable ? $this->usageTracker->calculateCost($totalTokens,
+                    (string) ($response['model'] ?? $this->llmProvider->getModel()), $inputTokens, $outputTokens,
+                    (string) ($response['provider'] ?? config('ai-assistant.llm.provider', 'unknown'))) : 0.0,
+            ];
 
             $this->usageTracker->recordUsage(
                 $organizationId,
@@ -3646,7 +3658,11 @@ class AIAssistantService
         $preparedMessages = $this->prepareMessagesForProvider($messages);
         $preparedOptions = $options;
         $limits = $this->activeRequest !== null ? $this->requestLifecycle?->limits($this->activeRequest) : null;
-        $prepared = $this->tokenBudget->prepare($preparedMessages, $options['tools'] ?? [], (string) ($options['budget_profile'] ?? $this->activeProfile), $limits);
+        $budgetService = $this->llmProvider instanceof \App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider
+            ? new TokenBudgetService(calibrationModel: LunaModelPolicy::OPENAI) : $this->tokenBudget;
+        $budget = \App\Support\AI\PreparedTokenBudget::create($budgetService, $preparedMessages, $options['tools'] ?? [], (string) ($options['budget_profile'] ?? $this->activeProfile), $limits);
+        $prepared = $budget->prepared;
+        $preparedOptions['_prepared_token_budget'] = $budget;
         $preparedOptions['budget_profile'] = $prepared['profile'];
         $preparedOptions['max_completion_tokens'] = $prepared['max_completion_tokens'];
         $preparedOptions['estimated_input_tokens'] = $prepared['input_tokens'];

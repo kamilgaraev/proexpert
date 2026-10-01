@@ -121,6 +121,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $policy = new AssistantDataAccessPolicy($authorization, $this->mock(UserProjectAccessService::class), $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
         $permissions = $this->mock(AIPermissionChecker::class);
+        $permissions->shouldReceive('canExposeTool')->andReturn(false)->byDefault();
         $permissions->shouldReceive('canUseAssistant')->andReturnUsing(function (User $user, int $organizationId) use ($policy): bool {
             $this->assistantGateChecks++;
             return $this->assistantEnabled && $policy->belongsToOrganization($user, $organizationId);
@@ -243,7 +244,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     public function test_cancel_before_start_leaves_tombstone_and_never_reserves_or_generates(): void
     {
         $payload = $this->quote();
-        $this->assertSame('queued', $this->lifecycle->status($payload['request_id'], $this->actor, $this->organization->id)['status']);
+        $this->assertSame('not_submitted', $this->lifecycle->status($payload['request_id'], $this->actor, $this->organization->id)['status']);
         $cancelled = $this->lifecycle->cancel($payload['request_id'], $this->actor, $this->organization->id);
         $this->assertSame('cancelled', $cancelled['status']);
         $provider = $this->createMock(LLMProviderInterface::class);
@@ -334,6 +335,46 @@ final class AssistantRequestLifecycleTest extends TestCase
         } finally {
             Log::swap($originalLogger);
         }
+    }
+
+    public function test_committed_request_recovers_enqueue_gap_and_duplicate_delivery_is_claimed_once(): void
+    {
+        $payload = $this->quote();
+        $request = $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload, 'lk')['request'];
+        Bus::fake();
+        $this->assertSame(1, $this->lifecycle->recoverQueued());
+        Bus::assertDispatched(ExecuteAssistantChatJob::class, 1);
+        $repeated = (new QueuedAssistantChatService($this->lifecycle))->submit((int) $this->organization->id, $this->actor, null, $payload, 'lk');
+        $this->assertFalse($repeated['created']);
+        Bus::assertDispatched(ExecuteAssistantChatJob::class, 2);
+        $this->assertSame(1, AICreditReservation::query()->count());
+        $assistant = $this->mock(AIAssistantService::class);
+        $assistant->shouldReceive('executeStartedRequest')->once()->andReturnUsing(fn (AssistantRequest $claimed): array =>
+            $this->lifecycle->complete($claimed, $this->actor, ['request_id' => $request->request_id, 'answer' => 'Готово']));
+        $job = new ExecuteAssistantChatJob($request->id);
+        $job->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
+        $job->handle($this->lifecycle, app(AssistantDataAccessPolicy::class));
+        $this->assertSame(0, $this->lifecycle->recoverQueued());
+        $this->assertSame('completed', $request->fresh()->status);
+        $reservation = AICreditReservation::query()->sole();
+        $this->assertSame(1, AICreditLedgerEntry::query()->where('reference_id', $reservation->public_id)->where('type', 'consume')->count());
+        $this->assertSame(1, AICreditLedgerEntry::query()->where('reference_id', $reservation->public_id)->where('type', 'release')->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public function test_quote_without_post_is_distinct_from_queued_and_expiration_preserves_no_reservation(): void
+    {
+        $payload = $this->quote();
+        $status = $this->lifecycle->status($payload['request_id'], $this->actor, $this->organization->id, 'lk');
+        $this->assertSame('not_submitted', $status['status']);
+        $this->assertArrayHasKey('quote_expires_at', $status);
+        $this->assertSame(0, AssistantRequest::query()->count());
+        AICreditQuote::query()->where('public_id', $payload['quote_id'])->update(['expires_at' => now()->subSecond()]);
+        $this->assertOperationThrows(\Illuminate\Database\Eloquent\ModelNotFoundException::class,
+            fn () => $this->lifecycle->status($payload['request_id'], $this->actor, $this->organization->id, 'lk'));
+        $this->assertOperationThrows(DomainException::class,
+            fn () => $this->lifecycle->startQueued($this->organization, $this->actor, null, $payload, 'lk'));
+        $this->assertSame(0, AICreditReservation::query()->count());
     }
 
     public function test_actual_implicit_project_greeting_uses_no_business_plan_rag_or_provider_and_charges_zero(): void
@@ -1233,6 +1274,7 @@ final class AssistantRequestLifecycleTest extends TestCase
         $permissions = $this->mock(AIPermissionChecker::class);
         $permissions->shouldReceive('canUseAssistant')->andReturn(true);
         $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('canExposeTool')->andReturn(true);
         $permissions->shouldReceive('isMutationTool')->andReturn(false);
         $this->conversations = new ConversationManager($policy);
         $this->lifecycle = new AssistantRequestLifecycle($this->credits, $permissions, $this->conversations, $policy);
@@ -1284,6 +1326,7 @@ final class AssistantRequestLifecycleTest extends TestCase
     {
         $permissions = app(AIPermissionChecker::class);
         $permissions->shouldReceive('canExecuteTool')->andReturn(true);
+        $permissions->shouldReceive('canExposeTool')->andReturn(true);
         $permissions->shouldReceive('isMutationTool')->andReturn(false);
         $registry = new AIToolRegistry;
         foreach (['assistant_domain_discover_capabilities', 'generate_operational_pdf_report'] as $name) {
