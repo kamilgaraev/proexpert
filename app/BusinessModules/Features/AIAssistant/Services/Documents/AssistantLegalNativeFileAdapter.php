@@ -121,15 +121,7 @@ final class AssistantLegalNativeFileAdapter
                 $documents = AIAssistantDocument::query()->where('organization_id',$organizationId)->where('file_id',$file->id)
                     ->where('parent_entity_type',$type)->where('parent_entity_id',(string)$id)->where('storage_path',$path)->get();
                 foreach ($documents as $document) {
-                    app(AssistantDocumentService::class)->settleMissingNativeSourceOcr((int)$document->id);
-                    $document->refresh();
-                    if ($document->status === AIAssistantDocument::STATUS_FAILED
-                        && $document->coverage_status === 'needs_access_review'
-                        && $document->last_error === 'native_source_missing') {
-                        continue;
-                    }
-
-                    $document->update(['status'=>AIAssistantDocument::STATUS_FAILED,'coverage_status'=>'needs_access_review','last_error'=>'native_source_missing']);
+                    app(AssistantDocumentService::class)->markNativeSourceMissing((int)$document->id);
                 }
 
                 $file->deleteQuietly();

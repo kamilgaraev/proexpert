@@ -30,6 +30,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentAccessGrant;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\Project;
+use App\Models\Credits\AICreditProviderUsage;
 use App\Models\Credits\AICreditReservation;
 use App\Services\Credits\AICreditService;
 use App\Services\Storage\FileService;
@@ -38,6 +39,7 @@ use Aws\S3\Exception\S3Exception;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
@@ -52,6 +54,7 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
 
     private string $content = 'Invoice total 1234.56';
     private int $reads = 0;
+    private ?S3Exception $storageFailure = null;
 
     public function test_nonfinancial_legal_pdf_maps_without_finance_or_download_permission_under_current_preview_grant(): void
     {
@@ -454,9 +457,140 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertSame(0, (int) $settings->fresh()->reserved_minor);
     }
 
-    private function fixture(bool $nonfinancial = false): array
+    public function test_native_source_missing_during_ocr_provider_call_suppresses_late_page_and_budget_charge(): void
     {
-        $this->content = $this->pdf($nonfinancial ? 'Confidentiality obligations only' : 'Invoice total 1234.56');
+        $imageContent = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true)
+            ?: throw new RuntimeException('fixture_png_unavailable');
+        [$fixture, $version] = $this->fixture(false, $imageContent, 'image/png', 'png');
+        LegalDocumentAccessGrant::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $version->document_id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => $fixture->organization->id,
+            'subject_user_id' => $fixture->owner->id,
+            'abilities' => ['view'],
+            'granted_by_user_id' => $fixture->owner->id,
+        ]);
+        config(['cache.default' => 'array', 'ai-assistant-credits.enforce' => true,
+            'ai-assistant.llm.timeweb.api_key' => 'test-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://example.test/v1']);
+        Cache::clearResolvedInstances();
+        Queue::fake();
+
+        $adapter = $this->adapter();
+        $credits = new AICreditService;
+        $credits->grant($fixture->organization, 1_000_000, 'purchase', null, 'native-missing-race-'.$fixture->organization->id);
+        $documents = app(AssistantDocumentService::class);
+        $budgets = new AssistantDocumentBudgetService($documents);
+        $budgets->approve($fixture->owner, $fixture->organization->id, true, 1_000_000, 'archive');
+
+        $file = $adapter->map($fixture->member, $fixture->organization->id, 'legal_document_version', $version->id);
+        $document = $documents->registerFile($file, $fixture->member);
+        $previousText = 'Previously extracted source text.';
+        $document->update([
+            'status' => AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
+            'coverage_status' => 'ocr_quote_required',
+            'metadata' => array_merge($document->metadata ?? [], ['page_count' => 1]),
+            'extracted_text' => $previousText,
+            'processed_at' => now(),
+        ]);
+        $preservedUnit = AIAssistantDocumentUnit::query()->create([
+            'document_id' => $document->id,
+            'unit_type' => 'text_chunk',
+            'unit_index' => 0,
+            'text' => $previousText,
+            'checksum' => hash('sha256', $previousText),
+        ]);
+        self::assertTrue($budgets->authorizeBackground($document->refresh()));
+        $document->refresh();
+        $reservationId = (int) $document->ocr_reservation_id;
+
+        Http::fake(function () use ($adapter, $fixture, $version) {
+            $this->storageFailure = $this->s3Exception('NoSuchKey', 404);
+            try {
+                $adapter->mapForIndexing($fixture->organization->id, $version->id);
+                self::fail('The native source must be invalidated during the in-flight provider call.');
+            } catch (S3Exception $exception) {
+                self::assertSame('NoSuchKey', $exception->getAwsErrorCode());
+            }
+
+            return Http::response(['choices' => [['finish_reason' => 'stop', 'message' => ['content' => 'Late OCR text']]],
+                'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 10]]);
+        });
+
+        $result = $documents->processOcr((int) $document->id);
+
+        self::assertSame(AIAssistantDocument::STATUS_FAILED, $result->status);
+        self::assertSame('needs_access_review', $result->coverage_status);
+        self::assertSame('native_source_missing', $result->last_error);
+        self::assertSame($previousText, $result->extracted_text);
+        self::assertTrue(AIAssistantDocumentUnit::query()->whereKey($preservedUnit->id)->exists());
+        self::assertSame(0, AIAssistantDocumentUnit::query()->where('document_id', $document->id)->where('unit_type', 'ocr_page')->count());
+        $reservation = AICreditReservation::query()->findOrFail($reservationId);
+        self::assertNotSame('reserved', $reservation->status);
+        self::assertSame(0, (int) $reservation->consumed_minor);
+        self::assertSame(0, $credits->balance($fixture->organization)['reserved_minor']);
+        $settings = $budgets->settings($fixture->owner, $fixture->organization->id);
+        self::assertSame(0, (int) $settings->reserved_minor);
+        self::assertSame(0, (int) $settings->spent_minor);
+        $usage = AICreditProviderUsage::query()->where('ai_credit_reservation_id', $reservationId)->where('operation', 'ocr')->firstOrFail();
+        self::assertSame($credits->costMicroRub(100, 10, $reservation), (int) $usage->cost_micro_rub);
+        self::assertTrue($usage->is_successful);
+        self::assertTrue($usage->metadata['late_provider_result']);
+    }
+
+    public function test_native_source_missing_from_ocr_read_check_does_not_reenter_document_cache_lock(): void
+    {
+        $imageContent = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true)
+            ?: throw new RuntimeException('fixture_png_unavailable');
+        [$fixture, $version] = $this->fixture(false, $imageContent, 'image/png', 'png');
+        LegalDocumentAccessGrant::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $version->document_id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => $fixture->organization->id,
+            'subject_user_id' => $fixture->owner->id,
+            'abilities' => ['view'],
+            'granted_by_user_id' => $fixture->owner->id,
+        ]);
+        config(['cache.default' => 'array', 'ai-assistant-credits.enforce' => true]);
+        Cache::clearResolvedInstances();
+        Http::fake();
+
+        $adapter = $this->adapter();
+        $credits = new AICreditService;
+        $credits->grant($fixture->organization, 1_000_000, 'purchase', null, 'native-missing-read-'.$fixture->organization->id);
+        $documents = app(AssistantDocumentService::class);
+        $file = $adapter->map($fixture->member, $fixture->organization->id, 'legal_document_version', $version->id);
+        $document = $documents->registerFile($file, $fixture->member);
+        $document->update([
+            'status' => AIAssistantDocument::STATUS_OCR_QUOTE_REQUIRED,
+            'coverage_status' => 'ocr_quote_required',
+            'metadata' => array_merge($document->metadata ?? [], ['page_count' => 1]),
+        ]);
+        $quote = $documents->quoteOcr($fixture->owner, $fixture->organization->id, $document);
+        $approved = $documents->confirmOcr($fixture->owner, $fixture->organization->id, $document,
+            $quote['quote_id'], $quote['request_id']);
+        $this->storageFailure = $this->s3Exception('NoSuchKey', 404);
+
+        try {
+            $documents->processOcr((int) $approved->id);
+            self::fail('Missing S3 source during the OCR read check must stop before the provider call.');
+        } catch (S3Exception $exception) {
+            self::assertSame('NoSuchKey', $exception->getAwsErrorCode());
+        }
+
+        $failed = $document->fresh();
+        self::assertSame(AIAssistantDocument::STATUS_FAILED, $failed->status);
+        self::assertSame('needs_access_review', $failed->coverage_status);
+        self::assertSame('native_source_missing', $failed->last_error);
+        self::assertNotSame('reserved', AICreditReservation::query()->findOrFail($approved->ocr_reservation_id)->status);
+        self::assertSame(0, $credits->balance($fixture->organization)['reserved_minor']);
+        Http::assertNothingSent();
+    }
+
+    private function fixture(bool $nonfinancial = false, ?string $content = null, string $mimeType = 'application/pdf', string $extension = 'pdf'): array
+    {
+        $this->content = $content ?? $this->pdf($nonfinancial ? 'Confidentiality obligations only' : 'Invoice total 1234.56');
         $fixture = AssistantRealAuthorizationFixture::create();
         $fixture->memberRole->update(['system_permissions'=>['legal_archive.view','legal_archive.files.view']]);
         $document = LegalArchiveDocument::withoutEvents(fn () => LegalArchiveDocument::query()->create(['organization_id'=>$fixture->organization->id,
@@ -467,8 +601,8 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         $version = LegalArchiveDocumentVersion::withoutEvents(fn () => LegalArchiveDocumentVersion::query()->create(['organization_id'=>$fixture->organization->id,
             'document_id'=>$document->id,'document_file_id'=>$documentFile->id,'uploaded_by_user_id'=>$fixture->member->id,
             'version_number'=>'1','is_current'=>true,'status'=>'uploaded','processing_status'=>'ready',
-            'file_path'=>'org-'.$fixture->organization->id.'/legal-archive/files/'.$documentFile->id.'/versions/12345678-1234-1234-1234-123456789abc.pdf',
-            'original_filename'=>'Договор.pdf','mime_type'=>'application/pdf','size_bytes'=>strlen($this->content),'content_hash'=>hash('sha256',$this->content)]));
+            'file_path'=>'org-'.$fixture->organization->id.'/legal-archive/files/'.$documentFile->id.'/versions/12345678-1234-1234-1234-123456789abc.'.$extension,
+            'original_filename'=>'Договор.'.$extension,'mime_type'=>$mimeType,'size_bytes'=>strlen($this->content),'content_hash'=>hash('sha256',$this->content)]));
         $grant = LegalDocumentAccessGrant::query()->create(['organization_id'=>$fixture->organization->id,'document_id'=>$document->id,
             'subject_kind'=>'internal_user','subject_organization_id'=>$fixture->organization->id,'subject_user_id'=>$fixture->member->id,
             'abilities'=>['view'],'granted_by_user_id'=>$fixture->owner->id]);
@@ -492,7 +626,9 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
     {
         $storage = Mockery::mock(FileService::class)->makePartial();
         $storage->shouldReceive('readCurrentBounded')->andReturnUsing(function (): mixed {
-            $this->reads++; $stream = fopen('php://temp','w+b');
+            $this->reads++;
+            if ($this->storageFailure instanceof S3Exception) { throw $this->storageFailure; }
+            $stream = fopen('php://temp','w+b');
             if ($stream === false) { throw new RuntimeException('fixture_stream_unavailable'); }
             fwrite($stream,$this->content); rewind($stream); return $stream;
         });
