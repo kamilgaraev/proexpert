@@ -176,6 +176,7 @@ final class AssistantDocumentCoverageService
             $table = $model->getTable();
             $native = $model->newQuery()->whereIn($model->getQualifiedKeyName(), $native->select($model->getQualifiedKeyName()));
             if ($type === 'design_artifact_version') { $native->whereNotNull($table.'.source_file_path'); }
+            if ($type === 'legal_document_version') { $native->where($table.'.processing_status', 'ready'); }
             if (isset(AssistantLegalNativeFileMetadata::definitions()[$type])) {
                 $native->whereNotNull($table.'.'.AssistantLegalNativeFileMetadata::definitions()[$type]['path']);
             }

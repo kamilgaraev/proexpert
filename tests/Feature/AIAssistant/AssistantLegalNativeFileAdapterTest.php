@@ -153,9 +153,27 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertSame($before,$this->reads);
     }
 
-    public function test_coverage_counts_native_path_from_visible_ids_without_exposing_private_projection(): void
+    public function test_coverage_counts_only_ready_legal_paths_from_visible_ids_without_exposing_private_projection(): void
     {
-        [$fixture] = $this->fixture(true);
+        [$fixture, $readyVersion] = $this->fixture(true);
+        $failedVersion = LegalArchiveDocumentVersion::withoutEvents(fn () => LegalArchiveDocumentVersion::query()->create([
+            'organization_id' => $fixture->organization->id,
+            'document_id' => $readyVersion->document_id,
+            'document_file_id' => $readyVersion->document_file_id,
+            'uploaded_by_user_id' => $fixture->member->id,
+            'version_number' => '2',
+            'is_current' => false,
+            'status' => 'uploaded',
+            'processing_status' => 'failed',
+            'file_path' => 'org-'.$fixture->organization->id.'/legal-archive/files/'.$readyVersion->document_file_id.'/versions/87654321-4321-4321-4321-cba987654321.pdf',
+            'original_filename' => 'Договор-ошибка.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => strlen($this->content),
+            'content_hash' => hash('sha256', $this->content),
+        ]));
+        self::assertSame('failed', $failedVersion->processing_status);
+        self::assertSame(1, AssistantLegalNativeFileMetadata::sourceQuery('legal_document_version', $fixture->organization->id)->count('native_source.id'));
+
         $coverage = app(AssistantDocumentCoverageService::class)->coverage($fixture->organization->id, $fixture->member);
 
         self::assertSame(1, $coverage['native_attachment_coverage']['legal_document_version']['expected_file_count']);
