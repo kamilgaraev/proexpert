@@ -217,9 +217,13 @@ class AIAssistantServiceBudgetTest extends TestCase
             public function getParametersSchema(): array
             {
                 return ['type' => 'object', 'properties' => [
-                    'domain' => ['type' => 'string'],
-                    'entity_type' => ['type' => 'string'],
-                ], 'required' => ['domain', 'entity_type'], 'additionalProperties' => false];
+                    'domain' => ['type' => 'string', 'enum' => ['finance', 'contracts']],
+                    'entity_type' => ['type' => 'string', 'enum' => ['payment_document', 'contract']],
+                    'query' => ['type' => 'string', 'maxLength' => 200],
+                    'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
+                    'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20],
+                    'fields' => ['type' => ['array', 'null'], 'items' => ['type' => 'string', 'enum' => ['id', 'document_number']]],
+                ], 'required' => ['domain', 'entity_type', 'query', 'project_id', 'limit', 'fields'], 'additionalProperties' => false];
             }
             public function execute(array $arguments, ?User $user, Organization $organization): array|string
             {
@@ -394,6 +398,70 @@ class AIAssistantServiceBudgetTest extends TestCase
         ], $mixedPlan, $failures);
         $this->assertSame('success', $estimateResult['status']);
         $this->assertTrue($blockedTools['get_estimate_answer']->executed);
+    }
+
+    public function test_payment_only_domain_search_normalizes_missing_arguments_and_preserves_explicit_scope(): void
+    {
+        $searchTool = new class implements AIToolInterface
+        {
+            public array $executedArguments = [];
+
+            public function getName(): string
+            {
+                return 'assistant_domain_search';
+            }
+
+            public function getDescription(): string
+            {
+                return 'Test payment search';
+            }
+
+            public function getParametersSchema(): array
+            {
+                return ['type' => 'object', 'properties' => [
+                    'domain' => ['type' => 'string', 'enum' => ['finance', 'contracts']],
+                    'entity_type' => ['type' => 'string', 'enum' => ['payment_document', 'contract']],
+                    'query' => ['type' => 'string', 'maxLength' => 200],
+                    'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
+                    'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20],
+                    'fields' => ['type' => ['array', 'null'], 'items' => ['type' => 'string', 'enum' => ['id', 'document_number']]],
+                ], 'required' => ['domain', 'entity_type', 'query', 'project_id', 'limit', 'fields'], 'additionalProperties' => false];
+            }
+
+            public function execute(array $arguments, ?User $user, Organization $organization): array|string
+            {
+                $this->executedArguments = $arguments;
+
+                return ['status' => 'success'];
+            }
+        };
+        $registry = new AIToolRegistry;
+        $registry->registerTool($searchTool);
+        $service = $this->makeService($registry, true);
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray()];
+        $failures = [];
+
+        $result = $service->exposeHandleToolCall([
+            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{}'],
+        ], $plan, $failures);
+
+        $this->assertSame('success', $result['status']);
+        $this->assertSame([
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+            'query' => '',
+            'project_id' => null,
+            'limit' => 5,
+            'fields' => null,
+        ], $searchTool->executedArguments);
+
+        $wrongScopeResult = $service->exposeHandleToolCall([
+            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{"domain":"contracts","entity_type":"contract"}'],
+        ], $plan, $failures);
+
+        $this->assertSame('blocked_by_request_policy', $wrongScopeResult['status']);
+        $this->assertSame('finance', $searchTool->executedArguments['domain']);
+        $this->assertSame('payment_document', $searchTool->executedArguments['entity_type']);
     }
 
     public function test_reports_capability_exposes_schedule_report_tools(): void

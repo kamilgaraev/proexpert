@@ -1681,6 +1681,10 @@ class AIAssistantService
         $toolName = (string) ($toolCall['function']['name'] ?? '');
         $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+        if ($toolName === 'assistant_domain_search' && $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding)) {
+            $args = $this->normalizePaymentOnlyDomainSearchArguments($args);
+        }
         $tool = $this->toolRegistry->getTool($toolName);
 
         if (! $tool) {
@@ -1694,7 +1698,6 @@ class AIAssistantService
         try {
             $this->toolArguments->validate($args, $tool->getParametersSchema());
             $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
-            $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
             if ($isMutationTool && (! $allowActions || ! $requestUnderstanding instanceof AssistantRequestUnderstanding)) {
                 $this->recordRequestOutcome('request_blocked');
                 $message = $this->toolBlockedMessage(null);
@@ -3300,10 +3303,7 @@ class AIAssistantService
 
     protected function buildDomainCapabilityHints(array $taskPlan): array
     {
-        if ($this->toolEligibilityPolicy->isPaymentOnlyRequest($this->requestUnderstandingFromPlan($taskPlan))) {
-            return [];
-        }
-
+        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($this->requestUnderstandingFromPlan($taskPlan));
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $actor = $this->activeActor;
         $tool = $this->toolRegistry->getTool('assistant_domain_discover_capabilities');
@@ -3314,10 +3314,14 @@ class AIAssistantService
             if (! $metadataFrameActive) {
                 $this->executionCheckpoint();
             }
-            $read = function () use ($actor, $tool, $metadataFrameActive): array {
+            $read = function () use ($actor, $tool, $metadataFrameActive, $paymentOnlyRequest): array {
                 if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id, ! $metadataFrameActive)
                     || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName(), [], ! $metadataFrameActive)) {
                     return [];
+                }
+
+                if ($paymentOnlyRequest) {
+                    return $this->buildPaymentOnlyDomainCapabilityHints($tool, $actor, (int) $actor->current_organization_id);
                 }
 
                 return $tool->compactForActor($actor, (int) $actor->current_organization_id, ! $metadataFrameActive);
@@ -3341,6 +3345,59 @@ class AIAssistantService
             }
             throw $exception;
         }
+    }
+
+    private function normalizePaymentOnlyDomainSearchArguments(array $arguments): array
+    {
+        return $arguments + [
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+            'query' => '',
+            'project_id' => null,
+            'limit' => 5,
+            'fields' => null,
+        ];
+    }
+
+    private function buildPaymentOnlyDomainCapabilityHints(
+        DiscoverAssistantDomainCapabilitiesTool $tool,
+        User $actor,
+        int $organizationId
+    ): array {
+        $organization = new Organization;
+        $organization->id = $organizationId;
+        $capabilityResult = $tool->execute([
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+            'offset' => 0,
+            'limit' => 1,
+            'field_offset' => 0,
+            'field_limit' => 16,
+        ], $actor, $organization);
+        if (! is_array($capabilityResult)) {
+            return [];
+        }
+
+        $domains = [];
+        foreach ($capabilityResult['capabilities'] ?? [] as $capability) {
+            if (! is_array($capability)
+                || ($capability['domain'] ?? null) !== 'finance'
+                || ($capability['entity_type'] ?? null) !== 'payment_document') {
+                continue;
+            }
+
+            $domains[] = [
+                'domain' => 'finance',
+                'primary_entity_type' => 'payment_document',
+                'entity_type_count' => 1,
+                'operations' => is_array($capability['operations'] ?? null) ? $capability['operations'] : [],
+            ];
+        }
+
+        return [
+            'domains' => count($domains) === 1 ? $domains : [],
+            'record_access' => $capabilityResult['record_access'] ?? 'checked_on_read',
+        ];
     }
 
     protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array
