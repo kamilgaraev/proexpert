@@ -9,6 +9,17 @@ use Throwable;
 
 final class RagQueueBacklog
 {
+    public static function isQueueEmpty(string $queueName): bool
+    {
+        try {
+            $connection = (string) config('ai-assistant.rag.queue_connection', 'redis_ai_rag');
+
+            return Queue::connection($connection)->size($queueName) === 0;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
     public static function isEmpty(): bool
     {
         try {
