@@ -10,17 +10,19 @@ use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNa
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileMetadata;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
-final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
+final class PrepareAssistantNativeAttachmentsJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
 
     private const PAGE_SIZE = 5;
+
     private const PREPARABLE_RUN_STATUSES = [
         RagIndexRun::STATUS_QUEUED,
         RagIndexRun::STATUS_RUNNING,
@@ -31,6 +33,8 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
     public int $tries = 3;
 
     public int $timeout = 80;
+
+    public int $uniqueFor = 600;
 
     public bool $failOnTimeout = true;
 
@@ -51,6 +55,17 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
         return [5, 20, 60];
     }
 
+    public function uniqueId(): string
+    {
+        return implode(':', [
+            $this->runId,
+            $this->sourceType,
+            $this->nativeTypeIndex,
+            $this->afterSourceId ?? 'first',
+            $this->dispatchToken,
+        ]);
+    }
+
     public function handle(
         AssistantLegalNativeFileIndexer $legal,
         AssistantOperationsNativeFileIndexer $operations,
@@ -59,9 +74,6 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
         if ($this->organizationId < 1 || ! in_array($this->sourceType, ['legal_business', 'operations_quality'], true)) {
             $queue->releaseDispatch($this->runId, $this->dispatchToken);
 
-            return;
-        }
-        if (! $queue->renewDispatch($this->runId, $this->dispatchToken)) {
             return;
         }
 
@@ -77,10 +89,52 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
 
             return;
         }
+        if (! $queue->renewDispatch($this->runId, $this->dispatchToken)) {
+            return;
+        }
 
+        $pageTypeIndex = max(0, $this->nativeTypeIndex);
+        $pageAfterSourceId = $this->afterSourceId;
+        $shouldMarkComplete = false;
+        $queue->withPageLock($this->runId, $this->sourceType, $pageTypeIndex, $pageAfterSourceId, function () use ($legal, $operations, $queue, $pageTypeIndex, $pageAfterSourceId, &$shouldMarkComplete): void {
+            $progress = $queue->pageProgress($this->runId, $this->sourceType, $pageTypeIndex, $pageAfterSourceId);
+            if (is_array($progress)) {
+                if (($progress['state'] ?? null) === 'complete') {
+                    $shouldMarkComplete = true;
+
+                    return;
+                }
+
+                if ($queue->resumePageContinuation(
+                    $this->runId,
+                    $this->sourceType,
+                    $pageTypeIndex,
+                    $pageAfterSourceId,
+                    $this->dispatchToken,
+                    fn (int $nextTypeIndex, ?string $nextAfterSourceId) => $this->dispatchContinuation($nextTypeIndex, $nextAfterSourceId),
+                )) {
+                    return;
+                }
+            }
+
+            $this->preparePage($legal, $operations, $queue, $pageTypeIndex, $pageAfterSourceId, $shouldMarkComplete);
+        });
+        if ($shouldMarkComplete) {
+            $queue->markComplete($this->runId, $this->dispatchToken);
+        }
+    }
+
+    private function preparePage(
+        AssistantLegalNativeFileIndexer $legal,
+        AssistantOperationsNativeFileIndexer $operations,
+        AssistantNativeAttachmentPreparationQueue $queue,
+        int $pageTypeIndex,
+        ?string $pageAfterSourceId,
+        bool &$shouldMarkComplete,
+    ): void {
         $types = $this->nativeTypes();
-        $typeIndex = max(0, $this->nativeTypeIndex);
-        $afterSourceId = $this->afterSourceId;
+        $typeIndex = $pageTypeIndex;
+        $afterSourceId = $pageAfterSourceId;
         $processed = 0;
 
         while ($typeIndex < count($types)) {
@@ -92,7 +146,7 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
 
             $remaining = self::PAGE_SIZE - $processed;
             if ($remaining < 1) {
-                $this->dispatchContinuation($typeIndex, $afterSourceId);
+                $this->checkpointAndDispatch($queue, $pageTypeIndex, $pageAfterSourceId, $typeIndex, $afterSourceId);
 
                 return;
             }
@@ -112,7 +166,7 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
             }
 
             if ($hasMore) {
-                $this->dispatchContinuation($typeIndex, $afterSourceId);
+                $this->checkpointAndDispatch($queue, $pageTypeIndex, $pageAfterSourceId, $typeIndex, $afterSourceId);
 
                 return;
             }
@@ -121,7 +175,27 @@ final class PrepareAssistantNativeAttachmentsJob implements ShouldQueue
             $afterSourceId = null;
         }
 
-        $queue->markComplete($this->runId, $this->dispatchToken);
+        $queue->markPageComplete($this->runId, $this->sourceType, $pageTypeIndex, $pageAfterSourceId);
+        $shouldMarkComplete = true;
+    }
+
+    private function checkpointAndDispatch(
+        AssistantNativeAttachmentPreparationQueue $queue,
+        int $pageTypeIndex,
+        ?string $pageAfterSourceId,
+        int $nextTypeIndex,
+        ?string $nextAfterSourceId,
+    ): void {
+        $queue->checkpointPageContinuation(
+            $this->runId,
+            $this->sourceType,
+            $pageTypeIndex,
+            $pageAfterSourceId,
+            $nextTypeIndex,
+            $nextAfterSourceId,
+            $this->dispatchToken,
+            fn (int $nextIndex, ?string $nextId) => $this->dispatchContinuation($nextIndex, $nextId),
+        );
     }
 
     public function failed(Throwable $exception): void
