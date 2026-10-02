@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Collection;
 use App\Models\ContractAllocationHistory;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge;
 
 class ContractAllocationService
 {
@@ -39,6 +40,9 @@ class ContractAllocationService
 
             // Получаем ID проектов из новых данных
             $newProjectIds = collect($allocationsData)->pluck('project_id')->toArray();
+            app(CoreRagMutationBridge::class)->changedRows(ContractProjectAllocation::class,
+                ContractProjectAllocation::query()->where('contract_id', $contract->id)
+                    ->where('is_active', true)->whereNotIn('project_id', $newProjectIds), (int) $contract->organization_id);
 
             // Деактивируем старые распределения, которых НЕТ в новых данных
             // Это предотвращает конфликт при обновлении существующих

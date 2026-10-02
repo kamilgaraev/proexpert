@@ -285,7 +285,7 @@ final class ProductionLaborRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function workOrderLines(int $organizationId, ?int $projectId): iterable
@@ -295,7 +295,7 @@ final class ProductionLaborRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->whereHas('workOrder', static fn ($workOrderQuery) => $workOrderQuery->where('project_id', $projectId)))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function timesheets(int $organizationId, ?int $projectId): iterable
@@ -306,7 +306,7 @@ final class ProductionLaborRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function timesheetEntries(int $organizationId, ?int $projectId): iterable
@@ -316,7 +316,7 @@ final class ProductionLaborRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->whereHas('timesheet', static fn ($timesheetQuery) => $timesheetQuery->where('project_id', $projectId)))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function outputEntries(int $organizationId, ?int $projectId): iterable
@@ -326,7 +326,7 @@ final class ProductionLaborRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function payrollAccruals(int $organizationId, ?int $projectId): iterable
@@ -336,7 +336,7 @@ final class ProductionLaborRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleWorkOrder(int $organizationId, string|int $entityId): array

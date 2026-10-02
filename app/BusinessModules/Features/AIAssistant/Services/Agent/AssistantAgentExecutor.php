@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService;
 use App\Models\Organization;
@@ -34,7 +35,7 @@ final class AssistantAgentExecutor
         $startedAt = microtime(true);
         $tool = $this->toolRegistry->getTool($toolName);
 
-        if ($tool === null) {
+        if ($tool === null || $this->permissionChecker->isMutationTool($toolName)) {
             return $this->errorResult($toolName, $arguments, [
                 'status' => 'error',
                 'message' => $this->assistantMessage('ai_assistant.tool_unavailable', 'Инструмент недоступен для выполнения.'),
@@ -44,7 +45,7 @@ final class AssistantAgentExecutor
         $understanding = $this->normalizeRequestUnderstanding($requestUnderstanding);
         if ($understanding instanceof AssistantRequestUnderstanding) {
             $eligibility = ($this->toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy)
-                ->canExecuteTool($toolName, $understanding);
+                ->canExecuteTool($toolName, $understanding, false, $arguments);
 
             if (! $eligibility->allowed) {
                 return $this->errorResult($toolName, $arguments, [
@@ -66,6 +67,7 @@ final class AssistantAgentExecutor
         }
 
         try {
+            (new AssistantToolArgumentValidator)->validate($arguments, $tool->getParametersSchema());
             $raw = $tool->execute($arguments, $user, $organization);
         } catch (Throwable $throwable) {
             $this->logReportGenerationFailed($toolName, $organization, $user, $startedAt, $throwable::class);

@@ -4,8 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantHttpRequestOptions;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\Exception\RequestException;
 use Illuminate\Support\Facades\Log;
 use OpenAI;
 use OpenAI\Exceptions\ErrorException as OpenAIErrorException;
@@ -22,6 +28,8 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
     private ?object $client;
 
+    private ?object $queryClient;
+
     private ?string $apiKey;
 
     private string $model;
@@ -32,14 +40,22 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
     private string $providerName;
 
+    private int $queryTimeoutSeconds;
+
+    private bool $hasInjectedClient;
+
     /**
-     * @var array{input_tokens: int, output_tokens: int, total_tokens: int}
+     * @var array<string, mixed>
      */
     private array $lastUsage = [
         'input_tokens' => 0,
         'output_tokens' => 0,
         'total_tokens' => 0,
+        'usage_source' => 'unavailable',
+        'provider_usage_available' => false,
+        'estimated_input_tokens' => null,
     ];
+    private array $usageAttempts = [];
 
     public function __construct(
         ?object $client = null,
@@ -57,12 +73,28 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $this->dimensions = $dimensions ?? $this->configInt('ai-assistant.rag.embedding_dimensions', 1536);
         $this->baseUri = $baseUri ?? $this->configString('ai-assistant.rag.embedding_base_uri');
         $this->providerName = $providerName ?? 'openai';
+        $this->queryTimeoutSeconds = max(1, min(10, $this->configInt('ai-assistant.rag.query_embedding_timeout', 6)));
+        $this->hasInjectedClient = $client !== null;
         $this->client = $client ?? $this->makeClient($this->apiKey, $this->baseUri);
+        $this->queryClient = $client ?? $this->makeClient(
+            $this->apiKey,
+            $this->baseUri,
+            $this->queryTimeoutSeconds
+        );
     }
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
-        $client = $this->client;
+        $this->lastUsage = self::usageEvidence(null, $text);
+        $this->usageAttempts = [];
+        $executionContext = $purpose === self::PURPOSE_QUERY && app()->bound(AssistantRequestExecutionContext::class)
+            ? app(AssistantRequestExecutionContext::class)
+            : null;
+        $client = $purpose === self::PURPOSE_QUERY
+            ? ($executionContext !== null && ! $this->hasInjectedClient
+                ? $this->makeClient($this->apiKey, $this->baseUri, $this->queryTimeoutSeconds, $executionContext)
+                : $this->queryClient)
+            : $this->client;
 
         if (! is_object($client) || ! method_exists($client, 'embeddings')) {
             throw new RuntimeException($this->assistantMessage(
@@ -84,7 +116,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
             'input' => $text,
         ];
 
-        if (str_contains($this->model, 'text-embedding-3') && $this->dimensions > 0) {
+        if ((str_contains($this->model, 'text-embedding-3') || str_contains($this->model, 'text-embedding-v4')) && $this->dimensions > 0) {
             $parameters['dimensions'] = $this->dimensions;
         }
 
@@ -92,11 +124,20 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
             'input_tokens' => 0,
             'output_tokens' => 0,
             'total_tokens' => 0,
+            'usage_source' => 'unavailable',
+            'provider_usage_available' => false,
+            'estimated_input_tokens' => null,
         ];
 
         try {
-            $response = $this->createEmbeddingWithRetry($embeddings, $parameters);
+            $response = $this->createEmbeddingWithRetry($embeddings, $parameters, $text, $purpose === self::PURPOSE_QUERY ? 1 : self::RETRY_ATTEMPTS);
         } catch (Throwable $exception) {
+            if ($executionContext !== null) {
+                $executionContext->assertCanContinue();
+            }
+            if ($exception instanceof AssistantRequestCancelled || $exception instanceof AssistantRequestDeadlineExceeded) {
+                throw $exception;
+            }
             throw new RagEmbeddingUnavailableException($this->assistantMessage(
                 'ai_assistant.rag_embedding_unavailable',
                 'Сервис подготовки контекста временно недоступен.'
@@ -107,10 +148,18 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
         $embedding = $response->embeddings[0]->embedding ?? null;
         if (! is_array($embedding)) {
+            $lastAttempt = array_key_last($this->usageAttempts);
+            if ($lastAttempt !== null) $this->usageAttempts[$lastAttempt]['is_successful'] = false;
             throw new RuntimeException($this->assistantMessage(
                 'ai_assistant.rag_embedding_unavailable',
                 'Сервис подготовки контекста временно недоступен.'
             ));
+        }
+
+        if (count($embedding) !== $this->dimensions) {
+            $lastAttempt = array_key_last($this->usageAttempts);
+            if ($lastAttempt !== null) $this->usageAttempts[$lastAttempt]['is_successful'] = false;
+            throw new RagEmbeddingDimensionMismatch($this->dimensions, count($embedding));
         }
 
         return array_map(static fn (mixed $value): float => (float) $value, array_values($embedding));
@@ -119,23 +168,34 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<string, mixed>  $parameters
      */
-    private function createEmbeddingWithRetry(object $embeddings, array $parameters): object
+    private function createEmbeddingWithRetry(object $embeddings, array $parameters, string $text, int $maxAttempts): object
     {
         $lastException = null;
+        $callKey = 'embedding:'.bin2hex(random_bytes(16));
 
-        for ($attempt = 1; $attempt <= self::RETRY_ATTEMPTS; $attempt++) {
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             try {
-                return $embeddings->create($parameters);
-            } catch (Throwable $exception) {
-                $lastException = $exception;
+                $response = $embeddings->create($parameters);
+                $this->lastUsage = $this->usageFromResponse($response, $text);
+                $this->usageAttempts[] = $this->lastUsage + ['usage_key' => $callKey.':attempt:'.$attempt, 'attempt' => $attempt, 'is_successful' => true];
 
-                if ($attempt >= self::RETRY_ATTEMPTS || ! $this->shouldRetry($exception)) {
+                return $response;
+            } catch (Throwable $exception) {
+                if (app()->bound(AssistantRequestExecutionContext::class)) {
+                    app(AssistantRequestExecutionContext::class)->assertCanContinue();
+                }
+                $lastException = $exception;
+                $this->lastUsage = $this->usageFromException($exception, $text);
+                $this->usageAttempts[] = $this->lastUsage + ['usage_key' => $callKey.':attempt:'.$attempt, 'attempt' => $attempt, 'is_successful' => false,
+                    'http_status' => $this->exceptionStatus($exception)];
+
+                if ($attempt >= $maxAttempts || ! $this->shouldRetry($exception)) {
                     throw $exception;
                 }
 
                 Log::warning('ai_assistant.rag.openai_embedding_retry', [
                     'attempt' => $attempt,
-                    'max_attempts' => self::RETRY_ATTEMPTS,
+                    'max_attempts' => $maxAttempts,
                     'provider' => $this->providerName,
                     'model' => $this->model,
                     'exception' => $exception::class,
@@ -206,25 +266,61 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     }
 
     /**
-     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     * @return array<string, mixed>
      */
     public function lastUsage(): array
     {
         return $this->lastUsage;
     }
 
-    private function makeClient(?string $apiKey, ?string $baseUri): ?object
+    public function usageAttempts(): array
+    {
+        return $this->usageAttempts;
+    }
+
+    private function usageFromException(Throwable $exception, string $text): array
+    {
+        for ($current = $exception; $current !== null; $current = $current->getPrevious()) {
+            $response = $current instanceof OpenAIErrorException || $current instanceof RateLimitException
+                ? $current->response : ($current instanceof RequestException ? $current->getResponse() : null);
+            if ($response === null) continue;
+            try {
+                $body = $response->getBody();
+                if (! $body->isSeekable()) return self::usageEvidence(null, $text);
+                $position = $body->tell();
+                $payload = json_decode((string) $body, true);
+                $body->seek($position);
+            } catch (Throwable) {
+                return self::usageEvidence(null, $text);
+            }
+
+            return $this->usageFromResponse((object) ['usage' => is_array($payload) ? ($payload['usage'] ?? null) : null], $text);
+        }
+
+        return self::usageEvidence(null, $text);
+    }
+
+    private function makeClient(
+        ?string $apiKey,
+        ?string $baseUri,
+        int $timeout = 45,
+        ?AssistantRequestExecutionContext $executionContext = null
+    ): ?object
     {
         if ($apiKey === null || trim($apiKey) === '') {
             return null;
         }
 
+        $httpOptions = $executionContext !== null
+            ? AssistantHttpRequestOptions::forContext($timeout, $executionContext)
+            : [
+                'timeout' => $timeout,
+                'connect_timeout' => min(5, $timeout),
+            ];
+
         $factory = OpenAI::factory()
             ->withApiKey($apiKey)
-            ->withHttpClient(new GuzzleClient([
-                'timeout' => 45,
-                'connect_timeout' => 5,
-            ]));
+            ->withHttpClient(new GuzzleClient($httpOptions));
 
         if ($baseUri !== null && trim($baseUri) !== '') {
             $factory = $factory->withBaseUri($baseUri);
@@ -265,7 +361,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     }
 
     /**
-     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     * @return array<string, mixed>
      */
     private function usageFromResponse(object $response, string $text): array
     {
@@ -274,28 +370,38 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         $outputTokens = $this->usageInt($usage, ['completionTokens', 'completion_tokens', 'outputTokens', 'output_tokens']);
         $totalTokens = $this->usageInt($usage, ['totalTokens', 'total_tokens']);
 
-        if ($inputTokens <= 0) {
-            $inputTokens = max(1, (int) ceil(mb_strlen($text, 'UTF-8') / 4));
-        }
+        $inputTokens ??= $totalTokens;
+        return self::usageEvidence($inputTokens === null ? null : [
+            'input_tokens' => $inputTokens, 'output_tokens' => $outputTokens ?? 0,
+            'total_tokens' => $totalTokens ?? $inputTokens + ($outputTokens ?? 0),
+            'usage_source' => 'provider_response', 'provider_usage_available' => true,
+        ], $text);
+    }
 
-        if ($totalTokens <= 0) {
-            $totalTokens = $inputTokens + $outputTokens;
+    public static function usageEvidence(mixed $usage, string $text): array
+    {
+        $available = is_array($usage) && ($usage['usage_source'] ?? null) === 'provider_response'
+            && ($usage['provider_usage_available'] ?? null) === true;
+        foreach (['input_tokens', 'output_tokens', 'total_tokens'] as $field) {
+            $available = $available && is_int($usage[$field] ?? null) && $usage[$field] >= 0;
         }
-
-        return [
-            'input_tokens' => $inputTokens,
-            'output_tokens' => $outputTokens,
-            'total_tokens' => $totalTokens,
-        ];
+        if ($available && $usage['total_tokens'] === $usage['input_tokens'] + $usage['output_tokens']) {
+            return ['input_tokens' => $usage['input_tokens'], 'output_tokens' => $usage['output_tokens'],
+                'total_tokens' => $usage['total_tokens'], 'usage_source' => 'provider_response',
+                'provider_usage_available' => true, 'estimated_input_tokens' => null];
+        }
+        return ['input_tokens' => 0, 'output_tokens' => 0, 'total_tokens' => 0,
+            'usage_source' => 'unavailable', 'provider_usage_available' => false,
+            'estimated_input_tokens' => max(1, (int) ceil(mb_strlen($text, 'UTF-8') / 4))];
     }
 
     /**
      * @param  array<int, string>  $keys
      */
-    private function usageInt(mixed $usage, array $keys): int
+    private function usageInt(mixed $usage, array $keys): ?int
     {
         if (! is_object($usage) && ! is_array($usage)) {
-            return 0;
+            return null;
         }
 
         foreach ($keys as $key) {
@@ -303,11 +409,11 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
                 ? ($usage[$key] ?? null)
                 : ($usage->{$key} ?? null);
 
-            if (is_numeric($value)) {
-                return max(0, (int) $value);
+            if (is_int($value) && $value >= 0) {
+                return $value;
             }
         }
 
-        return 0;
+        return null;
     }
 }

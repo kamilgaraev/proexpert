@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ApprovePaymentRequestTool;
@@ -31,8 +33,15 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanne
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantCapabilityCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
-use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantMemoryService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
@@ -49,19 +58,25 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ChangeManagementRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CommercialProcessRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ConstructionJournalRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ContractRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\CrmRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateGenerationLearningRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\EstimateReferenceRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\HandoverAcceptanceRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\KnowledgeHubRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\MachineryRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PaymentRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PeopleRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\PerformanceActRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProcurementRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ProductionLaborRagSource;
@@ -71,6 +86,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\QualityAndExec
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SafetyRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\ScheduleRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\TimeTrackingRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WarehouseRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\WorkCompletionRagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantRagReportSourceRetriever;
@@ -80,6 +96,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportPdf
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSourceRetrieverInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantReportPdfWriter;
 use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
+use App\Support\AI\LunaModelPolicy;
+use App\Support\AI\TokenBudgetService;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 
@@ -91,11 +109,29 @@ class AIAssistantServiceProvider extends ServiceProvider
             __DIR__.'/config/ai-assistant.php', 'ai-assistant'
         );
 
+        $this->app->scoped(AIAssistantService::class);
+        $this->app->scoped(AssistantRequestLifecycle::class);
+        $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\AssistantReadConcurrencyLimiter::class);
+        $this->app->scoped(AssistantDataAccessPolicy::class);
+        $this->app->scoped(AssistantMemoryService::class);
+        $this->app->scoped(AssistantFinancialAnswerService::class);
+        $this->app->scoped(AssistantFinancialClaimVerifier::class);
+        $this->app->scoped(AssistantStructuredFactVerifier::class);
+        $this->app->bind(\App\BusinessModules\Features\Budgeting\Contracts\ExactProjectFinanceSourceRead::class,
+            \App\BusinessModules\Features\Budgeting\Services\ProjectMarginReportService::class);
+        $this->app->scoped(\App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyLiveEvidenceAdapter::class);
+        $this->app->singleton(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class);
+        $this->app->singleton(AssistantDomainCatalog::class, fn () => new AssistantDomainCatalog(AssistantDomainCatalog::defaults()));
+        $this->app->scoped(TokenBudgetService::class, fn ($app) => new TokenBudgetService(
+            calibrationCache: $app['cache']->store(),
+            calibrationModel: LunaModelPolicy::forProvider((string) config('ai-assistant.llm.provider', 'timeweb')),
+        ));
+
         // Динамический выбор LLM провайдера на основе конфигурации
         $this->app->singleton(AssistantCapabilityCatalog::class);
         $this->app->singleton(AssistantPeriodResolver::class);
         $this->app->singleton(AssistantAgentPlanner::class);
-        $this->app->singleton(AssistantAgentExecutor::class);
+        $this->app->scoped(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
         $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {
             $provider = strtolower((string) config('ai-assistant.rag.embedding_provider', 'timeweb'));
@@ -112,6 +148,9 @@ class AIAssistantServiceProvider extends ServiceProvider
                 default => throw new InvalidArgumentException('ai_rag_embedding_provider_invalid'),
             };
         });
+        $this->app->singleton(RagEmbeddingProviderRegistry::class, fn ($app) => new RagEmbeddingProviderRegistry(
+            $app->make(RagEmbeddingProviderInterface::class),
+        ));
         $this->app->singleton(RagSourceRegistry::class, function ($app): RagSourceRegistry {
             return new RagSourceRegistry([
                 $app->make(ProjectRagSource::class),
@@ -134,13 +173,21 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProductionLaborRagSource::class),
                 $app->make(ChangeManagementRagSource::class),
                 $app->make(HandoverAcceptanceRagSource::class),
+                $app->make(PeopleRagSource::class),
+                $app->make(TimeTrackingRagSource::class),
+                $app->make(CrmRagSource::class),
+                $app->make(CommercialProcessRagSource::class),
+                $app->make(KnowledgeHubRagSource::class),
+                $app->make(FileRagSource::class),
+                $app->make(\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\DesignManagementRagSource::class),
+                ...array_map(static fn (string $class) => $app->make($class), \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::values('sourceClasses')),
             ]);
         });
         $this->app->singleton(RagIndexer::class);
-        $this->app->singleton(RagRetriever::class);
+        $this->app->scoped(RagRetriever::class);
         $this->app->singleton(RagPromptContextBuilder::class);
-        $this->app->singleton(AssistantReportSourceRetrieverInterface::class, AssistantRagReportSourceRetriever::class);
-        $this->app->singleton(AssistantReportComposerInterface::class, AssistantReportComposer::class);
+        $this->app->scoped(AssistantReportSourceRetrieverInterface::class, AssistantRagReportSourceRetriever::class);
+        $this->app->scoped(AssistantReportComposerInterface::class, AssistantReportComposer::class);
         $this->app->singleton(AssistantReportPdfWriterInterface::class, DompdfAssistantReportPdfWriter::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
@@ -148,42 +195,64 @@ class AIAssistantServiceProvider extends ServiceProvider
 
             return match ($provider) {
                 'openai' => $app->make(OpenAIProvider::class),
-                'deepseek' => $app->make(DeepSeekProvider::class),
                 'timeweb' => $app->make(TimewebProvider::class),
                 default => throw new InvalidArgumentException('ai_llm_provider_invalid'),
             };
         });
 
         // Регистрация реестра инструментов
-        $this->app->singleton(AIToolRegistry::class, function ($app) {
+        $this->app->scoped(AIToolRegistry::class, function ($app) {
             $registry = new AIToolRegistry;
 
             // Регистрируем инструменты
-            $registry->registerTool($app->make(GenerateProfitabilityReportTool::class));
-            $registry->registerTool($app->make(GenerateWorkCompletionReportTool::class));
-            $registry->registerTool($app->make(GenerateMaterialMovementsReportTool::class));
-            $registry->registerTool($app->make(GenerateContractorSettlementsReportTool::class));
-            $registry->registerTool($app->make(GenerateWarehouseStockReportTool::class));
-            $registry->registerTool($app->make(GenerateTimeTrackingReportTool::class));
-            $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
-            $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
-            $registry->registerTool($app->make(GenerateOperationalPdfReportTool::class));
-            $registry->registerTool($app->make(GenerateRagPdfReportTool::class));
-            $registry->registerTool($app->make(GetProjectSnapshotTool::class));
-            $registry->registerTool($app->make(GetProcurementSnapshotTool::class));
-            $registry->registerTool($app->make(GetContractSnapshotTool::class));
-            $registry->registerTool($app->make(GetScheduleSnapshotTool::class));
+            $registry->registerFactory('generate_profitability_report', fn () => $app->make(GenerateProfitabilityReportTool::class));
+            $registry->registerFactory('generate_work_completion_report', fn () => $app->make(GenerateWorkCompletionReportTool::class));
+            $registry->registerFactory('generate_material_movements_report', fn () => $app->make(GenerateMaterialMovementsReportTool::class));
+            $registry->registerFactory('generate_contractor_settlements_report', fn () => $app->make(GenerateContractorSettlementsReportTool::class));
+            $registry->registerFactory('generate_warehouse_stock_report', fn () => $app->make(GenerateWarehouseStockReportTool::class));
+            $registry->registerFactory('generate_time_tracking_report', fn () => $app->make(GenerateTimeTrackingReportTool::class));
+            $registry->registerFactory('generate_contract_payments_report', fn () => $app->make(GenerateContractPaymentsReportTool::class));
+            $registry->registerFactory('generate_project_timelines_report', fn () => $app->make(GenerateProjectTimelinesReportTool::class));
+            $registry->registerFactory('generate_operational_pdf_report', fn () => $app->make(GenerateOperationalPdfReportTool::class));
+            $registry->registerFactory('generate_rag_pdf_report', fn () => $app->make(GenerateRagPdfReportTool::class));
+            $registry->registerFactory('get_project_snapshot', fn () => $app->make(GetProjectSnapshotTool::class));
+            $registry->registerFactory('get_procurement_snapshot', fn () => $app->make(GetProcurementSnapshotTool::class));
+            $registry->registerFactory('get_contract_snapshot', fn () => $app->make(GetContractSnapshotTool::class));
+            $registry->registerFactory('get_schedule_snapshot', fn () => $app->make(GetScheduleSnapshotTool::class));
 
             // Phase 2: CRUD and Business Actions
-            $registry->registerTool($app->make(SearchProjectsTool::class));
-            $registry->registerTool($app->make(SearchWarehouseTool::class));
-            $registry->registerTool($app->make(SearchMaterialsTool::class));
-            $registry->registerTool($app->make(SearchUsersTool::class));
-            $registry->registerTool($app->make(SearchContractorsTool::class));
-            $registry->registerTool($app->make(ApprovePaymentRequestTool::class));
-            $registry->registerTool($app->make(CreateScheduleTaskTool::class));
-            $registry->registerTool($app->make(UpdateScheduleTaskStatusTool::class));
-            $registry->registerTool($app->make(SendProjectNotificationTool::class));
+            $registry->registerFactory('search_projects', fn () => $app->make(SearchProjectsTool::class));
+            $registry->registerFactory('search_warehouse', fn () => $app->make(SearchWarehouseTool::class));
+            $registry->registerFactory('search_materials', fn () => $app->make(SearchMaterialsTool::class));
+            $registry->registerFactory('search_users', fn () => $app->make(SearchUsersTool::class));
+            $registry->registerFactory('search_contractors', fn () => $app->make(SearchContractorsTool::class));
+            $registry->registerFactory('approve_payment_request', fn () => $app->make(ApprovePaymentRequestTool::class));
+            $registry->registerFactory('create_schedule_task', fn () => $app->make(CreateScheduleTaskTool::class));
+            $registry->registerFactory('update_schedule_task_status', fn () => $app->make(UpdateScheduleTaskStatusTool::class));
+            $registry->registerFactory('send_project_notification', fn () => $app->make(SendProjectNotificationTool::class));
+
+            foreach ([
+                'assistant_domain_discover_capabilities' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool::class,
+                'search_assistant_documents' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool::class,
+                'get_material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class,
+                'get_bim_model_elements' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool::class,
+                'get_published_report_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
+                'get_live_project_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
+                'assistant_domain_search' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool::class,
+                'assistant_domain_read' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\ReadAssistantDomainTool::class,
+                'assistant_domain_navigation' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\NavigationAssistantDomainTool::class,
+                'resolve_estimate' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\ResolveEstimateTool::class,
+                'get_estimate_answer' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool::class,
+                'get_estimate_positions' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimatePositionsTool::class,
+                'search_estimate_positions' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\SearchEstimatePositionsTool::class,
+                'get_estimate_financial_snapshot' => \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateFinancialSnapshotTool::class,
+                'create_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\CreateMeasurementUnitTool::class,
+                'update_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\UpdateMeasurementUnitTool::class,
+                'delete_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\DeleteMeasurementUnitTool::class,
+                'mass_create_measurement_units' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\Tools\MassCreateMeasurementUnitsTool::class,
+            ] as $toolName => $toolClass) {
+                $registry->registerFactory($toolName, fn () => $app->make($toolClass));
+            }
 
             return $registry;
         });
@@ -207,13 +276,30 @@ class AIAssistantServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $indexingState = $this->app->make(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class);
+        $this->app['events']->listen(\Illuminate\Database\Events\MigrationsStarted::class, static fn () => $indexingState->beginMigration());
+        $this->app['events']->listen(\Illuminate\Database\Events\MigrationsEnded::class, static fn () => $indexingState->endMigration());
+
         $this->loadMigrationsFrom(__DIR__.'/migrations');
 
         $this->loadRoutesFrom(__DIR__.'/routes.php');
 
+        foreach (\App\BusinessModules\Features\AIAssistant\Observers\AssistantRagEntityObserver::models() as $modelClass) {
+            $modelClass::observe(\App\BusinessModules\Features\AIAssistant\Observers\AssistantRagEntityObserver::class);
+        }
+        foreach ([\App\Models\Estimate::class, \App\Models\EstimateSection::class, \App\Models\EstimateItem::class, \App\Models\EstimateItemResource::class] as $modelClass) {
+            $modelClass::observe(\App\BusinessModules\Features\AIAssistant\Observers\EstimateRagIndexObserver::class);
+        }
+        \App\Models\File::observe(\App\Observers\AssistantEntityFileObserver::class);
+        \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument::observe(\App\Observers\AssistantDocumentIndexObserver::class);
+
         if ($this->app->runningInConsole()) {
             $this->commands([
                 BackfillRagIndexCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\RecoverRagIndexRunsCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\PurgeAssistantRetentionCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\ExpireAssistantRequestsCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\ScanAssistantDocumentsCommand::class,
             ]);
 
             $this->publishes([

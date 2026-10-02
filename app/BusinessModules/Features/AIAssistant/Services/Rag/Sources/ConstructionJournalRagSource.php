@@ -47,7 +47,7 @@ final class ConstructionJournalRagSource implements RagSourceCollectorInterface
             })
             ->orderBy('id');
 
-        foreach ($query->cursor() as $entry) {
+        foreach ($query->reorder()->lazyById(100) as $entry) {
             yield $this->chunk($entry);
         }
     }

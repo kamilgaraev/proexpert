@@ -348,7 +348,7 @@ class CommercialQuotaService
         $resources = [];
 
         foreach ($configured as $slug => $resource) {
-            if (! is_string($slug) || ! is_array($resource)) {
+            if (! is_string($slug) || ! is_array($resource) || ($resource['limit_key'] ?? null) === 'ai_requests_month') {
                 continue;
             }
 

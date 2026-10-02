@@ -35,13 +35,16 @@ class GetProjectSnapshotTool extends AbstractReadOnlyTool
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
-        unset($user);
+        if ($user === null || (int) $user->current_organization_id !== (int) $organization->id
+            || ! app(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class)->canExecuteTool($user, $this->getName(), $arguments)) {
+            throw new \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException();
+        }
 
         if (!$this->hasTable('projects')) {
             return $this->tableUnavailable('projects', 'projects');
         }
 
-        $query = $this->withoutDeleted($this->orgTable('projects', $organization), 'projects');
+        $query = $this->withoutDeleted($this->actorTable($user, 'projects', $organization), 'projects');
         $projectId = $this->intArg($arguments, 'project_id');
         $search = $this->stringArg($arguments, 'query');
         $status = $this->stringArg($arguments, 'status');
@@ -89,11 +92,11 @@ class GetProjectSnapshotTool extends AbstractReadOnlyTool
                 'query' => $search,
                 'status' => $status,
             ],
-            'results' => $projects->map(fn (object $project): array => $this->projectSnapshot($project, $organization))->all(),
+            'results' => $projects->map(fn (object $project): array => $this->projectSnapshot($project, $organization, $user))->all(),
         ];
     }
 
-    private function projectSnapshot(object $project, Organization $organization): array
+    private function projectSnapshot(object $project, Organization $organization, User $user): array
     {
         $projectId = (int) $project->id;
 
@@ -109,34 +112,43 @@ class GetProjectSnapshotTool extends AbstractReadOnlyTool
                 'customer' => $project->customer,
                 'external_code' => $project->external_code,
             ],
-            'contracts' => $this->contractSummary($organization, $projectId),
-            'schedule' => $this->scheduleSummary($organization, $projectId),
-            'procurement' => $this->procurementSummary($organization, $projectId),
+            'contracts' => $this->contractSummary($organization, $projectId, $user),
+            'schedule' => $this->scheduleSummary($organization, $projectId, $user),
+            'procurement' => $this->procurementSummary($organization, $projectId, $user),
         ];
     }
 
-    private function contractSummary(Organization $organization, int $projectId): array
+    private function contractSummary(Organization $organization, int $projectId, User $user): array
     {
         if (!$this->hasTable('contracts')) {
-            return ['count' => 0, 'total_amount' => 0.0];
+            return ['count' => 0, 'total_amount' => 0.0, 'currency' => null, 'amounts_by_currency' => []];
         }
 
-        $query = $this->withoutDeleted($this->orgTable('contracts', $organization), 'contracts')
+        $query = $this->withoutDeleted($this->actorTable($user, 'contracts', $organization), 'contracts')
             ->where('contracts.project_id', $projectId);
+
+        $currency = $this->hasColumn('contracts', 'currency') ? "UPPER(NULLIF(TRIM(contracts.currency), ''))" : 'NULL';
+        $amounts = (clone $query)->selectRaw("{$currency} AS currency, SUM(contracts.total_amount) AS total_amount")
+            ->groupByRaw($currency)->orderBy('currency')->get()->map(static fn ($row): array => [
+                'currency' => $row->currency,
+                'total_amount' => round((float) $row->total_amount, 2),
+            ])->all();
 
         return [
             'count' => (clone $query)->count(),
-            'total_amount' => round((float) (clone $query)->sum('total_amount'), 2),
+            'total_amount' => count($amounts) <= 1 ? ($amounts[0]['total_amount'] ?? 0.0) : null,
+            'currency' => count($amounts) === 1 ? $amounts[0]['currency'] : null,
+            'amounts_by_currency' => $amounts,
         ];
     }
 
-    private function scheduleSummary(Organization $organization, int $projectId): array
+    private function scheduleSummary(Organization $organization, int $projectId, User $user): array
     {
         if (!$this->hasTable('project_schedules')) {
             return ['schedules_count' => 0, 'tasks_count' => 0, 'overdue_tasks_count' => 0, 'critical_tasks_count' => 0];
         }
 
-        $schedules = $this->withoutDeleted($this->orgTable('project_schedules', $organization), 'project_schedules')
+        $schedules = $this->withoutDeleted($this->actorTable($user, 'project_schedules', $organization), 'project_schedules')
             ->where('project_schedules.project_id', $projectId);
         $scheduleIds = (clone $schedules)->pluck('project_schedules.id')->all();
 
@@ -144,7 +156,7 @@ class GetProjectSnapshotTool extends AbstractReadOnlyTool
             return ['schedules_count' => count($scheduleIds), 'tasks_count' => 0, 'overdue_tasks_count' => 0, 'critical_tasks_count' => 0];
         }
 
-        $tasks = $this->withoutDeleted($this->orgTable('schedule_tasks', $organization), 'schedule_tasks')
+        $tasks = $this->withoutDeleted($this->actorTable($user, 'schedule_tasks', $organization), 'schedule_tasks')
             ->whereIn('schedule_tasks.schedule_id', $scheduleIds);
 
         return [
@@ -158,13 +170,13 @@ class GetProjectSnapshotTool extends AbstractReadOnlyTool
         ];
     }
 
-    private function procurementSummary(Organization $organization, int $projectId): array
+    private function procurementSummary(Organization $organization, int $projectId, User $user): array
     {
         if (!$this->hasTable('purchase_requests') || !$this->hasTable('site_requests')) {
             return ['requests_count' => 0, 'open_requests_count' => 0];
         }
 
-        $query = $this->withoutDeleted($this->orgTable('purchase_requests', $organization), 'purchase_requests')
+        $query = $this->withoutDeleted($this->actorTable($user, 'purchase_requests', $organization), 'purchase_requests')
             ->join('site_requests', 'purchase_requests.site_request_id', '=', 'site_requests.id')
             ->where('site_requests.project_id', $projectId);
 

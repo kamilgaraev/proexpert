@@ -21,7 +21,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
 
         Http::fake([
             'https://api.timeweb.ai/v1/chat/completions' => Http::response([
-                'model' => 'gemini/gemini-3.1-flash-lite',
+                'model' => 'openai/gpt-6-luna',
                 'choices' => [
                     [
                         'message' => [
@@ -55,7 +55,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         ));
 
         $this->assertSame(TimewebVisionOcrClient::PROVIDER, $result->provider);
-        $this->assertSame('gemini/gemini-3.1-flash-lite', $result->model);
+        $this->assertSame('openai/gpt-6-luna', $result->model);
         $this->assertSame('Склад 1200 м2', $result->text());
         $this->assertSame(0.91, $result->pages[0]->confidence);
         $this->assertSame(['ru'], $result->pages[0]->languageCodes);
@@ -72,8 +72,11 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
 
             return $request->url() === 'https://api.timeweb.ai/v1/chat/completions'
                 && $request->hasHeader('Authorization', 'Bearer timeweb-key')
-                && $payload['model'] === 'gemini/gemini-3.1-flash-lite'
-                && $payload['temperature'] === 0
+                && $payload['model'] === 'openai/gpt-6-luna'
+                && !array_key_exists('temperature', $payload)
+                && !array_key_exists('max_tokens', $payload)
+                && $payload['max_completion_tokens'] === 4096
+                && $payload['reasoning_effort'] === 'none'
                 && $imagePart['type'] === 'image_url'
                 && $imagePart['image_url']['url'] === 'data:image/png;base64,'.base64_encode('binary-content')
                 && $imagePart['image_url']['detail'] === 'high';
@@ -83,12 +86,12 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
     public function test_it_uses_the_pinned_model_and_input_file_part_for_pdf_documents(): void
     {
         $this->configureClient([
-            'estimate-generation.ocr.model' => 'openai/gpt-5-mini',
+            'estimate-generation.ocr.model' => 'openai/gpt-6-luna',
         ]);
 
         Http::fake([
             'https://api.timeweb.ai/v1/chat/completions' => Http::response([
-                'model' => 'openai/gpt-5-mini',
+                'model' => 'openai/gpt-6-luna',
                 'choices' => [
                     [
                         'message' => [
@@ -118,13 +121,13 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         ));
 
         $this->assertSame("Первая страница\nВторая страница", $result->text());
-        $this->assertSame('openai/gpt-5-mini', $result->model);
+        $this->assertSame('openai/gpt-6-luna', $result->model);
 
         Http::assertSent(function (Request $request): bool {
             $payload = $request->data();
             $filePart = $payload['messages'][1]['content'][1] ?? [];
 
-            return $payload['model'] === 'openai/gpt-5-mini'
+            return $payload['model'] === 'openai/gpt-6-luna'
                 && $filePart['type'] === 'input_file'
                 && $filePart['filename'] === 'project.pdf'
                 && $filePart['file_data'] === 'data:application/pdf;base64,'.base64_encode('%PDF content');
@@ -134,7 +137,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
     public function test_it_retries_the_same_pinned_model_after_provider_error(): void
     {
         $this->configureClient([
-            'estimate-generation.ocr.model' => 'gemini/gemini-3.1-flash-lite',
+            'estimate-generation.ocr.model' => 'openai/gpt-6-luna',
             'estimate-generation.ocr.retry_attempts' => 2,
         ]);
 
@@ -142,7 +145,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
             'https://api.timeweb.ai/v1/chat/completions' => Http::sequence()
                 ->push(['error' => ['code' => 'model_failed']], 503)
                 ->push([
-                    'model' => 'gemini/gemini-3.1-flash-lite',
+                    'model' => 'openai/gpt-6-luna',
                     'choices' => [
                         [
                             'message' => [
@@ -159,7 +162,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
             operationContext: $this->operationContext(),
         ));
 
-        $this->assertSame('gemini/gemini-3.1-flash-lite', $result->model);
+        $this->assertSame('openai/gpt-6-luna', $result->model);
         $this->assertSame('Готовый текст', $result->text());
         Http::assertSentCount(2);
     }
@@ -216,7 +219,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
 
         Http::fake([
             'https://api.timeweb.ai/v1/chat/completions' => Http::response([
-                'model' => 'gemini/gemini-3.1-flash-lite',
+                'model' => 'openai/gpt-6-luna',
                 'choices' => [
                     [
                         'message' => [
@@ -248,7 +251,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         $defaults = [
             'estimate-generation.ocr.timeweb.api_key' => 'timeweb-key',
             'estimate-generation.ocr.timeweb.base_uri' => 'https://api.timeweb.ai/v1',
-            'estimate-generation.ocr.model' => 'gemini/gemini-3.1-flash-lite',
+            'estimate-generation.ocr.model' => 'openai/gpt-6-luna',
             'estimate-generation.ocr.timeweb.image_detail' => 'high',
             'estimate-generation.ocr.max_tokens' => 4096,
             'estimate-generation.ocr.timeout_seconds' => 60,

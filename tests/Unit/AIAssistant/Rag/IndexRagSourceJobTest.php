@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -12,6 +13,24 @@ use PHPUnit\Framework\TestCase;
 
 class IndexRagSourceJobTest extends TestCase
 {
+    public function test_dimension_mismatch_fails_the_job_without_retrying(): void
+    {
+        $failure = new RagEmbeddingDimensionMismatch(256, 1024);
+        $indexer = new class($failure) extends RagIndexer {
+            public function __construct(private readonly RagEmbeddingDimensionMismatch $failure) {}
+            public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?callable $progress = null): int
+            {
+                throw $this->failure;
+            }
+        };
+        $queued = $this->createMock(\Illuminate\Contracts\Queue\Job::class);
+        $queued->expects($this->once())->method('fail')->with($failure);
+        $queued->expects($this->never())->method('release');
+        $job = new IndexRagSourceJob(10, 20, 'project');
+        $job->setJob($queued);
+        $job->handle($indexer);
+    }
+
     public function test_job_calls_indexer_with_requested_scope(): void
     {
         $job = new IndexRagSourceJob(10, 20, 'project');
@@ -44,7 +63,7 @@ class IndexRagSourceJobTest extends TestCase
         $this->assertSame([], $indexer->calls);
     }
 
-    public function test_legacy_org_wide_project_scoped_job_is_split_before_indexing(): void
+    public function test_org_wide_scheduled_job_traverses_full_organization_scope(): void
     {
         $job = new IndexRagSourceJob(10, null, 'estimate', 30);
         $indexer = new RecordingRagIndexer();
@@ -57,9 +76,10 @@ class IndexRagSourceJobTest extends TestCase
         $job->handle($indexer, $coordinator);
 
         $this->assertSame([30], $coordinator->markRunningCalls);
-        $this->assertSame(['estimate'], $coordinator->shouldSplitCalls);
-        $this->assertSame([[30, 10, 'estimate']], $coordinator->splitCalls);
-        $this->assertSame([], $indexer->calls);
+        $this->assertSame([], $coordinator->shouldSplitCalls);
+        $this->assertSame([], $coordinator->splitCalls);
+        $this->assertSame([[10, null, 'estimate']], $indexer->calls);
+        $this->assertSame([[30, 1]], $coordinator->markSucceededCalls);
     }
 
     public function test_job_keeps_org_wide_manual_run_on_direct_indexing_path(): void
@@ -85,6 +105,8 @@ class IndexRagSourceJobTest extends TestCase
         $job = new IndexRagSourceJob(10, 20, 'estimate', null, 'estimate', 30);
         $indexer = new RecordingRagIndexer();
 
+        $this->assertSame('ai-rag-live', $job->queue);
+
         $job->handle($indexer);
 
         $this->assertSame([], $indexer->calls);
@@ -108,7 +130,7 @@ final class RecordingRagIndexer extends RagIndexer
     {
     }
 
-    public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null): int
+    public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?callable $progress = null): int
     {
         $this->calls[] = [$organizationId, $projectId, $sourceType];
 
@@ -119,7 +141,8 @@ final class RecordingRagIndexer extends RagIndexer
         int $organizationId,
         ?string $sourceType,
         string $entityType,
-        string|int $entityId
+        string|int $entityId,
+        ?callable $progress = null
     ): int {
         $this->entityCalls[] = [$organizationId, $sourceType, $entityType, $entityId];
 
@@ -174,7 +197,7 @@ final class TestRagIndexingCoordinator extends RagIndexingCoordinator
         return 1;
     }
 
-    public function markSucceeded(int $runId, int $indexedChunks): ?RagIndexRun
+    public function markSucceeded(int $runId, int $indexedChunks, ?string $leaseToken = null): ?RagIndexRun
     {
         $this->markSucceededCalls[] = [$runId, $indexedChunks];
 

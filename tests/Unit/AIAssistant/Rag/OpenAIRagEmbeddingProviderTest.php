@@ -14,6 +14,33 @@ use Tests\TestCase;
 
 class OpenAIRagEmbeddingProviderTest extends TestCase
 {
+    public function test_provider_rejects_a_vector_that_ignores_requested_dimensions(): void
+    {
+        $client = new FakeOpenAIEmbeddingClient(array_fill(0, 1024, 0.1));
+        $provider = new OpenAIRagEmbeddingProvider(client: $client, apiKey: 'test-key', model: 'dashscope/text-embedding-v4', dimensions: 256);
+        try {
+            $provider->embed('Контекст проекта');
+            $this->fail('A mismatched vector must not reach storage.');
+        } catch (\App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch $exception) {
+            $this->assertSame(256, $exception->expected);
+            $this->assertSame(1024, $exception->actual);
+        }
+        $this->assertSame(1, $client->embeddings->attempts);
+        $this->assertFalse($provider->usageAttempts()[0]['is_successful']);
+    }
+
+    public function test_registry_keeps_legacy_profile_and_uses_native_qwen_dimensions(): void
+    {
+        $legacy = new OpenAIRagEmbeddingProvider(client: new FakeOpenAIEmbeddingClient(array_fill(0, 256, 0.1)),
+            apiKey: 'test-key', model: 'openai/text-embedding-3-large', dimensions: 256, providerName: 'timeweb');
+        $registry = new \App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry($legacy);
+        $new = $registry->newIndexProvider();
+        $this->assertSame(1024, $new->dimensions());
+        $this->assertSame('dashscope/text-embedding-v4', $new->model());
+        $this->assertSame($legacy, $registry->forProfile('timeweb', 'openai/text-embedding-3-large', 256));
+        $this->assertNull($registry->forProfile('timeweb', 'dashscope/text-embedding-v4', 256));
+    }
+
     public function test_contract_returns_embedding_metadata(): void
     {
         $provider = new FakeRagEmbeddingProvider([0.1, 0.2, 0.3]);
@@ -42,6 +69,9 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
             'input_tokens' => 14,
             'output_tokens' => 0,
             'total_tokens' => 14,
+            'usage_source' => 'provider_response',
+            'provider_usage_available' => true,
+            'estimated_input_tokens' => null,
         ], $provider->lastUsage());
         $this->assertSame([
             'model' => 'text-embedding-3-small',
@@ -52,7 +82,7 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
 
     public function test_openai_provider_passes_configured_dimensions_for_text_embedding_3_models(): void
     {
-        $client = new FakeOpenAIEmbeddingClient([0.4, 0.5, 0.6]);
+        $client = new FakeOpenAIEmbeddingClient(array_fill(0, 256, 0.4));
         $provider = new OpenAIRagEmbeddingProvider(
             client: $client,
             apiKey: 'test-key',
@@ -126,6 +156,28 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
 
         $this->assertSame([0.7, 0.8, 0.9], $provider->embed('project context'));
         $this->assertSame(2, $client->embeddings->attempts);
+    }
+
+    public function test_query_embedding_does_not_retry_past_request_budget(): void
+    {
+        $client = new FakeOpenAIEmbeddingClient(
+            [0.7, 0.8, 0.9],
+            [new RuntimeException('Operation timed out after 6000 milliseconds')]
+        );
+        $provider = new OpenAIRagEmbeddingProvider(
+            client: $client,
+            apiKey: 'test-key',
+            model: 'text-embedding-3-small',
+            dimensions: 3
+        );
+
+        $this->expectException(RagEmbeddingUnavailableException::class);
+
+        try {
+            $provider->embed('project context', RagEmbeddingProviderInterface::PURPOSE_QUERY);
+        } finally {
+            $this->assertSame(1, $client->embeddings->attempts);
+        }
     }
 }
 

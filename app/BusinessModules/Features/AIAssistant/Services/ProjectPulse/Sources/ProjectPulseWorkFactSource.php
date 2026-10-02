@@ -26,13 +26,14 @@ class ProjectPulseWorkFactSource implements ProjectPulseFactSourceInterface
         }
 
         return $this->table($context, 'completed_works')
+            ->where('completed_works.status', 'confirmed')
             ->leftJoin('projects', 'projects.id', '=', 'completed_works.project_id')
             ->whereBetween('completed_works.completion_date', [$context->from->toDateString(), $context->to->toDateString()])
             ->limit($this->limit())
             ->get([
                 'completed_works.id',
                 'completed_works.project_id',
-                'completed_works.total_amount',
+                \Illuminate\Support\Facades\DB::raw('COALESCE(completed_works.total_amount, completed_works.quantity * COALESCE(completed_works.price, 0), 0) as total_amount'),
                 'completed_works.status',
                 'completed_works.completion_date',
                 'projects.name as project_name',

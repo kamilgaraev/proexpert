@@ -5,20 +5,35 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantCapabilityRegistry;
 
 final class AssistantRequestUnderstandingResolver
 {
+    public function __construct(private readonly AssistantCapabilityRegistry $capabilities = new AssistantCapabilityRegistry) {}
+
     public function resolve(string $message, array $context = []): AssistantRequestUnderstanding
     {
-        unset($context);
-
         $normalized = $this->normalize($message);
         $constraints = $this->resolveConstraints($normalized);
         $requestedEntities = $this->resolveRequestedEntities($normalized);
-        $primaryIntent = $this->resolvePrimaryIntent($normalized, $constraints);
+        $capability = $this->capabilities->match($message, $context);
+        $domain = $capability['domain'] ?? null;
+        if ($domain === 'estimates' && ! in_array('estimate', $requestedEntities, true)) {
+            $requestedEntities[] = 'estimate';
+        }
+        $sectionNavigation = !in_array('no_navigation', $constraints, true)
+            && $this->isSectionNavigation($normalized, $context, $capability);
+        $primaryIntent = $sectionNavigation ? 'navigate' : $this->resolvePrimaryIntent($normalized, $constraints);
         $outputFormat = $this->resolveOutputFormat($normalized, $constraints, $primaryIntent);
         $actionPolicy = $this->resolveActionPolicy($primaryIntent, $constraints);
         $evidence = $this->buildEvidence($normalized, $primaryIntent, $outputFormat, $actionPolicy, $constraints, $requestedEntities);
+
+        if (is_string($domain)) {
+            $evidence[] = ['type' => 'primary_domain', 'value' => $domain];
+        }
+        if ($sectionNavigation) {
+            $evidence[] = ['type' => 'section_navigation', 'value' => $capability['id']];
+        }
 
         return new AssistantRequestUnderstanding(
             primaryIntent: $primaryIntent,
@@ -81,7 +96,14 @@ final class AssistantRequestUnderstandingResolver
             'ничего не меняй',
             'без изменений',
             'не изменяй',
+            'не обновляй',
+            'не удаляй',
+            'не добавляй',
         ])) {
+            $constraints[] = 'no_actions';
+        }
+
+        if ($negativeCreation && ! $this->hasFileMarker($normalized) && ! $this->hasPdfMarker($normalized) && ! $this->hasReportMarker($normalized)) {
             $constraints[] = 'no_actions';
         }
 
@@ -111,6 +133,7 @@ final class AssistantRequestUnderstandingResolver
             'warehouse' => ['склад', 'материал', 'остатк'],
             'payment' => ['платеж', 'платежи', 'оплат', 'счет', 'счёт', 'согласован'],
             'schedule' => ['график', 'срок', 'задач', 'этап'],
+            'measurement_unit' => ['единиц измерен', 'единицу измерен', 'единицы измерен', 'measurement unit'],
         ];
 
         foreach ($map as $entity => $markers) {
@@ -136,6 +159,10 @@ final class AssistantRequestUnderstandingResolver
             if ($this->isSummaryRequest($normalized)) {
                 return 'summarize';
             }
+        }
+
+        if ($this->isQuestionRequest($normalized)) {
+            return 'question';
         }
 
         if ($this->isApprovalRequest($normalized)) {
@@ -164,6 +191,18 @@ final class AssistantRequestUnderstandingResolver
 
         if ($this->isUpdateRequest($normalized)) {
             return 'update';
+        }
+
+        if ($this->hasLeadingCommand($normalized, ['отправь уведомление', 'уведоми'])) {
+            return 'send';
+        }
+
+        if ($this->isDeleteRequest($normalized)) {
+            return 'delete';
+        }
+
+        if ($this->containsAnyWholePhrase($normalized, ['найди', 'найти', 'ищи'])) {
+            return 'find';
         }
 
         if ($this->isSummaryRequest($normalized)) {
@@ -195,7 +234,7 @@ final class AssistantRequestUnderstandingResolver
             return 'file';
         }
 
-        if (in_array($primaryIntent, ['search_knowledge', 'summarize', 'analyze'], true)) {
+        if (in_array($primaryIntent, ['search_knowledge', 'summarize', 'analyze', 'question', 'find'], true)) {
             return 'text';
         }
 
@@ -216,7 +255,7 @@ final class AssistantRequestUnderstandingResolver
             return 'allow_navigation';
         }
 
-        if (in_array($primaryIntent, ['create', 'update', 'approve'], true)) {
+        if (in_array($primaryIntent, ['create', 'update', 'delete', 'approve', 'send'], true)) {
             return 'requires_confirmation';
         }
 
@@ -404,7 +443,7 @@ final class AssistantRequestUnderstandingResolver
             return false;
         }
 
-        return $this->containsAny($normalized, ['утверди', 'согласуй', 'одобри', 'подтверди платеж']);
+        return $this->hasLeadingCommand($normalized, ['утверди', 'согласуй', 'одобри', 'подтверди платеж']);
     }
 
     private function isNavigationRequest(string $normalized): bool
@@ -412,14 +451,85 @@ final class AssistantRequestUnderstandingResolver
         return $this->containsAny($normalized, ['открой', 'перейди', 'покажи раздел', 'открой проект']);
     }
 
+    private function isSectionNavigation(string $normalized, array $context, ?array $capability): bool
+    {
+        if ($capability === null || !self::hasOnlyBackgroundProjectReferences($context) || !empty($context['filters'])
+            || !empty($context['period']) || !empty($context['selected_estimate_id'])
+            || !empty($context['selected_estimate']) || !empty($context['selected_entities'])
+            || array_diff(array_keys($context), ['source_module', 'source_route', 'entity_refs', 'period', 'filters', 'ui_state']) !== []) {
+            return false;
+        }
+        $uiState = $context['ui_state'] ?? [];
+        if (!is_array($uiState) || array_diff(array_keys($uiState), ['pathname', 'assistant_path']) !== []) {
+            return false;
+        }
+        if (preg_match('/^(?:где(?: находится| находятся| найти)?|куда(?: перейти)?|как найти|открой(?:те)?|перейди(?:те)?|покажи(?:те)? раздел)\s+(.+)$/u', $normalized, $match) !== 1) {
+            return false;
+        }
+        $subject = preg_replace('/^(?:(?:у нас|в|раздел|список|меню)\s+)+/u', '', $match[1]) ?? $match[1];
+        $subject = preg_replace('/\s+(?:в меню|в интерфейсе|в системе|в мост)$/u', '', $subject) ?? $subject;
+        $aliases = [$capability['label'] ?? '', ...($capability['keywords'] ?? [])];
+        $ending = '(?:а|я|ы|и|е|у|ю|о|ов|ев|ей|ах|ях|ам|ям|ами|ями|ие|ия|ии|ий|ию|ения|ений|ению|ениях)?';
+        foreach ($aliases as $alias) {
+            if (!is_string($alias) || ($alias = $this->normalize($alias)) === '') {
+                continue;
+            }
+            if ($subject === $alias) {
+                return true;
+            }
+            $words = explode(' ', $alias);
+            $pattern = implode('\s+', array_map(static fn (string $word): string => preg_quote($word, '/').$ending, $words));
+            if (preg_match('/^'.$pattern.'$/u', $subject) === 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static function hasOnlyBackgroundProjectReferences(array $context): bool
+    {
+        $references = $context['entity_refs'] ?? [];
+        if ($references === []) {
+            return true;
+        }
+        if (!is_array($references) || count($references) !== 1) {
+            return false;
+        }
+        $reference = reset($references);
+        return is_array($reference) && ($reference['type'] ?? null) === 'project'
+            && array_diff(array_keys($reference), ['type', 'id', 'label']) === []
+            && (is_int($reference['id'] ?? null) || is_string($reference['id'] ?? null));
+    }
+
     private function isCreateRequest(string $normalized): bool
     {
-        return $this->containsAny($normalized, ['создай задачу', 'создай заявку', 'создай проект']);
+        return $this->hasLeadingCommand($normalized, ['создай', 'добавь', 'создайте', 'добавьте']);
     }
 
     private function isUpdateRequest(string $normalized): bool
     {
-        return $this->containsAny($normalized, ['измени', 'обнови', 'назначь', 'перенеси']);
+        return $this->hasLeadingCommand($normalized, ['измени', 'обнови', 'назначь', 'перенеси']);
+    }
+
+    private function isDeleteRequest(string $normalized): bool
+    {
+        return $this->hasLeadingCommand($normalized, ['удали', 'удалите']);
+    }
+
+    private function hasLeadingCommand(string $normalized, array $commands): bool
+    {
+        foreach ($commands as $command) {
+            if (preg_match('/^(?:пожалуйста |прошу )?'.preg_quote($command, '/').'(?: |$)/u', $normalized) === 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isQuestionRequest(string $normalized): bool
+    {
+        return preg_match('/^(?:а |и )?(?:как |сколько |каков|какая |какие |какой |почему |зачем |что |где |когда |можно ли |можешь объяснить |объясни )/u', $normalized) === 1;
     }
 
     private function hasPdfMarker(string $normalized): bool

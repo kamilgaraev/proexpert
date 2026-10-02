@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts\PayrollReadinessDatabasePort;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\DTO\PayrollCalculationVersion;
+use Illuminate\Support\Facades\DB;
+use App\Models\Organization;
 
 final readonly class PayrollCalculationVersionService
 {
@@ -15,7 +18,12 @@ final readonly class PayrollCalculationVersionService
 
     public function build(int $organizationId, int $periodId, int $actorId): PayrollCalculationVersion
     {
-        return $this->database->buildVersion($organizationId, $periodId, $actorId);
+        return DB::transaction(function () use ($organizationId, $periodId, $actorId): PayrollCalculationVersion {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            $version = $this->database->buildVersion($organizationId, $periodId, $actorId);
+            app(WorkforceRagMutationBridge::class)->calculationVersion($organizationId, $version->id);
+            return $version;
+        });
     }
 
     public function validate(
@@ -23,7 +31,12 @@ final readonly class PayrollCalculationVersionService
         int $calculationVersionId,
         int $actorId,
     ): PayrollCalculationVersion {
-        return $this->database->validateVersion($organizationId, $calculationVersionId, $actorId);
+        return DB::transaction(function () use ($organizationId, $calculationVersionId, $actorId): PayrollCalculationVersion {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            $version = $this->database->validateVersion($organizationId, $calculationVersionId, $actorId);
+            app(WorkforceRagMutationBridge::class)->calculationVersion($organizationId, $version->id);
+            return $version;
+        });
     }
 
     public function lock(
@@ -31,7 +44,12 @@ final readonly class PayrollCalculationVersionService
         int $calculationVersionId,
         int $actorId,
     ): PayrollCalculationVersion {
-        return $this->database->lockVersion($organizationId, $calculationVersionId, $actorId);
+        return DB::transaction(function () use ($organizationId, $calculationVersionId, $actorId): PayrollCalculationVersion {
+            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            $version = $this->database->lockVersion($organizationId, $calculationVersionId, $actorId);
+            app(WorkforceRagMutationBridge::class)->calculationVersion($organizationId, $version->id);
+            return $version;
+        });
     }
 
     public function current(int $organizationId, int $periodId): ?PayrollCalculationVersion

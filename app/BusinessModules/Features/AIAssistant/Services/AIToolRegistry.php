@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\AssistantDomainTool;
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use Closure;
+use UnexpectedValueException;
 
 class AIToolRegistry
 {
@@ -17,12 +20,26 @@ class AIToolRegistry
      */
     protected array $tools = [];
 
+    private array $factories = [];
+
+    private array $toolNames = [];
+
     /**
      * Register a new AI Tool into the registry.
      */
     public function registerTool(AIToolInterface $tool): void
     {
-        $this->tools[$tool->getName()] = $tool;
+        $name = $tool->getName();
+        $this->rememberToolName($name);
+        unset($this->factories[$name]);
+        $this->tools[$name] = $tool;
+    }
+
+    public function registerFactory(string $name, callable $factory): void
+    {
+        $this->rememberToolName($name);
+        unset($this->tools[$name]);
+        $this->factories[$name] = Closure::fromCallable($factory);
     }
 
     /**
@@ -32,7 +49,15 @@ class AIToolRegistry
      */
     public function getTools(): array
     {
-        return $this->tools;
+        $tools = [];
+        foreach ($this->toolNames as $name) {
+            $tool = $this->getTool($name);
+            if ($tool !== null) {
+                $tools[$name] = $tool;
+            }
+        }
+
+        return $tools;
     }
 
     /**
@@ -42,7 +67,21 @@ class AIToolRegistry
     {
         $name = self::TOOL_ALIASES[$name] ?? $name;
 
-        return $this->tools[$name] ?? null;
+        if (isset($this->tools[$name])) {
+            return $this->tools[$name];
+        }
+
+        $factory = $this->factories[$name] ?? null;
+        if ($factory === null) {
+            return null;
+        }
+
+        $tool = $factory();
+        if (! $tool instanceof AIToolInterface || $tool->getName() !== $name) {
+            throw new UnexpectedValueException('assistant_tool_factory_name_mismatch');
+        }
+
+        return $this->tools[$name] = $tool;
     }
 
     /**
@@ -61,8 +100,13 @@ class AIToolRegistry
             )), true);
         }
 
-        foreach ($this->tools as $tool) {
-            if (is_array($allowed) && ! isset($allowed[$tool->getName()])) {
+        foreach ($this->toolNames as $name) {
+            if (is_array($allowed) && ! isset($allowed[$name])) {
+                continue;
+            }
+
+            $tool = $this->getTool($name);
+            if ($tool === null) {
                 continue;
             }
 
@@ -71,11 +115,43 @@ class AIToolRegistry
                 'function' => [
                     'name' => $tool->getName(),
                     'description' => $tool->getDescription(),
-                    'parameters' => $tool->getParametersSchema(),
+                    'parameters' => $this->serializedSchema($tool),
+                    'strict' => str_starts_with($tool->getName(), 'assistant_domain_'),
                 ],
             ];
         }
 
         return $definitions;
+    }
+
+    private function serializedSchema(AIToolInterface $tool): array
+    {
+        $schema = $tool->getParametersSchema();
+        if (! $tool instanceof AssistantDomainTool) {
+            return $schema;
+        }
+        unset($schema['properties']['domain']['enum']);
+        $schema['properties']['domain']['maxLength'] = 128;
+        $schema['properties']['domain']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
+        $schema['properties']['domain']['description'] = 'domain каталога. Права проверяет сервер.';
+        unset($schema['properties']['entity_type']['enum']);
+        $schema['properties']['entity_type']['maxLength'] = 128;
+        $schema['properties']['entity_type']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
+        $schema['properties']['entity_type']['description'] = 'Тип domain из каталога или assistant_domain_discover_capabilities.';
+        if (isset($schema['properties']['fields']['items'])) {
+            unset($schema['properties']['fields']['items']['enum']);
+            $schema['properties']['fields']['items']['maxLength'] = 128;
+            $schema['properties']['fields']['items']['pattern'] = '^[a-zA-Z][a-zA-Z0-9_]*$';
+            $schema['properties']['fields']['description'] = 'Разрешённые поля каталога; null — доступные по умолчанию.';
+        }
+
+        return $schema;
+    }
+
+    private function rememberToolName(string $name): void
+    {
+        if (! in_array($name, $this->toolNames, true)) {
+            $this->toolNames[] = $name;
+        }
     }
 }

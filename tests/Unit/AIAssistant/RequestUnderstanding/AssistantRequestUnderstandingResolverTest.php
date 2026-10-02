@@ -7,9 +7,12 @@ namespace Tests\Unit\AIAssistant\RequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 final class AssistantRequestUnderstandingResolverTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     public function test_negative_pdf_report_request_is_text_rag_read_only(): void
     {
         $result = (new AssistantRequestUnderstandingResolver)->resolve(
@@ -151,6 +154,66 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         $this->assertContains('project', $result->requestedEntities);
     }
 
+    #[DataProvider('sectionNavigationProvider')]
+    public function test_bare_registered_sections_are_navigation_without_entity_lookup(string $message, string $domain): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve($message, [
+            'source_module' => 'ai-assistant', 'source_route' => '/dashboard',
+            'ui_state' => ['pathname' => '/dashboard', 'assistant_path' => '/assistant'],
+        ]);
+
+        $this->assertSame('navigate', $result->primaryIntent);
+        $this->assertContains(['type' => 'section_navigation', 'value' => $domain], $result->evidence);
+    }
+
+    public static function sectionNavigationProvider(): array
+    {
+        return [
+            ['Где сметы?', 'estimates'], ['Как найти раздел проектов?', 'projects'],
+            ['Куда перейти в склад?', 'warehouse'], ['Где находится раздел платежей?', 'payments'],
+            ['Открой договоры', 'contracts'], ['Где единицы измерения?', 'measurement_units'],
+        ];
+    }
+
+    public function test_background_project_context_does_not_change_bare_registered_section_intent(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Где сметы?', [
+            'source_module' => 'ai-assistant', 'source_route' => null,
+            'entity_refs' => [['type' => 'project', 'id' => 42, 'label' => 'Проект']],
+            'filters' => [], 'period' => null, 'ui_state' => ['assistant_path' => '/ai-assistant/chat'],
+        ]);
+
+        $this->assertSame('navigate', $result->primaryIntent);
+        $this->assertContains(['type' => 'section_navigation', 'value' => 'estimates'], $result->evidence);
+    }
+
+    #[DataProvider('nonSectionNavigationProvider')]
+    public function test_entity_scopes_and_semantic_requests_are_not_bare_section_navigation(string $message, array $context): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve($message, $context);
+
+        $this->assertNotContains('section_navigation', array_column($result->evidence, 'type'));
+    }
+
+    public static function nonSectionNavigationProvider(): array
+    {
+        return [
+            ['Где смета «Северный дом»?', []], ['Где смета №5?', []], ['Где проект Альфа?', []],
+            ['Найди сметы', []], ['Где сметы за май?', []], ['Где сметы по проекту?', []],
+            ['Где сметы? Без навигации.', []], ['Где сметы?', ['filters' => ['status' => 'approved']]],
+            ['Где проекты?', ['period' => ['from' => '2026-01-01']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'estimate', 'id' => 5]]]],
+            ['Где сметы по проекту?', ['entity_refs' => [['type' => 'project', 'id' => 42]]]],
+            ['Где сметы проекта Северный дом?', ['entity_refs' => [['type' => 'project', 'id' => 42]]]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'project', 'id' => 42]], 'period' => ['from' => '2026-01-01']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'project', 'id' => 42]], 'filters' => ['status' => 'draft']]],
+            ['Где сметы?', ['entity_refs' => [['type' => 'project', 'id' => 42], ['type' => 'estimate', 'id' => 5]]]],
+            ['Где сметы?', ['selected_estimate_id' => 5]],
+            ['Где сметы?', ['ui_state' => ['selected_estimate' => ['estimate_id' => 5]]]],
+            ['Где договоры с заказчиком?', []],
+        ];
+    }
+
     #[DataProvider('negativeReportProvider')]
     public function test_negative_report_and_file_words_do_not_create_generation_intent(string $message, string $constraint): void
     {
@@ -170,5 +233,30 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
             'negative report' => ['Без отчета расскажи, какие риски по проекту.', 'no_report'],
             'negative file' => ['Не нужен файл, просто напиши текстом.', 'no_file'],
         ];
+    }
+
+    public function test_estimate_followup_preserves_domain_and_entity(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Какая прибыль и итоговая стоимость?', ['entity_references' => [['type' => 'estimate', 'id' => 7]]]);
+        $this->assertSame('question', $result->primaryIntent);
+        $this->assertSame('read_only', $result->actionPolicy);
+        $this->assertContains('estimate', $result->requestedEntities);
+        $this->assertContains(['type' => 'primary_domain', 'value' => 'estimates'], $result->evidence);
+    }
+
+    public function test_explicit_domain_change_overrides_estimate_context(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Найди сотрудников', ['selected_estimate_id' => 7, 'last_capability' => 'estimates']);
+        $this->assertSame('find', $result->primaryIntent);
+        $this->assertNotContains('estimate', $result->requestedEntities);
+        $this->assertContains(['type' => 'primary_domain', 'value' => 'people'], $result->evidence);
+    }
+
+    public function test_measurement_question_cannot_become_write_request(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve('Как создать единицу измерения?');
+        $this->assertSame('question', $result->primaryIntent);
+        $this->assertSame('read_only', $result->actionPolicy);
+        $this->assertContains('measurement_unit', $result->requestedEntities);
     }
 }

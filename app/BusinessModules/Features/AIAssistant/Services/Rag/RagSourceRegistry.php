@@ -41,17 +41,46 @@ final class RagSourceRegistry
     }
 
     /**
-     * @return array<int, array{type: string, enabled: bool}>
+     * @return array<int, array{type: string, enabled: bool, display_label?: string}>
      */
     public function sourceCatalog(): array
     {
         return array_values(array_map(
-            static fn (RagSourceCollectorInterface $collector): array => [
-                'type' => $collector->sourceType(),
-                'enabled' => $collector->enabled(),
-            ],
+            static function (RagSourceCollectorInterface $collector): array {
+                $sourceType = $collector->sourceType();
+                $source = [
+                    'type' => $sourceType,
+                    'enabled' => $collector->enabled(),
+                ];
+                $displayLabel = self::displayLabel($sourceType);
+
+                if ($displayLabel !== null) {
+                    $source['display_label'] = $displayLabel;
+                }
+
+                return $source;
+            },
             $this->enabledCollectors()
         ));
+    }
+
+    private static function displayLabel(string $sourceType): ?string
+    {
+        $translationKey = 'ai_assistant.rag_source_labels.'.$sourceType;
+
+        if (! \Illuminate\Support\Facades\Lang::has($translationKey)) {
+            return null;
+        }
+
+        $label = trans_message($translationKey);
+
+        if (! is_string($label)) {
+            return null;
+        }
+
+        $label = trim($label);
+
+        return $label !== '' ? $label : null;
     }
 
     public function collector(string $sourceType): ?RagSourceCollectorInterface

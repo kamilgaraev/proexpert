@@ -27,17 +27,28 @@ class AssistantTaskOrchestrator
     public function plan(string $query, array $requestPayload, array $accessContext): array
     {
         $request = $this->normalizeRequest($query, $requestPayload);
-        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query, $request['context']);
+        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query,
+            is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : $request['context']);
         $taskType = $this->resolveTaskType($request, $requestUnderstanding);
         $capability = $this->capabilityRegistry->match($query, $request['context'], $request['goal']);
         $navigationTarget = $this->resolveNavigationTarget($capability, $request['context']);
         $nextActions = $this->buildNextActions($capability, $accessContext, $request, $navigationTarget, $requestUnderstanding);
         $accessLimits = $this->buildAccessLimits($capability, $accessContext, $request, $nextActions);
+        $sectionNavigation = in_array('section_navigation', array_column($requestUnderstanding->evidence, 'type'), true)
+            && empty($requestPayload['attachment_ids'])
+            && in_array($request['goal'], [null, '', 'navigate'], true)
+            && in_array($request['desired_mode'], [null, '', 'navigate'], true);
+        if ($sectionNavigation) {
+            $nextActions = array_values(array_filter($nextActions, static fn (array $action): bool =>
+                ($action['type'] ?? null) === 'navigate' && ($action['allowed'] ?? false) === true));
+            $navigationTarget = $nextActions[0]['target'] ?? null;
+        }
 
         return [
             'request' => $request,
             'request_understanding' => $requestUnderstanding->toArray(),
             'task_type' => $taskType,
+            'section_navigation' => $sectionNavigation,
             'capability' => $capability,
             'navigation_target' => $navigationTarget,
             'next_actions' => $nextActions,
@@ -60,7 +71,7 @@ class AssistantTaskOrchestrator
                 $options['proposed_actions'] ?? [],
                 static fn (mixed $action): bool => is_array($action)
             ))
-        )), $requestUnderstanding);
+        )), $requestUnderstanding, (bool) ($plan['request']['allow_actions'] ?? false));
         $navigationTarget = $this->payloadNavigationTarget($plan['navigation_target'] ?? null, $requestUnderstanding);
 
         $missingData = array_values(array_unique(array_filter(array_merge(
@@ -91,6 +102,9 @@ class AssistantTaskOrchestrator
             'evidence' => $this->buildEvidence($plan, $options),
             'missing_data' => $missingData,
             'next_actions' => $nextActions,
+            'proposed_actions' => array_values(array_filter($nextActions, static fn (array $action): bool =>
+                isset($action['tool_name'], $action['arguments']) && ($action['type'] ?? null) === 'act'
+                && ($action['requires_confirmation'] ?? false))),
             'navigation_target' => $navigationTarget,
             'wizard' => $wizard,
             'executed_actions' => $executedActions,
@@ -248,7 +262,7 @@ class AssistantTaskOrchestrator
                 'arguments' => is_array($action['arguments'] ?? null) ? $action['arguments'] : [],
             ];
 
-            $eligibility = $this->toolEligibilityPolicy->canExposeAction($nextAction, $requestUnderstanding);
+            $eligibility = $this->toolEligibilityPolicy->canExposeAction($nextAction, $requestUnderstanding, (bool) ($request['allow_actions'] ?? false));
             if (! $eligibility->allowed) {
                 continue;
             }
@@ -538,14 +552,14 @@ class AssistantTaskOrchestrator
             : null;
     }
 
-    private function filterPayloadActions(array $actions, ?AssistantRequestUnderstanding $requestUnderstanding): array
+    private function filterPayloadActions(array $actions, ?AssistantRequestUnderstanding $requestUnderstanding, bool $allowActions): array
     {
         if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
             return $actions;
         }
 
-        return array_values(array_filter($actions, function (array $action) use ($requestUnderstanding): bool {
-            return $this->toolEligibilityPolicy->canExposeAction($action, $requestUnderstanding)->allowed;
+        return array_values(array_filter($actions, function (array $action) use ($requestUnderstanding, $allowActions): bool {
+            return $this->toolEligibilityPolicy->canExposeAction($action, $requestUnderstanding, $allowActions)->allowed;
         }));
     }
 

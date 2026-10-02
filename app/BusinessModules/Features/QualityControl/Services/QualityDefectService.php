@@ -11,17 +11,25 @@ use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Contracts\Q
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Enums\QualityDefectFlowEventKind;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Enums\QualityDefectFlowTerminalReason;
 use App\Models\Contractor;
-use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use DomainException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 final class QualityDefectService
 {
+    private const PHOTO_MIME_EXTENSIONS = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/webp' => 'webp',
+    ];
+
     private const RESOURCE_RELATIONS = [
         'organization',
         'project',
@@ -95,7 +103,8 @@ final class QualityDefectService
         }
         $this->assertOptionalContractorBelongsToOrganization($data['contractor_id'] ?? null, $organizationId);
 
-        return DB::transaction(function () use ($organizationId, $userId, $data): QualityDefect {
+        $storedPhotoKeys = [];
+        $transaction = function () use ($organizationId, $userId, $data, &$storedPhotoKeys): QualityDefect {
             $status = empty($data['assigned_to'])
                 ? QualityDefectStatusEnum::OPEN
                 : QualityDefectStatusEnum::ASSIGNED;
@@ -121,7 +130,7 @@ final class QualityDefectService
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
-            $this->storePhotos($defect, $data['photos'] ?? [], $organizationId, $userId);
+            $this->storePhotos($defect, $data['photos'] ?? [], $organizationId, $userId, $storedPhotoKeys);
             $history = $this->recordStatus(
                 $defect,
                 null,
@@ -134,7 +143,14 @@ final class QualityDefectService
             }
 
             return $defect->fresh(self::RESOURCE_RELATIONS);
-        });
+        };
+
+        try {
+            return DB::transaction($transaction);
+        } catch (\Throwable $exception) {
+            $this->deleteStoredPhotoObjects($storedPhotoKeys, $organizationId);
+            throw $exception;
+        }
     }
 
     public function assign(QualityDefect $defect, int $assigneeId, int $userId, ?string $comment = null): QualityDefect
@@ -223,9 +239,10 @@ final class QualityDefectService
             throw new DomainException(trans_message('quality_control.errors.result_evidence_required'));
         }
 
-        return DB::transaction(function () use ($defect, $userId, $comment, $photos): QualityDefect {
+        $storedPhotoKeys = [];
+        $transaction = function () use ($defect, $userId, $comment, $photos, &$storedPhotoKeys): QualityDefect {
             $defect = $this->lockCurrentProjectIssue($defect);
-            $this->storePhotos($defect, $photos, (int) $defect->organization_id, $userId);
+            $this->storePhotos($defect, $photos, (int) $defect->organization_id, $userId, $storedPhotoKeys);
 
             return $this->transition(
                 $defect,
@@ -235,7 +252,14 @@ final class QualityDefectService
                 ['resolved_at' => now()],
                 $comment !== '' ? $comment : null
             );
-        });
+        };
+
+        try {
+            return DB::transaction($transaction);
+        } catch (\Throwable $exception) {
+            $this->deleteStoredPhotoObjects($storedPhotoKeys, (int) $defect->organization_id);
+            throw $exception;
+        }
     }
 
     public function verify(QualityDefect $defect, int $userId, bool $accepted, ?string $comment = null): QualityDefect
@@ -359,49 +383,118 @@ final class QualityDefectService
         return $locked;
     }
 
-    private function storePhotos(QualityDefect $defect, array $photos, int $organizationId, int $userId): void
-    {
-        $organization = Organization::query()->find($organizationId);
-
+    private function storePhotos(
+        QualityDefect $defect,
+        array $photos,
+        int $organizationId,
+        int $userId,
+        array &$storedKeys,
+    ): void {
         foreach ($photos as $photo) {
             $url = $photo['url'] ?? null;
+            $type = $photo['type'] ?? null;
+            $storedFile = null;
+            $file = $photo['file'] ?? null;
 
-            if (($photo['file'] ?? null) instanceof UploadedFile) {
+            if ($file instanceof UploadedFile) {
+                if (! is_string($type) || trim($type) === '') {
+                    throw new DomainException(trans_message('quality_control.validation.photo_type_required'));
+                }
+                if (! $file->isValid()) {
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                }
+
                 try {
-                    $url = $this->fileService->upload(
-                        $photo['file'],
-                        "quality-control/defects/{$defect->id}",
-                        null,
-                        'private',
-                        $organization
-                    );
+                    $mime = $file->getMimeType();
                 } catch (\Throwable) {
                     throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
                 }
 
-                if ($url === false) {
+                $extension = is_string($mime) ? (self::PHOTO_MIME_EXTENSIONS[$mime] ?? null) : null;
+                if ($extension === null) {
                     throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
                 }
+
+                try {
+                    $sha256 = hash_file('sha256', $file->getPathname());
+                    $contents = fopen($file->getPathname(), 'rb');
+                } catch (\Throwable) {
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                }
+
+                if (! is_string($sha256) || ! is_resource($contents)) {
+                    if (is_resource($contents)) {
+                        fclose($contents);
+                    }
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                }
+
+                $key = "org-{$organizationId}/quality-control/defects/{$defect->id}/".Str::uuid().".{$extension}";
+                try {
+                    $storedFile = $this->fileService->putPrivate($key, $contents, $mime, $sha256);
+                } catch (\Throwable $exception) {
+                    Log::warning('quality_defect_photo_upload_failed', [
+                        'organization_id' => $organizationId,
+                        'quality_defect_id' => $defect->id,
+                        'storage_key' => $key,
+                        'exception' => $exception::class,
+                    ]);
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                } finally {
+                    fclose($contents);
+                }
+
+                $storedKeys[] = $key;
+                if ($storedFile->key !== $key) {
+                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
+                }
+
+                $url = $storedFile->key;
             }
 
             if (! is_string($url) || trim($url) === '') {
                 continue;
             }
 
-            $type = $photo['type'] ?? null;
-
             if (! is_string($type) || trim($type) === '') {
                 throw new DomainException(trans_message('quality_control.validation.photo_type_required'));
             }
 
-            $defect->photos()->create([
+            $attributes = [
                 'organization_id' => $organizationId,
                 'uploaded_by' => $userId,
                 'type' => $type,
                 'url' => $url,
                 'caption' => $photo['caption'] ?? null,
                 'metadata' => $photo['metadata'] ?? null,
-            ]);
+            ];
+
+            if ($storedFile instanceof CurrentStoredFile) {
+                $attributes += [
+                    'storage_etag' => $storedFile->etag,
+                    'storage_sha256' => $storedFile->sha256,
+                    'size_bytes' => $storedFile->sizeBytes,
+                    'mime_type' => $storedFile->mime,
+                    'storage_identity_verified' => true,
+                ];
+            }
+
+            $defect->photos()->create($attributes);
+        }
+    }
+
+    private function deleteStoredPhotoObjects(array $keys, int $organizationId): void
+    {
+        foreach (array_unique($keys) as $key) {
+            try {
+                $this->fileService->deleteCurrent($key);
+            } catch (\Throwable $exception) {
+                Log::warning('quality_defect_photo_storage_cleanup_failed', [
+                    'organization_id' => $organizationId,
+                    'storage_key' => $key,
+                    'exception' => $exception::class,
+                ]);
+            }
         }
     }
 

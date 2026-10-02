@@ -7,25 +7,53 @@ $envValue = static function (string $key, mixed $default = null): mixed {
 
     return $value !== null && $value !== '' ? $value : $default;
 };
-$visionModelOverride = $envValue('ESTIMATE_GENERATION_VISION_MODEL');
-$visionModelDefault = 'openai/gpt-5.6-luna';
+$visionModelOverride = 'openai/gpt-6-luna';
+$lunaModel = static function (string $key, string $default = 'openai/gpt-6-luna') use ($envValue): string {
+    $model = trim((string) $envValue($key, $default));
+
+    return $model === 'openai/gpt-6-luna' ? $model : $default;
+};
+$visionModelDefault = 'openai/gpt-6-luna';
+$lunaPrice = [[
+    'input_per_million' => '14',
+    'cached_input_per_million' => '14',
+    'output_per_million' => '68',
+    'reasoning_per_million' => '68',
+    'reasoning_mode' => 'included_in_output',
+    'image_unit' => '0',
+    'page_unit' => '0',
+    'currency' => 'RUB',
+    'version' => 'timeweb-ai-gateway-2026-09-26',
+    'effective_at' => '2026-09-26T00:00:00+00:00',
+], [
+    'input_per_million' => '13.5',
+    'cached_input_per_million' => '13.5',
+    'output_per_million' => '67.5',
+    'reasoning_per_million' => '67.5',
+    'reasoning_mode' => 'included_in_output',
+    'image_unit' => '0',
+    'page_unit' => '0',
+    'currency' => 'RUB',
+    'version' => 'timeweb-ai-gateway-2026-09-29-v2',
+    'effective_at' => '2026-09-29T00:00:00+00:00',
+]];
 
 return [
     'project_engineer' => [
-        'model' => $envValue('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL', 'openai/gpt-5-mini'),
+        'model' => $lunaModel('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL'),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_INPUT_BYTES', 524_288),
         'max_output_tokens' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_OUTPUT_TOKENS', 4096),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_TIMEOUT_SECONDS', 120),
     ],
     'estimate_composer' => [
-        'model' => $envValue('ESTIMATE_GENERATION_COMPOSER_MODEL', 'openai/gpt-5-mini'),
+        'model' => $lunaModel('ESTIMATE_GENERATION_COMPOSER_MODEL'),
         'max_facts' => (int) env('ESTIMATE_GENERATION_COMPOSER_MAX_FACTS', 10000),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_COMPOSER_MAX_INPUT_BYTES', 524_288),
         'max_output_tokens' => (int) env('ESTIMATE_GENERATION_COMPOSER_MAX_OUTPUT_TOKENS', 8192),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_COMPOSER_TIMEOUT_SECONDS', 120),
     ],
     'estimate_auditor' => [
-        'model' => $envValue('ESTIMATE_GENERATION_AUDITOR_MODEL', 'openai/gpt-5-mini'),
+        'model' => $lunaModel('ESTIMATE_GENERATION_AUDITOR_MODEL'),
         'max_facts' => (int) env('ESTIMATE_GENERATION_AUDITOR_MAX_FACTS', 10000),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_AUDITOR_MAX_INPUT_BYTES', 2097152),
         'max_output_tokens' => (int) env('ESTIMATE_GENERATION_AUDITOR_MAX_OUTPUT_TOKENS', 8192),
@@ -34,9 +62,9 @@ return [
     'vision' => [
         'provider' => env('ESTIMATE_GENERATION_VISION_PROVIDER', 'timeweb'),
         'model_override' => $visionModelOverride,
-        'model' => $visionModelOverride ?? $visionModelDefault,
-        'model_version' => env('ESTIMATE_GENERATION_VISION_MODEL_VERSION', 'timeweb-gpt-5.6-luna-2026-08-13'),
-        'reasoning_effort' => env('ESTIMATE_GENERATION_VISION_REASONING_EFFORT', 'medium'),
+        'model' => $visionModelOverride,
+        'model_version' => env('ESTIMATE_GENERATION_VISION_MODEL_VERSION', 'timeweb-gpt-6-luna'),
+        'reasoning_effort' => 'none',
         'api_key' => $envValue('ESTIMATE_GENERATION_VISION_API_KEY', $envValue('TIMEWEB_AI_API_KEY')),
         'base_uri' => $envValue('ESTIMATE_GENERATION_VISION_BASE_URI', $envValue('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1')),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_VISION_TIMEOUT', 60),
@@ -95,7 +123,7 @@ return [
         'provider' => env('ESTIMATE_GENERATION_OCR_PROVIDER', 'timeweb'),
         'enabled' => (bool) env('ESTIMATE_GENERATION_OCR_ENABLED', true),
         'languages' => ['ru', 'en'],
-        'model' => env('ESTIMATE_GENERATION_OCR_MODEL', 'gemini/gemini-3.1-flash-lite'),
+        'model' => $lunaModel('ESTIMATE_GENERATION_OCR_MODEL'),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_OCR_TIMEOUT', 60),
         'retry_attempts' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_ATTEMPTS', 3),
         'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_DELAY_MS', 250),
@@ -154,7 +182,7 @@ return [
             'low_confidence_threshold' => 0.6,
         ],
         'reranker' => [
-            'models' => $envValue('ESTIMATE_GENERATION_NORM_RERANKER_MODELS', 'openai/gpt-5-mini,openai/gpt-5-nano'),
+            'models' => $lunaModel('ESTIMATE_GENERATION_NORM_RERANKER_MODELS'),
             'max_candidates' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_MAX_CANDIDATES', 8),
             'timeout_seconds' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_TIMEOUT', 15),
             'prompt_version' => 'normative-rerank-prompt-v1',
@@ -183,7 +211,7 @@ return [
     'completeness_arbiter' => [
         'enabled' => (bool) env('ESTIMATE_COMPLETENESS_ARBITER_ENABLED', false),
         'active_targeted_rebuild_enabled' => (bool) env('ESTIMATE_TARGETED_REBUILD_ENABLED', false),
-        'model' => $envValue('ESTIMATE_COMPLETENESS_ARBITER_MODEL', 'openai/gpt-5-mini'),
+        'model' => $lunaModel('ESTIMATE_COMPLETENESS_ARBITER_MODEL'),
         'prompt_version' => 'completeness-arbiter:v1',
         'schema_version' => 'completeness-arbiter:v1',
         'timeout_seconds' => (int) env('ESTIMATE_COMPLETENESS_ARBITER_TIMEOUT', 20),
@@ -191,7 +219,7 @@ return [
         'max_output_tokens' => (int) env('ESTIMATE_COMPLETENESS_ARBITER_MAX_OUTPUT_TOKENS', 2_000),
     ],
     'ai_pricing_catalog' => [
-        'vision' => ['timeweb' => [
+        'vision' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice,
             'openai/gpt-5.6-luna' => [[
                 'input_per_million' => '135',
                 'cached_input_per_million' => '135',
@@ -222,7 +250,7 @@ return [
                 'effective_at' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_EFFECTIVE_AT', ''),
             ]],
         ]],
-        'ocr' => ['timeweb' => [(string) env('ESTIMATE_GENERATION_OCR_MODEL', 'gemini/gemini-3.1-flash-lite') => [[
+        'ocr' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'gemini/gemini-3.1-flash-lite' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_CACHED_INPUT_PER_MILLION', ''),
             'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_OUTPUT_PER_MILLION', ''),
@@ -232,8 +260,8 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_EFFECTIVE_AT', ''),
         ]]]],
-        'rerank' => ['timeweb' => [
-            (string) $envValue('ESTIMATE_GENERATION_NORM_RERANKER_PRIMARY_MODEL', 'openai/gpt-5-mini') => [[
+        'rerank' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice,
+            'openai/gpt-5-mini' => [[
                 'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
                 'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
                 'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
@@ -250,7 +278,7 @@ return [
                 'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_EFFECTIVE_AT', '2026-07-20T00:00:00+00:00'),
             ]],
         ]],
-        'project_synthesis' => ['timeweb' => [(string) $envValue('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL', 'openai/gpt-5-mini') => [[
+        'project_synthesis' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'openai/gpt-5-mini' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
             'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
@@ -258,7 +286,7 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
         ]]]],
-        'estimate_composition' => ['timeweb' => [(string) $envValue('ESTIMATE_GENERATION_COMPOSER_MODEL', 'openai/gpt-5-mini') => [[
+        'estimate_composition' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'openai/gpt-5-mini' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
             'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
@@ -266,7 +294,7 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
         ]]]],
-        'estimate_audit' => ['timeweb' => [(string) $envValue('ESTIMATE_GENERATION_AUDITOR_MODEL', 'openai/gpt-5-mini') => [[
+        'estimate_audit' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'openai/gpt-5-mini' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
             'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
@@ -274,7 +302,7 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
         ]]]],
-        'completeness_review' => ['timeweb' => [(string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_MODEL', 'openai/gpt-5-mini') => [[
+        'completeness_review' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'openai/gpt-5-mini' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_CACHED_INPUT_PER_MILLION', ''),
             'output_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_OUTPUT_PER_MILLION', ''),

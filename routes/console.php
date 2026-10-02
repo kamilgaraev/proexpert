@@ -231,7 +231,7 @@ Schedule::command('contracts:sync-event-sourcing')
     })
     ->appendOutputTo(storage_path('logs/schedule-contracts-sync.log'));
 
-$ragScheduledLimit = max(1, (int) config('ai-assistant.rag.scheduled_limit', 50));
+$ragScheduledLimit = min(2, max(1, (int) config('ai-assistant.rag.scheduled_limit', 2)));
 $ragBackfillCommand = implode(' ', [
     'ai-assistant:rag-backfill',
     '--all',
@@ -247,6 +247,39 @@ Schedule::command($ragBackfillCommand)
         Log::channel('stderr')->error('Scheduled ai-assistant:rag-backfill command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-ai-rag-backfill.log'));
+
+Schedule::command('ai-assistant:rag-recover')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(5)
+    ->runInBackground();
+
+Schedule::command('ai-assistant:requests-expire')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(5)
+    ->runInBackground();
+
+Schedule::command('ai-credits:economics-report --days=30')
+    ->dailyAt('00:15')
+    ->timezone('UTC')
+    ->onOneServer()
+    ->withoutOverlapping(60)
+    ->runInBackground();
+
+Schedule::command('ai-assistant:documents-scan --batch=50')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(5)
+    ->runInBackground();
+
+if ((bool) config('ai-assistant.retention.enabled', false)) {
+    Schedule::command('ai-assistant:purge-retention --days=90 --execute')
+        ->dailyAt('03:30')
+        ->onOneServer()
+        ->withoutOverlapping(120)
+        ->runInBackground();
+}
 
 Schedule::command('estimates:regional-prices:sync-fgiscs --all-regions --latest-only')
     ->dailyAt('01:00')

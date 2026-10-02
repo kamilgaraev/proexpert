@@ -15,6 +15,13 @@ abstract class AbstractReadOnlyTool implements AIToolInterface
     protected const DEFAULT_LIMIT = 10;
     protected const MAX_LIMIT = 30;
 
+    protected function actorTable(\App\Models\User $user, string $table, Organization $organization): Builder
+    {
+        return app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class)->scopeTable(
+            $this->orgTable($table, $organization), $user, (int) $organization->id, $table,
+        );
+    }
+
     protected function orgTable(string $table, Organization $organization): Builder
     {
         return DB::table($table)->where("{$table}.organization_id", $organization->id);

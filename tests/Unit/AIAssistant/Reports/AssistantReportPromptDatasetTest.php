@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantReportPromptDatasetTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
     public function test_report_prompt_dataset_resolves_expected_intents(): void
     {
         $dataset = $this->loadDataset();

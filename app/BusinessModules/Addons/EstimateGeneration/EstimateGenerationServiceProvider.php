@@ -299,7 +299,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             static function ($app): \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter {
                 $settings = config('estimate-generation.completeness_arbiter');
                 $settings = is_array($settings) ? $settings : [];
-                $model = trim((string) ($settings['model'] ?? 'openai/gpt-5-mini'));
+                $model = trim((string) ($settings['model'] ?? 'openai/gpt-6-luna'));
                 $promptVersion = trim((string) ($settings['prompt_version'] ?? 'completeness-arbiter:v1'));
                 if (($settings['enabled'] ?? false) !== true) {
                     return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\DisabledCompletenessArbiter($model, $promptVersion);

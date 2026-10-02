@@ -325,7 +325,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function violations(int $organizationId, ?int $projectId): iterable
@@ -335,7 +335,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function permits(int $organizationId, ?int $projectId): iterable
@@ -345,7 +345,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function briefings(int $organizationId, ?int $projectId): iterable
@@ -356,7 +356,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function correctiveActions(int $organizationId, ?int $projectId): iterable
@@ -366,7 +366,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function inspections(int $organizationId, ?int $projectId): iterable
@@ -377,7 +377,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function inspectionFindings(int $organizationId, ?int $projectId): iterable
@@ -387,7 +387,7 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleIncident(int $organizationId, string|int $entityId): array

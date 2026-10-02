@@ -4,33 +4,53 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantBudgetExceeded;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
+use App\Support\AI\LunaModelPolicy;
+use App\Support\AI\TokenBudgetService;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\QueryException;
+use Illuminate\Log\LogManager;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Throwable;
 
 class AIAssistantService
 {
-    private const HISTORY_MESSAGE_LIMIT = 6;
+    private const HISTORY_MESSAGE_LIMIT = 100;
 
-    private const HISTORY_TOTAL_CHARS = 4000;
+    private const HISTORY_TOTAL_CHARS = 120000;
 
-    private const HISTORY_USER_MESSAGE_CHARS = 500;
+    private const UNRESOLVED_DOMAIN_MESSAGE = 'Ассистент не смог однозначно определить домен запроса по текущему контексту.';
 
-    private const HISTORY_ASSISTANT_MESSAGE_CHARS = 900;
+    private const HISTORY_USER_MESSAGE_CHARS = 4000;
+
+    private const HISTORY_ASSISTANT_MESSAGE_CHARS = 24000;
 
     private const LEGACY_CONTEXT_CHARS = 3500;
 
@@ -92,6 +112,38 @@ class AIAssistantService
 
     protected AssistantToolEligibilityPolicy $toolEligibilityPolicy;
 
+    private ?AssistantRequest $activeRequest = null;
+
+    private bool $runtimeTimingEnabled = false;
+
+    private ?User $activeActor = null;
+
+    private string $activeProfile = 'normal';
+
+    private array $activeToolResults = [];
+
+    private array $providerUsageAttempts = [];
+
+    private ?array $pendingSummary = null;
+
+    private ?string $requestOutcome = null;
+
+    private bool $estimateResolutionAttempted = false;
+
+    private ?int $resolvedEstimateId = null;
+
+    private ?array $activeEstimateSelection = null;
+
+    private array $currentAttachmentIds = [];
+
+    private array $currentImageParts = [];
+
+    private bool $documentContextBlocked = false;
+
+    private ?array $precomputedCapabilityHints = null;
+
+    private bool $preparationMetadataFrameActive = false;
+
     public function __construct(
         LLMProviderInterface $llmProvider,
         ConversationManager $conversationManager,
@@ -109,7 +161,17 @@ class AIAssistantService
         AssistantResponseVerifier $responseVerifier,
         ?RagRetriever $ragRetriever = null,
         ?RagPromptContextBuilder $ragPromptContextBuilder = null,
-        ?AssistantToolEligibilityPolicy $toolEligibilityPolicy = null
+        ?AssistantToolEligibilityPolicy $toolEligibilityPolicy = null,
+        private readonly ?AssistantRequestLifecycle $requestLifecycle = null,
+        private readonly TokenBudgetService $tokenBudget = new TokenBudgetService(),
+        private readonly ?AssistantMemoryService $memoryService = null,
+        private readonly ?AssistantFinancialAnswerService $financialAnswers = null,
+        private readonly ?AssistantFinancialClaimVerifier $financialClaims = null,
+        private readonly AssistantToolArgumentValidator $toolArguments = new AssistantToolArgumentValidator(),
+        private readonly ?AssistantDataAccessPolicy $dataAccess = null,
+        private readonly AssistantStructuredFactVerifier $structuredFacts = new AssistantStructuredFactVerifier(),
+        private readonly ?AssistantLegacyLiveEvidenceAdapter $legacyLiveEvidence = null,
+        private readonly ?AssistantDocumentCoverageService $documentCoverageService = null,
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -135,9 +197,219 @@ class AIAssistantService
         int $organizationId,
         User $user,
         ?int $conversationId = null,
-        array $requestPayload = []
+        array $requestPayload = [],
+        ?string $surface = null
     ): array {
-        if (! $this->permissionChecker->canUseAssistant($user, $organizationId)) {
+        $this->activeActor = $user;
+        $this->activeProfile = (string) ($requestPayload['profile'] ?? 'normal');
+        $this->activeToolResults = [];
+        $this->documentContextBlocked = false;
+        $this->pendingSummary = null;
+        $this->requestOutcome = null;
+        $this->estimateResolutionAttempted = false;
+        $this->resolvedEstimateId = null;
+        $this->currentAttachmentIds = $requestPayload['attachment_ids'] ?? [];
+        $this->currentAttachmentIds = array_map('strtolower', $this->currentAttachmentIds);
+        sort($this->currentAttachmentIds, SORT_STRING);
+        $this->currentImageParts = [];
+        if ($this->requestLifecycle === null) {
+            try {
+                return $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
+            } finally {
+                $this->activeActor = null;
+                $this->activeToolResults = [];
+                $this->documentContextBlocked = false;
+            }
+        }
+
+        $payload = array_merge($requestPayload, ['message' => $query, 'conversation_id' => $conversationId]);
+        $started = $this->requestLifecycle->start($this->resolveOrganization($organizationId), $user, $conversationId, $payload, $surface);
+        if (is_array($started['response'])) {
+            $this->activeActor = null;
+            return $started['response'];
+        }
+        $this->activeRequest = $started['request'];
+        $requestPayload['request_id'] = $this->activeRequest->request_id;
+        try {
+            $result = $this->performAsk($query, $organizationId, $user, $conversationId, $requestPayload);
+            return $this->requestLifecycle->complete($this->activeRequest, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user));
+        } catch (Throwable $exception) {
+            $this->requestLifecycle->fail($this->activeRequest, $this->requestErrorCode($exception));
+            throw $exception;
+        } finally {
+            $this->activeRequest = null;
+            $this->activeActor = null;
+            $this->activeToolResults = [];
+            $this->pendingSummary = null;
+            $this->currentAttachmentIds = [];
+            $this->currentImageParts = [];
+            $this->documentContextBlocked = false;
+        }
+    }
+
+    public function executeStartedRequest(AssistantRequest $request, User $user): array
+    {
+        if ($this->requestLifecycle === null || $request->started_at === null || !is_array($request->payload)
+            || (int) $request->user_id !== (int) $user->id) {
+            throw new \InvalidArgumentException('Invalid queued assistant request');
+        }
+        $payload = $request->payload;
+        $query = $payload['message'] ?? null;
+        if (!is_string($query) || trim($query) === '') {
+            throw new \InvalidArgumentException('Invalid queued assistant payload');
+        }
+        $conversationId = isset($payload['conversation_id']) ? (int) $payload['conversation_id'] : null;
+        $this->activeActor = $user;
+        $this->activeProfile = (string) ($payload['profile'] ?? 'normal');
+        $this->activeToolResults = [];
+        $this->documentContextBlocked = false;
+        $this->pendingSummary = null;
+        $this->requestOutcome = null;
+        $this->estimateResolutionAttempted = false;
+        $this->resolvedEstimateId = null;
+        $this->activeRequest = $request;
+        $this->runtimeTimingEnabled = true;
+        $this->currentAttachmentIds = $payload['attachment_ids'] ?? [];
+        $this->currentImageParts = [];
+        try {
+            if ($this->currentAttachmentIds !== []) {
+                $validated = $this->measurePhase('attachment_prepare', fn (): array => app(AssistantChatAttachmentService::class)->prepareRequest($payload, $user, (int) $request->organization_id));
+                if (!hash_equals($request->request_hash, app(\App\Services\Credits\AICreditService::class)->canonicalAssistantRequest($validated))) {
+                    throw new AuthorizationException(trans_message('ai_assistant.request_mismatch'));
+                }
+            }
+            $this->measurePhase('request_context', fn () => $this->requestLifecycle->stage($request, $user, 'reading'));
+            $result = $this->performAsk($query, (int) $request->organization_id, $user, $conversationId, $payload);
+            return $this->measurePhase('request_complete', fn (): array => $this->requestLifecycle->complete($request, $user, $result, $this->isUsefulAnswer($result), fn () => $this->savePendingSummary($user)));
+        } catch (Throwable $exception) {
+            $errorCode = $this->requestErrorCode($exception);
+            $this->requestLifecycle->fail($request, $errorCode);
+            throw $exception;
+        } finally {
+            $this->runtimeTimingEnabled = false;
+            $this->activeRequest = null;
+            $this->activeActor = null;
+            $this->activeToolResults = [];
+            $this->pendingSummary = null;
+            $this->currentAttachmentIds = [];
+            $this->currentImageParts = [];
+            $this->documentContextBlocked = false;
+        }
+    }
+
+    private function shouldCheckDocumentCorpus(string $query, array $conversationContext): bool
+    {
+        if ($this->isDocumentKnowledgeRequest($query)) {
+            return true;
+        }
+
+        if ($this->isLiveFinancialContinuation($query) || ! $this->isDetailContinuation($query)) {
+            return false;
+        }
+
+        $lastRagContext = is_array($conversationContext['last_rag_context'] ?? null)
+            ? $conversationContext['last_rag_context'] : [];
+        foreach ($lastRagContext['sources'] ?? [] as $source) {
+            if (is_array($source) && (($source['source_type'] ?? null) === 'file_document'
+                || ($source['entity_type'] ?? null) === 'assistant_document')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isLiveFinancialContinuation(string $query): bool
+    {
+        $normalized = mb_strtolower(trim($query));
+
+        return $this->containsAnyText($normalized, [
+            'по деньгам', 'деньгам', 'платеж', 'платёж', 'оплат', 'сумм', 'смет', 'счет', 'счёт',
+        ]);
+    }
+
+    private function suppressDocumentContinuationContext(array $conversationContext): array
+    {
+        unset($conversationContext['last_rag_context']);
+
+        foreach (['last_request', 'last_request_context'] as $key) {
+            if (! is_array($conversationContext[$key] ?? null)) {
+                continue;
+            }
+
+            $requestContext = $key === 'last_request'
+                ? (is_array($conversationContext[$key]['context'] ?? null) ? $conversationContext[$key]['context'] : [])
+                : $conversationContext[$key];
+            $uiState = is_array($requestContext['ui_state'] ?? null) ? $requestContext['ui_state'] : [];
+            unset($uiState['assistant_follow_up_query']);
+            $requestContext['ui_state'] = $uiState;
+            if ($key === 'last_request') {
+                $conversationContext[$key]['context'] = $requestContext;
+            } else {
+                $conversationContext[$key] = $requestContext;
+            }
+        }
+
+        return $conversationContext;
+    }
+
+    private function isDocumentKnowledgeRequest(string $query): bool
+    {
+        $normalized = mb_strtolower(trim($query));
+        if ($this->containsAnyText($normalized, [
+            'база знаний', 'базы знаний', 'базе знаний', 'фрагмент', 'фрагменты',
+        ])) {
+            return true;
+        }
+
+        if (preg_match('/(?:загруженн\p{L}*|прикрепл\p{L}*|вложенн\p{L}*)\s+(?:[\p{L}-]+\s+){0,2}(?:документ\p{L}*|файл\p{L}*|договор\p{L}*)/u', $normalized) === 1) {
+            return true;
+        }
+
+        $mentionsDocument = preg_match('/(?:документ\p{L}*|файл\p{L}*|договор\p{L}*|стать\p{L}*|инструкц\p{L}*|регламент\p{L}*|методич\p{L}*|руководств\p{L}*)/u', $normalized) === 1;
+        if (! $mentionsDocument) {
+            $financialRequest = $this->containsAnyText($normalized, [
+                'платеж', 'платёж', 'оплат', 'сумм', 'смет', 'счет', 'счёт', 'склад', 'остатк',
+            ]);
+
+            return ! $financialRequest && $this->containsAnyText($normalized, ['источник', 'источники']);
+        }
+
+        return $this->containsAnyText($normalized, [
+            'что написано', 'что в документ', 'что в стать', 'что в инструкц', 'что в регламент',
+            'содержание', 'текст', 'перескаж', 'прочитай', 'прочт', 'изучи', 'проанализируй', 'услови',
+            'пункт', 'правил', 'требован', 'неустойк', 'гаранти', 'ответственност', 'расторжен',
+        ]);
+    }
+
+    private function documentCorpusIsComplete(int $organizationId, User $actor): bool
+    {
+        try {
+            $coverageService = $this->documentCoverageService ?? app(AssistantDocumentCoverageService::class);
+            $execution = app()->bound(AssistantRequestExecutionContext::class)
+                ? app(AssistantRequestExecutionContext::class) : null;
+            $coverage = fn (): array => $coverageService->coverage(
+                $organizationId,
+                $actor,
+                $execution === null ? null : $execution->assertCanContinue(...),
+                $execution === null ? null : fn (): int => $execution->remainingMilliseconds()
+            );
+            $result = $execution === null ? $coverage() : $execution->withDatabaseStatementTimeout(
+                fn (): array => $execution->withOperationBudget($coverage, 30_000, 'pgsql')
+            );
+
+            return AssistantDocumentCoverageService::isCompleteForAnswer($result);
+        } catch (AssistantRequestCancelled|AssistantRequestDeadlineExceeded|AuthorizationException|AccessDeniedHttpException $exception) {
+            throw $exception;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function performAsk(string $query, int $organizationId, User $user, ?int $conversationId, array $requestPayload): array
+    {
+        $this->providerUsageAttempts = [];
+        if (! $this->measurePhase('request_permission', fn (): bool => $this->permissionChecker->canUseAssistant($user, $organizationId))) {
             throw new AuthorizationException($this->assistantMessage('ai_assistant.access_denied', 'Недостаточно прав для работы с AI-ассистентом.'));
         }
 
@@ -147,23 +419,66 @@ class AIAssistantService
             'query_length' => strlen($query),
         ]);
 
-        if (! $this->usageTracker->canMakeRequest($organizationId)) {
+        $standaloneGreeting = $this->isStandaloneGreeting($query, $requestPayload);
+        if (! $standaloneGreeting && $this->activeRequest !== null) {
+            $this->requestLifecycle?->assertReservedBudget($this->activeRequest, $user);
+        } elseif (!$standaloneGreeting && ! $this->usageTracker->canMakeRequest($organizationId)) {
             throw new RuntimeException($this->assistantMessage('ai_assistant.limit_exceeded', 'Исчерпан месячный лимит запросов к AI-ассистенту.'));
         }
 
-        $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
-        $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
-        $accessContext = $this->accessContextResolver->resolve($user, $organizationId);
-        $taskPlan = $this->taskOrchestrator->plan($query, $requestPayload, $accessContext);
-        $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
+        $conversation = $this->measurePhase('conversation', function () use ($conversationId, $organizationId, $user): Conversation {
+            $conversation = $this->getOrCreateConversation($conversationId, $organizationId, $user);
+            if ($this->activeRequest !== null) {
+                $this->requestLifecycle?->bindConversation($this->activeRequest, $conversation, $user);
+            }
+            $this->stage('reading');
 
-        $this->conversationManager->addMessage(
+            return $conversation;
+        });
+        if ($standaloneGreeting) {
+            return $this->measurePhase('greeting', fn (): array => $this->answerStandaloneGreeting($query, $organizationId, $user, $conversation, $requestPayload));
+        }
+        $navigationRequestContext = $requestPayload['context'] ?? [];
+        $continuationContext = $conversation->context ?? [];
+        if ($this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
+            $this->documentContextBlocked = ! $this->documentCorpusIsComplete($organizationId, $user);
+            if ($this->documentContextBlocked) {
+                $continuationContext = $this->suppressDocumentContinuationContext($continuationContext);
+            }
+        }
+        $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $continuationContext);
+        if ($this->documentContextBlocked && is_array($requestPayload['context'] ?? null)) {
+            $requestContext = $requestPayload['context'];
+            $uiState = is_array($requestContext['ui_state'] ?? null) ? $requestContext['ui_state'] : [];
+            unset($uiState['assistant_follow_up_query']);
+            $requestContext['ui_state'] = $uiState;
+            $requestPayload['context'] = $requestContext;
+        }
+        $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
+        $this->activeEstimateSelection = null;
+        $selection = $conversation->context['selected_estimate'] ?? null;
+        if (is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
+            && $this->dataAccess->withCurrentChecks($user, $organizationId,
+                fn (): bool => $this->dataAccess->canReadEntityContent($user, $organizationId, 'estimate', $selection['estimate_id']), true)) {
+            $this->activeEstimateSelection = array_intersect_key($selection, array_flip(['estimate_id', 'position_filter', 'position_numbers']));
+        }
+        $accessContext = $this->measurePhase('access_context', fn (): array => $this->accessContextResolver->resolve($user, $organizationId));
+        $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($query, $requestPayload, $accessContext));
+        $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
+        $businessDomain = $this->businessDataDomain($taskPlan);
+        if ($businessDomain !== null && $this->dataAccess !== null && !$this->dataAccess->canReadDomain($user, $organizationId, $businessDomain)) {
+            $this->recordRequestOutcome('access_denied');
+        }
+
+        $userMessage = $this->conversationManager->addMessage(
             $conversation,
             'user',
             $query,
             0,
-            'gpt-4o-mini',
+            LunaModelPolicy::forProvider((string) config('ai-assistant.llm.provider', 'timeweb')),
             [
+                'actor_user_id' => (int) $user->id,
+                'request_id' => $requestPayload['request_id'] ?? null,
                 'request' => $taskPlan['request'],
                 'task_type' => $taskPlan['task_type'],
                 'capability' => $taskPlan['capability']['id'] ?? null,
@@ -171,28 +486,12 @@ class AIAssistantService
             ]
         );
 
-        $previousIntent = $conversation->context['last_intent'] ?? null;
-        $legacyConversationContext = array_merge($conversation->context ?? [], [
-            'current_request' => $taskPlan['request'],
-            'current_request_context' => $taskPlan['request']['context'] ?? [],
-        ]);
-        $legacyContext = $this->contextBuilder->buildContext(
-            $query,
-            $organizationId,
-            $user->id,
-            $previousIntent,
-            $legacyConversationContext
-        );
+        if ($this->currentAttachmentIds !== []) {
+            app(AssistantChatAttachmentService::class)->linkMessage($this->currentAttachmentIds, $userMessage, $user);
+        }
 
-        $this->logging->technical('ai.context.built', [
-            'organization_id' => $organizationId,
-            'intent' => $legacyContext['intent'] ?? 'unknown',
-            'context_keys' => array_keys($legacyContext),
-            'task_type' => $taskPlan['task_type'],
-            'capability' => $taskPlan['capability']['id'] ?? null,
-        ]);
-
-        $currentIntent = $legacyContext['intent'] ?? null;
+        $legacyContext = ['intent' => $taskPlan['request_understanding']['primary_intent'] ?? $taskPlan['task_type'] ?? 'summary'];
+        $currentIntent = $legacyContext['intent'];
         $executedAction = null;
 
         $conversationContext = array_merge($conversation->context ?? [], $this->buildLastRequestContext($query, $taskPlan));
@@ -213,24 +512,34 @@ class AIAssistantService
         $conversation->context = $conversationContext;
         $conversation->save();
 
-        $agentResult = $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan);
+        if (($taskPlan['section_navigation'] ?? false) && $this->activeEstimateSelection === null
+            && empty($conversationContext['selected_estimate']) && empty($conversationContext['selected_estimate_id'])
+            && is_array($navigationRequestContext) && AssistantRequestUnderstandingResolver::hasOnlyBackgroundProjectReferences($navigationRequestContext)
+            && empty($navigationRequestContext['entity_references']) && empty($navigationRequestContext['filters'])
+            && empty($navigationRequestContext['period'])
+            && array_diff(array_keys($navigationRequestContext), ['source_module', 'source_route', 'ui_state', 'entity_refs', 'period', 'filters']) === []) {
+            return $this->answerSectionNavigation($query, $organizationId, $user, $conversation, $requestPayload);
+        }
+
+        $agentResult = $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($agentResult !== null) {
             return $agentResult;
         }
 
-        $ragContext = $this->buildRagContext($query, $organizationId, $user, $taskPlan, $requestPayload);
-        $ragMetadata = is_array($ragContext['metadata'] ?? null) ? $ragContext['metadata'] : [];
-        $messages = $this->buildMessages(
-            $conversation,
-            $legacyContext,
-            $taskPlan,
-            is_string($ragContext['prompt'] ?? null) ? $ragContext['prompt'] : ''
-        );
+        $ragMetadata = ['used' => false, 'sources' => []];
+        [$messages, $tools] = $this->measurePhase('preparation', fn (): array => $this->readPhase(function () use ($taskPlan, $user, $organizationId, $conversation, $legacyContext, $query): array {
+            $metadata = $this->buildPreparationMetadata($taskPlan, $user, $organizationId);
+            $messages = $this->measurePhase('messages', fn (): array => $this->buildMessagesWithCapabilityHints($conversation, $legacyContext, $taskPlan, $query, $metadata['capability_hints']));
 
+            return [$messages, $metadata['tools']];
+        }, $user, $organizationId));
+
+        $verificationTimer = null;
         try {
             $options = [];
             $options['profile'] = 'assistant';
-            $tools = $this->resolveToolDefinitions($taskPlan);
+            $options['budget_profile'] = $this->activeProfile;
+            $this->recordUnavailableBusinessTools($taskPlan, $tools);
             if (! empty($tools)) {
                 $options['tools'] = $tools;
             }
@@ -250,7 +559,7 @@ class AIAssistantService
             }
 
             $loopCount = 0;
-            $maxLoops = 5;
+            $maxLoops = $this->activeRequest !== null ? max(0, $this->activeRequest->max_calls - 1) : TokenBudgetService::limits($this->activeProfile)['calls'] - 1;
             $organization = null;
 
             while (! empty($response['tool_calls']) && $loopCount < $maxLoops) {
@@ -265,6 +574,7 @@ class AIAssistantService
                 ];
 
                 foreach ($response['tool_calls'] as $toolCall) {
+                    $this->stage('tools');
                     $toolResult = $this->handleToolCall(
                         $toolCall,
                         $organization,
@@ -279,9 +589,11 @@ class AIAssistantService
                         $trustedDownloadUrls
                     );
 
-                    $toolContent = is_string($toolResult)
-                        ? $toolResult
-                        : (json_encode($toolResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{"error":"tool_result_serialization_failed"}');
+                    $toolName = (string) ($toolCall['function']['name'] ?? '');
+                    $providerResult = $this->toolResultForProvider($toolName, $toolResult);
+                    $toolContent = is_string($providerResult)
+                        ? $providerResult
+                        : (json_encode($providerResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{"error":"tool_result_serialization_failed"}');
 
                     $messages[] = [
                         'role' => 'tool',
@@ -289,9 +601,175 @@ class AIAssistantService
                         'name' => $toolCall['function']['name'] ?? 'unknown_tool',
                         'content' => $toolContent,
                     ];
+
+                    $serverResult = $this->activeToolResults[0] ?? null;
+                    $serverAnswer = is_array($serverResult) ? ($serverResult['server_formatted_answer'] ?? null) : null;
+                    $financialEvidence = is_array($serverResult) ? ($serverResult['financial_evidence'] ?? null) : null;
+                    $sourceRefs = is_array($serverResult) ? ($serverResult['source_refs'] ?? null) : null;
+                    $resolution = is_array($serverResult) ? ($serverResult['resolution'] ?? null) : null;
+                    $selection = is_array($serverResult) ? ($serverResult['selection'] ?? null) : null;
+                    $estimateEvidence = is_array($financialEvidence) ? ($financialEvidence['estimate'] ?? null) : null;
+                    $stockEvidence = is_array($serverResult) ? ($serverResult['stock_evidence'] ?? null) : null;
+                    $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+                    $requestPlan = is_array($taskPlan['request'] ?? null) ? $taskPlan['request'] : [];
+                    $requestMessage = is_string($requestPlan['message'] ?? null) ? $requestPlan['message'] : '';
+                    $expectedEntity = match ($toolName) {
+                        'get_material_stock' => 'warehouse',
+                        'get_estimate_answer' => 'estimate',
+                        default => null,
+                    };
+                    $expectedDomains = match ($toolName) {
+                        'get_material_stock' => ['warehouse', 'operations_warehouse'],
+                        'get_estimate_answer' => ['estimates', 'core_estimates'],
+                        default => [],
+                    };
+                    $understandingEvidence = $requestUnderstanding?->evidence ?? [];
+                    $understoodEntities = array_values(array_unique(array_map(
+                        static fn (array $item): string => (string) ($item['value'] ?? ''),
+                        array_filter($understandingEvidence, static fn (mixed $item): bool => is_array($item) && ($item['type'] ?? null) === 'entity')
+                    )));
+                    $understoodDomains = array_values(array_unique(array_map(
+                        static fn (array $item): string => (string) ($item['value'] ?? ''),
+                        array_filter($understandingEvidence, static fn (mixed $item): bool => is_array($item) && ($item['type'] ?? null) === 'primary_domain')
+                    )));
+                    $classifiedIntent = $requestMessage === '' ? null : $this->intentRecognizer->recognize($requestMessage);
+                    $intentMatchesTool = match ($toolName) {
+                        'get_material_stock' => $classifiedIntent === 'material_stock',
+                        'get_estimate_answer' => $classifiedIntent === 'general',
+                        default => false,
+                    };
+                    $singleIntentRequest = $requestUnderstanding !== null
+                        && $expectedEntity !== null
+                        && $requestUnderstanding->primaryIntent === 'question'
+                        && $requestUnderstanding->outputFormat === 'text'
+                        && $requestUnderstanding->actionPolicy === 'read_only'
+                        && $requestUnderstanding->constraints === []
+                        && $requestUnderstanding->confidence >= 0.65
+                        && $requestUnderstanding->requestedEntities === [$expectedEntity]
+                        && $understoodEntities === [$expectedEntity]
+                        && count($understoodDomains) === 1
+                        && in_array($understoodDomains[0], $expectedDomains, true)
+                        && in_array($this->businessDataDomain($taskPlan), $expectedDomains, true)
+                        && in_array($requestPlan['goal'] ?? null, [null, ''], true)
+                        && in_array($requestPlan['desired_mode'] ?? null, [null, ''], true)
+                        && $intentMatchesTool;
+                    if (
+                        $loopCount === 0
+                        && is_array($response['tool_calls'] ?? null)
+                        && count($response['tool_calls']) === 1
+                        && count($this->activeToolResults) === 1
+                        && $toolName === 'get_material_stock'
+                        && $this->isTerminalReadOnlyTool($toolName)
+                        && $singleIntentRequest
+                        && $executedAction === null
+                        && $proposedActions === []
+                        && $toolFailures === []
+                        && ! $degradedMode
+                        && is_array($serverResult)
+                        && ($serverResult['_tool_name'] ?? null) === $toolName
+                        && ($serverResult['status'] ?? null) === 'empty'
+                        && ($serverResult['validation_status'] ?? null) === 'verified'
+                        && ($serverResult['needs_clarification'] ?? false) === false
+                        && is_string($serverAnswer)
+                        && trim($serverAnswer) !== ''
+                        && is_array($serverResult['stock'] ?? null)
+                        && $serverResult['stock'] === []
+                        && is_array($sourceRefs)
+                        && $sourceRefs === []
+                        && is_array($serverResult['quantity_scope'] ?? null)
+                        && is_array($stockEvidence)
+                        && ($stockEvidence['scope'] ?? null) === 'warehouse_balance_sum'
+                        && ($stockEvidence['organization_id'] ?? null) === $organizationId
+                        && ($stockEvidence['actor_id'] ?? null) === (int) $user->id
+                        && is_array($stockEvidence['filters'] ?? null)
+                        && ($stockEvidence['quantity_scope'] ?? null) === $serverResult['quantity_scope']
+                        && is_array($stockEvidence['rows'] ?? null)
+                        && $stockEvidence['rows'] === []
+                        && ($stockEvidence['validation_status'] ?? null) === 'verified'
+                        && is_string($stockEvidence['version'] ?? null)
+                        && $stockEvidence['version'] !== ''
+                    ) {
+                        $response['content'] = $serverAnswer;
+                        $response['tool_calls'] = [];
+                        break 2;
+                    }
+
+                    if (
+                        $loopCount === 0
+                        && is_array($response['tool_calls'] ?? null)
+                        && count($response['tool_calls']) === 1
+                        && count($this->activeToolResults) === 1
+                        && $toolName === 'get_estimate_answer'
+                        && $this->isTerminalReadOnlyTool($toolName)
+                        && $singleIntentRequest
+                        && $executedAction === null
+                        && $proposedActions === []
+                        && $toolFailures === []
+                        && ! $degradedMode
+                        && is_array($serverResult)
+                        && ($serverResult['_tool_name'] ?? null) === $toolName
+                        && ($serverResult['status'] ?? null) === 'resolved'
+                        && ($serverResult['validation_status'] ?? null) === 'verified'
+                        && ($serverResult['needs_clarification'] ?? null) === false
+                        && is_array($resolution)
+                        && ($resolution['status'] ?? null) === 'resolved'
+                        && is_int($resolution['estimate_id'] ?? null)
+                        && is_array($selection)
+                        && ($selection['estimate_id'] ?? null) === $resolution['estimate_id']
+                        && is_string($serverAnswer)
+                        && trim($serverAnswer) !== ''
+                        && is_array($sourceRefs)
+                        && $sourceRefs !== []
+                        && is_array($financialEvidence)
+                        && ($financialEvidence['validation_status'] ?? null) === 'verified'
+                        && ($financialEvidence['totals_validation_status'] ?? null) === 'verified'
+                        && is_array($estimateEvidence)
+                        && ($estimateEvidence['id'] ?? null) === $resolution['estimate_id']
+                        && is_array($financialEvidence['totals'] ?? null)
+                        && is_string($financialEvidence['fetched_at'] ?? null)
+                        && $financialEvidence['fetched_at'] !== ''
+                        && is_string($financialEvidence['version'] ?? null)
+                        && $financialEvidence['version'] !== ''
+                        && ($financialEvidence['source_refs'] ?? null) === $sourceRefs
+                    ) {
+                        $financialProof = $this->financialClaims?->guard($serverAnswer, [$serverResult]);
+                        $structuredProof = $this->structuredFacts->guard($query, $serverAnswer, [$serverResult]);
+                        if (
+                            is_array($financialProof)
+                            && ($financialProof['validation_status'] ?? null) === 'verified'
+                            && ($financialProof['source_refs'] ?? null) === $sourceRefs
+                            && ($financialProof['text'] ?? null) === $serverAnswer
+                            && is_array($structuredProof)
+                            && ($structuredProof['validation_status'] ?? null) === 'verified'
+                            && ($structuredProof['needs_clarification'] ?? null) === false
+                            && ($structuredProof['source_refs'] ?? null) === $sourceRefs
+                            && ($structuredProof['text'] ?? null) === $serverAnswer
+                        ) {
+                            $response['content'] = $serverAnswer;
+                            $response['tool_calls'] = [];
+                            break 2;
+                        }
+                    }
                 }
 
-                $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
+                try {
+                    $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
+                } catch (AssistantBudgetExceeded) {
+                    $toolFailures[] = trans_message('ai_assistant.approved_budget_exceeded');
+                    $response['content'] = trans_message('ai_assistant.budget_partial_answer');
+                    $response['tool_calls'] = [];
+                    $degradedMode = true;
+                    break;
+                } catch (\DomainException $exception) {
+                    if ($exception->getMessage() !== 'ai_token_budget_exhausted') {
+                        throw $exception;
+                    }
+                    $toolFailures[] = trans_message('ai_assistant.context_budget_exhausted');
+                    $response['content'] = trans_message('ai_assistant.context_budget_exhausted');
+                    $response['tool_calls'] = [];
+                    $degradedMode = true;
+                    break;
+                }
                 $response = $responseEnvelope['response'];
                 $degradedMode = $degradedMode || (bool) ($responseEnvelope['degraded_mode'] ?? false);
 
@@ -302,12 +780,66 @@ class AIAssistantService
                 $loopCount++;
             }
 
+            $terminalToolResponse = ! empty($response['tool_calls']);
+            if ($terminalToolResponse) {
+                $user->refresh();
+                $this->stage('tools');
+                $toolCalls = $response['tool_calls'];
+                $toolCall = is_array($toolCalls) && count($toolCalls) === 1 ? reset($toolCalls) : null;
+                $toolName = is_array($toolCall) ? (string) ($toolCall['function']['name'] ?? '') : '';
+                $advertisedTools = array_column(array_column($tools, 'function'), 'name');
+
+                if (is_array($toolCall) && in_array($toolName, $advertisedTools, true)
+                    && $this->isTerminalReadOnlyTool($toolName) && $this->toolRegistry->getTool($toolName) !== null) {
+                    if (! $organization instanceof Organization) {
+                        $organization = $this->resolveOrganization($organizationId);
+                    }
+                    $this->handleToolCall(
+                        $toolCall,
+                        $organization,
+                        $user,
+                        $organizationId,
+                        $taskPlan,
+                        false,
+                        $executedAction,
+                        $toolEvidence,
+                        $toolFailures,
+                        $proposedActions,
+                        $trustedDownloadUrls
+                    );
+                }
+
+                $response['content'] = trans_message('ai_assistant_facts.live_proof_required');
+                $response['tool_calls'] = [];
+            }
+
             $toolFailures = array_values(array_unique(array_filter(
                 $toolFailures,
                 static fn (mixed $value): bool => is_string($value) && trim($value) !== ''
             )));
+            $hasCurrentChatImages = $this->currentAttachmentIds !== [];
+            $documentCorpusIncomplete = ! $hasCurrentChatImages && $this->documentContextBlocked;
+            $documentSearchPartial = false;
+            foreach ($this->activeToolResults as $toolResult) {
+                if ($hasCurrentChatImages || ($toolResult['_tool_name'] ?? null) !== 'search_assistant_documents') {
+                    continue;
+                }
+                $documentCorpusIncomplete = $documentCorpusIncomplete || ($toolResult['status'] ?? null) === 'corpus_incomplete';
+                $documentSearchPartial = $documentSearchPartial || ($toolResult['status'] ?? null) === 'partial';
+            }
+            $verificationToolResults = $documentCorpusIncomplete || $documentSearchPartial
+                ? array_values(array_filter($this->activeToolResults,
+                    static fn (array $toolResult): bool => ! in_array($toolResult['_tool_name'] ?? null,
+                        ['search_assistant_documents', 'generate_rag_pdf_report'], true)))
+                : $this->activeToolResults;
+            $ragMetadata = $this->ragMetadataFromToolResults($query, $verificationToolResults);
 
+            $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
+            $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $verificationToolResults, $query) : null;
+            $rawPresentationPlan = $plannedPresentation !== null
+                ? $assistantContent : null;
+            $this->stage('verifying');
             if ($assistantContent === '') {
                 $assistantContent = $this->assistantMessage('ai_assistant.empty_response', 'Не удалось сформировать содержательный ответ по текущему запросу.');
             }
@@ -317,6 +849,164 @@ class AIAssistantService
                 'rag_context' => $ragMetadata,
             ]);
             $assistantContent = $this->softenUnsupportedCriticalClaims($assistantContent, $ragMetadata);
+
+            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults);
+            if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
+                $assistantContent = $financialCheck['text'];
+            }
+            $rejectedFinancialPlan = $rawPresentationPlan !== null && AssistantPresentationPlanner::hasFinancialSelection($rawPresentationPlan)
+                && (!in_array($financialCheck['validation_status'] ?? null, ['verified', 'partial'], true)
+                    || ($financialCheck['source_refs'] ?? []) === []
+                    || !(new AssistantPresentationPlanner)->financialSelectionCovered($rawPresentationPlan, $verificationToolResults, $financialCheck['source_refs'] ?? []));
+            if ($rejectedFinancialPlan) {
+                $rawPresentationPlan = null;
+            }
+            $structuredCheck = $proposedActions === []
+                ? ($rejectedFinancialPlan ? ($financialCheck ?? ['text' => trans_message('ai_assistant_financial.unverified_claim'),
+                    'validation_status' => 'partial', 'source_refs' => []])
+                    : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $verificationToolResults))
+                : null;
+            if (is_array($structuredCheck)) {
+                $assistantContent = $structuredCheck['text'];
+            }
+            if ($terminalToolResponse && ($structuredCheck['source_refs'] ?? []) === [] && $proposedActions === []
+                && ! $rejectedFinancialPlan && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
+                $terminalProof = $this->structuredFacts->confirmedResults($verificationToolResults, $query);
+                if (($terminalProof['source_refs'] ?? []) !== []) {
+                    $terminalProof['needs_clarification'] = (bool) ($structuredCheck['needs_clarification'] ?? false);
+                    $assistantContent = $terminalProof['text'];
+                    $structuredCheck = $terminalProof;
+                }
+            }
+            $clarificationSelection = is_array($conversation->context['selected_estimate'] ?? null)
+                ? $conversation->context['selected_estimate'] : null;
+            $clarificationPinnedId = isset($clarificationSelection['estimate_id']) ? (int) $clarificationSelection['estimate_id'] : null;
+            if ($clarificationPinnedId === null) {
+                foreach ($taskPlan['request']['context']['entity_refs'] ?? [] as $ref) {
+                    if (is_array($ref) && ($ref['type'] ?? null) === 'estimate' && is_numeric($ref['id'] ?? null)) {
+                        $clarificationPinnedId = (int) $ref['id'];
+                        break;
+                    }
+                }
+            }
+            $financialIntentSupported = $this->financialAnswers?->supports($query, $clarificationPinnedId) ?? false;
+            $stockDomainResolved = false;
+            foreach ($rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
+                if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
+                    $verifiedStock = $this->verifyMaterialStock($toolResult, $user, $organizationId);
+                    if ($verifiedStock !== null) {
+                        $stockDomainResolved = in_array($toolResult['status'] ?? null, ['success', 'empty'], true)
+                            && ($verifiedStock['validation_status'] ?? null) === 'verified'
+                            && ($verifiedStock['needs_clarification'] ?? true) === false;
+                        $assistantContent = $verifiedStock['text'];
+                        $structuredCheck = $verifiedStock;
+                        $compoundParts = false;
+                        foreach ($this->activeToolResults as $financialResult) {
+                            if (($financialResult['_tool_name'] ?? null) === 'get_estimate_answer'
+                                && !($financialResult['needs_clarification'] ?? true)
+                                && is_array($financialResult['financial_evidence'] ?? null)
+                                && ($financialResult['financial_evidence']['fetched_at'] ?? null) !== null
+                                && ($financialResult['financial_evidence']['source_refs'] ?? []) !== []
+                                && is_string($financialResult['server_formatted_answer'] ?? null)) {
+                                $assistantContent = $financialResult['server_formatted_answer']."\n\n".$assistantContent;
+                                $compoundParts = true;
+                                $structuredCheck['text'] = $assistantContent;
+                                $structuredCheck['source_refs'] = array_merge($financialResult['source_refs'] ?? [], $structuredCheck['source_refs']);
+                                if (($financialResult['validation_status'] ?? 'partial') !== 'verified') {
+                                    $structuredCheck['validation_status'] = 'partial';
+                                }
+                            }
+                        }
+                        $otherFacts = $this->structuredFacts->confirmedResults(array_values(array_filter($verificationToolResults,
+                            static fn (array $result): bool => !in_array($result['_tool_name'] ?? null, ['get_material_stock', 'get_estimate_answer'], true))), $query);
+                        if ($otherFacts['source_refs'] !== []) {
+                            $assistantContent .= "\n\n".$otherFacts['text'];
+                            $compoundParts = true;
+                            $structuredCheck['text'] = $assistantContent;
+                            $structuredCheck['source_refs'] = array_merge($structuredCheck['source_refs'], $otherFacts['source_refs']);
+                            $structuredCheck['validation_status'] = 'partial';
+                            $structuredCheck['structured_evidence_truncated'] = $otherFacts['structured_evidence_truncated'] ?? false;
+                        }
+                        if ($compoundParts) {
+                            $structuredCheck['validation_status'] = 'partial';
+                            $assistantContent .= "\n\n".trans_message('ai_assistant.checked_sources_only');
+                        }
+                        $structuredCheck['text'] = $assistantContent;
+                        break;
+                    }
+                }
+                if ($financialIntentSupported && ($toolResult['_tool_name'] ?? null) === 'get_estimate_answer' && ($toolResult['needs_clarification'] ?? false)
+                    && is_string($toolResult['server_formatted_answer'] ?? null)) {
+                    $assistantContent = $toolResult['server_formatted_answer'];
+                    $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
+                        'needs_clarification' => true, 'source_refs' => $toolResult['source_refs'] ?? []];
+                    break;
+                }
+            }
+
+            foreach (array_reverse($verificationToolResults) as $toolResult) {
+                if (($toolResult['_tool_name'] ?? null) === 'get_bim_model_elements' && $proposedActions === []) {
+                    $verifiedBim = $this->verifyBimModel($toolResult, $user, $organizationId);
+                    if (($structuredCheck['source_refs'] ?? []) !== []) {
+                        $verifiedBim['text'] .= "\n\n".$structuredCheck['text'];
+                        $verifiedBim['source_refs'] = array_merge($verifiedBim['source_refs'], $structuredCheck['source_refs']);
+                        if (($verifiedBim['validation_status'] ?? null) !== 'verified' || ($structuredCheck['validation_status'] ?? null) !== 'verified') {
+                            $verifiedBim['validation_status'] = 'partial';
+                        }
+                        $verifiedBim['needs_clarification'] = (bool) ($verifiedBim['needs_clarification'] ?? false)
+                            || (bool) ($structuredCheck['needs_clarification'] ?? false);
+                    }
+                    $assistantContent = $verifiedBim['text'];
+                    $structuredCheck = $verifiedBim;
+                    break;
+                }
+            }
+            $documentNotices = [];
+            $documentUnavailable = false;
+            foreach ($this->activeToolResults as $toolResult) {
+                if ($hasCurrentChatImages || ($toolResult['_tool_name'] ?? null) !== 'search_assistant_documents') {
+                    continue;
+                }
+                if (($toolResult['status'] ?? null) === 'unavailable') {
+                    $documentUnavailable = true;
+                    $documentNotices[] = trans_message('ai_assistant.document_search_unavailable');
+                } elseif (($toolResult['status'] ?? null) === 'partial') {
+                    $documentNotices[] = trans_message('ai_assistant.document_search_partial');
+                }
+            }
+            if ($documentCorpusIncomplete || $documentSearchPartial) {
+                $documentNotice = trans_message($documentCorpusIncomplete
+                    ? 'ai_assistant.document_corpus_incomplete' : 'ai_assistant.document_search_partial');
+                $serverVerifiedText = null;
+                $serverVerifiedRefs = [];
+                if (is_array($structuredCheck) && (($structuredCheck['source_refs'] ?? []) !== []
+                    || ($stockDomainResolved && ($structuredCheck['validation_status'] ?? null) === 'verified'))
+                    && is_string($structuredCheck['text'] ?? null) && trim($structuredCheck['text']) !== '') {
+                    $serverVerifiedText = trim($structuredCheck['text']);
+                    $serverVerifiedRefs = $structuredCheck['source_refs'];
+                } elseif (is_array($financialCheck) && ($financialCheck['source_refs'] ?? []) !== []
+                    && is_string($financialCheck['text'] ?? null) && trim($financialCheck['text']) !== '') {
+                    $serverVerifiedText = trim($financialCheck['text']);
+                    $serverVerifiedRefs = $financialCheck['source_refs'];
+                }
+                $assistantContent = $serverVerifiedText === null
+                    ? $documentNotice
+                    : $serverVerifiedText."\n\n".$documentNotice;
+                $structuredCheck = ['text' => $assistantContent, 'validation_status' => 'partial',
+                    'source_refs' => $serverVerifiedRefs, 'replaced' => true, 'needs_clarification' => false];
+                $ragMetadata = ['enabled' => true, 'used' => false, 'query' => $query, 'sources' => [], 'limits' => ['returned' => 0]];
+                $degradedMode = true;
+            } elseif ($documentNotices !== []) {
+                $degradedMode = true;
+                $notice = implode("\n", array_unique($documentNotices));
+                $hasProof = ($structuredCheck['source_refs'] ?? []) !== [] || ($financialCheck['source_refs'] ?? []) !== []
+                    || ($ragMetadata['used'] ?? false);
+                $assistantContent = $documentUnavailable && !$hasProof ? $notice : $assistantContent."\n\n".$notice;
+                if (is_array($structuredCheck)) {
+                    $structuredCheck['text'] = $assistantContent;
+                    $structuredCheck['validation_status'] = 'partial';
+                }
+            }
 
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'degraded_mode' => $degradedMode,
@@ -328,29 +1018,60 @@ class AIAssistantService
                 'rag_context' => $ragMetadata,
             ]);
 
+            $assistantPayload['source_refs'] = is_array($structuredCheck) && ($structuredCheck['replaced'] || $structuredCheck['source_refs'] !== [])
+                ? $structuredCheck['source_refs']
+                : ($terminalToolResponse ? [] : $this->collectSourceRefs($ragMetadata, $this->activeToolResults));
+            $validationStatus = $structuredCheck['validation_status'] ?? $financialCheck['validation_status'] ?? 'unverified';
+            $assistantPayload['validation_status'] = $validationStatus === 'unverified' && $assistantPayload['source_refs'] !== []
+                ? 'partial' : $validationStatus;
+            if (($stockDomainResolved || (($structuredCheck['replaced'] ?? false)
+                && in_array($validationStatus, ['verified', 'partial'], true) && $assistantPayload['source_refs'] !== [])) && empty($taskPlan['capability'])
+                && is_array($assistantPayload['missing_data'] ?? null)) {
+                $assistantPayload['missing_data'] = array_values(array_filter($assistantPayload['missing_data'],
+                    static fn (mixed $reason): bool => $reason !== self::UNRESOLVED_DOMAIN_MESSAGE));
+            }
+            $assistantPayload['needs_clarification'] = (bool) ($assistantPayload['needs_clarification'] ?? false)
+                || (bool) ($structuredCheck['needs_clarification'] ?? false)
+                || ($terminalToolResponse && $assistantPayload['source_refs'] === []);
+            if (($structuredCheck['structured_evidence_truncated'] ?? false) === true) {
+                $assistantPayload['structured_evidence_truncated'] = true;
+            }
+            $assistantPayload['request_id'] = $requestPayload['request_id'] ?? null;
+            foreach (['next_actions', 'proposed_actions'] as $key) {
+                $assistantPayload[$key] = array_map(static fn (array $action): array =>
+                    isset($action['tool_name']) ? array_merge($action, ['origin_request_id' => $requestPayload['request_id'] ?? null]) : $action,
+                    $assistantPayload[$key] ?? []);
+            }
+            $assistantPayload['actor_user_id'] = (int) $user->id;
+            $assistantPayload['fetched_at'] = now()->toISOString();
+            $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
+            $verificationTimer->finish();
             $this->rememberRagContext($conversation, $ragMetadata);
+            $this->rememberResolvedEstimate($conversation, $user, $organizationId);
 
+            $this->pendingSummary = [
+                'conversation' => $conversation,
+                'summary' => json_encode(['user_request' => $query, 'request_id' => $assistantPayload['request_id']], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'selected_entities' => $this->selectedSummaryEntities($requestPayload, $organizationId),
+                'source_refs' => $assistantPayload['source_refs'],
+                'user_decisions' => [['request_id' => $assistantPayload['request_id'], 'user_request' => $query]],
+            ];
+
+            $tokensUsed = (int) array_sum(array_column($this->providerUsageAttempts, 'tokens'));
+            $cost = (float) array_sum(array_column($this->providerUsageAttempts, 'cost'));
             $assistantMessage = $this->conversationManager->addMessage(
                 $conversation,
                 'assistant',
                 $assistantContent,
-                (int) ($response['tokens_used'] ?? 0),
-                (string) ($response['model'] ?? 'gpt-4o-mini'),
+                $tokensUsed,
+                (string) ($response['model'] ?? $this->llmProvider->getModel()),
                 $assistantPayload
-            );
-
-            $cost = $this->usageTracker->calculateCost(
-                (int) ($response['tokens_used'] ?? 0),
-                (string) ($response['model'] ?? 'gpt-4o-mini'),
-                isset($response['input_tokens']) ? (int) $response['input_tokens'] : null,
-                isset($response['output_tokens']) ? (int) $response['output_tokens'] : null,
-                isset($response['provider']) ? (string) $response['provider'] : null
             );
 
             $this->usageTracker->trackRequest(
                 $organizationId,
                 $user,
-                (int) ($response['tokens_used'] ?? 0),
+                $tokensUsed,
                 $cost
             );
 
@@ -358,7 +1079,7 @@ class AIAssistantService
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
                 'conversation_id' => $conversation->id,
-                'tokens_used' => (int) ($response['tokens_used'] ?? 0),
+                'tokens_used' => $tokensUsed,
                 'cost_rub' => $cost,
                 'provider' => $response['provider'] ?? null,
                 'model' => $response['model'] ?? null,
@@ -373,11 +1094,11 @@ class AIAssistantService
                     'id' => $assistantMessage->id,
                     'role' => 'assistant',
                     'content' => $assistantContent,
-                    'tokens_used' => (int) ($response['tokens_used'] ?? 0),
+                    'tokens_used' => $tokensUsed,
                     'metadata' => $assistantPayload,
                     'created_at' => $assistantMessage->created_at?->toISOString(),
                 ],
-                'tokens_used' => (int) ($response['tokens_used'] ?? 0),
+                'tokens_used' => $tokensUsed,
                 'usage' => $this->usageTracker->getUsageStats($organizationId),
             ];
 
@@ -387,10 +1108,11 @@ class AIAssistantService
 
             return $result;
         } catch (Throwable $exception) {
+            $verificationTimer?->finish($exception);
             $this->logging->technical('ai.assistant.error', [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
-                'error' => $exception->getMessage(),
+                'exception_class' => $exception::class,
             ], 'error');
 
             throw $exception;
@@ -491,6 +1213,9 @@ class AIAssistantService
         if ($this->isReportAgentState($state)) {
             $payload = $this->sanitizeReportPayload($payload);
         }
+        $payload['needs_clarification'] = true;
+        $payload['validation_status'] = 'unverified';
+        $payload = $this->decorateMetadata($payload, $user);
 
         $assistantMessage = $this->conversationManager->addMessage(
             $conversation,
@@ -514,6 +1239,7 @@ class AIAssistantService
         array $toolArguments
     ): array {
         $organization = $this->resolveOrganization($organizationId);
+        $this->stage('tools');
         $toolResult = $this->agentExecutor->execute(
             $toolName,
             $toolArguments,
@@ -528,6 +1254,9 @@ class AIAssistantService
         )));
 
         $toolStatus = (string) ($toolResult['status'] ?? 'error');
+        if ($toolStatus === 'error' || $artifacts === []) {
+            $this->recordRequestOutcome('service_error');
+        }
         $finalState = $this->stateWithStatus(
             $state,
             $toolStatus === 'error' || $artifacts === [] ? 'failed' : 'completed'
@@ -557,6 +1286,10 @@ class AIAssistantService
         if ($this->isReportAgentState($finalState)) {
             $payload = $this->sanitizeReportPayload($payload);
         }
+        $payload['source_refs'] = $this->collectSourceRefs([], [is_array($toolResult['raw'] ?? null) ? $toolResult['raw'] : []]);
+        $payload['validation_status'] = $artifacts === [] ? 'unverified' : 'partial';
+        $payload['task_status'] = $artifacts === [] ? 'failed' : 'completed';
+        $payload = $this->decorateMetadata($payload, $user);
 
         $assistantMessage = $this->conversationManager->addMessage(
             $conversation,
@@ -726,6 +1459,434 @@ class AIAssistantService
         return $organization;
     }
 
+    private function stage(string $stage): void
+    {
+        if ($this->activeRequest !== null && $this->activeActor !== null) {
+            $this->requestLifecycle?->stage($this->activeRequest, $this->activeActor, $stage);
+        }
+    }
+
+    private function executionCheckpoint(): void
+    {
+        if (app()->bound(AssistantRequestExecutionContext::class)) {
+            app(AssistantRequestExecutionContext::class)->assertCanContinue();
+        }
+    }
+
+    private function measurePhase(string $phase, callable $operation): mixed
+    {
+        return AssistantRequestPhaseTimer::run($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, $phase, $operation);
+    }
+
+    private function requestErrorCode(Throwable $exception): string
+    {
+        return match (true) {
+            $exception instanceof AssistantRequestDeadlineExceeded => 'request_deadline_exceeded',
+            $exception instanceof AssistantRequestCancelled => 'request_cancelled',
+            $exception instanceof AssistantBudgetExceeded => 'approved_budget_exceeded',
+            $exception instanceof AuthorizationException => 'access_revoked',
+            default => 'request_failed',
+        };
+    }
+
+    protected function ragMetadataFromToolResults(string $query, array $toolResults): array
+    {
+        $sources = [];
+        foreach ($toolResults as $result) {
+            if (!is_array($result) || !in_array($result['status'] ?? null, ['success', 'partial'], true) || !is_array($result['rag_context'] ?? null)) {
+                continue;
+            }
+            foreach ($result['rag_context']['sources'] ?? [] as $source) {
+                if (is_array($source) && isset($source['entity_type'], $source['entity_id'])) {
+                    $sources[hash('sha256', json_encode($source, JSON_THROW_ON_ERROR))] = $source;
+                }
+            }
+        }
+        return ['enabled' => true, 'used' => $sources !== [], 'query' => $query, 'sources' => array_values($sources),
+            'limits' => ['returned' => count($sources)]];
+    }
+
+    protected function toolResultForProvider(string $toolName, array|string $result): array|string
+    {
+        return is_array($result)
+            ? AssistantToolResultProjection::forProvider($toolName, $result)
+            : $result;
+    }
+
+    private function readPhase(callable $read, User $actor, int $organizationId): mixed
+    {
+        if (!app()->bound(AssistantRequestExecutionContext::class)) {
+            return $read();
+        }
+        $execution = app(AssistantRequestExecutionContext::class);
+        $requestId = $this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null;
+        $timingCallback = $requestId === null ? null : static function (
+            string $phase,
+            float $durationMs,
+            bool $success,
+            ?string $exceptionClass,
+        ) use ($requestId): void {
+            AssistantRequestPhaseTimer::recordDuration($requestId, $phase, $durationMs, $success, $exceptionClass);
+        };
+
+        return app(AssistantReadConcurrencyLimiter::class)->run(
+            fn (callable $heartbeat): mixed => $execution->withOperationBudget(function () use ($heartbeat, $read, $actor, $organizationId): mixed {
+                $heartbeat();
+                $result = $this->dataAccess === null ? $read() : $this->dataAccess->withCurrentChecks(
+                    $actor, $organizationId, $read, false, $heartbeat);
+                $heartbeat();
+                return $result;
+            }, 30_000), fn () => $this->executionCheckpoint(), $organizationId, fn (): int => $execution->remainingMilliseconds(), $timingCallback);
+    }
+
+    protected function verifyMaterialStock(array $result, User $actor, int $organizationId): ?array
+    {
+        if (!in_array($result['status'] ?? null, ['success', 'empty'], true) || !is_array($result['stock_evidence'] ?? null)) {
+            return null;
+        }
+        $read = fn (): ?array => $this->measurePhase('stock_read', fn (): ?array => app(AssistantMaterialStockReader::class)->verifiedAnswer($result, $actor, $organizationId));
+        $this->executionCheckpoint();
+        try {
+            $verified = $this->readPhase($read, $actor, $organizationId);
+        } catch (QueryException $exception) {
+            if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '57014') {
+                throw $exception;
+            }
+            $verified = null;
+        }
+        $this->executionCheckpoint();
+        if ($verified === null) {
+            $this->recordRequestOutcome('service_error');
+            return ['text' => trans_message('ai_assistant.material_stock_unavailable'), 'replaced' => true,
+                'validation_status' => 'unverified', 'needs_clarification' => false, 'source_refs' => []];
+        }
+        return $verified;
+    }
+
+    protected function verifyBimModel(array $result, User $actor, int $organizationId): array
+    {
+        $this->executionCheckpoint();
+        try {
+            $verified = $this->readPhase(fn (): ?array => app(AssistantBimModelReader::class)
+                ->verifiedAnswer($result, $actor, $organizationId), $actor, $organizationId);
+        } catch (QueryException $exception) {
+            if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '57014') {
+                throw $exception;
+            }
+            $verified = null;
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            $verified = null;
+        }
+        $this->executionCheckpoint();
+
+        return $verified ?? ['text' => trans_message('ai_assistant_bim.unavailable'), 'replaced' => true,
+            'validation_status' => 'unverified', 'needs_clarification' => true, 'source_refs' => []];
+    }
+
+    private function progress(?string $code, string $state): void
+    {
+        if ($code !== null && $this->activeRequest !== null && $this->activeActor !== null) {
+            $this->requestLifecycle?->progress($this->activeRequest, $this->activeActor, $code, $state);
+        }
+    }
+
+    private function isUsefulAnswer(array $result): bool
+    {
+        $metadata = $result['message']['metadata'] ?? [];
+        return trim((string) ($result['message']['content'] ?? '')) !== ''
+            && !($metadata['needs_clarification'] ?? false)
+            && !($metadata['budget_exhausted'] ?? false)
+            && !($metadata['access_denied'] ?? false)
+            && !($metadata['service_error'] ?? false)
+            && !in_array($metadata['outcome'] ?? null, ['access_denied', 'service_error', 'request_blocked', 'insufficient_data'], true)
+            && ($metadata['task_status'] ?? null) !== 'failed';
+    }
+
+    private function decorateMetadata(array $payload, User $actor): array
+    {
+        if ($this->requestOutcome !== null) {
+            $payload['outcome'] = $this->requestOutcome;
+            $payload['access_denied'] = $this->requestOutcome === 'access_denied';
+            $payload['service_error'] = $this->requestOutcome === 'service_error';
+        }
+        unset($payload['confidence']);
+        $payload['request_id'] = $this->activeRequest?->request_id ?? ($payload['request_id'] ?? null);
+        $payload['actor_user_id'] = (int) $actor->id;
+        $payload['request_state'] = $this->activeRequest !== null ? 'pending' : 'completed';
+        $payload['source_refs'] ??= [];
+        $payload['validation_status'] ??= 'unverified';
+        $payload['fetched_at'] ??= now()->toISOString();
+        return $payload;
+    }
+
+    private function recordRequestOutcome(string $outcome): void
+    {
+        if ($this->requestOutcome !== 'access_denied') {
+            $this->requestOutcome = $outcome;
+        }
+    }
+
+    private function recordUnavailableBusinessTools(array $taskPlan, array $tools): void
+    {
+        if ($this->businessDataDomain($taskPlan) === null) {
+            return;
+        }
+        $understanding = $this->requestUnderstandingFromPlan($taskPlan);
+        $category = match ($understanding?->primaryIntent) {
+            'create', 'update', 'delete', 'approve', 'send' => 'mutation',
+            'generate_report' => 'report',
+            default => null,
+        };
+        if ($tools !== [] && $category === null) {
+            return;
+        }
+        $allowActions = (bool) ($taskPlan['request']['allow_actions'] ?? false);
+        foreach ($tools as $definition) {
+            $name = $definition['function']['name'] ?? null;
+            if (is_string($name) && $understanding instanceof AssistantRequestUnderstanding) {
+                $eligibility = $this->toolEligibilityPolicy->canExposeTool($name, $understanding, $allowActions);
+                if ($eligibility->allowed && $eligibility->category === $category) {
+                    return;
+                }
+            }
+        }
+        $this->recordRequestOutcome($category === 'mutation' && !$allowActions ? 'request_blocked' : 'service_error');
+    }
+
+    private function businessDataDomain(array $taskPlan): ?string
+    {
+        $understanding = $this->requestUnderstandingFromPlan($taskPlan);
+        if (!$understanding instanceof AssistantRequestUnderstanding || $understanding->requestedEntities === []) {
+            return null;
+        }
+        $message = (string) ($taskPlan['request']['message'] ?? '');
+        if (preg_match('/^\s*(?:что\s+(?:(?:ты|вы|ассистент)\s+)?уме[её]|какие\s+(?:у\s+(?:тебя|вас)\s+)?возможности)/iu', $message)) {
+            return null;
+        }
+        $domain = $taskPlan['capability']['domain'] ?? $taskPlan['capability']['id'] ?? null;
+        return is_string($domain) && $domain !== ''
+            ? match ($domain) { 'notifications' => 'projects', 'payments' => 'finance', 'schedules' => 'schedule', default => $domain }
+            : null;
+    }
+
+    private function savePendingSummary(User $actor): void
+    {
+        $pending = $this->pendingSummary;
+        if ($pending === null || !($pending['conversation'] ?? null) instanceof Conversation) {
+            return;
+        }
+        $this->measurePhase('summary_publish', function () use ($pending, $actor): void {
+            $conversation = $pending['conversation'];
+            $conversation->refresh();
+            $this->conversationManager->saveSummary($conversation, $actor, [
+                'validation_status' => 'verified', 'summary' => $pending['summary'],
+                'selected_entities' => $pending['selected_entities'], 'user_decisions' => $pending['user_decisions'],
+            ], $pending['source_refs'], (int) $conversation->context_version);
+        });
+    }
+
+    private function selectedSummaryEntities(array $filteredRequest, int $organizationId): array
+    {
+        $context = is_array($filteredRequest['context'] ?? null) ? $filteredRequest['context'] : [];
+        $references = array_merge(is_array($context['entity_refs'] ?? null) ? $context['entity_refs'] : [],
+            is_array($context['entity_references'] ?? null) ? $context['entity_references'] : []);
+        $estimateId = $this->estimateResolutionAttempted ? $this->resolvedEstimateId
+            : ($this->activeEstimateSelection['estimate_id'] ?? $context['selected_estimate_id'] ?? null);
+        if (is_int($estimateId) && $estimateId > 0) {
+            $references[] = ['entity_type' => 'estimate', 'entity_id' => $estimateId];
+        }
+        $selected = [];
+        foreach ($references as $reference) {
+            if (!is_array($reference)) {
+                continue;
+            }
+            $type = $reference['entity_type'] ?? $reference['type'] ?? null;
+            $id = $reference['entity_id'] ?? $reference['id'] ?? null;
+            if (!is_string($type) || $type === '' || (!is_int($id) && !is_string($id)) || (string) $id === '') {
+                continue;
+            }
+            $selected[$type.':'.$id] ??= ['entity_type' => $type, 'entity_id' => $id, 'organization_id' => $organizationId];
+        }
+
+        return array_values($selected);
+    }
+
+    private function filterRequestEntityContext(array $request, User $actor, int $organizationId): array
+    {
+        $context = is_array($request['context'] ?? null) ? $request['context'] : [];
+        foreach (['entity_refs', 'entity_references'] as $key) {
+            if (!is_array($context[$key] ?? null)) {
+                continue;
+            }
+            $context[$key] = array_values(array_filter($context[$key], function ($ref) use ($actor, $organizationId): bool {
+                if (!is_array($ref)) {
+                    return false;
+                }
+                $type = $ref['entity_type'] ?? $ref['type'] ?? null;
+                $id = $ref['entity_id'] ?? $ref['id'] ?? null;
+                return is_string($type) && (is_int($id) || is_string($id)) && ($this->dataAccess?->canReadEntity($actor, $organizationId, $type, $id) ?? false);
+            }));
+        }
+        if (isset($context['selected_estimate_id']) && !($this->dataAccess?->canReadEntity($actor, $organizationId, 'estimate', $context['selected_estimate_id']) ?? false)) {
+            unset($context['selected_estimate_id']);
+        }
+        $request['context'] = $context;
+        return $request;
+    }
+
+    private function answerFinancialRequest(string $query, int $organizationId, User $user, Conversation $conversation, array $taskPlan): ?array
+    {
+        $selection = is_array($conversation->context['selected_estimate'] ?? null) ? $conversation->context['selected_estimate'] : null;
+        $pinnedId = isset($selection['estimate_id']) ? (int) $selection['estimate_id'] : null;
+        if ($pinnedId === null) {
+            foreach ($taskPlan['request']['context']['entity_refs'] ?? [] as $ref) {
+                if (is_array($ref) && ($ref['type'] ?? null) === 'estimate' && is_numeric($ref['id'] ?? null)) {
+                    $pinnedId = (int) $ref['id'];
+                    break;
+                }
+            }
+        }
+        if ($this->financialAnswers === null || !$this->financialAnswers->supports($query, $pinnedId)) {
+            return null;
+        }
+        $this->stage('tools');
+        $answer = $this->financialAnswers->answer($query, $organizationId, $user, $pinnedId, $selection);
+        if (($answer['resolution']['status'] ?? null) === 'resolved' && is_array($answer['financial_evidence'] ?? null)
+            && ($answer['source_refs'] ?? []) !== []) {
+            $this->progress('estimates', 'completed');
+        }
+        if (($answer['resolution']['status'] ?? null) === 'forbidden') {
+            $this->recordRequestOutcome('access_denied');
+        }
+        $content = (string) $answer['text'];
+        $payload = $this->taskOrchestrator->buildPayload($taskPlan, $content, []);
+        unset($payload['confidence']);
+        $payload['validation_status'] = $answer['validation_status'];
+        $payload['source_refs'] = $answer['source_refs'] ?? [];
+        $payload['fetched_at'] = $answer['fetched_at'] ?? now()->toISOString();
+        $payload['provenance'] = $this->financialReceipt($answer);
+        $payload['needs_clarification'] = (bool) ($answer['needs_clarification'] ?? false);
+        $payload['request_id'] = $this->activeRequest?->request_id;
+        $payload['actor_user_id'] = (int) $user->id;
+        $payload['entity_references'] = $answer['source_refs'] ?? [];
+        $payload['rag_context'] = ['used' => false, 'sources' => []];
+        $payload = $this->decorateMetadata($payload, $user);
+        $contextChanges = $this->buildLastRequestContext($query, $taskPlan);
+        $contextRemovals = [];
+        if (is_array($answer['selection'] ?? null)) {
+            $contextChanges['selected_estimate'] = $answer['selection'];
+        } elseif (($answer['pinned_estimate_id'] ?? null) === null) {
+            $contextRemovals[] = 'selected_estimate';
+        }
+        $this->conversationManager->updateContext($conversation, $user, $organizationId, $contextChanges, $contextRemovals);
+        $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, $this->llmProvider->getModel(), $payload);
+        if ($answer['validation_status'] === 'verified') {
+            $summaryRequest = $taskPlan['request'] ?? [];
+            $selectedId = $answer['selection']['estimate_id'] ?? $answer['pinned_estimate_id'] ?? null;
+            if (is_int($selectedId) && $selectedId > 0) {
+                $summaryRequest['context']['selected_estimate_id'] = $selectedId;
+            }
+            $this->pendingSummary = [
+                'conversation' => $conversation,
+                'summary' => $content,
+                'selected_entities' => $this->selectedSummaryEntities($summaryRequest, $organizationId),
+                'source_refs' => $answer['source_refs'] ?? [],
+                'user_decisions' => [['request_id' => $this->activeRequest?->request_id, 'query' => $query, 'created_at' => now()->toISOString()]],
+            ];
+        }
+        return $this->agentAskResult($conversation, $message, $content, $payload, $organizationId, $user);
+    }
+
+    private function financialReceipt(array $answer): ?array
+    {
+        $evidence = $answer['financial_evidence'] ?? null;
+        if (!is_array($evidence)) {
+            return null;
+        }
+        $receipt = array_intersect_key($evidence, array_flip(['estimate', 'totals', 'stored_totals', 'position_count', 'fetched_at', 'version',
+            'validation_status', 'totals_validation_status', 'missing_total_fields', 'aggregation', 'selection']));
+        $references = is_array($answer['source_refs'] ?? null) ? $answer['source_refs'] : [];
+        $shownIds = [];
+        foreach ($references as $reference) {
+            if (is_array($reference) && ($reference['entity_type'] ?? null) === 'estimate_item') {
+                $shownIds[(string) $reference['entity_id']] = true;
+            }
+        }
+        $receipt['positions'] = array_slice(array_values(array_filter($evidence['positions'] ?? [],
+            static fn (array $position): bool => isset($shownIds[(string) $position['id']]))), 0, 50);
+        $receipt['source_refs'] = $references;
+
+        return $receipt;
+    }
+
+    private function rememberResolvedEstimate(Conversation $conversation, User $actor, int $organizationId): void
+    {
+        if (! $this->estimateResolutionAttempted) {
+            return;
+        }
+        if ($this->resolvedEstimateId === null || ! ($this->dataAccess?->canReadEntity($actor, $organizationId, 'estimate', $this->resolvedEstimateId) ?? false)) {
+            $this->resolvedEstimateId = null;
+            $changes = [];
+            $remove = ['selected_estimate', 'selected_estimate_id'];
+        } else {
+            $changes = [
+                'selected_estimate' => ['estimate_id' => $this->resolvedEstimateId],
+                'selected_estimate_id' => $this->resolvedEstimateId,
+            ];
+            foreach ($this->activeToolResults as $result) {
+                if (($result['_tool_name'] ?? null) === 'get_estimate_answer'
+                    && ($result['selection']['estimate_id'] ?? null) === $this->resolvedEstimateId) {
+                    $changes['selected_estimate'] = $result['selection'];
+                }
+            }
+            $remove = [];
+        }
+        $this->conversationManager->updateContext($conversation, $actor, $organizationId, $changes, $remove, preserveSelectionDetails: true);
+    }
+
+    private function collectSourceRefs(array $ragMetadata, array $toolResults): array
+    {
+        $refs = [];
+        foreach ($ragMetadata['sources'] ?? [] as $source) {
+            if (is_array($source) && isset($source['entity_type'], $source['entity_id'])) {
+                $refs[] = array_intersect_key($source, array_flip(['source_id', 'source_type', 'entity_type', 'entity_id', 'organization_id', 'project_id', 'content_scope', 'version', 'checksum', 'source_version', 'updated_at', 'fetched_at', 'navigation', 'title', 'checked_fields', 'required_permissions', 'required_domains', 'projection_name', 'composite_key', 'projection_source_version', 'assistant_public_schema_revision']));
+            }
+        }
+        foreach ($toolResults as $result) {
+            if (!is_array($result)) {
+                continue;
+            }
+            foreach ([$result['source_refs'] ?? [], $result['metadata']['source_refs'] ?? [], $result['financial_evidence']['source_refs'] ?? []] as $references) {
+                if (!is_array($references)) {
+                    continue;
+                }
+                foreach ($references as $ref) {
+                    if (is_array($ref) && isset($ref['entity_type'], $ref['entity_id'])) {
+                        $refs[] = $ref;
+                    }
+                }
+            }
+        }
+        $result = [];
+        foreach ($refs as $ref) {
+            $ref['fetched_at'] ??= now()->toISOString();
+            $result[AssistantSourceReferenceIdentity::key($ref)] = $ref;
+        }
+        return array_values($result);
+    }
+
+    private function isTerminalReadOnlyTool(string $toolName): bool
+    {
+        return in_array($toolName, [
+            'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
+            'resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
+            'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
+            'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
+            'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
+            'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
+        ], true);
+    }
+
     protected function handleToolCall(
         array $toolCall,
         Organization $organization,
@@ -739,23 +1900,49 @@ class AIAssistantService
         array &$proposedActions,
         array &$trustedDownloadUrls
     ): array|string {
+        $this->executionCheckpoint();
         $toolName = (string) ($toolCall['function']['name'] ?? '');
         $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        if ($toolName === 'get_bim_model_elements' && ($args['project_id'] ?? null) === null) {
+            $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+        }
+        if ($toolName === 'assistant_domain_search' && ($args['project_id'] ?? null) === null) {
+            $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
+            if ($definition !== null && in_array('project_id', $definition->fields, true)) {
+                $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            }
+        }
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+        if ($toolName === 'assistant_domain_search' && $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding)) {
+            $args = $this->normalizePaymentOnlyDomainSearchArguments($args);
+        }
         $tool = $this->toolRegistry->getTool($toolName);
 
         if (! $tool) {
-            $message = "Tool {$toolName} not found or not registered.";
+            $this->recordRequestOutcome('service_error');
+            $message = trans_message('ai_assistant.tool_unavailable');
             $toolFailures[] = $message;
 
             return ['error' => $message];
         }
 
         try {
-            $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+            $this->toolArguments->validate($args, $tool->getParametersSchema());
+            $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
+            if ($isMutationTool && (! $allowActions || ! $requestUnderstanding instanceof AssistantRequestUnderstanding)) {
+                $this->recordRequestOutcome('request_blocked');
+                $message = $this->toolBlockedMessage(null);
+                $toolFailures[] = $message;
+
+                return ['status' => 'blocked_by_request_policy', 'error' => $message, 'tool_name' => $toolName];
+            }
             if ($requestUnderstanding instanceof AssistantRequestUnderstanding) {
-                $eligibility = $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding);
+                $eligibility = $isMutationTool
+                    ? $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding, $allowActions)
+                    : $this->toolEligibilityPolicy->canExecuteTool($toolName, $requestUnderstanding, $allowActions, $args);
                 if (! $eligibility->allowed) {
+                    $this->recordRequestOutcome('request_blocked');
                     $message = $this->toolBlockedMessage($eligibility->reason);
                     $toolFailures[] = $message;
 
@@ -776,7 +1963,6 @@ class AIAssistantService
                 }
             }
 
-            $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
             $canExecuteTool = $this->permissionChecker->canExecuteTool($user, $toolName, $args);
 
             if ($isMutationTool) {
@@ -800,6 +1986,7 @@ class AIAssistantService
                 ], 'info');
 
                 if (! $canExecuteTool) {
+                    $this->recordRequestOutcome('access_denied');
                     $toolFailures[] = $this->assistantMessage('ai_assistant.tool_access_denied', 'Недостаточно прав для выполнения инструмента :tool.', [
                         'tool' => $toolName,
                     ]);
@@ -813,6 +2000,7 @@ class AIAssistantService
             }
 
             if (! $canExecuteTool) {
+                $this->recordRequestOutcome('access_denied');
                 $message = $this->assistantMessage(
                     'ai_assistant.tool_access_denied',
                     "Недостаточно прав для выполнения инструмента {$toolName}.",
@@ -829,7 +2017,62 @@ class AIAssistantService
                 return ['error' => $message];
             }
 
-            $toolResult = $tool->execute($args, $user, $organization);
+            $progressCode = AssistantRequestProgress::toolCode($toolName, $args);
+            $this->progress($progressCode, 'started');
+            $pureDatabaseRead = in_array($toolName, [
+                'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
+                'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
+                'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
+                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_bim_model_elements',
+                'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
+            ], true);
+            $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool
+                ? $tool->executeForSelection($args, $user, $organization, $this->activeEstimateSelection)
+                : $tool->execute($args, $user, $organization);
+            if ($toolName === 'get_material_stock') {
+                $stockRead = $read;
+                $read = fn (): array|string => $this->measurePhase('stock_read', $stockRead);
+            }
+            $toolResult = $this->measurePhase('tool', fn (): array|string => $pureDatabaseRead && app()->bound(AssistantRequestExecutionContext::class)
+                ? $this->readPhase($read, $user, $organizationId) : $read());
+            $this->executionCheckpoint();
+            if (is_array($toolResult) && in_array($toolResult['status'] ?? null, ['access_denied', 'forbidden'], true)) {
+                $this->recordRequestOutcome('access_denied');
+            } elseif (is_array($toolResult) && in_array($toolName, ['get_published_report_financial_evidence', 'get_live_project_financial_evidence'], true)
+                && (in_array($toolResult['status'] ?? null, ['insufficient_data', 'incomplete', 'partial'], true) || ($toolResult['useful'] ?? null) === false)) {
+                $this->recordRequestOutcome('insufficient_data');
+            } elseif (is_array($toolResult) && (in_array($toolResult['status'] ?? null, ['error', 'failed', 'unavailable', 'blocked_by_request_policy'], true)
+                || !empty($toolResult['error']))) {
+                $this->recordRequestOutcome('service_error');
+            }
+            if (is_array($toolResult) && $this->legacyLiveEvidence !== null) {
+                $liveReads = $this->legacyLiveEvidence->read($toolName, $toolResult, $user, $organizationId);
+                foreach ($liveReads as $liveRead) {
+                    $this->activeToolResults[] = $liveRead;
+                }
+                if ($liveReads !== []) {
+                    $toolResult['live_entity_reads'] = $liveReads;
+                }
+            }
+            if (AssistantRequestProgress::toolCompleted($toolResult)
+                || ($toolName === 'search_assistant_documents' && is_array($toolResult)
+                    && ($toolResult['status'] ?? null) === 'partial' && ($toolResult['source_refs'] ?? []) !== [])) {
+                $this->progress($progressCode, 'completed');
+            }
+            if ($toolName === 'resolve_estimate') {
+                $this->estimateResolutionAttempted = true;
+                $this->resolvedEstimateId = is_array($toolResult) && ($toolResult['status'] ?? null) === 'resolved'
+                    && is_int($toolResult['estimate_id'] ?? null) && count($toolResult['options'] ?? []) === 1
+                    && ($toolResult['options'][0]['id'] ?? null) === $toolResult['estimate_id']
+                    ? $toolResult['estimate_id'] : null;
+            }
+            if ($toolName === 'get_estimate_answer') {
+                $this->estimateResolutionAttempted = true;
+                $this->resolvedEstimateId = is_array($toolResult) && ($toolResult['status'] ?? null) === 'resolved'
+                    && is_int($toolResult['selection']['estimate_id'] ?? null)
+                    ? $toolResult['selection']['estimate_id'] : null;
+            }
+            $this->activeToolResults[] = is_array($toolResult) ? $toolResult + ['_tool_name' => $toolName] : [];
             $trustedDownloadUrls = array_values(array_unique(array_merge(
                 $trustedDownloadUrls,
                 $this->collectTrustedDownloadUrls($toolResult)
@@ -848,26 +2091,132 @@ class AIAssistantService
 
             return $toolResult;
         } catch (Throwable $exception) {
-            $toolFailures[] = $exception->getMessage();
+            if ($exception instanceof AssistantRequestCancelled || $exception instanceof AssistantRequestDeadlineExceeded
+                || $exception instanceof AssistantReadPermitTimeoutException) {
+                throw $exception;
+            }
+            $this->executionCheckpoint();
+            $this->recordRequestOutcome($exception instanceof AuthorizationException
+                || $exception instanceof \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException ? 'access_denied' : 'service_error');
+            $message = trans_message('ai_assistant.tool_execute_failed');
+            $toolFailures[] = $message;
 
-            $this->logging->technical('ai.tool.error', [
+            $technicalContext = [
                 'tool' => $toolName,
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
-                'error' => $exception->getMessage(),
-            ], 'error');
-
-            return ['error' => $exception->getMessage()];
+                'exception_class' => $exception::class,
+            ];
+            if ($exception instanceof QueryException) {
+                $technicalContext += $this->queryExceptionDiagnosticMetadata($exception);
+            }
+            $this->logging->technical('ai.tool.error', $technicalContext, 'error');
+            if ($exception instanceof QueryException && (string) ($exception->errorInfo[0] ?? $exception->getCode()) === '57014') {
+                return ['status' => 'unavailable', 'reason' => 'read_timed_out', 'error' => trans_message('ai_assistant.data_read_timed_out')];
+            }
+            return ['error' => $message];
         }
+    }
+
+    private function queryExceptionDiagnosticMetadata(QueryException $exception): array
+    {
+        $metadata = ['sql_fingerprint' => hash('sha256', $exception->getSql())];
+        $sqlState = null;
+        foreach ([$exception->errorInfo[0] ?? null, $exception->getCode()] as $candidate) {
+            if (!is_string($candidate) && !is_int($candidate)) {
+                continue;
+            }
+
+            $candidate = (string) $candidate;
+            if (preg_match('/\\A[A-Z0-9]{5}\\z/', $candidate) === 1) {
+                $sqlState = $candidate;
+                break;
+            }
+        }
+
+        if ($sqlState === null) {
+            return $metadata;
+        }
+
+        $metadata['sqlstate'] = $sqlState;
+        $objectType = match ($sqlState) {
+            '42703' => 'column',
+            '42P01' => 'relation',
+            default => null,
+        };
+        $driverMessage = $exception->errorInfo[2] ?? null;
+        if ($objectType === null || !is_string($driverMessage) || strlen($driverMessage) > 2048) {
+            return $metadata;
+        }
+
+        $identifierPart = '[A-Za-z_][A-Za-z0-9_]{0,62}';
+        $pattern = '/\\AERROR:[ \\t]+'
+            . preg_quote($objectType, '/')
+            . '[ \\t]+"('
+            . $identifierPart
+            . '(?:\\.'
+            . $identifierPart
+            . ')*)"[ \\t]+does not exist'
+            . '(?: at character [0-9]+)?'
+            . '(?:\\r?\\nLINE [0-9]+:[^\\r\\n]*\\r?\\n[ \\t]*\\^[ \\t]*)?\\z/';
+        if (preg_match($pattern, $driverMessage, $matches) === 1) {
+            $metadata['database_identifier'] = $matches[1];
+        }
+
+        return $metadata;
     }
 
     protected function requestAssistantResponse(array $messages, array $options, int $organizationId, User $user): array
     {
-        [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->prepareProviderPayload($messages, $options, $organizationId, $user);
+        $this->executionCheckpoint();
+        [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->measurePhase('provider_prepare', fn (): array => $this->prepareProviderPayload($messages, $options, $organizationId, $user));
+        if (app()->bound(AssistantRequestExecutionContext::class)) {
+            $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
+            $profileTimeout = $provider === 'timeweb' ? config('ai-assistant.llm.timeweb.profiles.assistant.timeout') : null;
+            $configuredTimeout = $preparedOptions['timeout'] ?? $profileTimeout ?? config('ai-assistant.llm.'.$provider.'.timeout', 45);
+            $preparedOptions['timeout'] = app(AssistantRequestExecutionContext::class)->remainingSeconds(max(1, (int) $configuredTimeout));
+        }
 
+        $attempt = $this->activeRequest !== null
+            ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
+            : 1;
+        $response = null;
+        $providerStarted = false;
         try {
-            $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
-            $this->recordAssistantProviderUsage($response, $organizationId, $user, $preparedOptions, $budgetDegraded);
+            $this->executionCheckpoint();
+            $providerStarted = true;
+            $providerCallStarted = hrtime(true);
+            $providerCallFailure = null;
+            try {
+                $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
+            } catch (Throwable $exception) {
+                $providerCallFailure = $exception;
+                throw $exception;
+            } finally {
+                try {
+                    $providerCallDuration = round((hrtime(true) - $providerCallStarted) / 1_000_000, 2);
+                    $provider = (string) config('ai-assistant.llm.provider', 'timeweb');
+                    $model = $this->llmProvider->getModel();
+                    $logger = Log::getFacadeRoot();
+                    if (! $logger instanceof LogManager || is_string(config('logging.default'))) {
+                        Log::info('ai.assistant.provider_call_completed', [
+                            'request_id' => $this->activeRequest?->request_id,
+                            'call_attempt' => (int) $attempt,
+                            'provider' => in_array($provider, ['timeweb', 'openai'], true) ? $provider : 'unknown',
+                            'model' => LunaModelPolicy::isLuna($model, $provider) ? $model : 'unknown',
+                            'duration_ms' => $providerCallDuration,
+                            'success' => $providerCallFailure === null,
+                            'exception_class' => $providerCallFailure === null ? null : $providerCallFailure::class,
+                        ]);
+                    }
+                } catch (Throwable) {
+                }
+            }
+            $this->executionCheckpoint();
+            if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
+                throw new AssistantResponseIncomplete($response);
+            }
+            $this->recordProviderUsageDuringCleanup($response, $organizationId, $user, $preparedOptions, $budgetDegraded, true, (int) $attempt);
 
             return [
                 'response' => $response,
@@ -875,27 +2224,34 @@ class AIAssistantService
                 'fallback_reason' => null,
             ];
         } catch (Throwable $exception) {
-            if (empty($preparedOptions['tools'])) {
-                throw $exception;
+            if ($providerStarted) {
+                $failedUsage = $this->providerUsageFromFailure($exception, $response);
+                try {
+                    $this->recordProviderUsageDuringCleanup($failedUsage, $organizationId, $user, $preparedOptions, true, false, (int) $attempt);
+                } catch (Throwable $cleanupFailure) {
+                    $this->logging->technical('ai.assistant.provider_usage_cleanup_failed', [
+                        'organization_id' => $organizationId, 'exception_class' => $cleanupFailure::class,
+                    ], 'error');
+                }
             }
+            $this->executionCheckpoint();
+            throw $exception;
+        }
+    }
 
-            $this->logging->technical('ai.assistant.tools_fallback', [
-                'organization_id' => $organizationId,
-                'user_id' => $user->id,
-                'provider' => $this->llmProvider::class,
-                'error' => $exception->getMessage(),
-            ], 'warning');
-
-            unset($preparedOptions['tools']);
-
-            $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
-            $this->recordAssistantProviderUsage($response, $organizationId, $user, $preparedOptions, true);
-
-            return [
-                'response' => $response,
-                'degraded_mode' => true,
-                'fallback_reason' => $this->assistantMessage('ai_assistant.tools_fallback', 'Часть инструментов оказалась недоступна, ответ сформирован в упрощенном режиме.'),
-            ];
+    private function recordProviderUsageDuringCleanup(array $response, int $organizationId, User $user, array $options,
+        bool $degradedMode, bool $successful, int $attempt): void
+    {
+        $record = function () use ($response, $organizationId, $user, $options, $degradedMode, $successful, $attempt): void {
+            if ($this->activeRequest !== null) {
+                $this->requestLifecycle?->recordProviderUsage($this->activeRequest, $response, $attempt, $successful);
+            }
+            $this->recordAssistantProviderUsage($response, $organizationId, $user, $options, $degradedMode, $successful, $attempt);
+        };
+        if (app()->bound(AssistantRequestExecutionContext::class)) {
+            app(AssistantRequestExecutionContext::class)->withCleanupBudget($record, 5000);
+        } else {
+            $record();
         }
     }
 
@@ -904,12 +2260,23 @@ class AIAssistantService
         int $organizationId,
         User $user,
         array $options,
-        bool $degradedMode
+        bool $degradedMode,
+        bool $successful = true,
+        ?int $attempt = null
     ): void {
         try {
             $inputTokens = max(0, (int) ($response['input_tokens'] ?? 0));
             $outputTokens = max(0, (int) ($response['output_tokens'] ?? 0));
             $totalTokens = max(0, (int) ($response['tokens_used'] ?? ($inputTokens + $outputTokens)));
+            $usageAvailable = ($response['provider_usage_available'] ?? true) !== false && isset($response['input_tokens'], $response['output_tokens']);
+
+            $key = $this->activeRequest !== null && $attempt !== null ? $attempt : count($this->providerUsageAttempts);
+            $this->providerUsageAttempts[$key] = [
+                'tokens' => $usageAvailable ? $totalTokens : 0,
+                'cost' => $usageAvailable ? $this->usageTracker->calculateCost($totalTokens,
+                    (string) ($response['model'] ?? $this->llmProvider->getModel()), $inputTokens, $outputTokens,
+                    (string) ($response['provider'] ?? config('ai-assistant.llm.provider', 'unknown'))) : 0.0,
+            ];
 
             $this->usageTracker->recordUsage(
                 $organizationId,
@@ -921,6 +2288,14 @@ class AIAssistantService
                 $outputTokens,
                 $totalTokens,
                 [
+                    'request_id' => $this->activeRequest?->request_id,
+                    'attempt' => $attempt,
+                    'credit_usage_key' => $this->activeRequest !== null && $attempt !== null ? $this->activeRequest->request_id.':call:'.$attempt : null,
+                    'usage_key' => $this->activeRequest !== null && $attempt !== null ? $this->activeRequest->request_id.':call:'.$attempt : null,
+                    'is_successful' => $successful,
+                    'provider_usage_available' => $usageAvailable,
+                    'cost_available' => $usageAvailable,
+                    'usage_source' => $usageAvailable ? ($response['usage_source'] ?? 'provider_response') : 'unavailable',
                     'profile' => $response['profile'] ?? ($options['profile'] ?? null),
                     'route_attempt' => $response['route_attempt'] ?? null,
                     'route_fallback' => (bool) ($response['route_fallback'] ?? false),
@@ -937,21 +2312,56 @@ class AIAssistantService
         }
     }
 
+    private function providerUsageFromFailure(Throwable $exception, ?array $response): array
+    {
+        if ($exception instanceof AssistantResponseIncomplete) {
+            return $exception->providerUsage;
+        }
+        if ($response !== null) {
+            return $response;
+        }
+        try {
+            $httpResponse = $exception->response ?? null;
+            if (!$httpResponse instanceof \Psr\Http\Message\ResponseInterface) {
+                return [];
+            }
+            $stream = $httpResponse->getBody();
+            if (!$stream->isSeekable()) {
+                return [];
+            }
+            $position = $stream->tell();
+            try {
+                $stream->rewind();
+                $body = json_decode($stream->getContents(), true, 512, JSON_THROW_ON_ERROR);
+            } finally {
+                $stream->seek($position);
+            }
+            $usage = is_array($body) ? ($body['usage'] ?? null) : null;
+            if (!is_array($usage)) {
+                return [];
+            }
+            $input = filter_var($usage['input_tokens'] ?? $usage['prompt_tokens'] ?? null, FILTER_VALIDATE_INT);
+            $output = filter_var($usage['output_tokens'] ?? $usage['completion_tokens'] ?? null, FILTER_VALIDATE_INT);
+            if ($input === false || $output === false || $input < 0 || $output < 0) {
+                return [];
+            }
+            $result = ['input_tokens' => $input, 'output_tokens' => $output, 'tokens_used' => $input + $output];
+            if (is_string($body['model'] ?? null)) {
+                $result['model'] = $body['model'];
+            }
+            return $result;
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     protected function getOrCreateConversation(?int $conversationId, int $organizationId, User $user): Conversation
     {
         if ($conversationId) {
-            $conversation = $this->conversationManager->findUserConversation($conversationId, $user, $organizationId);
+            $conversation = $this->conversationManager->findAccessibleConversation($conversationId, $user, $organizationId, true);
 
             if ($conversation instanceof Conversation) {
                 return $conversation;
-            }
-
-            if ($this->permissionChecker->canAccessOrganizationConversationsInAdmin($user, $organizationId)) {
-                $conversation = $this->conversationManager->findOrganizationConversation($conversationId, $organizationId);
-
-                if ($conversation instanceof Conversation) {
-                    return $conversation;
-                }
             }
 
             throw new AuthorizationException($this->assistantMessage('ai_assistant.conversation_not_found', 'Диалог не найден или недоступен.'));
@@ -1109,6 +2519,12 @@ class AIAssistantService
         }
 
         $exactPhrases = [
+            'надо по деньгам',
+            'по деньгам',
+            'точнее',
+            'давай конкретнее а не около',
+            'какие это позиции по смете',
+            'какие позиции',
             'а подробнее',
             'давай детальнее',
             'давай подробнее',
@@ -1439,8 +2855,15 @@ class AIAssistantService
         array $taskPlan,
         array $requestPayload
     ): array {
+        if ($this->isStandaloneGreeting($query, $requestPayload)) {
+            return $this->ragPromptContextBuilder->build($query, []);
+        }
+
         try {
             $ragSearchQuery = $this->resolveRagSearchQuery($query, $requestPayload);
+            if ($this->ragRetriever instanceof RagRetriever) {
+                $this->progress('rag_search', 'started');
+            }
             $results = $this->ragRetriever instanceof RagRetriever
                 ? $this->ragRetriever->search(
                     $ragSearchQuery,
@@ -1449,6 +2872,9 @@ class AIAssistantService
                     $this->buildRagRequestContext($taskPlan, $requestPayload)
                 )
                 : [];
+            if ($this->ragRetriever instanceof RagRetriever) {
+                $this->progress('rag_search', 'completed');
+            }
 
             $context = $this->ragPromptContextBuilder->build($query, $results);
             if ($ragSearchQuery !== $query && is_array($context['metadata'] ?? null)) {
@@ -1457,6 +2883,9 @@ class AIAssistantService
 
             return $context;
         } catch (Throwable $exception) {
+            if ($exception instanceof AssistantRequestCancelled || $exception instanceof AuthorizationException) {
+                throw $exception;
+            }
             $this->logging->technical('ai.rag.context_failed', [
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
@@ -1465,6 +2894,122 @@ class AIAssistantService
 
             return $this->ragPromptContextBuilder->build($query, []);
         }
+    }
+
+    private function isStandaloneGreeting(string $query, array $requestPayload): bool
+    {
+        if (preg_match('/^\s*(?:привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро))\s*[!.?]?\s*$/iu', $query) !== 1
+            || ! empty($requestPayload['conversation_id']) || ! empty($requestPayload['goal'])
+            || ! empty($requestPayload['desired_mode']) || ! empty($requestPayload['allow_actions'])) {
+            return false;
+        }
+
+        if (!empty($requestPayload['attachment_ids'])) { return false; }
+
+        $context = $requestPayload['context'] ?? [];
+        if (! is_array($context) || ! $this->hasOnlyImplicitProjectReference($context['entity_refs'] ?? [])
+            || ! empty($context['period'])
+            || ! empty($context['filters'])) {
+            return false;
+        }
+
+        $uiState = $context['ui_state'] ?? [];
+
+        return is_array($uiState) && array_diff(array_keys($uiState), ['assistant_path', 'pathname']) === [];
+    }
+
+    private function answerSectionNavigation(string $query, int $organizationId, User $user, Conversation $conversation, array $requestPayload): array
+    {
+        $this->stage('verifying');
+        $this->executionCheckpoint();
+        $access = $this->accessContextResolver->resolve($user, $organizationId);
+        if (($access['can_use_assistant'] ?? false) !== true) {
+            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
+        }
+        if ($this->dataAccess !== null && !empty($requestPayload['context']['entity_refs'])) {
+            $requestPayload = $this->dataAccess->withCurrentChecks($user, $organizationId,
+                fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId), true);
+        }
+        $plan = $this->taskOrchestrator->plan($query, $requestPayload, $access);
+        $domain = $plan['capability']['domain'] ?? null;
+        $allowed = ($plan['section_navigation'] ?? false) === true && is_array($plan['navigation_target'] ?? null);
+        if ($allowed && $this->dataAccess !== null) {
+            $allowed = is_string($domain) && $this->dataAccess->withCurrentChecks($user, $organizationId,
+                fn (): bool => $this->dataAccess->canReadDomain($user, $organizationId, $domain), true);
+        }
+        $this->executionCheckpoint();
+        if (!$allowed) {
+            $plan['navigation_target'] = null;
+            $plan['next_actions'] = [];
+            $this->recordRequestOutcome('access_denied');
+        } else {
+            $plan['access_limits'] = array_values(array_filter($plan['access_limits'] ?? [],
+                static fn (array $limit): bool => ($limit['code'] ?? null) !== 'actions_locked'));
+        }
+        $content = trans_message($allowed ? 'ai_assistant.section_navigation_response' : 'ai_assistant.section_navigation_denied',
+            ['section' => $plan['capability']['label'] ?? '']);
+        $metadata = $this->decorateMetadata(array_replace($this->taskOrchestrator->buildPayload($plan, $content), [
+            'validation_status' => $allowed ? 'verified' : 'unverified',
+            'needs_clarification' => false, 'source_refs' => [],
+            'response_kind' => 'navigation', 'request_id' => $requestPayload['request_id'] ?? null,
+            'actor_user_id' => (int) $user->id,
+        ]), $user);
+        $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, 'system', $metadata);
+        $this->usageTracker->trackRequest($organizationId, $user, 0, 0.0);
+        return ['conversation_id' => $conversation->id, 'message' => [
+            'id' => $message->id, 'role' => 'assistant', 'content' => $content, 'tokens_used' => 0,
+            'metadata' => $metadata, 'created_at' => $message->created_at?->toISOString(),
+        ], 'tokens_used' => 0, 'usage' => $this->usageTracker->getUsageStats($organizationId)];
+    }
+
+    private function answerStandaloneGreeting(string $query, int $organizationId, User $user, Conversation $conversation, array $requestPayload): array
+    {
+        $this->conversationManager->addMessage($conversation, 'user', $query, 0, 'system', [
+            'actor_user_id' => (int) $user->id,
+            'request_id' => $requestPayload['request_id'] ?? null,
+            'response_kind' => 'greeting',
+        ]);
+        $this->stage('verifying');
+        $content = trans_message('ai_assistant.greeting_response');
+        $metadata = $this->decorateMetadata([
+            'response_kind' => 'greeting',
+            'task_type' => 'greeting',
+            'validation_status' => 'verified',
+            'source_refs' => [],
+            'missing_data' => [],
+            'access_limits' => [],
+            'needs_clarification' => false,
+        ], $user);
+        $message = $this->conversationManager->addMessage($conversation, 'assistant', $content, 0, 'system', $metadata);
+        $this->usageTracker->trackRequest($organizationId, $user, 0, 0.0);
+
+        return [
+            'conversation_id' => $conversation->id,
+            'message' => [
+                'id' => $message->id,
+                'role' => 'assistant',
+                'content' => $content,
+                'tokens_used' => 0,
+                'metadata' => $metadata,
+                'created_at' => $message->created_at?->toISOString(),
+            ],
+            'tokens_used' => 0,
+            'usage' => $this->usageTracker->getUsageStats($organizationId),
+        ];
+    }
+
+    private function hasOnlyImplicitProjectReference(mixed $references): bool
+    {
+        if (! is_array($references)) {
+            return false;
+        }
+
+        if ($references === []) {
+            return true;
+        }
+
+        return array_is_list($references) && count($references) === 1
+            && is_array($references[0]) && ($references[0]['type'] ?? null) === 'project';
     }
 
     protected function resolveRagSearchQuery(string $query, array $requestPayload): string
@@ -1571,38 +3116,82 @@ class AIAssistantService
         return null;
     }
 
-    protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = ''): array
+    private function buildMessagesWithCapabilityHints(Conversation $conversation, array $context, array $taskPlan, string $currentQuery, array $capabilityHints): array
     {
-        $messages = [];
-        $systemSections = [$this->contextBuilder->buildSystemPrompt()];
-
-        if (! empty($context)) {
-            $systemSections[] = $this->formatContextForLLM($context);
+        $previous = $this->precomputedCapabilityHints;
+        $this->precomputedCapabilityHints = $capabilityHints;
+        try {
+            return $this->buildMessages($conversation, $context, $taskPlan, '', $currentQuery);
+        } finally {
+            $this->precomputedCapabilityHints = $previous;
         }
+    }
 
-        if (trim($ragPrompt) !== '') {
-            $systemSections[] = $ragPrompt;
-        }
-
-        $systemSections[] = $this->formatStructuredContextForLLM($taskPlan);
-        $systemPrompt = $this->truncateText(implode("\n\n", array_filter($systemSections)), self::SYSTEM_PROMPT_CHAR_LIMIT);
-
-        $messages[] = [
+    protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = '', ?string $currentQuery = null): array
+    {
+        $messages = [[
             'role' => 'system',
-            'content' => $systemPrompt,
-        ];
+            'content' => $this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.trusted_instruction_boundary'),
+        ]];
+        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
+        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
+        if ($this->currentAttachmentIds !== []) {
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_instruction_boundary');
+        }
 
-        foreach ($this->conversationManager->getMessagesForContextWithBudget(
+        $history = $this->conversationManager->getMessagesForContextWithBudget(
             $conversation,
             self::HISTORY_MESSAGE_LIMIT,
             self::HISTORY_TOTAL_CHARS,
             self::HISTORY_USER_MESSAGE_CHARS,
-            self::HISTORY_ASSISTANT_MESSAGE_CHARS
-        ) as $message) {
+            self::HISTORY_ASSISTANT_MESSAGE_CHARS,
+            $this->activeActor,
+        );
+        if ($this->documentContextBlocked) {
+            $history = array_values(array_filter($history,
+                static fn (array $message): bool => ($message['role'] ?? null) === 'user'));
+        }
+        $currentQuery ??= (string) ($taskPlan['request']['message'] ?? '');
+        if ($history !== [] && end($history)['role'] === 'user' && ($currentQuery === '' || end($history)['content'] === $currentQuery)) {
+            $last = array_pop($history);
+            $currentQuery = (string) $last['content'];
+        }
+        foreach ($history as $message) {
             $messages[] = $message;
         }
 
-        return $this->enforceMessageBudget($messages, self::MESSAGE_CHAR_BUDGET);
+        $references = [
+            'kind' => 'untrusted_reference_data',
+            'legacy_context' => $this->formatContextForLLM($context),
+            'search_data' => $ragPrompt,
+            'task_context' => $this->formatStructuredContextForLLM($taskPlan),
+        ];
+        if ($this->activeEstimateSelection !== null) {
+            $references['selected_estimate'] = $this->activeEstimateSelection;
+        }
+        $capabilityHints = $this->precomputedCapabilityHints ?? $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan));
+        if ($capabilityHints !== []) {
+            $references['registered_domain_capabilities'] = $capabilityHints;
+        }
+        if ($this->activeActor !== null) {
+            if (! $this->documentContextBlocked) {
+                $references['conversation_summary'] = $this->conversationManager->getSummary($conversation, $this->activeActor);
+                $references['personal_memory'] = $this->memoryService?->forContext($this->activeActor, (int) $conversation->organization_id) ?? [];
+            }
+        }
+        $messages[] = ['role' => 'user', 'content' => json_encode($references, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        if ($currentQuery !== '') {
+            if ($this->currentAttachmentIds !== []) {
+                if ($this->activeActor === null || $this->activeRequest === null) {
+                    throw new RuntimeException('assistant_attachment_request_required');
+                }
+                $this->currentImageParts = $this->measurePhase('image_parts', fn (): array => app(AssistantChatAttachmentService::class)->providerParts($this->currentAttachmentIds, $this->activeActor, (int) $conversation->organization_id, $this->activeRequest->request_id));
+                $messages[] = ['role' => 'user', 'content' => array_merge([['type' => 'text', 'text' => $currentQuery]], $this->currentImageParts), '_trusted_chat_images' => true];
+            } else {
+                $messages[] = ['role' => 'user', 'content' => $currentQuery];
+            }
+        }
+        return $messages;
     }
 
     protected function formatContextForLLM(array $context): string
@@ -1832,9 +3421,61 @@ class AIAssistantService
         return $compacted;
     }
 
+    private function buildPreparationMetadata(array $taskPlan, User $actor, int $organizationId): array
+    {
+        $this->executionCheckpoint();
+        $metadataFrameActive = $this->dataAccess !== null;
+        $read = function () use ($taskPlan, $metadataFrameActive): array {
+            $previous = $this->preparationMetadataFrameActive;
+            $this->preparationMetadataFrameActive = $metadataFrameActive;
+            try {
+                return [
+                    'capability_hints' => $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan)),
+                    'tools' => $this->measurePhase('tool_definitions', fn (): array => $this->resolveToolDefinitions($taskPlan)),
+                ];
+            } finally {
+                $this->preparationMetadataFrameActive = $previous;
+            }
+        };
+
+        try {
+            $metadata = $metadataFrameActive
+                ? $this->dataAccess->withCurrentChecks($actor, $organizationId, $read, true)
+                : $read();
+        } catch (Throwable $exception) {
+            $this->executionCheckpoint();
+            throw $exception;
+        }
+
+        $this->executionCheckpoint();
+
+        return $metadata;
+    }
+
     protected function resolveToolDefinitions(array $taskPlan): array
     {
+        $metadataFrameActive = $this->preparationMetadataFrameActive;
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
+        if ($this->documentContextBlocked) {
+            $toolNames = array_values(array_filter($toolNames,
+                static fn (string $toolName): bool => ! in_array($toolName, ['search_assistant_documents', 'generate_rag_pdf_report'], true)));
+        }
+        if ($this->activeActor !== null) {
+            if (! $metadataFrameActive) {
+                $this->executionCheckpoint();
+            }
+            $filter = fn (): array => array_values(array_filter($toolNames,
+                fn (string $toolName): bool => $this->permissionChecker->canExposeTool($this->activeActor, $toolName, false)));
+            if ($metadataFrameActive) {
+                $toolNames = $filter();
+            } else {
+                $toolNames = $this->dataAccess === null ? $filter() : $this->dataAccess->withCurrentChecks(
+                    $this->activeActor, (int) $this->activeActor->current_organization_id, $filter, true,
+                    fn (): ?int => app()->bound(AssistantRequestExecutionContext::class)
+                        ? app(AssistantRequestExecutionContext::class)->remainingMilliseconds() : null);
+                $this->executionCheckpoint();
+            }
+        }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
 
         if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
@@ -1845,7 +3486,7 @@ class AIAssistantService
         $blockedTools = [];
 
         foreach ($toolNames as $toolName) {
-            $eligibility = $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding);
+            $eligibility = $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding, (bool) ($taskPlan['request']['allow_actions'] ?? false));
 
             if ($eligibility->allowed) {
                 $allowedToolNames[] = $toolName;
@@ -1891,22 +3532,47 @@ class AIAssistantService
     {
         $taskType = (string) ($taskPlan['task_type'] ?? 'summary');
         $capabilityId = $taskPlan['capability']['id'] ?? null;
+        $query = (string) ($taskPlan['request']['message'] ?? '');
+        if (AssistantEstimateCrossSearchIntent::matches($query)) {
+            return ['search_estimate_positions'];
+        }
+        if (AssistantEstimateCompositionIntent::matches($query, $capabilityId === 'estimates')) {
+            return ['get_estimate_positions'];
+        }
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding);
 
         $capabilityTools = match ($capabilityId) {
             'projects' => ['get_project_snapshot', 'search_projects'],
             'contracts' => ['get_contract_snapshot', 'search_contractors'],
             'reports' => ['get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report', 'generate_operational_pdf_report', 'generate_rag_pdf_report'],
             'warehouse' => ['search_warehouse', 'search_materials'],
-            'payments' => ['get_contract_snapshot', 'get_project_snapshot', 'approve_payment_request', 'generate_contract_payments_report'],
+            'payments' => ['approve_payment_request', 'generate_contract_payments_report'],
             'schedules' => ['get_schedule_snapshot', 'search_projects', 'create_schedule_task', 'update_schedule_task_status'],
             'procurement' => ['get_procurement_snapshot', 'get_project_snapshot', 'search_materials', 'search_contractors'],
             'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
+            'estimates' => ['resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'],
+            'measurement_units' => ['create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units'],
+            'design', 'design_detail' => ['get_bim_model_elements'],
             default => [],
         };
 
         $toolNames = $capabilityTools;
+        if ($capabilityId === 'payments' && $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            if (in_array('contract', $requestUnderstanding->requestedEntities, true)) {
+                $toolNames[] = 'get_contract_snapshot';
+            }
+            if (in_array('project', $requestUnderstanding->requestedEntities, true)) {
+                $toolNames[] = 'get_project_snapshot';
+            }
+        }
+        if (in_array($capabilityId, ['reports', 'payments'], true)
+            || in_array($taskPlan['domain'] ?? $taskPlan['capability']['domain'] ?? null, ['finance', 'reports', 'budgeting', 'holding_finance', 'organization_reporting'], true)) {
+            $toolNames[] = 'get_published_report_financial_evidence';
+            $toolNames[] = 'get_live_project_financial_evidence';
+        }
 
-        if ($taskType === 'find') {
+        if ($taskType === 'find' && ! $paymentOnlyRequest) {
             $toolNames = array_merge($toolNames, [
                 'search_projects',
                 'search_contractors',
@@ -1929,8 +3595,15 @@ class AIAssistantService
             ]);
         }
 
-        if ($capabilityId === null && in_array($taskType, ['summary', 'analyze'], true)) {
-            return [];
+        $toolNames = array_merge($toolNames, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
+            'assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_estimate_answer', 'get_material_stock',
+            'get_published_report_financial_evidence', 'get_live_project_financial_evidence', 'get_bim_model_elements']);
+
+        if ($paymentOnlyRequest) {
+            $toolNames = array_values(array_filter(
+                $toolNames,
+                fn (string $toolName): bool => $this->toolEligibilityPolicy->isAllowedForPaymentOnlyRequest($toolName)
+            ));
         }
 
         return array_values(array_unique(array_filter(
@@ -1939,41 +3612,120 @@ class AIAssistantService
         )));
     }
 
+    protected function buildDomainCapabilityHints(array $taskPlan): array
+    {
+        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($this->requestUnderstandingFromPlan($taskPlan));
+        $metadataFrameActive = $this->preparationMetadataFrameActive;
+        $actor = $this->activeActor;
+        $tool = $this->toolRegistry->getTool('assistant_domain_discover_capabilities');
+        if ($actor === null || ! $tool instanceof DiscoverAssistantDomainCapabilitiesTool) {
+            return [];
+        }
+        try {
+            if (! $metadataFrameActive) {
+                $this->executionCheckpoint();
+            }
+            $read = function () use ($actor, $tool, $metadataFrameActive, $paymentOnlyRequest): array {
+                if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id, ! $metadataFrameActive)
+                    || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName(), [], ! $metadataFrameActive)) {
+                    return [];
+                }
+
+                if ($paymentOnlyRequest) {
+                    return $this->buildPaymentOnlyDomainCapabilityHints($tool, $actor, (int) $actor->current_organization_id);
+                }
+
+                return $tool->compactForActor($actor, (int) $actor->current_organization_id, ! $metadataFrameActive);
+            };
+            if ($metadataFrameActive) {
+                $hints = $read();
+            } else {
+                $hints = $this->dataAccess !== null && app()->bound(AssistantRequestExecutionContext::class)
+                    ? $this->dataAccess->withCurrentChecks($actor, (int) $actor->current_organization_id, $read, false,
+                        fn (): int => app(AssistantRequestExecutionContext::class)->remainingMilliseconds())
+                    : $read();
+                $this->executionCheckpoint();
+            }
+
+            return $hints;
+        } catch (AssistantRequestCancelled|\App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            if (! $metadataFrameActive) {
+                $this->executionCheckpoint();
+            }
+            throw $exception;
+        }
+    }
+
+    private function normalizePaymentOnlyDomainSearchArguments(array $arguments): array
+    {
+        return $arguments + [
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+            'query' => '',
+            'project_id' => null,
+            'limit' => 5,
+            'fields' => null,
+        ];
+    }
+
+    private function buildPaymentOnlyDomainCapabilityHints(
+        DiscoverAssistantDomainCapabilitiesTool $tool,
+        User $actor,
+        int $organizationId
+    ): array {
+        $organization = new Organization;
+        $organization->id = $organizationId;
+        $capabilityResult = $tool->execute([
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+            'offset' => 0,
+            'limit' => 1,
+            'field_offset' => 0,
+            'field_limit' => 16,
+        ], $actor, $organization);
+        if (! is_array($capabilityResult)) {
+            return [];
+        }
+
+        $domains = [];
+        foreach ($capabilityResult['capabilities'] ?? [] as $capability) {
+            if (! is_array($capability)
+                || ($capability['domain'] ?? null) !== 'finance'
+                || ($capability['entity_type'] ?? null) !== 'payment_document') {
+                continue;
+            }
+
+            $domains[] = [
+                'domain' => 'finance',
+                'primary_entity_type' => 'payment_document',
+                'entity_type_count' => 1,
+                'operations' => is_array($capability['operations'] ?? null) ? $capability['operations'] : [],
+            ];
+        }
+
+        return [
+            'domains' => count($domains) === 1 ? $domains : [],
+            'record_access' => $capabilityResult['record_access'] ?? 'checked_on_read',
+        ];
+    }
+
     protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array
     {
         $preparedMessages = $this->prepareMessagesForProvider($messages);
         $preparedOptions = $options;
-        $degraded = false;
-
-        $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
-
-        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET && ! empty($preparedOptions['tools'])) {
-            unset($preparedOptions['tools']);
-            $degraded = true;
-
-            $this->logging->technical('ai.assistant.tools_budget_limited', [
-                'organization_id' => $organizationId,
-                'user_id' => $user->id,
-                'estimated_tokens' => $estimatedTokens,
-            ], 'warning');
-
-            $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
-        }
-
-        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET) {
-            $preparedMessages = $this->enforceMessageBudget($preparedMessages, self::STRICT_MESSAGE_CHAR_BUDGET);
-            $estimatedTokens = $this->estimateProviderInputTokens($preparedMessages, $preparedOptions);
-            $degraded = true;
-        }
-
-        if ($estimatedTokens > self::PROVIDER_INPUT_TOKEN_BUDGET) {
-            throw new RuntimeException($this->assistantMessage(
-                'ai_assistant.prompt_too_large',
-                'Запрос получился слишком широким. Уточни объект, период или задачу.'
-            ));
-        }
-
-        return [$preparedMessages, $preparedOptions, $degraded];
+        $limits = $this->activeRequest !== null ? $this->requestLifecycle?->limits($this->activeRequest) : null;
+        $budgetService = $this->llmProvider instanceof \App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider
+            ? new TokenBudgetService(calibrationModel: LunaModelPolicy::OPENAI) : $this->tokenBudget;
+        $budget = \App\Support\AI\PreparedTokenBudget::create($budgetService, $preparedMessages, $options['tools'] ?? [], (string) ($options['budget_profile'] ?? $this->activeProfile), $limits);
+        $prepared = $budget->prepared;
+        $preparedOptions['_prepared_token_budget'] = $budget;
+        $preparedOptions['budget_profile'] = $prepared['profile'];
+        $preparedOptions['max_completion_tokens'] = $prepared['max_completion_tokens'];
+        $preparedOptions['estimated_input_tokens'] = $prepared['input_tokens'];
+        $preparedOptions['budget_limits'] = $prepared['budget_limits'];
+        return [$prepared['messages'], $preparedOptions, count($prepared['messages']) < count($messages)];
     }
 
     protected function prepareMessagesForProvider(array $messages): array
@@ -1987,30 +3739,22 @@ class AIAssistantService
             }
         }
 
-        return $this->enforceMessageBudget($prepared, self::MESSAGE_CHAR_BUDGET);
+        return $prepared;
     }
 
     protected function normalizeMessageForProvider(array $message): ?array
     {
-        $role = (string) ($message['role'] ?? 'user');
         $normalized = $message;
-        $content = (string) ($message['content'] ?? '');
-
-        $limit = match ($role) {
-            'system' => self::SYSTEM_PROMPT_CHAR_LIMIT,
-            'assistant' => self::ASSISTANT_MESSAGE_CHAR_LIMIT,
-            'tool' => self::TOOL_MESSAGE_CHAR_LIMIT,
-            default => self::USER_MESSAGE_CHAR_LIMIT,
-        };
-
-        if ($role === 'tool') {
-            $decoded = json_decode($content, true);
-            if (is_array($decoded)) {
-                $content = $this->formatValueForLLM($this->compactValueForLLM($decoded));
+        unset($normalized['_trusted_chat_images']);
+        if (is_array($message['content'] ?? null)) {
+            if (($message['_trusted_chat_images'] ?? false) !== true || ($message['role'] ?? null) !== 'user'
+                || array_slice($message['content'], 1) !== $this->currentImageParts) {
+                throw new RuntimeException('assistant_untrusted_image_parts');
             }
+            return $normalized;
         }
-
-        $normalized['content'] = $this->truncateText($this->normalizeText($content), $limit);
+        $content = (string) ($message['content'] ?? '');
+        $normalized['content'] = $content;
 
         if ($normalized['content'] === '' && empty($normalized['tool_calls'])) {
             return null;
@@ -2075,25 +3819,7 @@ class AIAssistantService
 
     protected function estimateProviderInputTokens(array $messages, array $options = []): int
     {
-        $payload = '';
-
-        foreach ($messages as $message) {
-            $payload .= (string) ($message['role'] ?? 'user');
-            $payload .= "\n";
-            $payload .= (string) ($message['content'] ?? '');
-            $payload .= "\n";
-
-            if (! empty($message['tool_calls'])) {
-                $payload .= (string) json_encode($message['tool_calls'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                $payload .= "\n";
-            }
-        }
-
-        if (! empty($options['tools'])) {
-            $payload .= (string) json_encode($options['tools'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        }
-
-        return (int) ceil(mb_strlen($payload) / 2);
+        return (int) $this->tokenBudget->prepare($messages, $options['tools'] ?? [], (string) ($options['budget_profile'] ?? $this->activeProfile))['input_tokens'];
     }
 
     protected function normalizeText(string $value): string

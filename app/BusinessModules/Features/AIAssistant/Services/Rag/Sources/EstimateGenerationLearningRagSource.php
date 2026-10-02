@@ -37,7 +37,7 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
             })
             ->orderBy('id');
 
-        foreach ($query->cursor() as $example) {
+        foreach ($query->reorder()->lazyById(100) as $example) {
             if ($this->indexable($example)) {
                 yield $this->chunk($example);
             }

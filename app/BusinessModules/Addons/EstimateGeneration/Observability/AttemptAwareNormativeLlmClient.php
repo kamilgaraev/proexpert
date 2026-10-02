@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
+use App\Support\AI\LunaModelPolicy;
 use Closure;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -176,11 +177,16 @@ final readonly class AttemptAwareNormativeLlmClient
             return array_fill(
                 0,
                 $effective->retryAttempts('normative_matching') + 1,
-                $effective->model('normative_matching'),
+                LunaModelPolicy::assert($effective->model('normative_matching'), 'timeweb'),
             );
         }
 
-        return $this->configuredModels();
+        $models = $this->configuredModels();
+        foreach ($models as $model) {
+            LunaModelPolicy::assert($model, 'timeweb');
+        }
+
+        return array_values(array_unique($models));
     }
 
     /** @return array<int, string> */

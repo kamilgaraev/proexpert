@@ -11,9 +11,10 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\Storage\DTO\CurrentStoredFile;
+use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -38,6 +39,12 @@ class QualityDefectControllerWorkflowTest extends TestCase
         $foreignDefect = $this->createDefect($foreignContext, $foreignProject);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
+        $this->mock(FileService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('temporaryUrl')
+                ->atLeast()
+                ->once()
+                ->andReturn('https://storage.example/signed/quality-before-photo.jpg');
+        });
 
         $createResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/quality-control/defects', [
@@ -53,7 +60,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
                 'photos' => [
                     [
                         'type' => 'before',
-                        'url' => 's3://org-' . $context->organization->id . '/quality/before-1.jpg',
+                        'url' => 's3://org-'.$context->organization->id.'/quality/before-1.jpg',
                         'caption' => 'Before repair',
                     ],
                 ],
@@ -151,12 +158,73 @@ class QualityDefectControllerWorkflowTest extends TestCase
 
     public function test_owner_can_create_quality_defect_with_uploaded_photo_in_s3(): void
     {
-        Storage::fake('s3');
-
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
+        $jpeg = UploadedFile::fake()->image('before.jpeg', 1200, 800);
+        $contents = (string) $jpeg->get();
+        $file = new UploadedFile(
+            $jpeg->getPathname(),
+            'before.gif',
+            'image/gif',
+            UPLOAD_ERR_OK,
+            true,
+        );
+        $mime = $file->getMimeType();
+        $this->assertSame('image/jpeg', $mime);
+        $this->assertSame('gif', $file->getClientOriginalExtension());
+        $sha256 = hash('sha256', $contents);
+        $etag = hash('md5', $contents);
+        $previewUrl = 'https://storage.example/signed/quality-defect-photo.jpg';
+        $storedPath = null;
+
+        $this->mock(FileService::class, function (MockInterface $mock) use (
+            $context,
+            $contents,
+            $etag,
+            $mime,
+            $previewUrl,
+            $sha256,
+            &$storedPath,
+        ): void {
+            $mock->shouldNotReceive('upload');
+            $mock->shouldReceive('putPrivate')
+                ->once()
+                ->withArgs(function (string $key, mixed $actualContents, string $actualMime, string $actualSha256) use (
+                    $context,
+                    $contents,
+                    $mime,
+                    $sha256,
+                    &$storedPath,
+                ): bool {
+                    self::assertMatchesRegularExpression(
+                        '/^org-'.$context->organization->id.'\/quality-control\/defects\/[1-9][0-9]*\/[0-9a-f-]{36}\.jpg$/',
+                        $key,
+                    );
+                    self::assertTrue(is_resource($actualContents));
+                    self::assertSame(0, ftell($actualContents));
+                    self::assertSame($contents, stream_get_contents($actualContents));
+                    rewind($actualContents);
+                    self::assertSame($mime, $actualMime);
+                    self::assertSame($sha256, $actualSha256);
+                    $storedPath = $key;
+
+                    return true;
+                })
+                ->andReturnUsing(static function (
+                    string $key,
+                    mixed $actualContents,
+                    string $actualMime,
+                    string $actualSha256,
+                ) use ($contents, $etag): CurrentStoredFile {
+                    return new CurrentStoredFile($key, $etag, strlen($contents), $actualSha256, $actualMime);
+                });
+            $mock->shouldReceive('temporaryUrl')
+                ->atLeast()
+                ->once()
+                ->andReturn($previewUrl);
+        });
 
         $response = $this->withHeaders($context->authHeaders())
             ->post('/api/v1/admin/quality-control/defects', [
@@ -167,7 +235,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
                 'photos' => [
                     [
                         'type' => 'before',
-                        'file' => UploadedFile::fake()->image('before.jpg', 1200, 800),
+                        'file' => $file,
                         'caption' => 'Before repair',
                     ],
                 ],
@@ -177,9 +245,17 @@ class QualityDefectControllerWorkflowTest extends TestCase
         $response->assertJsonPath('data.photos.0.type', 'before');
 
         $path = (string) $response->json('data.photos.0.url');
+        $defect = QualityDefect::query()->findOrFail((int) $response->json('data.id'));
+        $photo = $defect->photos()->sole();
 
-        $this->assertStringStartsWith("org-{$context->organization->id}/quality-control/defects/", $path);
-        Storage::disk('s3')->assertExists($path);
+        $this->assertTrue($photo->storage_identity_verified);
+        $this->assertSame($storedPath, $path);
+        $this->assertSame($etag, $photo->storage_etag);
+        $this->assertSame($sha256, $photo->storage_sha256);
+        $this->assertSame(strlen($contents), $photo->size_bytes);
+        $this->assertSame($mime, $photo->mime_type);
+        $this->assertSame($path, $response->json('data.photos.0.path'));
+        $this->assertSame($previewUrl, $response->json('data.photos.0.preview_url'));
     }
 
     public function test_defect_requires_result_evidence_before_resolve_when_inspection_required(): void
@@ -208,7 +284,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
                 'photos' => [
                     [
                         'type' => 'after',
-                        'url' => 's3://org-' . $context->organization->id . '/quality/after-1.jpg',
+                        'url' => 's3://org-'.$context->organization->id.'/quality/after-1.jpg',
                         'caption' => 'After repair',
                     ],
                 ],
@@ -337,7 +413,7 @@ class QualityDefectControllerWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'created_by' => $context->user->id,
-            'defect_number' => 'QD-' . $context->organization->id . '-' . uniqid(),
+            'defect_number' => 'QD-'.$context->organization->id.'-'.uniqid(),
             'title' => 'Existing quality defect',
             'severity' => 'major',
             'status' => QualityDefectStatusEnum::OPEN,

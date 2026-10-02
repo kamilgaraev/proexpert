@@ -20,15 +20,23 @@ final class AssistantReportFileServiceTest extends TestCase
     public function test_creates_report_file_and_returns_normalized_artifact(): void
     {
         $organization = Organization::factory()->create();
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $user = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
         $path = 'org-'.$organization->id.'/personal-files/user-'.$user->id.'/01989f5c-27f3-7ab8-9e34-5d436c15a004.pdf';
         config()->set('filesystems.s3.download_ttl_seconds', 900);
         $fileService = Mockery::mock(FileService::class);
-        $fileService
-            ->shouldReceive('temporaryDownloadUrl')
-            ->once()
-            ->with($path, 900)
-            ->andReturn('https://files.example.test/timeline.pdf');
+        $fileService->shouldNotReceive('temporaryDownloadUrl');
+        $user->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $project = \App\Models\Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $authorization = Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('canCurrent')->andReturnTrue();
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('getUserRoles')->andReturn(collect());
+        $modules = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'project-management', 'reports', 'payments'])->map(static fn (string $slug): object => (object) ['slug' => $slug]));
+        $policy = new \App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy($authorization, new \App\Services\Project\UserProjectAccessService, $modules);
+        $this->app->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy::class, $policy);
+        $registered = app(\App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportAccessService::class)->register($path, $organization, $user,
+            [['entity_type' => 'project', 'entity_id' => (string) $project->id]], ['projects']);
 
         $service = new AssistantReportFileService($fileService);
 
@@ -36,7 +44,7 @@ final class AssistantReportFileServiceTest extends TestCase
             'generate_project_timelines_report',
             [
                 'status' => 'success',
-                'pdf_url' => 'https://storage.example.test/timeline.pdf',
+                'pdf_url' => $registered['download_url'],
                 'filename' => 'timeline.pdf',
                 'storage_disk' => 's3',
                 'storage_path' => $path,
@@ -46,17 +54,17 @@ final class AssistantReportFileServiceTest extends TestCase
             [
                 'date_from' => '2026-05-01',
                 'date_to' => '2026-05-20',
-                'project_id' => 12,
+                'project_id' => $project->id,
             ]
         );
 
         $this->assertCount(1, $artifacts);
         $this->assertSame('pdf', $artifacts[0]['type']);
-        $this->assertSame('https://files.example.test/timeline.pdf', $artifacts[0]['download_url']);
+        $this->assertStringStartsWith('/api/v1/ai-assistant/reports/', $artifacts[0]['download_url']);
         $this->assertSame($path, $artifacts[0]['storage_path']);
         $this->assertNull($artifacts[0]['expires_at']);
         $this->assertSame('project_timelines', $artifacts[0]['report_type']);
-        $this->assertSame(12, $artifacts[0]['filters']['project_id']);
+        $this->assertSame($project->id, $artifacts[0]['filters']['project_id']);
         $this->assertDatabaseHas('report_files', [
             'path' => $path,
             'organization_id' => $organization->id,

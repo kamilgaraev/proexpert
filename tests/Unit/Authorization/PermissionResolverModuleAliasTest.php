@@ -9,6 +9,71 @@ use PHPUnit\Framework\TestCase;
 
 class PermissionResolverModuleAliasTest extends TestCase
 {
+    public function test_finance_alias_only_maps_its_active_module_gate_to_payments(): void
+    {
+        self::assertContains('payments', \App\Domain\Authorization\ValueObjects\ModulePermissionAliases::variants('finance'));
+        self::assertNotContains('finance', \App\Domain\Authorization\ValueObjects\ModulePermissionAliases::variants('payments'));
+    }
+
+    public function test_finance_permissions_require_explicit_namespace_even_with_payments_wildcard(): void
+    {
+        $permissions = ['payments' => ['*']];
+
+        self::assertFalse($this->financePermission($permissions, 'payments', 'finance', 'view'));
+        self::assertFalse($this->financePermission($permissions, 'payments', 'finance', 'view_project_budget'));
+        self::assertTrue($this->financePermission($permissions, 'payments', 'payments', 'invoice.view'));
+    }
+
+    public function test_removing_finance_namespace_revokes_its_grant_without_revoking_payments(): void
+    {
+        $permissions = ['payments' => ['*'], 'finance' => ['finance.view']];
+
+        self::assertTrue($this->financePermission($permissions, 'payments', 'finance', 'view'));
+        unset($permissions['finance']);
+        self::assertFalse($this->financePermission($permissions, 'payments', 'finance', 'view'));
+        self::assertTrue($this->financePermission($permissions, 'payments', 'payments', 'invoice.view'));
+    }
+
+    public function test_canonical_payments_storage_preserves_only_explicit_qualified_finance_grants(): void
+    {
+        $permissions = ['payments' => ['*', 'payments.*', 'view', 'finance.view']];
+        self::assertTrue($this->financePermission($permissions, 'payments', 'finance', 'view'));
+        self::assertFalse($this->financePermission($permissions, 'payments', 'finance', 'view_project_budget'));
+        $permissions['payments'] = ['*', 'payments.*', 'view'];
+        self::assertFalse($this->financePermission($permissions, 'payments', 'finance', 'view'));
+        self::assertFalse($this->financePermission($permissions, 'payments', 'finance', 'view_project_budget'));
+        self::assertTrue($this->financePermission($permissions, 'payments', 'payments', 'invoice.view'));
+        self::assertTrue($this->financePermission(['payments' => ['finance.*']], 'payments', 'finance', 'view_project_budget'));
+    }
+
+    private function financePermission(array $permissions, string $module, string $requestedModule, string $action): bool
+    {
+        $resolver = new class($this->createMock(\App\Services\Logging\LoggingService::class)) extends PermissionResolver
+        {
+            public function __construct(\App\Services\Logging\LoggingService $logging)
+            {
+                $this->logging = $logging;
+            }
+
+            public function permits(array $permissions, string $module, string $requestedModule, string $action): bool
+            {
+                return $this->checkModulePermission($permissions, $module, $requestedModule, $action, $requestedModule.'.'.$action);
+            }
+        };
+
+        $previousLogger = \Illuminate\Support\Facades\Log::getFacadeRoot();
+        \Illuminate\Support\Facades\Log::swap(new \Psr\Log\NullLogger);
+        try {
+            return $resolver->permits($permissions, $module, $requestedModule, $action);
+        } finally {
+            if ($previousLogger === null) {
+                \Illuminate\Support\Facades\Log::clearResolvedInstance('log');
+            } else {
+                \Illuminate\Support\Facades\Log::swap($previousLogger);
+            }
+        }
+    }
+
     // Regression: ISSUE-083 — owner получал 403 на каталог спецификаций
     // Found by /qa on 2026-08-29
     // Report: .gstack/qa-reports/qa-report-most-full-2026-08-28.md

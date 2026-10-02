@@ -28,6 +28,8 @@ class RagIndexRun extends Model
         'organization_id',
         'project_id',
         'source_type',
+        'entity_type',
+        'entity_id',
         'status',
         'mode',
         'queued_at',
@@ -38,6 +40,12 @@ class RagIndexRun extends Model
         'source_count',
         'chunk_count',
         'last_error',
+        'expected_sources',
+        'processed_sources',
+        'lease_expires_at',
+        'lease_token',
+        'heartbeat_at',
+        'scan_completed_at',
     ];
 
     protected $casts = [
@@ -50,6 +58,11 @@ class RagIndexRun extends Model
         'indexed_chunks' => 'integer',
         'source_count' => 'integer',
         'chunk_count' => 'integer',
+        'expected_sources' => 'integer',
+        'processed_sources' => 'integer',
+        'lease_expires_at' => 'datetime',
+        'heartbeat_at' => 'datetime',
+        'scan_completed_at' => 'datetime',
     ];
 
     public function organization(): BelongsTo

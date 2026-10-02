@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -253,6 +255,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     $snapshot->output_hash = (string) DB::table('safety_admission_snapshots')
                         ->where('id', $snapshot->id)->value('output_hash');
                     $snapshot->sealed_at = $generatedAt;
+                    app(OperationsRagMutationBridge::class)->snapshot('safety_admission_snapshots', 'safety_admission_rows', $organizationId, $snapshot->id);
                     if ($query->definition->snapshotClassification === ReportSnapshotClassification::OFFICIAL) {
                         $this->seals->create(
                             'workforce_admission',

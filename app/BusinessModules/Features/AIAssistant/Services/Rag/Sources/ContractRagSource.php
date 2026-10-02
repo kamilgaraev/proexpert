@@ -36,7 +36,7 @@ final class ContractRagSource implements RagSourceCollectorInterface
             })
             ->orderBy('id');
 
-        foreach ($query->cursor() as $contract) {
+        foreach ($query->reorder()->lazyById(100) as $contract) {
             yield $this->chunk($contract, $projectId);
         }
     }

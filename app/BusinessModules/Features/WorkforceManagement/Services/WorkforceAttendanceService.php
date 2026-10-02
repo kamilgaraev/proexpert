@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\WorkforceRagMutationBridge;
 use App\BusinessModules\Features\WorkforceManagement\Domain\Scheduling\WorkforceWeekPattern;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
@@ -88,18 +89,23 @@ final class WorkforceAttendanceService
             throw new DomainException(trans_message('workforce.errors.attendance_conflicts_with_absence'));
         }
 
-        $id = DB::table('workforce_attendance_corrections')->insertGetId([
-            'organization_id' => $organizationId,
-            'employee_id' => $employeeId,
-            'project_id' => $projectId,
-            'work_date' => $workDate,
-            'status' => (string) $payload['status'],
-            'hours' => array_key_exists('hours', $payload) && $payload['hours'] !== null ? (float) $payload['hours'] : null,
-            'reason' => (string) $payload['reason'],
-            'created_by_user_id' => $userId,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $id = DB::transaction(function () use ($organizationId, $employeeId, $userId, $projectId, $workDate, $payload): int {
+            $id = DB::table('workforce_attendance_corrections')->insertGetId([
+                'organization_id' => $organizationId,
+                'employee_id' => $employeeId,
+                'project_id' => $projectId,
+                'work_date' => $workDate,
+                'status' => (string) $payload['status'],
+                'hours' => array_key_exists('hours', $payload) && $payload['hours'] !== null ? (float) $payload['hours'] : null,
+                'reason' => (string) $payload['reason'],
+                'created_by_user_id' => $userId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            app(WorkforceRagMutationBridge::class)->changed('workforce_attendance_corrections', $organizationId, $id);
+            return $id;
+        });
 
         $record = DB::table('workforce_attendance_corrections as correction')
             ->leftJoin('projects as project', 'project.id', '=', 'correction.project_id')

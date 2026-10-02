@@ -4,27 +4,32 @@ declare(strict_types=1);
 
 namespace App\Services\Monitoring;
 
+use Closure;
 use Illuminate\Contracts\Queue\Job;
+use Illuminate\Console\Events\CommandFinished;
+use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Redis\Events\CommandExecuted;
+use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Log;
 use OpenTelemetry\API\Common\Time\Clock;
 use OpenTelemetry\API\Trace\NoopTracerProvider;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use OpenTelemetry\API\Trace\Span;
+use OpenTelemetry\API\Trace\SpanContext;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
 use OpenTelemetry\API\Trace\TracerProviderInterface;
 use OpenTelemetry\Context\Context;
-use OpenTelemetry\Context\ScopeInterface;
 use OpenTelemetry\Contrib\Otlp\OtlpHttpTransportFactory;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
 use OpenTelemetry\SDK\Trace\Sampler\ParentBased;
+use OpenTelemetry\SDK\Trace\Sampler\AlwaysOffSampler;
 use OpenTelemetry\SDK\Trace\Sampler\TraceIdRatioBasedSampler;
 use OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
@@ -35,15 +40,21 @@ use Throwable;
 final class TracingService
 {
     private array $activeJobs = [];
+    private array $activeCommands = [];
+    private array $activeHttp = [];
+    private static array $correlationIds = [];
 
-    public function __construct(private readonly TracerProviderInterface $provider)
+    public function __construct(private readonly ?TracerProviderInterface $provider)
     {
     }
 
     public static function fromConfig(): self
     {
+        if (! interface_exists(TracerProviderInterface::class)) {
+            return new self(null);
+        }
         if (! config('monitoring.tracing_enabled')) {
-            return new self(new NoopTracerProvider());
+            return self::withoutExport();
         }
 
         try {
@@ -64,22 +75,172 @@ final class TracingService
             $provider = (new TracerProviderBuilder())
                 ->addSpanProcessor($processor)
                 ->setResource($resource)
-                ->setSampler(new ParentBased(new TraceIdRatioBasedSampler($ratio)))
+                ->setSampler(new SlowQuerySampler(new ParentBased(new TraceIdRatioBasedSampler($ratio))))
                 ->build();
 
             return new self($provider);
         } catch (Throwable $exception) {
             error_log('OpenTelemetry initialization failed: '.$exception::class);
 
-            return new self(new NoopTracerProvider());
+            return self::withoutExport();
         }
     }
 
     public static function currentTraceId(): ?string
     {
+        if (self::$correlationIds !== []) {
+            return self::$correlationIds[array_key_last(self::$correlationIds)];
+        }
+        if (! class_exists(Span::class)) {
+            return null;
+        }
         $context = Span::getCurrent()->getContext();
 
-        return $context->isValid() && $context->isSampled() ? $context->getTraceId() : null;
+        return $context->isValid() ? $context->getTraceId() : null;
+    }
+
+    public function supportsSpans(): bool
+    {
+        return $this->provider !== null;
+    }
+
+    private function traceIdFromCarrier(array $carrier): ?string
+    {
+        $header = $carrier['traceparent'] ?? '';
+        if (! is_string($header) || preg_match('/^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/D', $header, $matches) !== 1
+            || $matches[1] === str_repeat('0', 32) || $matches[2] === str_repeat('0', 16)) {
+            return null;
+        }
+        return $matches[1];
+    }
+
+    public function correlateHttp(Request $request, Closure $next): Response
+    {
+        self::$correlationIds[] = $this->traceIdFromCarrier(['traceparent' => $request->header('traceparent')]) ?? bin2hex(random_bytes(16));
+        $this->activeHttp[spl_object_id($request)] = $request;
+        try {
+            $response = $next($request);
+            $response->headers->set('X-Trace-ID', self::currentTraceId());
+            return $response;
+        } finally {
+            $this->endHttpContext($request);
+            array_pop(self::$correlationIds);
+        }
+    }
+
+    private static function withoutExport(): self
+    {
+        if (! class_exists(TracerProviderBuilder::class)) {
+            return new self(new NoopTracerProvider);
+        }
+
+        return new self((new TracerProviderBuilder())->setSampler(new AlwaysOffSampler())->build());
+    }
+
+    private function withCorrelation(SpanInterface $span): SpanInterface
+    {
+        return $span->getContext()->isValid()
+            ? $span
+            : Span::wrap(SpanContext::create(bin2hex(random_bytes(16)), bin2hex(random_bytes(8))));
+    }
+
+    public function executionContext(): array
+    {
+        if ($this->activeJobs !== []) {
+            return $this->activeJobs[array_key_last($this->activeJobs)][2];
+        }
+        if ($this->activeHttp !== []) {
+            $request = $this->activeHttp[array_key_last($this->activeHttp)];
+            $route = $request->route();
+            return ['kind' => 'http', 'method' => $request->method(), 'route' => $route instanceof Route ? $route->uri() : 'unmatched'];
+        }
+        if ($this->activeCommands !== []) {
+            return ['kind' => 'console', 'command' => $this->activeCommands[array_key_last($this->activeCommands)][1]];
+        }
+
+        return ['kind' => app()->runningInConsole() ? 'console' : 'http'];
+    }
+
+    public function startCommand(CommandStarting $event): void
+    {
+        $name = preg_match('/^[A-Za-z0-9_:-]{1,100}$/D', $event->command) === 1 ? $event->command : 'command';
+        if ($this->provider === null) {
+            self::$correlationIds[] = bin2hex(random_bytes(16));
+            $this->activeCommands[] = [$event->input, $name, null, null];
+            return;
+        }
+        $span = $this->provider->getTracer('most.laravel')->spanBuilder('console '.$name)
+            ->setAttribute('console.command', $name)->startSpan();
+        $span = $this->withCorrelation($span);
+        $this->activeCommands[] = [$event->input, $name, $span, $span->activate()];
+    }
+
+    public function finishCommand(CommandFinished $event): void
+    {
+        foreach (array_reverse(array_keys($this->activeCommands)) as $key) {
+            [$input, , $span, $scope] = $this->activeCommands[$key];
+            if ($input !== $event->input) {
+                continue;
+            }
+            unset($this->activeCommands[$key]);
+            if ($span === null) {
+                array_pop(self::$correlationIds);
+                return;
+            }
+            try {
+                $span->setAttribute('console.exit_code', $event->exitCode);
+                if ($event->exitCode !== 0) {
+                    $span->setStatus(StatusCode::STATUS_ERROR);
+                }
+                $span->end();
+            } finally {
+                $scope->detach();
+                $this->flush();
+            }
+            return;
+        }
+    }
+
+    public function slowQueryTrace(QueryExecuted $event): array
+    {
+        if ($this->provider === null) {
+            return ['trace_id' => self::currentTraceId() ?? bin2hex(random_bytes(16)), 'trace_sampled' => false, 'trace_kind' => 'correlation'];
+        }
+        $parent = Span::getCurrent()->getContext();
+        if ($parent->isValid() && $parent->isSampled() && Span::getCurrent()->isRecording()) {
+            return ['trace_id' => $parent->getTraceId(), 'span_id' => $parent->getSpanId(), 'trace_sampled' => true, 'trace_kind' => 'execution'];
+        }
+        try {
+            $end = Clock::getDefault()->now();
+            $builder = $this->provider->getTracer('most.laravel')->spanBuilder('db.slow_query '.$this->operation($event->sql))
+                ->setParent(Context::getRoot())
+                ->setSpanKind(SpanKind::KIND_CLIENT)
+                ->setStartTimestamp(max(0, $end - (int) round(max(0.0, $event->time) * 1_000_000)))
+                ->setAttributes([
+                    'most.slow_query' => true,
+                    'db.system.name' => 'postgresql',
+                    'db.operation.name' => $this->operation($event->sql),
+                    'db.connection.name' => (string) $event->connectionName,
+                    'db.query.fingerprint' => hash('sha256', $event->sql),
+                    'db.query.duration_ms' => $event->time,
+                ]);
+            if ($parent->isValid()) {
+                $builder->addLink($parent);
+            }
+            $span = $builder->startSpan();
+            $span->end($end);
+            $context = $span->getContext();
+
+            return [
+                'trace_id' => $context->isValid() ? $context->getTraceId() : bin2hex(random_bytes(16)),
+                'span_id' => $context->isValid() ? $context->getSpanId() : null,
+                'trace_sampled' => $context->isSampled(),
+                'trace_kind' => 'slow_query',
+                'parent_trace_id' => $parent->isValid() ? $parent->getTraceId() : null,
+            ];
+        } catch (Throwable) {
+            return ['trace_id' => self::currentTraceId() ?? bin2hex(random_bytes(16)), 'trace_sampled' => false, 'trace_kind' => 'correlation'];
+        }
     }
 
     public function startHttp(Request $request): array
@@ -99,8 +260,17 @@ final class TracingService
             ->setSpanKind(SpanKind::KIND_SERVER)
             ->setAttribute('http.request.method', $request->method())
             ->startSpan();
+        $span = $this->withCorrelation($span);
 
-        return [$span, $span->activate()];
+        $scope = $span->activate();
+        $this->activeHttp[spl_object_id($request)] = $request;
+
+        return [$span, $scope];
+    }
+
+    public function endHttpContext(Request $request): void
+    {
+        unset($this->activeHttp[spl_object_id($request)]);
     }
 
     public function finishHttp(SpanInterface $span, Request $request, Response $response): void
@@ -160,6 +330,10 @@ final class TracingService
 
     public function queuePayload(): array
     {
+        if ($this->provider === null) {
+            $traceId = self::currentTraceId();
+            return $traceId === null ? [] : ['otel_traceparent' => '00-'.$traceId.'-'.bin2hex(random_bytes(8)).'-00'];
+        }
         try {
             $carrier = [];
             TraceContextPropagator::getInstance()->inject($carrier);
@@ -189,6 +363,18 @@ final class TracingService
                 $carrier['tracestate'] = $payload['otel_tracestate'];
             }
 
+            if ($this->provider === null) {
+                $jobName = class_basename((string) ($payload['displayName'] ?? $event->job->getName()));
+                $jobName = preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,100}$/D', $jobName) === 1 ? $jobName : 'Job';
+                $jobId = $payload['uuid'] ?? null;
+                self::$correlationIds[] = $this->traceIdFromCarrier($carrier) ?? bin2hex(random_bytes(16));
+                $this->activeJobs[spl_object_id($event->job)] = [null, null, [
+                    'kind' => 'queue', 'job' => $jobName,
+                    'job_id' => is_string($jobId) && preg_match('/^[0-9a-f-]{36}$/D', $jobId) === 1 ? $jobId : null,
+                ]];
+                return;
+            }
+
             $parent = TraceContextPropagator::getInstance()->extract($carrier, context: Context::getRoot());
             $jobName = class_basename((string) ($payload['displayName'] ?? $event->job->getName()));
             $jobName = preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,100}$/', $jobName) ? $jobName : 'Job';
@@ -200,8 +386,13 @@ final class TracingService
                 ->setAttribute('messaging.operation.name', 'process')
                 ->setAttribute('job.type', $jobName)
                 ->startSpan();
+            $span = $this->withCorrelation($span);
 
-            $this->activeJobs[spl_object_id($event->job)] = [$span, $span->activate()];
+            $jobId = $payload['uuid'] ?? null;
+            $this->activeJobs[spl_object_id($event->job)] = [$span, $span->activate(), [
+                'kind' => 'queue', 'job' => $jobName,
+                'job_id' => is_string($jobId) && preg_match('/^[0-9a-f-]{36}$/D', $jobId) === 1 ? $jobId : null,
+            ]];
         } catch (Throwable) {
             return;
         }
@@ -210,7 +401,7 @@ final class TracingService
     public function markJobFailed(Job $job, Throwable $exception): void
     {
         $active = $this->activeJobs[spl_object_id($job)] ?? null;
-        if ($active !== null) {
+        if ($active !== null && $active[0] !== null) {
             $this->markError($active[0], $exception);
         }
     }
@@ -225,6 +416,10 @@ final class TracingService
 
         unset($this->activeJobs[$id]);
         [$span, $scope] = $active;
+        if ($span === null) {
+            array_pop(self::$correlationIds);
+            return;
+        }
         try {
             if ($exception !== null) {
                 $this->markError($span, $exception);
@@ -234,8 +429,8 @@ final class TracingService
             $scope->detach();
             if ($span->getContext()->isSampled()) {
                 $this->logCompletedTrace($span, 'queue');
-                $this->flush();
             }
+            $this->flush();
         }
     }
 
@@ -252,7 +447,7 @@ final class TracingService
 
     private function recordCompletedOperation(string $name, float $durationMs, array $attributes): void
     {
-        if (! Span::getCurrent()->isRecording()) {
+        if ($this->provider === null || ! Span::getCurrent()->isRecording()) {
             return;
         }
 

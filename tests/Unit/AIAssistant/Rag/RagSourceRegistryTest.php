@@ -20,7 +20,7 @@ class RagSourceRegistryTest extends TestCase
 
         $this->assertSame(['project'], array_keys($registry->enabledCollectors()));
         $this->assertSame(['project'], $registry->enabledSourceTypes());
-        $this->assertSame([['type' => 'project', 'enabled' => true]], $registry->sourceCatalog());
+        $this->assertSame([['type' => 'project', 'enabled' => true, 'display_label' => 'Проекты']], $registry->sourceCatalog());
         $this->assertSame('project', $registry->collector('project')?->sourceType());
         $this->assertNull($registry->collector('missing'));
     }
@@ -58,6 +58,25 @@ class RagSourceRegistryTest extends TestCase
             $registry->enabledSourceTypes(),
             array_map(static fn (array $source): string => $source['type'], $registry->sourceCatalog())
         );
+
+        foreach ($registry->sourceCatalog() as $source) {
+            $displayLabel = $source['display_label'] ?? null;
+
+            $this->assertIsString($displayLabel, $source['type']);
+            $this->assertNotSame('', trim($displayLabel), $source['type']);
+            $this->assertNotSame('Источник', $displayLabel, $source['type']);
+        }
+    }
+
+    public function test_unknown_source_type_keeps_catalog_contract_without_a_label(): void
+    {
+        $registry = new RagSourceRegistry([
+            new FakeRagSourceCollector('future_source_type', true),
+        ]);
+
+        $this->assertSame([
+            ['type' => 'future_source_type', 'enabled' => true],
+        ], $registry->sourceCatalog());
     }
 }
 

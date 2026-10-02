@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Models\User;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -43,6 +44,9 @@ class PaymentScheduleService
                 throw new \DomainException(trans_message('payments.schedule.update_locked'));
             }
 
+            app(CoreRagMutationBridge::class)->changedRows(PaymentSchedule::class, PaymentSchedule::query()
+                ->where('payment_document_id', $document->id)->where('status', 'pending'),
+                (int) $document->organization_id, $document->project_id === null ? null : (int) $document->project_id);
             PaymentSchedule::query()
                 ->where('payment_document_id', $document->id)
                 ->where('status', 'pending')
@@ -62,6 +66,9 @@ class PaymentScheduleService
 
             $firstPaymentDate = Carbon::parse((string) collect($installments)->min('due_date'))->startOfDay();
             $this->paymentDocumentService->schedule($document, $firstPaymentDate, $user);
+            app(CoreRagMutationBridge::class)->changedRows(PaymentSchedule::class, PaymentSchedule::query()
+                ->where('payment_document_id', $document->id),
+                (int) $document->organization_id, $document->project_id === null ? null : (int) $document->project_id);
 
             return $schedules;
         });

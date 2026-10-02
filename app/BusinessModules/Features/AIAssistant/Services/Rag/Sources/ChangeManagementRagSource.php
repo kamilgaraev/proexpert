@@ -268,7 +268,7 @@ final class ChangeManagementRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function changeRequests(int $organizationId, ?int $projectId): iterable
@@ -278,7 +278,7 @@ final class ChangeManagementRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function claims(int $organizationId, ?int $projectId): iterable
@@ -288,7 +288,7 @@ final class ChangeManagementRagSource implements RagSourceCollectorInterface
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function impacts(int $organizationId, ?int $projectId): iterable
@@ -298,7 +298,7 @@ final class ChangeManagementRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->whereHas('changeRequest', static fn ($requestQuery) => $requestQuery->where('project_id', $projectId)))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function approvals(int $organizationId, ?int $projectId): iterable
@@ -308,7 +308,7 @@ final class ChangeManagementRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->whereHas('changeRequest', static fn ($requestQuery) => $requestQuery->where('project_id', $projectId)))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function variationOrders(int $organizationId, ?int $projectId): iterable
@@ -318,7 +318,7 @@ final class ChangeManagementRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->whereHas('changeRequest', static fn ($requestQuery) => $requestQuery->where('project_id', $projectId)))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleRfi(int $organizationId, string|int $entityId): array

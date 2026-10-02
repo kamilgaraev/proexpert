@@ -29,7 +29,7 @@ final class ProjectRagSource implements RagSourceCollectorInterface
             ->when($projectId !== null, static fn ($query) => $query->where('id', $projectId))
             ->orderBy('id');
 
-        foreach ($query->cursor() as $project) {
+        foreach ($query->reorder()->lazyById(100) as $project) {
             yield $this->chunk($project);
         }
     }

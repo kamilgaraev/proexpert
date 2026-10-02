@@ -524,6 +524,9 @@ final class ContractPeriodCertificateService
      */
     private function syncMemberships(ContractPeriodCertificate $certificate, array $composition, bool $binding): void
     {
+        app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+            ContractPeriodCertificateAct::class, ContractPeriodCertificateAct::query()->where('certificate_id', $certificate->id),
+            (int) $certificate->organization_id, $certificate->project_id === null ? null : (int) $certificate->project_id);
         ContractPeriodCertificateAct::query()->where('certificate_id', $certificate->id)->delete();
         foreach ($composition as $row) {
             ContractPeriodCertificateAct::query()->create([
@@ -540,6 +543,9 @@ final class ContractPeriodCertificateService
                 'is_binding' => $binding,
             ]);
         }
+        app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+            ContractPeriodCertificateAct::class, ContractPeriodCertificateAct::query()->where('certificate_id', $certificate->id),
+            (int) $certificate->organization_id, $certificate->project_id === null ? null : (int) $certificate->project_id);
     }
 
     private function buildSnapshot(Contract $contract, Collection $periodActs, string $periodStart, string $periodEnd, ?int $projectId): array

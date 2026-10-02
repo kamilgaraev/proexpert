@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\OperationsRagMutationBridge;
+
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Contracts\QualityDefectFlowStore;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\DTO\QualityDefectFlowEvent;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Enums\QualityDefectFlowEventKind;
@@ -110,6 +112,7 @@ final readonly class EloquentQualityDefectFlowStore implements QualityDefectFlow
         ];
 
         DB::table('quality_defect_flow_events')->insert($attributes);
+        app(OperationsRagMutationBridge::class)->changed('quality_defect_flow_events', (int) $identity['organization_id'], $eventId);
 
         return $eventId;
     }
@@ -188,6 +191,8 @@ final readonly class EloquentQualityDefectFlowStore implements QualityDefectFlow
             'evidence_hash' => $evidenceHash,
             'created_at' => now(new DateTimeZone('UTC')),
         ]);
+
+        app(OperationsRagMutationBridge::class)->changed('quality_defect_flow_gaps', (int) $identity['organization_id'], $gapId);
 
         return $gapId;
     }

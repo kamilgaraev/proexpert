@@ -17,13 +17,38 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use DateTimeInterface;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
 class RagIndexerTest extends TestCase
 {
+    public function test_dimension_mismatch_preserves_the_existing_index(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $chunk = $this->chunk($organizationId, $projectId, 'original content');
+        (new RagIndexer(new RecordingEmbeddingProvider([1.0]), new RagSourceRegistry([])))->indexChunk($chunk);
+        $beforeSources = RagSource::query()->get()->toArray();
+        $beforeChunks = DB::table('ai_rag_chunks')->get()->toArray();
+        $provider = new class implements RagEmbeddingProviderInterface {
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array { return array_fill(0, 1024, 0.1); }
+            public function provider(): string { return 'fake'; }
+            public function model(): string { return 'fake-model'; }
+            public function dimensions(): int { return 256; }
+        };
+        try {
+            (new RagIndexer($provider, new RagSourceRegistry([])))->indexChunk($this->chunk($organizationId, $projectId, 'changed content'));
+            $this->fail('An invalid profile must not replace the existing index.');
+        } catch (\App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch $exception) {
+            $this->assertSame(1024, $exception->actual);
+        }
+        $this->assertSame($beforeSources, RagSource::query()->get()->toArray());
+        $this->assertEquals($beforeChunks, DB::table('ai_rag_chunks')->get()->toArray());
+    }
+
     public function test_indexes_new_source_skips_unchanged_source_and_replaces_changed_chunks(): void
     {
         [$organizationId, $projectId] = $this->seedScope();
@@ -52,6 +77,183 @@ class RagIndexerTest extends TestCase
         $this->assertSame(2, $provider->calls);
         $this->assertNotSame($firstChunkId, RagChunk::query()->value('id'));
         $this->assertSame('Обновленный контекст', RagChunk::query()->value('content'));
+    }
+
+    public function test_refreshes_source_metadata_without_reembedding_unchanged_chunks(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $original = $this->chunk($organizationId, $projectId, 'Контекст без изменений');
+        $indexer->indexChunk($original);
+        $source = RagSource::query()->firstOrFail();
+        $storedChunk = RagChunk::query()->firstOrFail();
+        $updatedAt = now()->addMinute();
+        $updated = $this->chunk(
+            $organizationId,
+            $projectId,
+            'Контекст без изменений',
+            title: 'Новое название',
+            metadata: ['status' => 'active', 'access_user_ids' => [17], 'provenance' => 'source-v2'],
+            updatedAt: $updatedAt
+        );
+
+        $indexer->indexChunk($updated);
+
+        $source->refresh();
+        $storedChunk->refresh();
+        $this->assertSame(1, $provider->calls);
+        $this->assertSame(1, RagSource::query()->count());
+        $this->assertSame(1, RagChunk::query()->count());
+        $this->assertSame($source->id, RagSource::query()->value('id'));
+        $this->assertSame($storedChunk->id, RagChunk::query()->value('id'));
+        $this->assertSame('Новое название', $source->title);
+        $this->assertSame($updatedAt->format(DateTimeInterface::ATOM), $source->source_version);
+        $sourceMetadata = $source->metadata;
+        $chunkMetadata = $storedChunk->metadata;
+        ksort($sourceMetadata);
+        ksort($chunkMetadata);
+        $this->assertSame(['access_user_ids' => [17], 'provenance' => 'source-v2', 'status' => 'active'], $sourceMetadata);
+        $this->assertSame(['access_user_ids' => [17], 'chunk_count' => 1, 'chunk_index' => 0, 'provenance' => 'source-v2', 'status' => 'active'], $chunkMetadata);
+        $this->assertSame($original->content, $storedChunk->content);
+        $this->assertSame($indexer->coverageIdentity($updated)['checksum'], $source->checksum);
+    }
+
+    public function test_reembeds_when_embedding_model_changes(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $sourceRegistry = new RagSourceRegistry([]);
+        $originalProvider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $original = $this->chunk($organizationId, $projectId, 'Контекст модели');
+        (new RagIndexer($originalProvider, $sourceRegistry))->indexChunk($original);
+        $firstChunkId = RagChunk::query()->value('id');
+        $updatedProvider = new RecordingEmbeddingProvider([0.4, 0.5, 0.6], modelName: 'new-model');
+
+        (new RagIndexer($updatedProvider, $sourceRegistry))->indexChunk($original);
+
+        $this->assertSame(1, $originalProvider->calls);
+        $this->assertSame(1, $updatedProvider->calls);
+        $this->assertNotSame($firstChunkId, RagChunk::query()->value('id'));
+        $this->assertSame('new-model', RagChunk::query()->value('embedding_model'));
+    }
+
+    public function test_reembeds_when_chunking_changes_the_actual_embedding_inputs(): void
+    {
+        config()->set('ai-assistant.rag.chunk_chars', 80);
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $chunk = $this->chunk($organizationId, $projectId, str_repeat('a', 201));
+
+        $indexer->indexChunk($chunk);
+        config()->set('ai-assistant.rag.chunk_chars', 100);
+        $indexer->indexChunk($chunk);
+
+        $this->assertSame(6, $provider->calls);
+        $this->assertSame(3, RagChunk::query()->count());
+        $this->assertSame([100, 100, 1], RagChunk::query()->orderBy('chunk_index')->pluck('content')
+            ->map(static fn (string $content): int => mb_strlen($content))->all());
+    }
+
+    public function test_reembeds_and_repairs_all_chunks_when_one_vector_is_missing(): void
+    {
+        config()->set('ai-assistant.rag.chunk_chars', 80);
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $chunk = $this->chunk($organizationId, $projectId, str_repeat('a', 201));
+        $indexer->indexChunk($chunk);
+        $missingVectorChunkId = (int) RagChunk::query()->where('chunk_index', 1)->value('id');
+
+        DB::table('ai_rag_chunks')->where('id', $missingVectorChunkId)->update(['embedding' => null]);
+        $indexer->indexChunk($chunk);
+
+        $this->assertSame(6, $provider->calls);
+        $this->assertSame(3, RagChunk::query()->count());
+        $this->assertSame(0, RagChunk::query()->whereNull('embedding')->count());
+        $this->assertNotSame($missingVectorChunkId, RagChunk::query()->where('chunk_index', 1)->value('id'));
+    }
+
+    public function test_cancelled_metadata_refresh_preserves_existing_source_and_chunk_metadata(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Сохраненный текст'));
+        $source = RagSource::query()->firstOrFail();
+        $storedChunk = RagChunk::query()->firstOrFail();
+        $updated = $this->chunk(
+            $organizationId,
+            $projectId,
+            'Сохраненный текст',
+            title: 'Отмененное название',
+            metadata: ['status' => 'changed', 'acl' => ['user_ids' => [25]]],
+            updatedAt: now()->addMinute()
+        );
+        $guardCalls = 0;
+
+        try {
+            $indexer->indexChunk($updated, guard: static function () use (&$guardCalls): void {
+                $guardCalls++;
+                if ($guardCalls === 2) {
+                    throw new RuntimeException('indexing_cancelled');
+                }
+            });
+            $this->fail('Cancellation guard must abort the metadata refresh.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('indexing_cancelled', $exception->getMessage());
+        }
+
+        $source->refresh();
+        $storedChunk->refresh();
+        $this->assertSame(1, $provider->calls);
+        $this->assertSame('Проект Литер А', $source->title);
+        $this->assertSame(['status' => 'active'], $source->metadata);
+        $this->assertSame('Сохраненный текст', $storedChunk->content);
+        $chunkMetadata = $storedChunk->metadata;
+        ksort($chunkMetadata);
+        $this->assertSame(['chunk_count' => 1, 'chunk_index' => 0, 'status' => 'active'], $chunkMetadata);
+        $this->assertNotNull($storedChunk->getRawOriginal('embedding'));
+    }
+
+    public function test_cancelled_text_refresh_keeps_old_chunks_and_vectors(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Старый текст'));
+        $source = RagSource::query()->firstOrFail();
+        $storedChunk = RagChunk::query()->firstOrFail();
+        $updated = $this->chunk(
+            $organizationId,
+            $projectId,
+            'Новый текст',
+            title: 'Новое название',
+            metadata: ['status' => 'changed'],
+            updatedAt: now()->addMinute()
+        );
+        $guardCalls = 0;
+
+        try {
+            $indexer->indexChunk($updated, guard: static function () use (&$guardCalls): void {
+                $guardCalls++;
+                if ($guardCalls === 2) {
+                    throw new RuntimeException('indexing_cancelled');
+                }
+            });
+            $this->fail('Cancellation guard must abort the chunk replacement.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('indexing_cancelled', $exception->getMessage());
+        }
+
+        $source->refresh();
+        $storedChunk->refresh();
+        $this->assertSame(2, $provider->calls);
+        $this->assertSame(1, RagChunk::query()->count());
+        $this->assertSame('Старый текст', $storedChunk->content);
+        $this->assertSame('Проект Литер А', $source->title);
+        $this->assertSame(['status' => 'active'], $source->metadata);
+        $this->assertNotNull($storedChunk->getRawOriginal('embedding'));
     }
 
     public function test_vector_is_stored_with_bound_parameters(): void
@@ -248,7 +450,10 @@ class RagIndexerTest extends TestCase
         string $content,
         string $sourceType = 'project',
         string $entityType = 'project',
-        string|int|null $entityId = null
+        string|int|null $entityId = null,
+        ?string $title = null,
+        ?array $metadata = null,
+        ?DateTimeInterface $updatedAt = null
     ): RagChunkData {
         $entityId ??= $projectId;
 
@@ -258,10 +463,10 @@ class RagIndexerTest extends TestCase
             sourceType: $sourceType,
             entityType: $entityType,
             entityId: $entityId,
-            title: 'Проект Литер А',
+            title: $title ?? 'Проект Литер А',
             content: $content,
-            metadata: ['status' => 'active'],
-            updatedAt: now()
+            metadata: $metadata ?? ['status' => 'active'],
+            updatedAt: $updatedAt ?? now()
         );
     }
 
@@ -367,7 +572,7 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
      */
     private readonly array $embedding;
 
-    public function __construct(array $embedding)
+    public function __construct(array $embedding, private readonly string $modelName = 'fake-model')
     {
         $this->embedding = RagTestEmbedding::fromLeadingValues($embedding);
     }
@@ -387,7 +592,7 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
 
     public function model(): string
     {
-        return 'fake-model';
+        return $this->modelName;
     }
 
     public function dimensions(): int

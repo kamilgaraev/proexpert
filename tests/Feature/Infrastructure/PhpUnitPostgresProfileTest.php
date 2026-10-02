@@ -6,14 +6,50 @@ namespace Tests\Feature\Infrastructure;
 
 use PDO;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\IsolatedPostgresTestDatabase;
 
 final class PhpUnitPostgresProfileTest extends TestCase
 {
+    public function test_profile_guard_accepts_only_matching_loopback_ports(): void
+    {
+        self::assertSame(55433, IsolatedPostgresTestDatabase::profilePort(''));
+        self::assertSame(55443, IsolatedPostgresTestDatabase::profilePort('ai-assistant'));
+        foreach (['' => 55433, 'ai-assistant' => 55443] as $profile => $port) {
+            IsolatedPostgresTestDatabase::assertSafeConfiguration([
+                'driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => $port,
+                'database' => 'most_phpunit_'.str_repeat('a', 24).'_testing',
+            ], $profile);
+        }
+    }
+
+    public function test_profile_guard_rejects_foreign_endpoints_and_missing_opt_in(): void
+    {
+        $safe = ['driver' => 'pgsql', 'host' => '127.0.0.1', 'port' => 55433, 'database' => 'most_backend_testing'];
+        $cases = [[$safe, 'foreign-project'], [$safe, 'ai-assistant'],
+            [array_replace($safe, ['port' => 55443]), ''],
+            [array_replace($safe, ['port' => 5432]), ''],
+            [array_replace($safe, ['port' => 55444]), 'ai-assistant'],
+            [array_replace($safe, ['host' => 'localhost']), ''],
+            [array_replace($safe, ['host' => '192.0.2.1']), ''],
+            [array_replace($safe, ['driver' => 'mysql']), ''],
+            [array_replace($safe, ['database' => 'most_production']), ''],
+            [array_replace($safe, ['database' => 'bad/testing']), ''],
+            [array_replace($safe, ['url' => 'postgres://unsafe']), '']];
+        foreach ($cases as [$configuration, $profile]) {
+            try {
+                IsolatedPostgresTestDatabase::assertSafeConfiguration($configuration, $profile);
+                self::fail('Unsafe PostgreSQL profile was accepted.');
+            } catch (\RuntimeException $exception) {
+                self::assertContains($exception->getMessage(), ['postgres_test_profile_unsafe', 'postgres_test_database_configuration_unsafe']);
+            }
+        }
+    }
+
     public function test_default_phpunit_profile_uses_isolated_postgresql(): void
     {
         self::assertSame('pgsql', getenv('DB_CONNECTION'));
         self::assertSame('127.0.0.1', getenv('DB_HOST'));
-        self::assertSame('55433', getenv('DB_PORT'));
+        self::assertSame((string) IsolatedPostgresTestDatabase::profilePort(), getenv('DB_PORT'));
         self::assertMatchesRegularExpression(
             '/^most_phpunit_[a-f0-9]{24}_testing$/D',
             (string) getenv('DB_DATABASE'),

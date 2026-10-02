@@ -34,6 +34,16 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantAgentFlowServiceTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $application = new \Illuminate\Foundation\Application(dirname(__DIR__, 4));
+        $application->instance('config', new \Illuminate\Config\Repository(['app' => ['locale' => 'ru', 'fallback_locale' => 'ru'], 'ai-assistant-credits' => require dirname(__DIR__, 4).'/config/ai-assistant-credits.php']));
+        $application->instance('translator', new \Illuminate\Translation\Translator(new \Illuminate\Translation\FileLoader(new \Illuminate\Filesystem\Filesystem, dirname(__DIR__, 4).'/lang'), 'ru'));
+        $application->instance('log', new \Psr\Log\NullLogger);
+        \Illuminate\Support\Facades\Facade::setFacadeApplication($application);
+    }
+
     public function test_missing_period_persists_clarification_and_waiting_agent_state(): void
     {
         $conversation = new AgentFlowConversation(101);
@@ -352,7 +362,10 @@ final class AssistantAgentFlowServiceTest extends TestCase
                 new AssistantPeriodResolver(CarbonImmutable::parse('2026-05-04 02:09:00', 'Europe/Moscow'))
             ),
             new AssistantAgentExecutor($toolRegistry, $permissionChecker, new AssistantArtifactNormalizer),
-            new AssistantResponseVerifier
+            new AssistantResponseVerifier,
+            tokenBudget: new \App\Support\AI\TokenBudgetService(new \App\Support\AI\TokenCounter(new class {
+                public function encode(string $text): array { return array_fill(0, mb_strlen($text), 1); }
+            }))
         );
     }
 
@@ -508,6 +521,16 @@ final class AgentFlowConversationManager extends ConversationManager
         return $this->conversation->id === $conversationId ? $this->conversation : null;
     }
 
+    public function findAccessibleConversation(int $conversationId, User $actor, int $organizationId, bool $write = false): ?Conversation
+    {
+        return $this->conversation->id === $conversationId ? $this->conversation : null;
+    }
+
+    public function getSummary(Conversation $conversation, ?User $actor = null): ?\App\BusinessModules\Features\AIAssistant\Models\ConversationSummary
+    {
+        return null;
+    }
+
     public function addMessage(
         Conversation $conversation,
         string $role,
@@ -544,8 +567,9 @@ final class AgentFlowConversationManager extends ConversationManager
         Conversation $conversation,
         int $limit = 6,
         int $maxTotalChars = 4000,
-        int $maxUserMessageChars = 500,
-        int $maxAssistantMessageChars = 900
+        int $maxUserMessageChars = 4000,
+        int $maxAssistantMessageChars = 900,
+        ?User $actor = null
     ): array {
         return [];
     }
@@ -570,7 +594,14 @@ final readonly class AgentFlowTool implements AIToolInterface
 
     public function getParametersSchema(): array
     {
-        return ['type' => 'object'];
+        return ['type' => 'object', 'properties' => [
+            'period' => ['type' => 'string'],
+            'date_from' => ['type' => 'string'],
+            'date_to' => ['type' => 'string'],
+            'project_id' => ['type' => 'integer', 'minimum' => 1],
+            'report_type' => ['type' => 'string'],
+            'query' => ['type' => 'string', 'maxLength' => 4000],
+        ], 'additionalProperties' => false];
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string

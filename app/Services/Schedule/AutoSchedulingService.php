@@ -31,11 +31,15 @@ class AutoSchedulingService
         }
 
         $parent = $task->parentTask;
-        if (!$parent || !$parent->task_type->hasChildren()) {
+        if (!$parent || !$parent->task_type->hasChildren()
+            || (int) $parent->organization_id !== (int) $task->organization_id
+            || (int) $parent->schedule_id !== (int) $task->schedule_id) {
             return;
         }
 
         $siblings = $parent->childTasks()
+            ->where('organization_id', $task->organization_id)
+            ->where('schedule_id', $task->schedule_id)
             ->whereNotNull('planned_start_date')
             ->whereNotNull('planned_end_date')
             ->get();

@@ -309,6 +309,9 @@ class PaymentScheduleGenerator
 
         try {
             $document = $this->synchronization->lockForManualChange($document);
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                PaymentSchedule::class, PaymentSchedule::query()->where('payment_document_id', $document->id)->where('status', 'pending'),
+                (int) $document->organization_id, $document->project_id === null ? null : (int) $document->project_id);
             // Удаляем старый график (только pending платежи)
             PaymentSchedule::where('payment_document_id', $document->id)
                 ->where('status', 'pending')
@@ -316,6 +319,9 @@ class PaymentScheduleGenerator
 
             // Генерируем новый
             $schedules = $this->generate($document, $config);
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\CoreRagMutationBridge::class)->changedRows(
+                PaymentSchedule::class, PaymentSchedule::query()->where('payment_document_id', $document->id),
+                (int) $document->organization_id, $document->project_id === null ? null : (int) $document->project_id);
 
             DB::commit();
             return $schedules;

@@ -5,10 +5,21 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 
 class AIPermissionChecker
 {
+    private ?AuthorizationService $batchAuthorization = null;
+
+    public function __construct(private readonly ?AuthorizationService $authorization = null) {}
+
+    private const ASSISTANT_SCOPE_TOOLS = ['assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_published_report_financial_evidence', 'get_live_project_financial_evidence'];
+
+    private const DOMAIN_SCOPE_TOOLS = ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'];
+
+    private const ESTIMATE_TOOLS = ['resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'];
+
     private const TOOL_PERMISSION_MAP = [
         'generate_profitability_report' => ['reports.view', 'admin.reports.view'],
         'generate_work_completion_report' => ['reports.view', 'admin.reports.view'],
@@ -43,19 +54,26 @@ class AIPermissionChecker
     ];
 
     private const PRIVILEGED_TOOLS = [
+        'mass_create_measurement_units',
+        'create_measurement_unit',
+        'update_measurement_unit',
+        'delete_measurement_unit',
         'approve_payment_request',
         'create_schedule_task',
         'update_schedule_task_status',
         'send_project_notification',
     ];
 
-    public function canUseAssistant(User $user, int $organizationId): bool
+    public function canUseAssistant(User $user, int $organizationId, bool $fresh = true): bool
     {
         if ($organizationId <= 0) {
             return false;
         }
 
-        return $user->belongsToOrganization($organizationId);
+        $policy = app(AssistantDataAccessPolicy::class);
+
+        return $policy->withCurrentChecks($user, $organizationId,
+            fn (): bool => $policy->canReadDomain($user, $organizationId, 'assistant'), $fresh);
     }
 
     public function canAccessConversation(User $user, Conversation $conversation, int $organizationId): bool
@@ -72,7 +90,7 @@ class AIPermissionChecker
             return true;
         }
 
-        return $this->canAccessOrganizationConversationsInAdmin($user, $organizationId);
+        return $conversation->participants()->where('user_id', $user->id)->exists();
     }
 
     public function canManageOrganizationConversations(User $user, int $organizationId): bool
@@ -81,7 +99,7 @@ class AIPermissionChecker
             return false;
         }
 
-        return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
+        return $this->canCurrent($user, 'ai_assistant.conversations.manage', $organizationId);
     }
 
     public function canAccessOrganizationConversationsInAdmin(User $user, int $organizationId): bool
@@ -90,40 +108,175 @@ class AIPermissionChecker
             return false;
         }
 
-        return $user->isAdminPanelUser($organizationId);
+        return false;
     }
 
-    public function canExecuteTool(User $user, string $toolName, array $params = []): bool
+    public function canExecuteTool(User $user, string $toolName, array $params = [], bool $fresh = true): bool
     {
-        unset($params);
-
-        $toolName = $this->normalizeToolName($toolName);
-
         $organizationId = (int) $user->current_organization_id;
 
-        if (! $this->canUseAssistant($user, $organizationId)) {
+        return app(AssistantDataAccessPolicy::class)->withCurrentChecks($user, $organizationId, function (AuthorizationService $authorization) use ($user, $toolName, $params, $organizationId, $fresh): bool {
+            $previous = $this->batchAuthorization;
+            $this->batchAuthorization = $fresh
+                ? ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true)
+                : $authorization;
+            try {
+                return $this->checkTool($user, $toolName, $params, $organizationId);
+            } finally {
+                $this->batchAuthorization = $previous === null ? null
+                    : ($this->authorization ?? app(AuthorizationService::class))->forCurrentChecks(true);
+            }
+        }, $fresh);
+    }
+
+    private function checkTool(User $user, string $toolName, array $params, int $organizationId, bool $requireEntityAuthorization = true): bool
+    {
+        $toolName = $this->normalizeToolName($toolName);
+        if (! app(AssistantDataAccessPolicy::class)->canReadDomain($user, $organizationId, 'assistant')) {
             return false;
         }
 
-        foreach (self::TOOL_PERMISSION_MAP[$toolName] ?? [] as $permission) {
-            if ($user->hasPermission($permission)) {
+        $policy = app(AssistantDataAccessPolicy::class);
+        if ($toolName === 'get_bim_model_elements') {
+            return $policy->canReadDomain($user, $organizationId, 'design')
+                && $policy->canCurrentPermission($user, $organizationId, 'design-management.models.view');
+        }
+        if (in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true)) {
+            return $policy->canReadDomain($user, $organizationId, 'assistant');
+        }
+        if (in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)) {
+            $domain = match ((string) ($params['domain'] ?? '')) {
+                'works' => 'projects', 'acts' => 'contracts', default => (string) ($params['domain'] ?? '')
+            };
+
+            return $policy->canReadDomain($user, $organizationId, $domain);
+        }
+        if (in_array($toolName, self::ESTIMATE_TOOLS, true)) {
+            if (! $policy->canReadDomain($user, $organizationId, 'estimates')) {
+                return false;
+            }
+
+            if ($toolName === 'resolve_estimate' || ($toolName === 'get_estimate_answer' && ($params['estimate_id'] ?? null) === null)
+                || ($toolName === 'search_estimate_positions'
+                    && $policy->canCurrentPermission($user, $organizationId, 'budget-estimates.finance.view'))
+                || ($toolName === 'get_estimate_positions' && ($params['estimate_id'] ?? null) === null
+                    && is_string($params['estimate_selector'] ?? null) && trim($params['estimate_selector']) !== ''
+                    && $policy->canCurrentPermission($user, $organizationId, 'budget-estimates.finance.view'))) {
                 return true;
             }
-        }
 
-        if ($this->isReportTool($toolName)) {
+            $estimateId = $params['estimate_id'] ?? null;
+
+            return filter_var($estimateId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) !== false
+                && $policy->canReadEntityContent($user, $organizationId, 'estimate', (int) $estimateId);
+        }
+        $domains = $this->domainsForTool($toolName);
+        if ($domains === []) {
             return false;
         }
-
-        if (in_array($toolName, self::MEMBER_TOOLS, true)) {
-            return true;
+        foreach ($domains as $domain) {
+            if (! $policy->canReadDomain($user, $organizationId, $domain)) {
+                return false;
+            }
         }
-
-        if (in_array($toolName, self::PRIVILEGED_TOOLS, true) || $this->isMutationTool($toolName)) {
-            return $user->isOrganizationAdmin($organizationId) || $user->isOrganizationOwner($organizationId);
+        foreach (['project_id' => 'project', 'contract_id' => 'contract', 'task_id' => 'schedule_task', 'parent_task_id' => 'schedule_task', 'schedule_id' => 'schedule', 'payment_document_id' => 'payment_document', 'measurement_unit_id' => 'measurement_unit', 'measurement_id' => 'measurement_unit', 'warehouse_id' => 'warehouse', 'material_id' => 'material', 'user_id' => 'user'] as $key => $type) {
+            if (isset($params[$key]) && ! $policy->canReadEntity($user, $organizationId, $type, (string) $params[$key])) {
+                return false;
+            }
         }
+        $idType = match ($toolName) {
+            'update_measurement_unit', 'delete_measurement_unit' => 'measurement_unit', default => null
+        };
+        if ($requireEntityAuthorization && $idType !== null && (! isset($params['id']) || ! $policy->canReadEntity($user, $organizationId, $idType, (string) $params['id']))) {
+            return false;
+        }
+        if (isset($params['schedule_id'], $params['project_id'])) {
+            $schedule = $policy->entityQuery($user, $organizationId, 'schedule');
+            if ($schedule === null || ! $schedule->whereKey($params['schedule_id'])->where('project_id', $params['project_id'])->exists()) {
+                return false;
+            }
+        }
+        if ($toolName === 'create_schedule_task' && isset($params['parent_task_id'])) {
+            $parent = $policy->entityQuery($user, $organizationId, 'schedule_task');
+            if (! isset($params['schedule_id'], $params['project_id']) || $parent === null
+                || ! $parent->whereKey($params['parent_task_id'])->where('schedule_id', $params['schedule_id'])
+                    ->whereIn('task_type', ['summary', 'container'])->exists()) {
+                return false;
+            }
+        }
+        if ($this->isReportTool($toolName) && ! $policy->canReadDomain($user, $organizationId, 'reports')) {
+            return false;
+        }
+        if (in_array($toolName, ['generate_contract_payments_report', 'generate_contractor_settlements_report'], true)
+            && ! $this->canCurrent($user, 'payments.invoice.view', $organizationId) && ! $this->canCurrent($user, 'payments.invoice.view_all', $organizationId)) {
+            return false;
+        }
+        $mutationPermission = match ($toolName) {
+            'create_schedule_task', 'update_schedule_task_status' => 'schedule-management.edit',
+            'send_project_notification' => 'projects.edit',
+            'approve_payment_request' => 'payments.invoice.approve',
+            'create_measurement_unit', 'mass_create_measurement_units' => 'measurement_units.create',
+            'update_measurement_unit' => 'measurement_units.edit', 'delete_measurement_unit' => 'measurement_units.delete',
+            default => null,
+        };
 
-        return false;
+        return $mutationPermission === null || $this->canCurrent($user, $mutationPermission, $organizationId);
+    }
+
+    public function hasExplicitToolPolicy(string $toolName): bool
+    {
+        $toolName = $this->normalizeToolName($toolName);
+
+        return in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true)
+            || in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)
+            || in_array($toolName, self::ESTIMATE_TOOLS, true)
+            || $this->domainsForTool($toolName) !== [];
+    }
+
+    public function canExposeTool(User $user, string $toolName, bool $fresh = true): bool
+    {
+        $toolName = $this->normalizeToolName($toolName);
+        $organizationId = (int) $user->current_organization_id;
+        $policy = app(AssistantDataAccessPolicy::class);
+
+        return $policy->withCurrentChecks($user, $organizationId, function (AuthorizationService $authorization) use ($user, $toolName, $organizationId, $policy): bool {
+            if (! $policy->canReadDomain($user, $organizationId, 'assistant')) {
+                return false;
+            }
+            if (in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true) || in_array($toolName, self::DOMAIN_SCOPE_TOOLS, true)) {
+                return true;
+            }
+            if (in_array($toolName, self::ESTIMATE_TOOLS, true)) {
+                return $policy->canReadDomain($user, $organizationId, 'estimates');
+            }
+            $previous = $this->batchAuthorization;
+            $this->batchAuthorization = $authorization;
+            try {
+                return $this->checkTool($user, $toolName, [], $organizationId, false);
+            } finally {
+                $this->batchAuthorization = $previous;
+            }
+        }, $fresh);
+    }
+
+    private function domainsForTool(string $toolName): array
+    {
+        return match ($toolName) {
+            'search_projects', 'send_project_notification' => ['projects'],
+            'get_bim_model_elements' => ['design'],
+            'get_project_snapshot' => ['projects', 'contracts', 'finance'],
+            'search_warehouse', 'get_material_stock' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
+            'search_materials' => ['materials'], 'search_users' => ['people'], 'search_contractors' => ['contractors'],
+            'get_contract_snapshot', 'generate_contractor_settlements_report', 'generate_contract_payments_report' => ['contracts', 'finance'],
+            'get_procurement_snapshot' => ['procurement', 'finance'],
+            'get_schedule_snapshot', 'create_schedule_task', 'update_schedule_task_status' => ['schedule'],
+            'generate_profitability_report' => ['projects', 'contracts', 'finance', 'warehouse'], 'generate_work_completion_report' => ['projects', 'contracts', 'finance'],
+            'generate_project_timelines_report' => ['projects', 'contracts', 'schedule', 'finance'], 'generate_material_movements_report' => ['warehouse', 'finance'], 'generate_time_tracking_report' => ['time_tracking', 'finance'],
+            'generate_operational_pdf_report', 'generate_rag_pdf_report' => ['reports'],
+            'approve_payment_request' => ['finance'],
+            'create_measurement_unit', 'mass_create_measurement_units', 'update_measurement_unit', 'delete_measurement_unit' => ['measurement_units'],
+            default => [],
+        };
     }
 
     public function isMutationTool(string $toolName): bool
@@ -131,10 +284,6 @@ class AIPermissionChecker
         $toolName = $this->normalizeToolName($toolName);
 
         if (in_array($toolName, self::PRIVILEGED_TOOLS, true)) {
-            return true;
-        }
-
-        if (str_starts_with($toolName, 'generate_') && str_ends_with($toolName, '_report')) {
             return true;
         }
 
@@ -158,5 +307,11 @@ class AIPermissionChecker
             'update_task_status' => 'update_schedule_task_status',
             default => $toolName,
         };
+    }
+
+    private function canCurrent(User $user, string $permission, int $organizationId): bool
+    {
+        return ($this->batchAuthorization ?? $this->authorization ?? app(AuthorizationService::class))
+            ->canCurrent($user, $permission, ['organization_id' => $organizationId]);
     }
 }

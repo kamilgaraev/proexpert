@@ -1,22 +1,35 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Actions\Contracts;
 
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyFinancialRead;
+use App\Models\User;
+use Brick\Math\BigDecimal;
 use Illuminate\Support\Facades\DB;
 
 class GetContractDetailsAction
 {
-    public function execute(int $organizationId, ?array $params = []): array
+    public function execute(int $organizationId, ?array $params = [], ?User $actor = null): array
     {
+        if ($actor === null || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'contracts') || ! app(AssistantDataAccessPolicy::class)->canReadDomain($actor, $organizationId, 'finance')) {
+            return [];
+        }
+
+        $finance = app(AssistantLegacyFinancialRead::class);
+        $canReadMoney = $finance->allowed($actor, $organizationId, 'finance.view');
         $contractId = $params['contract_id'] ?? null;
         $contractNumber = $params['contract_number'] ?? null;
 
-        if (!$contractId && !$contractNumber) {
+        if (! $contractId && ! $contractNumber) {
             $contracts = DB::table('contracts')
                 ->join('contractors', 'contracts.contractor_id', '=', 'contractors.id')
                 ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
                 ->where('contracts.organization_id', $organizationId)
                 ->whereNull('contracts.deleted_at')
+                ->whereIn('contracts.id', app(AssistantDataAccessPolicy::class)->entityQuery($actor, $organizationId, 'contract')->select('contracts.id'))
                 ->select(
                     'contracts.id',
                     'contracts.number',
@@ -33,13 +46,13 @@ class GetContractDetailsAction
             return [
                 'show_list' => true,
                 'message' => 'Выберите контракт из списка или укажите его номер/ID',
-                'contracts' => $contracts->map(function($c) {
+                'contracts' => $contracts->map(function ($c) use ($canReadMoney) {
                     return [
                         'id' => $c->id,
                         'number' => $c->number,
                         'status' => $c->status,
                         'date' => $c->date,
-                        'amount' => (float)$c->total_amount,
+                        'amount' => $canReadMoney ? AssistantLegacyFinancialRead::money($c->total_amount) : null,
                         'contractor' => $c->contractor_name,
                         'project' => $c->project_name,
                     ];
@@ -51,18 +64,19 @@ class GetContractDetailsAction
             ->join('contractors', 'contracts.contractor_id', '=', 'contractors.id')
             ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
             ->where('contracts.organization_id', $organizationId)
-            ->whereNull('contracts.deleted_at');
+            ->whereNull('contracts.deleted_at')
+            ->whereIn('contracts.id', app(AssistantDataAccessPolicy::class)->entityQuery($actor, $organizationId, 'contract')->select('contracts.id'));
 
         if ($contractId) {
             $query->where('contracts.id', $contractId);
         } elseif ($contractNumber) {
-            $query->where('contracts.number', 'ILIKE', '%' . $contractNumber . '%');
+            $query->where('contracts.number', 'ILIKE', '%'.$contractNumber.'%');
         }
 
         // Проверяем есть ли колонка type в таблице
         $hasTypeColumn = DB::getSchemaBuilder()->hasColumn('contracts', 'type');
         $hasActualAdvance = DB::getSchemaBuilder()->hasColumn('contracts', 'actual_advance_amount');
-        
+
         $contract = $query
             ->select(
                 'contracts.*',
@@ -71,7 +85,7 @@ class GetContractDetailsAction
                 'contractors.inn as contractor_inn',
                 'contractors.phone as contractor_phone',
                 'contractors.email as contractor_email',
-                'contractors.address as contractor_address',
+                'contractors.legal_address as contractor_address',
                 'projects.id as project_id',
                 'projects.name as project_name',
                 'projects.address as project_address',
@@ -79,41 +93,41 @@ class GetContractDetailsAction
             )
             ->first();
 
-        if (!$contract) {
+        if (! $contract) {
             return ['error' => 'Контракт не найден'];
         }
 
-        $acts = DB::table('acts')
-            ->where('contract_id', $contract->id)
-            ->whereNull('deleted_at')
-            ->select(
-                'id',
-                'number',
-                'date',
-                'total_amount',
-                'status'
-            )
-            ->orderByDesc('date')
-            ->get();
-
-        $documents = DB::table('payment_documents')
-            ->where('invoiceable_type', 'App\\Models\\Contract')
-            ->where('invoiceable_id', $contract->id)
-            ->whereNull('deleted_at')
-            ->select(
-                'id',
-                'document_number as number',
-                'document_date as date',
-                'amount as total_amount',
-                'status',
-                'paid_at as payment_date'
-            )
-            ->orderByDesc('document_date')
-            ->get();
-
-        $totalPaid = $documents->where('status', 'paid')->sum('total_amount');
-        $totalInvoiced = $documents->sum('total_amount');
-        $totalActed = $acts->sum('total_amount');
+        $policy = app(AssistantDataAccessPolicy::class);
+        $actScope = $policy->entityQuery($actor, $organizationId, 'performance_act');
+        $documentScope = $policy->entityQuery($actor, $organizationId, 'payment_document');
+        $currency = $contract->currency;
+        $acts = collect();
+        $documents = collect();
+        $actsAvailable = $canReadMoney && $actScope !== null && is_string($currency) && $currency !== '';
+        $documentsAvailable = $canReadMoney && $documentScope !== null && is_string($currency) && $currency !== '';
+        if ($actsAvailable) {
+            $acts = DB::table('contract_performance_acts')->where('contract_id', $contract->id)
+                ->whereIn('id', $actScope->select('contract_performance_acts.id'))
+                ->select('id', 'act_document_number as number', 'act_date as date', 'amount as total_amount', 'status', 'currency')
+                ->orderByDesc('act_date')->get();
+            $actsAvailable = count($acts) === DB::table('contract_performance_acts')->where('contract_id', $contract->id)->count() && ! $acts->contains(static fn ($row): bool => $row->currency !== $currency);
+        }
+        if ($documentsAvailable) {
+            $documents = DB::table('payment_documents')->where('organization_id', $organizationId)
+                ->whereIn('invoiceable_type', ['App\\Models\\Contract', (new \App\Models\Contract)->getMorphClass()])
+                ->where('invoiceable_id', $contract->id)->whereNull('deleted_at')
+                ->whereIn('id', $documentScope->select('payment_documents.id'))
+                ->select('id', 'document_number as number', 'document_date as date', 'amount as total_amount', 'status', 'paid_at as payment_date', 'currency')
+                ->orderByDesc('document_date')->get();
+            $documentsAvailable = count($documents) === DB::table('payment_documents')->where('organization_id', $organizationId)->whereIn('invoiceable_type', ['App\\Models\\Contract', (new \App\Models\Contract)->getMorphClass()])->where('invoiceable_id', $contract->id)->whereNull('deleted_at')->count() && ! $documents->contains(static fn ($row): bool => $row->currency !== $currency);
+        }
+        $totalPaid = $documentsAvailable ? AssistantLegacyFinancialRead::sum($documents->where('status', 'paid')->pluck('total_amount')) : null;
+        $totalInvoiced = $documentsAvailable ? AssistantLegacyFinancialRead::sum($documents->pluck('total_amount')) : null;
+        $totalActed = $actsAvailable ? AssistantLegacyFinancialRead::sum($acts->pluck('total_amount')) : null;
+        $amount = $canReadMoney ? AssistantLegacyFinancialRead::money($contract->total_amount) : null;
+        $plannedAdvance = $canReadMoney ? AssistantLegacyFinancialRead::money($contract->planned_advance_amount) : null;
+        $actualAdvance = $canReadMoney ? AssistantLegacyFinancialRead::money($contract->actual_advance_amount ?? null) : null;
+        $remainingAdvance = AssistantLegacyFinancialRead::subtract($plannedAdvance, $actualAdvance);
 
         return [
             'show_list' => false,
@@ -125,13 +139,13 @@ class GetContractDetailsAction
                 'status' => $contract->status,
                 'work_type_category' => $contract->work_type_category,
                 'payment_terms' => $contract->payment_terms,
-                'total_amount' => (float)$contract->total_amount,
-                'gp_percentage' => (float)($contract->gp_percentage ?? 0),
-                'gp_amount' => (float) ($contract->gp_amount ?? 0),
-                'total_amount_with_gp' => (float) ($contract->total_amount_with_gp ?? $contract->total_amount),
-                'planned_advance' => (float)($contract->planned_advance_amount ?? 0),
-                'actual_advance' => (float)($contract->actual_advance_amount ?? 0),
-                'remaining_advance' => max(0, ($contract->planned_advance_amount ?? 0) - ($contract->actual_advance_amount ?? 0)),
+                'total_amount' => $amount,
+                'gp_percentage' => $canReadMoney ? AssistantLegacyFinancialRead::money($contract->gp_percentage ?? null) : null,
+                'gp_amount' => $canReadMoney ? AssistantLegacyFinancialRead::money($contract->gp_amount ?? null) : null,
+                'total_amount_with_gp' => $canReadMoney ? AssistantLegacyFinancialRead::money($contract->total_amount_with_gp ?? $contract->total_amount) : null,
+                'planned_advance' => $plannedAdvance,
+                'actual_advance' => $actualAdvance,
+                'remaining_advance' => $remainingAdvance === null ? null : (BigDecimal::of($remainingAdvance)->isLessThan(0) ? '0.00' : $remainingAdvance),
                 'start_date' => $contract->start_date,
                 'end_date' => $contract->end_date,
                 'notes' => $contract->notes,
@@ -151,35 +165,36 @@ class GetContractDetailsAction
                 'status' => $contract->project_status,
             ] : null,
             'financial' => [
-                'total_amount' => (float)$contract->total_amount,
-                'total_acted' => (float)$totalActed,
-                'total_invoiced' => (float)$totalInvoiced,
-                'total_paid' => (float)$totalPaid,
-                'remaining' => (float)($contract->total_amount - $totalPaid),
-                'completion_percentage' => $contract->total_amount > 0 
-                    ? round(($totalActed / $contract->total_amount) * 100, 2) 
-                    : 0,
+                'currency' => $currency,
+                'total_amount' => $amount,
+                'total_acted' => $totalActed,
+                'total_invoiced' => $totalInvoiced,
+                'total_paid' => $totalPaid,
+                'remaining' => AssistantLegacyFinancialRead::subtract($amount, $totalPaid),
+                'completion_percentage' => AssistantLegacyFinancialRead::percentage($totalActed, $amount),
             ],
             'acts' => [
-                'count' => count($acts),
-                'list' => $acts->map(function($act) {
+                'count' => $actsAvailable ? count($acts) : null,
+                'list' => $acts->map(function ($act) {
                     return [
                         'id' => $act->id,
                         'number' => $act->number,
                         'date' => $act->date,
-                        'amount' => (float)$act->total_amount,
+                        'amount' => AssistantLegacyFinancialRead::money($act->total_amount),
+                        'currency' => $act->currency,
                         'status' => $act->status,
                     ];
                 })->toArray(),
             ],
             'invoices' => [
-                'count' => count($documents),
-                'list' => $documents->map(function($document) {
+                'count' => $documentsAvailable ? count($documents) : null,
+                'list' => $documents->map(function ($document) {
                     return [
                         'id' => $document->id,
                         'number' => $document->number,
                         'date' => $document->date,
-                        'amount' => (float)$document->total_amount,
+                        'amount' => AssistantLegacyFinancialRead::money($document->total_amount),
+                        'currency' => $document->currency,
                         'status' => $document->status,
                         'payment_date' => $document->payment_date,
                     ];
@@ -188,5 +203,3 @@ class GetContractDetailsAction
         ];
     }
 }
-
-

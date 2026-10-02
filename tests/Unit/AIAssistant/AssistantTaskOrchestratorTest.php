@@ -12,6 +12,8 @@ use PHPUnit\Framework\TestCase;
 
 class AssistantTaskOrchestratorTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     #[DataProvider('russianIntentProvider')]
     public function test_plan_routes_russian_intent_keywords(string $query, string $expectedTaskType): void
     {
@@ -25,7 +27,7 @@ class AssistantTaskOrchestratorTest extends TestCase
         $this->assertSame($expectedTaskType, $plan['task_type']);
     }
 
-    public function test_report_route_keeps_follow_up_on_reports_capability(): void
+    public function test_generic_project_period_from_report_route_keeps_project_capability(): void
     {
         $orchestrator = $this->makeOrchestratorWithRealRegistry();
 
@@ -46,9 +48,9 @@ class AssistantTaskOrchestratorTest extends TestCase
             'permissions_flat' => ['reports.view', 'schedule-management.view', 'projects.view'],
         ]);
 
-        $this->assertSame('reports', $plan['capability']['id'] ?? null);
+        $this->assertSame('projects', $plan['capability']['id'] ?? null);
         $this->assertSame('/reports', $plan['request']['context']['source_route']);
-        $this->assertSame(['route' => '/reports'], $plan['navigation_target']);
+        $this->assertSame(['route' => '/projects/56'], $plan['navigation_target']);
     }
 
     public function test_nested_schedule_route_wins_over_project_route(): void
@@ -74,7 +76,7 @@ class AssistantTaskOrchestratorTest extends TestCase
         $this->assertSame(['route' => '/projects/56/schedules'], $plan['navigation_target']);
     }
 
-    public function test_finance_summary_routes_to_reports_capability(): void
+    public function test_finance_summary_routes_to_payments_without_implicit_file_report(): void
     {
         $orchestrator = $this->makeOrchestratorWithRealRegistry();
 
@@ -84,7 +86,27 @@ class AssistantTaskOrchestratorTest extends TestCase
         ]);
 
         $this->assertSame('summary', $plan['task_type']);
-        $this->assertSame('reports', $plan['capability']['id'] ?? null);
+        $this->assertSame('payments', $plan['capability']['id'] ?? null);
+    }
+
+    public function test_project_module_does_not_override_nested_schedule_route(): void
+    {
+        $plan = $this->makeOrchestratorWithRealRegistry()->plan('за текущий период', ['context' => [
+            'source_module' => 'project-management', 'source_route' => '/projects/56/schedules',
+            'entity_refs' => [['type' => 'project', 'id' => 56]],
+        ]], ['organization_id' => 15, 'permissions_flat' => ['schedule.view', 'projects.view']]);
+        $this->assertSame('schedules', $plan['capability']['id']);
+        $this->assertSame(['route' => '/projects/56/schedules'], $plan['navigation_target']);
+    }
+
+    public function test_explicit_estimate_request_keeps_estimate_capability_on_project_page(): void
+    {
+        $plan = $this->makeOrchestratorWithRealRegistry()->plan('Покажи смету проекта', ['context' => [
+            'source_module' => 'project-management', 'source_route' => '/projects/56',
+            'entity_refs' => [['type' => 'project', 'id' => 56]],
+        ]], ['organization_id' => 15, 'permissions_flat' => ['projects.view', 'budget-estimates.view']]);
+        $this->assertSame('estimates', $plan['capability']['id']);
+        $this->assertSame('estimates', $plan['capability']['domain']);
     }
 
     public function test_data_capability_is_not_high_confidence_without_tool_evidence(): void

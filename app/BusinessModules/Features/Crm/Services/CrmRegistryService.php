@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Crm\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\SalesRagMutationBridge;
 use App\BusinessModules\Features\Crm\Models\CrmActivity;
 use App\BusinessModules\Features\Crm\Models\CrmCompany;
 use App\BusinessModules\Features\Crm\Models\CrmContact;
@@ -859,6 +860,7 @@ final class CrmRegistryService
             $company !== null
                 ? $query->where('company_id', $company->id)->whereNull('contact_id')
                 : $query->where('contact_id', $contact?->id);
+            SalesRagMutationBridge::changedRows(CrmContactPoint::class, $query, $organizationId);
             $query->delete();
 
             foreach ($data['contact_points'] ?? [] as $point) {
@@ -882,6 +884,7 @@ final class CrmRegistryService
             $company !== null
                 ? $query->where('company_id', $company->id)->whereNull('contact_id')
                 : $query->where('contact_id', $contact?->id);
+            SalesRagMutationBridge::changedRows(CrmContactIdentity::class, $query, $organizationId);
             $query->delete();
 
             foreach ($data['identities'] ?? [] as $identity) {
@@ -1426,11 +1429,12 @@ final class CrmRegistryService
             return;
         }
 
-        CrmContact::query()
+        $contacts = CrmContact::query()
             ->forOrganization($organizationId)
             ->where('company_id', $data['company_id'])
-            ->when($exceptContactId !== null, fn (Builder $query) => $query->whereKeyNot($exceptContactId))
-            ->update(['is_primary' => false]);
+            ->when($exceptContactId !== null, fn (Builder $query) => $query->whereKeyNot($exceptContactId));
+        SalesRagMutationBridge::changedRows(CrmContact::class, $contacts, $organizationId);
+        $contacts->update(['is_primary' => false]);
     }
 
     private function touchRelatedActivity(CrmActivity $activity): void
@@ -1442,11 +1446,13 @@ final class CrmRegistryService
             [CrmContact::class, $activity->contact_id],
         ] as [$class, $id]) {
             if ($id !== null) {
+                SalesRagMutationBridge::changedRows($class, $class::query()->whereKey($id), (int) $activity->organization_id);
                 $class::query()->whereKey($id)->update(['last_activity_at' => $timestamp]);
             }
         }
 
         if ($activity->deal_id !== null && $activity->status === 'planned') {
+            SalesRagMutationBridge::changedRows(CrmDeal::class, CrmDeal::query()->whereKey($activity->deal_id), (int) $activity->organization_id);
             CrmDeal::query()->whereKey($activity->deal_id)->update(['next_activity_at' => $activity->due_at]);
         }
     }

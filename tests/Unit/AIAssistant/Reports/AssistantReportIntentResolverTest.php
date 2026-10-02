@@ -11,6 +11,7 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantReportIntentResolverTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
     #[DataProvider('reportIntentProvider')]
     public function test_resolves_report_type_from_prompt(string $message, string $expectedReportId): void
     {

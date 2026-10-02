@@ -136,6 +136,7 @@ class ProjectPulseRuleEngine
     {
         return $facts
             ->filter(fn (ProjectPulseFact $fact) => in_array($fact->priority, ['critical', 'warning'], true))
+            ->sortBy(fn (ProjectPulseFact $fact) => $this->priorityRank($fact->priority))
             ->take((int) $this->configValue('ai-assistant.project_pulse.limits.recommendations', 12))
             ->map(fn (ProjectPulseFact $fact) => new ProjectPulseRecommendation(
                 id: 'rules:' . $fact->id,

@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\DesignRagMutationBridge;
+use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision;
+use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+
 use Illuminate\Support\Facades\DB;
 
 final class LegacyDesignCompositionBackfillService
@@ -21,6 +25,7 @@ final class LegacyDesignCompositionBackfillService
                 $existing = DB::table('design_composition_revisions')->where('package_id', $package->id)->where('revision_number', 1)->first();
                 if ($existing !== null) {
                     DB::table('design_packages')->where('id', $package->id)->update(['composition_revision_id' => $existing->id, 'composition_status' => $existing->status]);
+                    app(DesignRagMutationBridge::class)->changedRows(DesignPackage::class, DesignPackage::query()->whereKey($package->id));
 
                     return;
                 }
@@ -58,6 +63,8 @@ final class LegacyDesignCompositionBackfillService
                 $json = json_encode($composition, JSON_THROW_ON_ERROR);
                 $id = DB::table('design_composition_revisions')->insertGetId(['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'package_id' => $package->id, 'revision_number' => 1, 'status' => $status, 'composition' => $json, 'fingerprint' => hash('sha256', $json), 'created_by' => ($actorId ?: null), 'approved_by' => null, 'approved_at' => null, 'needs_review_reason' => $composition['conversion_report']['reason'] ?? null, 'created_at' => now(), 'updated_at' => now()]);
                 DB::table('design_packages')->where('id', $package->id)->whereNull('composition_revision_id')->update(['composition_revision_id' => $id, 'composition_status' => $status]);
+                app(DesignRagMutationBridge::class)->changedRows(DesignCompositionRevision::class, DesignCompositionRevision::query()->whereKey($id));
+                app(DesignRagMutationBridge::class)->changedRows(DesignPackage::class, DesignPackage::query()->whereKey($package->id));
             });
         });
     }

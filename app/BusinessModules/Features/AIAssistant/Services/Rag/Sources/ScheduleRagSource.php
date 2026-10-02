@@ -33,7 +33,7 @@ final class ScheduleRagSource implements RagSourceCollectorInterface
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id');
 
-        foreach ($query->cursor() as $schedule) {
+        foreach ($query->reorder()->lazyById(100) as $schedule) {
             yield $this->chunk($schedule);
         }
 
@@ -46,7 +46,7 @@ final class ScheduleRagSource implements RagSourceCollectorInterface
             ))
             ->orderBy('id');
 
-        foreach ($taskQuery->cursor() as $task) {
+        foreach ($taskQuery->reorder()->lazyById(100) as $task) {
             yield $this->taskChunk($task);
         }
     }

@@ -98,7 +98,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function warehouseMovements(int $organizationId, ?int $projectId): iterable
@@ -108,7 +108,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function warehouseProjectAllocations(int $organizationId, ?int $projectId): iterable
@@ -118,7 +118,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function assetReservations(int $organizationId, ?int $projectId): iterable
@@ -128,7 +128,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function warehouseTasks(int $organizationId, ?int $projectId): iterable
@@ -150,7 +150,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function warehouseBalances(int $organizationId, ?int $projectId): iterable
@@ -162,7 +162,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
                 $this->whereAllocationMatchesProject($query, $projectId, 'warehouse_balances');
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function warehouseAssets(int $organizationId, ?int $projectId): iterable
@@ -193,7 +193,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
                 });
             })
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function inventoryActs(int $organizationId): iterable
@@ -202,7 +202,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->with(['warehouse', 'creator', 'approver', 'items.material'])
             ->where('organization_id', $organizationId)
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function warehouseStorageCells(int $organizationId): iterable
@@ -211,7 +211,7 @@ final class WarehouseRagSource implements RagSourceCollectorInterface
             ->with(['warehouse', 'zone'])
             ->where('organization_id', $organizationId)
             ->orderBy('id')
-            ->cursor();
+            ->reorder()->lazyById(100);
     }
 
     private function singleProjectMaterialDelivery(int $organizationId, string|int $entityId): array

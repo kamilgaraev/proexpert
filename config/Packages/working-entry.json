@@ -14,8 +14,15 @@
         "users": 10,
         "projects": 10,
         "storage_gb": 20,
-        "ai_requests_month": 500,
         "document_pages_month": 500
+    },
+    "assistant_billing": {
+        "contract_version": 2,
+        "limiting_resource": "organization_ai_credits",
+        "included_units_per_paid_period": 5000
+    },
+    "legacy_limits": {
+        "ai_requests_month": 500
     },
     "tiers": {
         "standard": {

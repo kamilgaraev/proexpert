@@ -7,13 +7,16 @@ namespace Tests\Unit\AIAssistant\Rag;
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use DateTimeImmutable;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
+use Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
 
 class RagPromptContextBuilderTest extends TestCase
 {
+    use UsesAssistantUnitTranslations { setUp as private setUpTranslations; }
+
     protected function setUp(): void
     {
-        parent::setUp();
+        $this->setUpTranslations();
 
         config()->set('ai-assistant.rag.max_chunks', 8);
     }
@@ -35,12 +38,11 @@ class RagPromptContextBuilderTest extends TestCase
 
         $context = $builder->build('what is blocked', [$result]);
 
-        $this->assertStringContainsString('МОСТ', $context['prompt']);
-        $this->assertStringContainsString('Проблема — что не так — что сделать', $context['prompt']);
-        $this->assertStringContainsString('расхождений и рисков', $context['prompt']);
-        $this->assertStringContainsString('не подменяй их проектными сметами', $context['prompt']);
-        $this->assertStringContainsString('есть признаки проблемы', $context['prompt']);
-        $this->assertStringContainsString('[1] Schedule source: Concrete evidence from schedule.', $context['prompt']);
+        $data = json_decode($context['prompt'], true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame('untrusted_search_results', $data['kind']);
+        $this->assertSame('Schedule source', $data['sources'][0]['title']);
+        $this->assertSame('Concrete evidence from schedule.', $data['sources'][0]['excerpt']);
+        $this->assertArrayNotHasKey('instructions', $data);
         $this->assertTrue($context['metadata']['enabled']);
         $this->assertTrue($context['metadata']['used']);
         $this->assertSame('what is blocked', $context['metadata']['query']);
@@ -69,8 +71,8 @@ class RagPromptContextBuilderTest extends TestCase
         config()->set('ai-assistant.rag.max_chunks', 80);
 
         $cases = [
-            ['estimate', '55', 10, [], '/projects/10/estimates/55'],
-            ['estimate_section', '56', 10, ['estimate_id' => 55], '/projects/10/estimates/55'],
+            ['estimate', '55', 10, [], '/estimates/55'],
+            ['estimate_section', '56', 10, ['estimate_id' => 55], '/estimates/55'],
             ['estimate_template', '7', null, [], '/templates/library'],
             ['estimate_library_item', '8', null, [], '/libraries'],
             ['normative_rate', '9', null, [], '/catalogs/estimate-positions'],

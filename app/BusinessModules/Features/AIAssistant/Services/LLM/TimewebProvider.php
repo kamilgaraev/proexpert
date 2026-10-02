@@ -4,8 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantResponseIncomplete;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantHttpRequestOptions;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
+use App\Support\AI\LunaModelPolicy;
+use App\Support\AI\TokenCounter;
+use App\Support\AI\TokenBudgetService;
 use App\Services\Logging\LoggingService;
 use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\ClientInterface;
 use OpenAI;
 use RuntimeException;
 use Throwable;
@@ -24,11 +31,13 @@ final class TimewebProvider implements LLMProviderInterface
 
     private float $timeout;
 
-    public function __construct(private readonly LoggingService $logging)
-    {
+    public function __construct(
+        private readonly LoggingService $logging,
+        private readonly ?ClientInterface $httpClient = null
+    ) {
         $this->apiKey = (string) config('ai-assistant.llm.timeweb.api_key', '');
         $this->baseUri = (string) config('ai-assistant.llm.timeweb.base_uri', 'https://api.timeweb.ai/v1');
-        $this->model = (string) config('ai-assistant.llm.timeweb.model', 'gemini/gemini-3.1-flash-lite');
+        $this->model = (string) config('ai-assistant.llm.timeweb.model', 'openai/gpt-6-luna');
         $this->maxTokens = (int) config('ai-assistant.llm.timeweb.max_tokens', 2000);
         $this->temperature = (float) config('ai-assistant.llm.timeweb.temperature', 0.7);
         $this->timeout = (float) config('ai-assistant.llm.timeweb.timeout', 25);
@@ -40,27 +49,22 @@ final class TimewebProvider implements LLMProviderInterface
             throw new RuntimeException('Timeweb AI Gateway API key not configured');
         }
 
+        $budgetService = new TokenBudgetService();
+        $prepared = $budgetService->resolvePrepared($options['_prepared_token_budget'] ?? null, $messages, (array) ($options['tools'] ?? []), (string) ($options['budget_profile'] ?? $options['profile'] ?? 'normal'), array_key_exists('budget_limits', $options) ? (array) $options['budget_limits'] : null);
+        $messages = $prepared['messages'];
         $profile = $this->profile($options);
         $profileConfig = $this->profileConfig($profile);
         $models = $this->models($options, $profileConfig);
-        $maxTokens = (int) ($options['max_tokens'] ?? $profileConfig['max_tokens'] ?? $this->maxTokens);
-        $temperature = (float) ($options['temperature'] ?? $profileConfig['temperature'] ?? $this->temperature);
+        $maxTokens = min(
+            max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? $profileConfig['max_tokens'] ?? $this->maxTokens)),
+            $prepared['max_completion_tokens'],
+        );
         $timeout = $this->positiveFloat($options['timeout'] ?? $profileConfig['timeout'] ?? $this->timeout, $this->timeout);
         $lastException = null;
 
         foreach ($models as $attempt => $model) {
-            $requestPayload = [
-                'model' => $model,
-                'messages' => $messages,
-                'max_tokens' => $maxTokens,
-                'temperature' => $temperature,
-            ];
-
-            foreach (['tools', 'tool_choice', 'response_format', 'enable_thinking'] as $optionKey) {
-                if (array_key_exists($optionKey, $options)) {
-                    $requestPayload[$optionKey] = $options[$optionKey];
-                }
-            }
+            $adapter = new TimewebResponsesAdapter();
+            $requestPayload = $adapter->payload($model, $messages, $maxTokens, $options);
 
             try {
                 $this->logging->technical('ai.timeweb.request', [
@@ -74,13 +78,27 @@ final class TimewebProvider implements LLMProviderInterface
                 ]);
 
                 $startTime = microtime(true);
-                $response = $this->makeClient($timeout)->chat()->create($requestPayload);
+                $response = $this->makeClient($timeout)->responses()->create($requestPayload);
                 $duration = microtime(true) - $startTime;
 
-                $result = $this->parseResponse($response, $model);
+                $result = $adapter->result($response, $model);
                 $result['profile'] = $profile;
                 $result['route_attempt'] = $attempt + 1;
                 $result['route_fallback'] = $attempt > 0;
+
+                $result['token_calibration'] = ($result['provider_usage_available'] ?? false) === true
+                    ? $budgetService->calibration($prepared, (int) $result['input_tokens'])
+                    : ['actual_input_tokens' => null, 'provider_usage_available' => false, 'persisted' => false, 'profile_input_exceeded' => false];
+                $this->logging->technical('ai.token_calibration', $result['token_calibration']);
+
+                if (($result['response_status'] ?? null) === 'incomplete') {
+                    $exception = new AssistantResponseIncomplete($result);
+                    $this->logging->technical('ai.timeweb.incomplete', [
+                        'reason' => $exception->reason,
+                        'usage' => $exception->providerUsage,
+                    ], 'warning');
+                    throw $exception;
+                }
 
                 $this->logging->technical('ai.timeweb.success', [
                     'profile' => $profile,
@@ -91,13 +109,16 @@ final class TimewebProvider implements LLMProviderInterface
 
                 return $result;
             } catch (Throwable $exception) {
+                if (app()->bound(AssistantRequestExecutionContext::class)) {
+                    app(AssistantRequestExecutionContext::class)->assertCanContinue();
+                }
                 $lastException = $exception;
 
                 $this->logging->technical('ai.timeweb.model_failed', [
                     'profile' => $profile,
                     'model' => $model,
                     'attempt' => $attempt + 1,
-                    'error' => $exception->getMessage(),
+                    'incomplete_reason' => $exception instanceof AssistantResponseIncomplete ? $exception->reason : null,
                     'exception_class' => get_class($exception),
                 ], 'warning');
             }
@@ -112,7 +133,7 @@ final class TimewebProvider implements LLMProviderInterface
 
     public function countTokens(string $text): int
     {
-        return (int) (mb_strlen($text, 'UTF-8') / 4);
+        return (new TokenCounter())->text($text);
     }
 
     public function isAvailable(): bool
@@ -127,55 +148,18 @@ final class TimewebProvider implements LLMProviderInterface
 
     private function makeClient(float $timeout): object
     {
-        $connectTimeout = max(1.0, min(5.0, $timeout));
+        $httpOptions = app()->bound(AssistantRequestExecutionContext::class)
+            ? AssistantHttpRequestOptions::forContext($timeout, app(AssistantRequestExecutionContext::class))
+            : [
+                'timeout' => $timeout,
+                'connect_timeout' => min(5.0, $timeout),
+            ];
 
         return OpenAI::factory()
             ->withApiKey($this->apiKey)
             ->withBaseUri($this->baseUri)
-            ->withHttpClient(new GuzzleClient([
-                'timeout' => $timeout,
-                'connect_timeout' => $connectTimeout,
-            ]))
+            ->withHttpClient($this->httpClient ?? new GuzzleClient($httpOptions))
             ->make();
-    }
-
-    private function parseResponse(object $response, string $requestedModel): array
-    {
-        $message = $response->choices[0]->message ?? null;
-        if (!is_object($message)) {
-            throw new RuntimeException('Invalid Timeweb response format: no message');
-        }
-
-        $usage = $response->usage ?? null;
-        $promptTokens = is_object($usage) ? (int) ($usage->promptTokens ?? 0) : 0;
-        $completionTokens = is_object($usage) ? (int) ($usage->completionTokens ?? 0) : 0;
-        $totalTokens = is_object($usage) ? (int) ($usage->totalTokens ?? ($promptTokens + $completionTokens)) : 0;
-
-        $result = [
-            'content' => (string) ($message->content ?? ''),
-            'role' => (string) ($message->role ?? 'assistant'),
-            'tokens_used' => $totalTokens,
-            'input_tokens' => $promptTokens,
-            'output_tokens' => $completionTokens,
-            'model' => (string) ($response->model ?? $requestedModel),
-            'provider' => 'timeweb',
-            'finish_reason' => $response->choices[0]->finishReason ?? 'stop',
-        ];
-
-        if (!empty($message->toolCalls)) {
-            $result['tool_calls'] = array_map(static function (object $toolCall): array {
-                return [
-                    'id' => $toolCall->id,
-                    'type' => $toolCall->type,
-                    'function' => [
-                        'name' => $toolCall->function->name,
-                        'arguments' => $toolCall->function->arguments,
-                    ],
-                ];
-            }, $message->toolCalls);
-        }
-
-        return $result;
     }
 
     private function positiveFloat(mixed $value, float $default): float
@@ -215,7 +199,7 @@ final class TimewebProvider implements LLMProviderInterface
     private function models(array $options, array $profileConfig): array
     {
         if (isset($options['model']) && trim((string) $options['model']) !== '') {
-            return [trim((string) $options['model'])];
+            return [LunaModelPolicy::assert((string) $options['model'], 'timeweb')];
         }
 
         $models = $profileConfig['models'] ?? [$this->model];
@@ -228,11 +212,12 @@ final class TimewebProvider implements LLMProviderInterface
             $models = [$this->model];
         }
 
-        $normalized = array_values(array_filter(array_map(
-            static fn (mixed $model): string => trim((string) $model),
-            $models
-        )));
+        foreach ((array) $models as $model) {
+            if (LunaModelPolicy::isLuna((string) $model, 'timeweb')) {
+                return [LunaModelPolicy::TIMEWEB];
+            }
+        }
 
-        return $normalized !== [] ? $normalized : [$this->model];
+        return [LunaModelPolicy::TIMEWEB];
     }
 }

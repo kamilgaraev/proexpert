@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Reporting\Cycle\Services;
 
+use App\BusinessModules\Features\AIAssistant\Services\Rag\SalesRagMutationBridge;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementProcessEventStore;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProcessTransition;
@@ -85,6 +86,7 @@ final class EloquentProcurementProcessEventStore implements ProcurementProcessEv
         ]);
 
         if ($inserted === 1) {
+            SalesRagMutationBridge::changedRows(\App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent::class, \App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent::query()->where($identity), $transition->organizationId, $transition->projectId);
             return;
         }
 

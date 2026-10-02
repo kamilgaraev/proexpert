@@ -21,6 +21,17 @@ abstract class TestCase extends BaseTestCase
 
         $app->make(Kernel::class)->bootstrap();
 
+        \Illuminate\Support\Facades\Queue::fake([
+            \App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob::class,
+            \App\BusinessModules\Features\AIAssistant\Jobs\IndexGlobalRagEntityJob::class,
+            \App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob::class,
+            \App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob::class,
+            \App\Jobs\RegisterAssistantEntityFile::class,
+            \App\Jobs\ScanAssistantDocuments::class,
+            \App\Jobs\ProcessAssistantDocument::class,
+            \App\Jobs\ProcessAssistantDocumentOcr::class,
+        ]);
+
         return $app;
     }
 

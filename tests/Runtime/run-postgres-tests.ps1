@@ -3,7 +3,9 @@ param(
     [string] $TestSuite = '',
     [string] $Filter = '',
     [ValidateSet('phpunit', 'pest')]
-    [string] $Runner = 'phpunit'
+    [string] $Runner = 'phpunit',
+    [switch] $IsolatedAiAssistant,
+    [switch] $LogProgressEvents
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +55,16 @@ if (
     throw 'postgres_test_database_configuration_unsafe'
 }
 
-$pirTestsMutex = [System.Threading.Mutex]::new($false, 'Local\MostPostgresTests')
+$selectedProfile = if ($IsolatedAiAssistant) { 'ai-assistant' } else { '' }
+$selectedProject = if ($IsolatedAiAssistant) { 'most-ai-assistant-tests' } else { 'most-postgres-tests' }
+if ($env:MOST_POSTGRES_TEST_PROFILE -and $env:MOST_POSTGRES_TEST_PROFILE -cne $selectedProfile) {
+    throw 'postgres_test_profile_unsafe'
+}
+if ($env:COMPOSE_PROJECT_NAME -and $env:COMPOSE_PROJECT_NAME -cne $selectedProject) {
+    throw 'postgres_test_project_unsafe'
+}
+$mutexName = if ($IsolatedAiAssistant) { 'Local\MostAIAssistantPostgresTests' } else { 'Local\MostPostgresTests' }
+$pirTestsMutex = [System.Threading.Mutex]::new($false, $mutexName)
 $pirTestsLockAcquired = $false
 try {
     while (-not $pirTestsLockAcquired) {
@@ -87,16 +98,30 @@ if (-not $dockerReady) {
 }
 
 $composePath = Join-Path $root 'compose.testing.yml'
-$projectName = 'most-postgres-tests'
+$projectName = $selectedProject
+if ($IsolatedAiAssistant) {
+    $composeContents = Get-Content -LiteralPath $composePath -Raw -Encoding UTF8
+    if ([regex]::Matches($composeContents, '127\.0\.0\.1:55433:5432').Count -ne 1 -or
+        $composeContents -notmatch 'image:\s*pgvector/pgvector:0\.8\.5-pg16-bookworm') {
+        throw 'postgres_test_isolated_compose_source_unsafe'
+    }
+    $privateComposeDirectory = Join-Path $root 'storage/app/private/postgres-ai-assistant'
+    New-Item -ItemType Directory -Path $privateComposeDirectory -Force | Out-Null
+    $composePath = Join-Path $privateComposeDirectory 'compose.testing.yml'
+    [IO.File]::WriteAllText($composePath, $composeContents.Replace('127.0.0.1:55433:5432', '127.0.0.1:55443:5432'), [Text.UTF8Encoding]::new($false))
+}
+$previousProfile = $env:MOST_POSTGRES_TEST_PROFILE
 
 Push-Location $root
 try {
-    & docker compose -p $projectName -f $composePath down --volumes --remove-orphans
-    if ($LASTEXITCODE -ne 0) {
-        throw 'postgres_test_container_reset_failed'
+    if (-not $IsolatedAiAssistant) {
+        & docker compose -p $projectName -f $composePath down --volumes --remove-orphans
+        if ($LASTEXITCODE -ne 0) {
+            throw 'postgres_test_container_reset_failed'
+        }
     }
 
-    & docker compose -p $projectName -f $composePath up -d --wait --wait-timeout 60
+    & docker compose --project-directory $root -p $projectName -f $composePath up -d --wait --wait-timeout 60
     if ($LASTEXITCODE -ne 0) {
         throw 'postgres_test_container_start_failed'
     }
@@ -111,9 +136,20 @@ try {
         $phpunitArguments += @('--filter', $Filter)
     }
 
+    if ($LogProgressEvents) {
+        $eventsDirectory = [IO.Path]::GetFullPath((Join-Path $root 'storage/app/private/assistant-audit'))
+        New-Item -ItemType Directory -Path $eventsDirectory -Force | Out-Null
+        $eventsLogPath = Join-Path $eventsDirectory ((Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N')+'.events.log')
+        $phpunitArguments += @('--log-events-text', $eventsLogPath)
+        Write-Host ('PHPUnit events: '+$eventsLogPath)
+    }
+
+    if ($IsolatedAiAssistant) { $env:MOST_POSTGRES_TEST_PROFILE = 'ai-assistant' }
     & php @phpunitArguments
     $testExitCode = $LASTEXITCODE
 } finally {
+    if ($null -eq $previousProfile) { Remove-Item Env:MOST_POSTGRES_TEST_PROFILE -ErrorAction SilentlyContinue }
+    else { $env:MOST_POSTGRES_TEST_PROFILE = $previousProfile }
     Pop-Location
 }
 

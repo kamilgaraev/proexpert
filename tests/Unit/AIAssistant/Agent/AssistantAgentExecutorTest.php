@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecut
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantArtifactNormalizer;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 use App\Models\Organization;
 use App\Models\User;
 use PHPUnit\Framework\TestCase;
@@ -16,6 +17,7 @@ use RuntimeException;
 
 final class AssistantAgentExecutorTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantUnitTranslations;
     public function test_success_returns_artifact_url_when_tool_returns_storage_evidence(): void
     {
         $tool = $this->makeTool('generate_project_timelines_report', [
@@ -69,6 +71,60 @@ final class AssistantAgentExecutorTest extends TestCase
         $this->assertSame([], $result['artifacts']);
         $this->assertSame([], $result['evidence']);
         $this->assertSame('missing_tool', $result['tool_name']);
+    }
+
+    public function test_payment_only_domain_search_blocks_cross_domain_arguments(): void
+    {
+        $tool = new class implements AIToolInterface
+        {
+            public bool $executed = false;
+
+            public function getName(): string
+            {
+                return 'assistant_domain_search';
+            }
+
+            public function getDescription(): string
+            {
+                return 'Test domain search';
+            }
+
+            public function getParametersSchema(): array
+            {
+                return ['type' => 'object', 'properties' => [
+                    'domain' => ['type' => 'string'],
+                    'entity_type' => ['type' => 'string'],
+                ], 'required' => ['domain', 'entity_type'], 'additionalProperties' => false];
+            }
+            public function execute(array $arguments, ?User $user, Organization $organization): array|string
+            {
+                $this->executed = true;
+
+                return ['status' => 'success'];
+            }
+        };
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $permissionChecker = $this->createMock(AIPermissionChecker::class);
+        $permissionChecker->method('canExecuteTool')->willReturn(true);
+        $executor = new AssistantAgentExecutor($registry, $permissionChecker, new AssistantArtifactNormalizer);
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray();
+
+        $crossDomain = $executor->execute('assistant_domain_search', [
+            'domain' => 'contracts',
+            'entity_type' => 'contract',
+        ], new User, new Organization, $understanding);
+
+        $this->assertSame('blocked_by_request_policy', $crossDomain['raw']['status']);
+        $this->assertFalse($tool->executed);
+
+        $paymentSearch = $executor->execute('assistant_domain_search', [
+            'domain' => 'finance',
+            'entity_type' => 'payment_document',
+        ], new User, new Organization, $understanding);
+
+        $this->assertSame('success', $paymentSearch['status']);
+        $this->assertTrue($tool->executed);
     }
 
     public function test_tool_exception_fails_safely(): void
@@ -160,7 +216,7 @@ final class AssistantAgentExecutorTest extends TestCase
 
             public function getParametersSchema(): array
             {
-                return ['type' => 'object'];
+                return ['type' => 'object', 'properties' => ['period' => ['type' => 'string']], 'additionalProperties' => false];
             }
 
             public function execute(array $arguments, ?User $user, Organization $organization): array|string

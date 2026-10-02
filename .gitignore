@@ -54,6 +54,11 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 !docs/superpowers/plans/2026-07-26-reports-plan-1c-catalog-workspace-quality.md
 !docs/api/material-consumption-m29.md
 !docs/api/completed-work-history-migration.md
+!docs/ai-assistant-upgrade-implementation.md
+!docs/ai-assistant-shadow-evaluation.md
+!docs/ai-assistant-workflow.md
+!docs/ai-assistant-audit-remediation.md
+!docs/ai-assistant-release-checklist.md
 !README.md
 !CHANGELOG.md
 !pherp-98-wip-forecast-to-complete-model.md
@@ -67,6 +72,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 *.py
 !app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py
 *.png
+!tests/Fixtures/AIAssistant/screenshots/*.png
 .cursor
 *.txt
 *.xml

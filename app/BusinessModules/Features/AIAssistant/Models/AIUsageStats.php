@@ -22,7 +22,7 @@ class AIUsageStats extends Model
     protected $casts = [
         'requests_count' => 'integer',
         'tokens_used' => 'integer',
-        'cost_rub' => 'decimal:2',
+        'cost_rub' => 'decimal:6',
     ];
 
     public function organization(): BelongsTo

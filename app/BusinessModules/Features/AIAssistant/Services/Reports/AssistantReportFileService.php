@@ -81,10 +81,16 @@ final readonly class AssistantReportFileService
         $expiresAt = null;
         $definition = $this->definitionForArtifact($toolName, $data, $arguments);
         $type = self::URL_KEYS[$urlKey] ?? $definition?->artifactType ?? 'file';
-        $downloadUrl = $this->fileService->temporaryDownloadUrl(
-            $storagePath,
-            (int) config('filesystems.s3.download_ttl_seconds'),
-        );
+        $downloadUrl = $this->optionalString($data['download_url'] ?? $data['pdf_url'] ?? null);
+        if ($downloadUrl === null || ! str_starts_with($downloadUrl, '/api/v1/ai-assistant/reports/')) {
+            return null;
+        }
+
+        try {
+            $downloadUrl = app(AssistantReportAccessService::class)->urlForPath($storagePath, $user);
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException|\Symfony\Component\HttpKernel\Exception\GoneHttpException) {
+            return null;
+        }
 
         $reportFile = ReportFile::query()->updateOrCreate(
             [
