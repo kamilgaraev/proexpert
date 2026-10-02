@@ -12,6 +12,7 @@ use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
@@ -51,6 +52,28 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
     }
 
     public static function scopedQuery(string $type, int $organizationId, ?int $projectId = null, bool $skipSelf = false, array $seen = []): Builder
+    {
+        $scopes = $type === 'purchase_receipt_return' && $seen === [] ? [] : null;
+        $query = self::buildScopedQuery($type, $organizationId, $projectId, $skipSelf, $seen, $scopes);
+        if ($scopes === null || $scopes === []) {
+            return $query;
+        }
+        $table = $query->getModel()->getTable();
+        $definitions = [];
+        $bindings = [];
+        foreach ($scopes as $scope) {
+            $definitions[] = $scope['name'].' AS MATERIALIZED ('.$scope['query']->toSql().')';
+            array_push($bindings, ...$scope['query']->getBindings());
+        }
+        $query->select($table.'.'.$query->getModel()->getKeyName());
+        array_push($bindings, ...$query->getBindings());
+        $ids = DB::query()->select($query->getModel()->getKeyName())
+            ->fromRaw('(WITH '.implode(', ', $definitions).' '.$query->toSql().') AS rag_valid_entities', $bindings);
+
+        return $query->getModel()->newQuery()->whereIn($table.'.'.$query->getModel()->getKeyName(), $ids);
+    }
+
+    private static function buildScopedQuery(string $type, int $organizationId, ?int $projectId, bool $skipSelf, array $seen, ?array &$scopes): Builder
     {
         $definition = AssistantSalesBusinessMetadata::scopeDefinitions()[$type] ?? null;
         if ($definition === null) {
@@ -108,7 +131,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
             $parentDefinition = AssistantSalesBusinessMetadata::scopeDefinitions()[$parent['type']] ?? null;
             if ($parentDefinition !== null) {
                 $propagateProject = ! $hasProject && self::hasProjectLineage($parent['type']);
-                $parentQuery = self::scopedQuery($parent['type'], $organizationId, $propagateProject ? $projectId : null, ($parent['reference_only'] ?? false) && $parent['type'] === $type, ($parent['reference_only'] ?? false) && $parent['type'] === $type ? $seen : [...$seen, $type]);
+                $parentQuery = self::parentScopeQuery($parent['type'], $organizationId, $propagateProject ? $projectId : null, ($parent['reference_only'] ?? false) && $parent['type'] === $type, ($parent['reference_only'] ?? false) && $parent['type'] === $type ? $seen : [...$seen, $type], $scopes);
                 $inheritedProject = $inheritedProject || $propagateProject;
             } else { throw new RuntimeException('assistant_sales_parent_unsupported'); }
             $parentKey = $parent['key'] ?? 'id';
@@ -141,6 +164,33 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
         }
 
         return $query;
+    }
+
+    private static function parentScopeQuery(string $type, int $organizationId, ?int $projectId, bool $skipSelf, array $seen, ?array &$scopes): Builder
+    {
+        if ($scopes === null || in_array($type, $seen, true) || count($seen) > 16) {
+            return self::buildScopedQuery($type, $organizationId, $projectId, $skipSelf, $seen, $scopes);
+        }
+        $key = $type.':'.($projectId ?? 'all').':'.(int) $skipSelf;
+        if (! isset($scopes[$key])) {
+            $query = self::buildScopedQuery($type, $organizationId, $projectId, $skipSelf, $seen, $scopes);
+            $table = $query->getModel()->getTable();
+            $columns = [$query->getModel()->getKeyName()];
+            foreach (AssistantSalesBusinessMetadata::scopeDefinitions() as $definition) {
+                foreach ($definition['parents'] ?? [] as $parent) {
+                    if ($parent['type'] === $type) {
+                        $columns[] = $parent['key'] ?? 'id';
+                        array_push($columns, ...array_keys($parent['matches'] ?? []));
+                    }
+                }
+            }
+            $query->select(array_map(static fn (string $column): string => $table.'.'.$column, array_unique($columns)));
+            $scopes[$key] = ['name' => 'rag_parent_'.count($scopes), 'query' => $query];
+        }
+        $model = AssistantSalesBusinessMetadata::scopeDefinitions()[$type]['model'];
+        $query = $model::query()->withoutGlobalScopes();
+
+        return $query->from($scopes[$key]['name'].' as '.$query->getModel()->getTable());
     }
 
     protected function chunk(Model $model, string $type, array $fields, int $organizationId): RagChunkData
