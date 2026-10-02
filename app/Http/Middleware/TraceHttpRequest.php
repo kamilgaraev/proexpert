@@ -21,6 +21,9 @@ final class TraceHttpRequest
         if (in_array($request->path(), ['up', 'ready', 'metrics'], true)) {
             return $next($request);
         }
+        if (! $this->tracing->supportsSpans()) {
+            return $this->tracing->correlateHttp($request, $next);
+        }
 
         try {
             [$span, $scope] = $this->tracing->startHttp($request);

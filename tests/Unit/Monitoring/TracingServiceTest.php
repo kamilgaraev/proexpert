@@ -253,4 +253,42 @@ final class TracingServiceTest extends TestCase
             $scope->detach();
         }
     }
+
+    public function test_missing_all_opentelemetry_libraries_keeps_console_http_job_and_slow_query_correlation(): void
+    {
+        $tracing = new TracingService(null);
+        self::assertFalse($tracing->supportsSpans());
+        $input = new ArrayInput([]);
+        $output = new NullOutput();
+        $tracing->startCommand(new CommandStarting('octane:start', $input, $output));
+        $consoleTrace = TracingService::currentTraceId();
+        $request = Request::create('/api/projects', 'GET');
+        $request->headers->set('traceparent', '00-'.str_repeat('c', 32).'-'.str_repeat('d', 16).'-01');
+        $payload = [];
+        $response = (new TraceHttpRequest($tracing))->handle($request, static function () use ($tracing, &$payload): Response {
+            self::assertSame(str_repeat('c', 32), TracingService::currentTraceId());
+            self::assertSame('http', $tracing->executionContext()['kind']);
+            $connection = new class { public function getName(): string { return 'primary'; } };
+            $query = new QueryExecuted('select 1', [], 501.0, $connection);
+            $tracing->recordSql($query);
+            $slow = $tracing->slowQueryTrace($query);
+            self::assertSame(TracingService::currentTraceId(), $slow['trace_id']);
+            self::assertFalse($slow['trace_sampled']);
+            $payload = $tracing->queuePayload() + ['displayName' => 'App\\Jobs\\ExampleJob'];
+            return new Response('ok');
+        });
+        self::assertSame(str_repeat('c', 32), $response->headers->get('X-Trace-ID'));
+        self::assertSame($consoleTrace, TracingService::currentTraceId());
+        $tracing->finishCommand(new CommandFinished('octane:start', $input, $output, 0));
+        self::assertNull(TracingService::currentTraceId());
+        $job = Mockery::mock(Job::class);
+        $job->shouldReceive('payload')->andReturn($payload);
+        $tracing->startJob(new JobProcessing('redis', $job));
+        self::assertSame(str_repeat('c', 32), TracingService::currentTraceId());
+        self::assertSame('queue', $tracing->executionContext()['kind']);
+        $tracing->markJobFailed($job, new RuntimeException('failed'));
+        $tracing->finishJob($job, new RuntimeException('failed'));
+        self::assertNull(TracingService::currentTraceId());
+        $tracing->flush();
+    }
 }
