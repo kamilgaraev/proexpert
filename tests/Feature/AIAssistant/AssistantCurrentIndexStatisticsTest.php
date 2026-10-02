@@ -423,6 +423,52 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         }, fresh: true);
     }
 
+    public function test_source_section_skips_document_audit_and_keeps_current_access_checks(): void
+    {
+        [$organization, $actor, $project] = $this->scope();
+        $service = $this->service();
+        $this->source($organization->id, $project);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $status = $service->status($organization->id, $actor, 'sources');
+            $queries = array_column(DB::getQueryLog(), 'query');
+        } finally {
+            DB::disableQueryLog();
+        }
+        $this->assertSame(1, $status['source_count']);
+        $this->assertArrayNotHasKey('document_coverage', $status);
+        $this->assertArrayNotHasKey('archive_scan', $status);
+        $this->assertFalse((bool) preg_grep('/from "(?:files|ai_assistant_documents|ai_assistant_document_units)"/i', $queries));
+        $actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
+        $this->assertSame(0, $service->status($organization->id, $actor, 'sources')['source_count']);
+    }
+
+    public function test_document_section_skips_rag_counts_and_checks_owner_permission_freshly(): void
+    {
+        [$organization, $actor, $project] = $this->scope();
+        $service = $this->service();
+        $this->source($organization->id, $project);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $status = $service->status($organization->id, $actor, 'documents');
+            $queries = array_column(DB::getQueryLog(), 'query');
+        } finally {
+            DB::disableQueryLog();
+        }
+        $this->assertTrue($status['status_available']);
+        $this->assertArrayHasKey('document_coverage', $status);
+        $this->assertArrayNotHasKey('source_count', $status);
+        $this->assertFalse((bool) preg_grep('/from "ai_rag_(?:sources|chunks)"/i', $queries));
+        Queue::assertNotPushed(RefreshRagCoverageJob::class);
+        $this->assertFalse($status['can_manage_document_settings']);
+        $actor->organizations()->updateExistingPivot($organization->id, ['is_owner' => true]);
+        $this->assertTrue($service->status($organization->id, $actor, 'documents')['can_manage_document_settings']);
+        $actor->organizations()->updateExistingPivot($organization->id, ['is_owner' => false]);
+        $this->assertFalse($service->status($organization->id, $actor, 'documents')['can_manage_document_settings']);
+    }
+
     private function scope(): array
     {
         $organization = Organization::factory()->create();
