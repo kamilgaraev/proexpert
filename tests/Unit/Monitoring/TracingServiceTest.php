@@ -21,6 +21,7 @@ use OpenTelemetry\SDK\Trace\Sampler\ParentBased;
 use OpenTelemetry\SDK\Trace\SpanExporter\InMemoryExporter;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProviderBuilder;
+use OpenTelemetry\API\Trace\NoopTracerProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -210,6 +211,28 @@ final class TracingServiceTest extends TestCase
         }
         self::assertSame(['kind' => 'console', 'command' => 'octane:start'], $tracing->executionContext());
         $tracing->finishCommand(new CommandFinished('octane:start', $input, $output, 0));
+        self::assertNull(TracingService::currentTraceId());
+    }
+
+    public function test_noop_provider_without_sdk_keeps_http_and_console_job_correlation(): void
+    {
+        $tracing = new TracingService(new NoopTracerProvider);
+        $response = (new TraceHttpRequest($tracing))->handle(Request::create('/api/projects', 'GET'), static fn (): Response => new Response('ok'));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $response->headers->get('X-Trace-ID'));
+        self::assertNull(TracingService::currentTraceId());
+        $input = new ArrayInput([]);
+        $output = new NullOutput();
+        $tracing->startCommand(new CommandStarting('ai-assistant:index', $input, $output));
+        $traceId = TracingService::currentTraceId();
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $traceId);
+        $payload = $tracing->queuePayload() + ['displayName' => 'App\\Jobs\\ExampleJob'];
+        self::assertArrayHasKey('otel_traceparent', $payload);
+        $tracing->finishCommand(new CommandFinished('ai-assistant:index', $input, $output, 0));
+        $job = Mockery::mock(Job::class);
+        $job->shouldReceive('payload')->andReturn($payload);
+        $tracing->startJob(new JobProcessing('redis', $job));
+        self::assertSame($traceId, TracingService::currentTraceId());
+        $tracing->finishJob($job);
         self::assertNull(TracingService::currentTraceId());
     }
 }
