@@ -149,9 +149,18 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         RagSource::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'source_type' => 'file_document', 'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id,
             'title' => 'Document', 'checksum' => hash('sha256', $path)]);
+        $coverageQuery = '';
+        DB::listen(static function ($query) use (&$coverageQuery): void {
+            if (str_contains($query->sql, 'coverage_state') && str_contains($query->sql, 'COUNT(*) AS total')) {
+                $coverageQuery = $query->sql;
+            }
+        });
         $status = $service->status($organization->id, $actor);
         $this->assertSame(1, $status['source_count']);
         $this->assertSame(1, $status['document_coverage']['ready']);
+        $this->assertNotSame('', $coverageQuery);
+        $this->assertLessThanOrEqual(2, substr_count($coverageQuery, '(WITH "assistant_acl_0" AS MATERIALIZED'),
+            'File and document access scopes must each be computed once for coverage counts.');
 
         $file->update(['path' => 'org-'.$organization->id.'/replacement.pdf']);
         $status = $service->status($organization->id, $actor);
