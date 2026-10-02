@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Http\Controllers;
 
 use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantRagReindexRequest;
+use App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantRagStatusRequest;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\RagIndexStatusResource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -17,12 +17,12 @@ final class AIAssistantRagController extends AbstractAssistantApiController
 {
     public function __construct(private readonly AssistantIndexStatusService $index) {}
 
-    public function status(Request $request): JsonResponse
+    public function status(AssistantRagStatusRequest $request): JsonResponse
     {
         $organizationId = $this->organizationId($request);
 
         try {
-            return $this->success($request, new RagIndexStatusResource($this->index->status($organizationId, $this->actor($request))));
+            return $this->success($request, new RagIndexStatusResource($this->index->status($organizationId, $this->actor($request), $request->validated('section', 'all'))));
         } catch (Throwable $exception) {
             Log::error('ai_assistant.rag.status_failed', ['organization_id' => $organizationId, 'user_id' => $this->actor($request)->id, 'exception_class' => $exception::class]);
 

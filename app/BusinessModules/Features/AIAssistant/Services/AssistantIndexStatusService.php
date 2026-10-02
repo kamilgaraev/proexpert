@@ -36,8 +36,11 @@ final class AssistantIndexStatusService
         private readonly AuthorizationService $authorization,
     ) {}
 
-    public function status(int $organizationId, User $actor): array
+    public function status(int $organizationId, User $actor, string $section = 'all'): array
     {
+        if (! in_array($section, ['all', 'sources', 'documents'], true)) {
+            throw new \InvalidArgumentException('Unsupported assistant status section');
+        }
         if (! $this->access->belongsToOrganization($actor, $organizationId)) {
             throw new AuthorizationException;
         }
@@ -47,11 +50,11 @@ final class AssistantIndexStatusService
             $result = $this->inRepeatableRead(fn (): array => $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks(
                 $actor,
                 $organizationId,
-                function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget): array {
+                function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section): array {
                     $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
                     $projectionProof = null;
-                    $coverage = $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true);
-                    $documents = $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
+                    $coverage = $section === 'documents' ? [] : $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true);
+                    $documents = $section === 'sources' ? [] : $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
 
                     return array_merge($coverage, $documents, [
                         'status_available' => true,
