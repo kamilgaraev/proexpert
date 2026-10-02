@@ -94,6 +94,11 @@ final class AssistantStructuredFactSafetyTest extends TestCase
     public function test_labels_use_entity_vocabulary_without_changing_raw_evidence_or_translating_unknown_values(): void
     {
         foreach ([
+            ['project', 'status', 'draft', 'Черновик'],
+            ['project', 'status', 'active', 'Активный'],
+            ['project', 'status', 'completed', 'Завершён'],
+            ['project', 'status', 'paused', 'Приостановлен'],
+            ['project', 'status', 'cancelled', 'Отменён'],
             ['contract', 'status', 'draft', 'Черновик'],
             ['estimate', 'status', 'in_review', 'На согласовании'],
             ['payment_document', 'status', 'pending_approval', 'На согласовании'],
@@ -151,7 +156,8 @@ final class AssistantStructuredFactSafetyTest extends TestCase
         $guard = (new AssistantStructuredFactVerifier)->guard('Сколько осталось?', 'Осталось 9999 единиц.', $results);
 
         self::assertCount(25, $guard['source_refs']);
-        self::assertSame(25, substr_count($guard['text'], 'Остаток на складе:'));
+        self::assertStringContainsString('| Запись | Количество |', $guard['text']);
+        self::assertSame(25, substr_count($guard['text'], '| Остаток на складе [Открыть запись]('));
         self::assertStringNotContainsString('9999', $guard['text']);
         self::assertStringContainsString('Полнота списка и общие итоги не подтверждены', $guard['text']);
     }
