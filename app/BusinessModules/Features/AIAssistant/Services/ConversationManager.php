@@ -125,9 +125,9 @@ class ConversationManager
         return $result;
     }
 
-    public function canReadMessage(Message $message, Conversation $conversation, User $actor): bool
+    public function canReadMessage(Message $message, Conversation $conversation, User $actor, bool $fresh = true): bool
     {
-        if ((int) $message->conversation_id !== (int) $conversation->id || ! app(AIPermissionChecker::class)->canUseAssistant($actor, (int) $conversation->organization_id)) {
+        if ((int) $message->conversation_id !== (int) $conversation->id || ! app(AIPermissionChecker::class)->canUseAssistant($actor, (int) $conversation->organization_id, $fresh)) {
             return false;
         }
         if ($message->role !== 'assistant') {
@@ -138,7 +138,7 @@ class ConversationManager
             return false;
         }
         $refs = $this->messageReferences($metadata);
-        if ($refs === null || ! $this->references->canRead($actor, (int) $conversation->organization_id, $refs)) {
+        if ($refs === null || ! $this->references->canRead($actor, (int) $conversation->organization_id, $refs, $fresh)) {
             return false;
         }
 

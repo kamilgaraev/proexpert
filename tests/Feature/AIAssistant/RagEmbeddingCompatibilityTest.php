@@ -23,6 +23,53 @@ use Tests\TestCase;
 
 final class RagEmbeddingCompatibilityTest extends TestCase
 {
+    public function test_native_qwen_vectors_coexist_with_unchanged_legacy_vectors(): void
+    {
+        [$fixture, $project] = $this->scope();
+        $legacy = new CompatibilityEmbeddingProvider('timeweb', 'openai/text-embedding-3-large', 256);
+        $oldChunk = $this->chunk($project);
+        $this->indexer($legacy)->indexChunk($oldChunk);
+        $oldSource = RagSource::query()->where('entity_id', $project->id)->firstOrFail();
+        $oldVector = DB::table('ai_rag_chunks')->where('source_id', $oldSource->id)->value('embedding');
+        $newProject = Project::factory()->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]);
+        $qwen = new CompatibilityEmbeddingProvider('timeweb', 'dashscope/text-embedding-v4', 1024);
+        $this->indexer($qwen)->indexChunk($this->chunk($newProject));
+
+        $this->assertSame($oldVector, DB::table('ai_rag_chunks')->where('source_id', $oldSource->id)->value('embedding'));
+        $this->assertSame([256, 1024], DB::table('ai_rag_chunks')->orderBy('id')->selectRaw('vector_dims(embedding) AS dimensions')->pluck('dimensions')->all());
+        $retriever = new RagRetriever($qwen, app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
+        $result = $retriever->search('needle semantic', $fixture->organization->id, $fixture->owner);
+        $this->assertSame([(string) $newProject->id], array_map(static fn ($row): string => (string) $row->entityId, $result));
+        $oldResults = (new RagRetriever($legacy, app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class)))
+            ->search('needle semantic', $fixture->organization->id, $fixture->owner);
+        $this->assertSame([(string) $project->id], array_map(static fn ($row): string => (string) $row->entityId, $oldResults));
+        $callsBeforeReindexing = $legacy->calls;
+        $this->indexer($legacy)->indexChunk($oldChunk);
+        $this->assertSame($callsBeforeReindexing, $legacy->calls);
+    }
+
+    public function test_mixed_dimension_migration_preserves_vectors_and_blocks_destructive_rollback(): void
+    {
+        [, $project] = $this->scope();
+        $this->indexer(new CompatibilityEmbeddingProvider('timeweb', 'openai/text-embedding-3-large', 256))->indexChunk($this->chunk($project));
+        $before = DB::table('ai_rag_chunks')->orderBy('id')->get()->toArray();
+        $migration = require base_path('app/BusinessModules/Features/AIAssistant/migrations/2026_10_02_000001_allow_mixed_ai_rag_embedding_dimensions.php');
+        $migration->down();
+        $migration->up();
+        $this->assertEquals($before, DB::table('ai_rag_chunks')->orderBy('id')->get()->toArray());
+        $indexes = DB::select('SELECT indexname FROM pg_indexes WHERE tablename = ?', ['ai_rag_chunks']);
+        $this->assertContains('ai_rag_chunks_embedding_256_hnsw_idx', array_column($indexes, 'indexname'));
+        $this->assertContains('ai_rag_chunks_embedding_1024_hnsw_idx', array_column($indexes, 'indexname'));
+        DB::table('ai_rag_chunks')->update(['embedding' => '['.implode(',', array_fill(0, 1024, '0.1')).']']);
+        try {
+            $migration->down();
+            $this->fail('Rollback must preserve native Qwen vectors.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('rag_mixed_embedding_dimensions_prevent_rollback', $exception->getMessage());
+        }
+        $this->assertSame(1024, (int) DB::table('ai_rag_chunks')->selectRaw('vector_dims(embedding) AS dimensions')->value('dimensions'));
+    }
+
     public function test_compatible_legacy_checksum_is_upgraded_without_another_embedding_call(): void
     {
         [$fixture, $project] = $this->scope();
@@ -114,7 +161,7 @@ final class RagEmbeddingCompatibilityTest extends TestCase
 
         $accessible = $policy->applyToSources(RagSource::query(), $fixture->owner, $fixture->organization->id)->select('ai_rag_sources.id');
         $projectIds = Project::query()->where('organization_id', $fixture->organization->id)->pluck('id')->map(static fn ($id): int => (int) $id)->all();
-        $rows = (new ReflectionMethod(RagRetriever::class, 'fallbackRows'))->invoke($retriever, $current->embed('query'),
+        $rows = (new ReflectionMethod(RagRetriever::class, 'fallbackRows'))->invoke($retriever, $current->embed('query'), $current,
             $fixture->organization->id, 1, ['project'], $projectIds, null, false, $accessible);
         self::assertCount(1, $rows);
         self::assertSame((string) $project->id, (string) $rows->first()->entity_id);
@@ -154,16 +201,17 @@ final class RagEmbeddingCompatibilityTest extends TestCase
         \Illuminate\Support\Facades\Cache::flush();
         [$fixture, $project] = $this->scope();
         $this->indexer(new CompatibilityEmbeddingProvider('current', 'fixture-model', 256))->indexChunk($this->chunk($project, 'legacyunique text'));
-        $failed = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'failed-model', 256, true),
+        $failed = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'fixture-model', 256, true),
             app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
         $partial = $failed->searchWithDiagnostics('legacyunique', $fixture->organization->id, $fixture->owner);
         self::assertCount(1, $partial['results']);
-        self::assertSame(['status' => 'partial', 'error_code' => 'rag_query_embedding_unavailable',
-            'semantic_available' => false, 'lexical_used' => true], $partial['diagnostics']);
+        $failedProfile = json_encode(['current', 'fixture-model', 256], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        self::assertSame(['status' => 'partial', 'error_code' => 'rag_query_embedding_partial_failure',
+            'semantic_available' => false, 'lexical_used' => true, 'failed_embedding_profiles' => [$failedProfile]], $partial['diagnostics']);
         $unavailable = $failed->searchWithDiagnostics('absentunique', $fixture->organization->id, $fixture->owner);
         self::assertSame([], $unavailable['results']);
-        self::assertSame(['status' => 'unavailable', 'error_code' => 'rag_query_embedding_unavailable',
-            'semantic_available' => false, 'lexical_used' => true], $unavailable['diagnostics']);
+        self::assertSame(['status' => 'unavailable', 'error_code' => 'rag_query_embedding_partial_failure',
+            'semantic_available' => false, 'lexical_used' => true, 'failed_embedding_profiles' => [$failedProfile]], $unavailable['diagnostics']);
         config()->set('ai-assistant.rag.min_similarity', 2.0);
         $healthy = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'fixture-model', 256),
             app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
@@ -174,7 +222,7 @@ final class RagEmbeddingCompatibilityTest extends TestCase
             new \App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded,
             new \App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded,
             new \Illuminate\Database\QueryException('pgsql', 'fixture', [], new RuntimeException('fixture_sql_timeout'))] as $failure) {
-            $technical = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'technical-model', 256, $failure),
+            $technical = new RagRetriever(new CompatibilityEmbeddingProvider('current', 'fixture-model', 256, $failure),
                 app(UserProjectAccessService::class), app(AssistantDataAccessPolicy::class));
             $caught = null;
             try { $technical->searchWithDiagnostics('legacyunique', $fixture->organization->id, $fixture->owner); }

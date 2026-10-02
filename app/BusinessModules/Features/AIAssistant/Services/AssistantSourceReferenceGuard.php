@@ -16,10 +16,10 @@ class AssistantSourceReferenceGuard
     public function __construct(private readonly AssistantDataAccessPolicy $policy,
         private readonly ?\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantSalesParentProjection $projections = null) {}
 
-    public function canRead(User $actor, int $organizationId, array $references): bool
+    public function canRead(User $actor, int $organizationId, array $references, bool $fresh = true): bool
     {
         return $this->policy->withCurrentChecks($actor, $organizationId,
-            fn (): bool => $this->canReadCurrent($actor, $organizationId, $references), true);
+            fn (): bool => $this->canReadCurrent($actor, $organizationId, $references), $fresh);
     }
 
     private function canReadCurrent(User $actor, int $organizationId, array $references): bool

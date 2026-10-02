@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -12,6 +13,24 @@ use PHPUnit\Framework\TestCase;
 
 class IndexRagSourceJobTest extends TestCase
 {
+    public function test_dimension_mismatch_fails_the_job_without_retrying(): void
+    {
+        $failure = new RagEmbeddingDimensionMismatch(256, 1024);
+        $indexer = new class($failure) extends RagIndexer {
+            public function __construct(private readonly RagEmbeddingDimensionMismatch $failure) {}
+            public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?callable $progress = null): int
+            {
+                throw $this->failure;
+            }
+        };
+        $queued = $this->createMock(\Illuminate\Contracts\Queue\Job::class);
+        $queued->expects($this->once())->method('fail')->with($failure);
+        $queued->expects($this->never())->method('release');
+        $job = new IndexRagSourceJob(10, 20, 'project');
+        $job->setJob($queued);
+        $job->handle($indexer);
+    }
+
     public function test_job_calls_indexer_with_requested_scope(): void
     {
         $job = new IndexRagSourceJob(10, 20, 'project');

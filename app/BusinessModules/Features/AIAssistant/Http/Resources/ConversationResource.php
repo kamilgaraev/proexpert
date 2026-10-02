@@ -13,6 +13,11 @@ use Illuminate\Http\Resources\MissingValue;
  */
 class ConversationResource extends JsonResource
 {
+    public static function collection($resource): ConversationCollection
+    {
+        return new ConversationCollection($resource);
+    }
+
     public function toArray($request): array
     {
         $lastMessage = $this->resolveLastMessage();
@@ -21,7 +26,7 @@ class ConversationResource extends JsonResource
         $participants = $this->resource->relationLoaded('participants') ? $this->participants : collect();
         $role = $owned ? 'editor' : optional($participants->firstWhere('user_id', optional($request->user())->id))->role;
 
-        if ($lastMessage && $request->user() instanceof \App\Models\User && app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class)->canReadMessage($lastMessage, $this->resource, $request->user())) {
+        if ($lastMessage && $request->user() instanceof \App\Models\User && app(\App\BusinessModules\Features\AIAssistant\Services\ConversationManager::class)->canReadMessage($lastMessage, $this->resource, $request->user(), fresh: false)) {
             $preview = mb_strimwidth((string) $lastMessage->content, 0, 140, '...');
         }
 

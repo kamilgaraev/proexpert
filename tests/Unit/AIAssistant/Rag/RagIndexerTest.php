@@ -26,6 +26,29 @@ use Tests\TestCase;
 
 class RagIndexerTest extends TestCase
 {
+    public function test_dimension_mismatch_preserves_the_existing_index(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $chunk = $this->chunk($organizationId, $projectId, 'original content');
+        (new RagIndexer(new RecordingEmbeddingProvider([1.0]), new RagSourceRegistry([])))->indexChunk($chunk);
+        $beforeSources = RagSource::query()->get()->toArray();
+        $beforeChunks = DB::table('ai_rag_chunks')->get()->toArray();
+        $provider = new class implements RagEmbeddingProviderInterface {
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array { return array_fill(0, 1024, 0.1); }
+            public function provider(): string { return 'fake'; }
+            public function model(): string { return 'fake-model'; }
+            public function dimensions(): int { return 256; }
+        };
+        try {
+            (new RagIndexer($provider, new RagSourceRegistry([])))->indexChunk($this->chunk($organizationId, $projectId, 'changed content'));
+            $this->fail('An invalid profile must not replace the existing index.');
+        } catch (\App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch $exception) {
+            $this->assertSame(1024, $exception->actual);
+        }
+        $this->assertSame($beforeSources, RagSource::query()->get()->toArray());
+        $this->assertEquals($beforeChunks, DB::table('ai_rag_chunks')->get()->toArray());
+    }
+
     public function test_indexes_new_source_skips_unchanged_source_and_replaces_changed_chunks(): void
     {
         [$organizationId, $projectId] = $this->seedScope();
@@ -86,8 +109,12 @@ class RagIndexerTest extends TestCase
         $this->assertSame($storedChunk->id, RagChunk::query()->value('id'));
         $this->assertSame('Новое название', $source->title);
         $this->assertSame($updatedAt->format(DateTimeInterface::ATOM), $source->source_version);
-        $this->assertSame(['status' => 'active', 'access_user_ids' => [17], 'provenance' => 'source-v2'], $source->metadata);
-        $this->assertSame(['status' => 'active', 'access_user_ids' => [17], 'provenance' => 'source-v2', 'chunk_index' => 0, 'chunk_count' => 1], $storedChunk->metadata);
+        $sourceMetadata = $source->metadata;
+        $chunkMetadata = $storedChunk->metadata;
+        ksort($sourceMetadata);
+        ksort($chunkMetadata);
+        $this->assertSame(['access_user_ids' => [17], 'provenance' => 'source-v2', 'status' => 'active'], $sourceMetadata);
+        $this->assertSame(['access_user_ids' => [17], 'chunk_count' => 1, 'chunk_index' => 0, 'provenance' => 'source-v2', 'status' => 'active'], $chunkMetadata);
         $this->assertSame($original->content, $storedChunk->content);
         $this->assertSame($indexer->coverageIdentity($updated)['checksum'], $source->checksum);
     }
@@ -183,7 +210,9 @@ class RagIndexerTest extends TestCase
         $this->assertSame('Проект Литер А', $source->title);
         $this->assertSame(['status' => 'active'], $source->metadata);
         $this->assertSame('Сохраненный текст', $storedChunk->content);
-        $this->assertSame(['status' => 'active', 'chunk_index' => 0, 'chunk_count' => 1], $storedChunk->metadata);
+        $chunkMetadata = $storedChunk->metadata;
+        ksort($chunkMetadata);
+        $this->assertSame(['chunk_count' => 1, 'chunk_index' => 0, 'status' => 'active'], $chunkMetadata);
         $this->assertNotNull($storedChunk->getRawOriginal('embedding'));
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
@@ -815,6 +816,9 @@ class RagIndexer
                     $content,
                     RagEmbeddingProviderInterface::PURPOSE_DOCUMENT
                 );
+                if (count($embedding) !== $embeddingProvider->dimensions()) {
+                    throw new RagEmbeddingDimensionMismatch($embeddingProvider->dimensions(), count($embedding));
+                }
             } catch (Throwable $throwable) {
                 $this->recordEmbeddingUsage($chunk, $content, $index, $embeddingProvider, false);
                 Log::warning('ai_assistant.rag.embedding_failed', [

@@ -126,7 +126,7 @@ return [
         'embedding_input_price_per_million' => $configEnv('AI_RAG_EMBEDDING_INPUT_PRICE_PER_MILLION', 45.0),
         'new_index_embedding_provider' => $configEnv('AI_RAG_NEW_INDEX_EMBEDDING_PROVIDER', 'timeweb'),
         'new_index_embedding_model' => $configEnv('AI_RAG_NEW_INDEX_EMBEDDING_MODEL', 'dashscope/text-embedding-v4'),
-        'new_index_embedding_dimensions' => 256,
+        'new_index_embedding_dimensions' => $configEnv('AI_RAG_NEW_INDEX_EMBEDDING_MODEL', 'dashscope/text-embedding-v4') === 'dashscope/text-embedding-v4' ? 1024 : 256,
         'new_index_embedding_input_price_per_million' => $configEnv('AI_RAG_NEW_INDEX_EMBEDDING_INPUT_PRICE_PER_MILLION', 9.0),
         'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),

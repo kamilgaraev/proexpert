@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestCancelled;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantHttpRequestOptions;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use GuzzleHttp\Client as GuzzleClient;
@@ -153,6 +154,12 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
                 'ai_assistant.rag_embedding_unavailable',
                 'Сервис подготовки контекста временно недоступен.'
             ));
+        }
+
+        if (count($embedding) !== $this->dimensions) {
+            $lastAttempt = array_key_last($this->usageAttempts);
+            if ($lastAttempt !== null) $this->usageAttempts[$lastAttempt]['is_successful'] = false;
+            throw new RagEmbeddingDimensionMismatch($this->dimensions, count($embedding));
         }
 
         return array_map(static fn (mixed $value): float => (float) $value, array_values($embedding));

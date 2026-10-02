@@ -53,6 +53,8 @@ final class AssistantConversationPrivacyTest extends TestCase
 
     private bool $financeAllowed = true;
 
+    private int $moduleReads = 0;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -74,9 +76,11 @@ final class AssistantConversationPrivacyTest extends TestCase
             return Project::query()->where('organization_id', $organizationId)->whereNotIn('id', $deniedIds);
         });
         $modules = Mockery::mock(OrganizationEntitlementService::class);
-        $modules->shouldReceive('getEffectiveModules')->andReturn(collect([
-            ['slug' => 'ai-assistant'], ['slug' => 'project-management'], ['slug' => 'payments'],
-        ]));
+        $modules->shouldReceive('getEffectiveModules')->andReturnUsing(function () {
+            $this->moduleReads++;
+
+            return collect([['slug' => 'ai-assistant'], ['slug' => 'project-management'], ['slug' => 'payments']]);
+        });
         $policy = new AssistantDataAccessPolicy($authorization, $projects, $modules);
         $this->policy = $policy;
         $this->manager = new ConversationManager($policy);
@@ -94,6 +98,48 @@ final class AssistantConversationPrivacyTest extends TestCase
         $this->assertNull($this->manager->findAccessibleConversation($conversation->id, $this->viewer, $this->organization->id, true));
         DB::table('organization_user')->where('organization_id', $this->organization->id)->where('user_id', $this->viewer->id)->update(['is_active' => false]);
         $this->assertNull($this->manager->findAccessibleConversation($conversation->id, $this->viewer, $this->organization->id));
+    }
+
+    public function test_list_previews_share_current_access_checks_only_within_one_response(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $this->app->instance(AIPermissionChecker::class, new AIPermissionChecker());
+        for ($i = 0; $i < 30; $i++) {
+            $conversation = $this->conversation();
+            $this->manager->addMessage($conversation, 'user', 'Сообщение '.$i);
+        }
+        $page = $this->manager->queryVisibleConversations($this->owner, $this->organization->id)->get();
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/ai-assistant/conversations');
+        $request->setUserResolver(fn () => $this->owner);
+        $this->moduleReads = 0;
+        $rows = \App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource::collection($page)->resolve($request);
+        $this->assertCount(30, $rows);
+        $this->assertSame(1, $this->moduleReads);
+        $this->assertNotNull($rows[0]['last_message_preview']);
+
+        DB::table('organization_user')->where('organization_id', $this->organization->id)->where('user_id', $this->owner->id)->update(['is_active' => false]);
+        $nextRows = \App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource::collection($page)->resolve($request);
+        $this->assertSame(array_fill(0, 30, null), array_column($nextRows, 'last_message_preview'));
+    }
+
+    public function test_list_previews_recheck_sources_and_sharing_between_responses(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $project = Project::factory()->create(['organization_id' => $this->organization->id]);
+        $conversation = $this->conversation();
+        $this->share($conversation);
+        $this->manager->addMessage($conversation, 'assistant', 'Доступный ответ', metadata: ['validation_status' => 'verified', 'source_refs' => [$this->ref($project)]]);
+        $page = $this->manager->queryVisibleConversations($this->viewer, $this->organization->id)->get();
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/ai-assistant/conversations');
+        $request->setUserResolver(fn () => $this->viewer);
+        $rows = \App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource::collection($page)->resolve($request);
+        $this->assertSame('Доступный ответ', $rows[0]['last_message_preview']);
+
+        $this->denied[] = $this->viewer->id.':'.$project->id;
+        $nextRows = \App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource::collection($page)->resolve($request);
+        $this->assertNull($nextRows[0]['last_message_preview']);
+        $this->manager->updateParticipants($conversation, $this->owner, $this->organization->id, []);
+        $this->assertSame(0, $this->manager->queryVisibleConversations($this->viewer, $this->organization->id)->count());
     }
 
     public function test_context_update_merges_fresh_context_and_increments_version_without_activity_touch(): void
