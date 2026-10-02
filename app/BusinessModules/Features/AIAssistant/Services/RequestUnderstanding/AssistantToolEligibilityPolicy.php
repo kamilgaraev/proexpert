@@ -12,7 +12,7 @@ final class AssistantToolEligibilityPolicy
     private const READ_TOOLS = [
         'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities',
         'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
-        'search_assistant_documents', 'get_estimate_answer', 'get_material_stock',
+        'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
         'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions', 'search_estimate_positions',
         'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
         'search_projects', 'search_warehouse', 'search_materials', 'search_users', 'search_contractors',

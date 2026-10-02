@@ -95,4 +95,13 @@ final class AssistantCapabilityRegistryTest extends TestCase
         $this->assertSame('estimates', $registry->match('Проверь валидность источников', ['selected_estimate_id' => 7])['domain']);
         $this->assertNull($registry->match('валидность'));
     }
+
+    public function test_natural_model_questions_resolve_design_despite_project_context(): void
+    {
+        $registry = new AssistantCapabilityRegistry;
+        $context = ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'project', 'id' => 52]]];
+        foreach (['Какие перекрытия у гаражной?', 'Сколько колонн в модели гаража?', 'Покажи стены корпуса', 'Какая версия IFC сейчас?'] as $query) {
+            $this->assertSame('design', $registry->match($query, $context)['domain'], $query);
+        }
+    }
 }

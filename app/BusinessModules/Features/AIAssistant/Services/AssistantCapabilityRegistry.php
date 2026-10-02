@@ -76,7 +76,7 @@ class AssistantCapabilityRegistry
             'crm' => ['crm', 'срм', 'лид', 'сделк', 'воронк', 'контакт'],
             'commercial_processes' => ['коммерческ предложен', 'коммерческ', 'кп'],
             'knowledge' => ['база знаний', 'базы знаний', 'базе знаний', 'статья', 'статьи', 'инструкци'],
-            'design' => ['пир', 'проектирован', 'проектная документац', 'пакет проект', 'модель bim', 'замечания проект'],
+            'design' => ['пир', 'проектирован', 'проектная документац', 'пакет проект', 'модель bim', 'замечания проект', ...AssistantBimModelReader::keywords()],
             'budgeting' => ['бюджетирован', 'бюджет', 'бдр', 'бддс', 'цфо', 'кассовый разрыв', 'управленческ'],
             'tenders' => ['тендер', 'конкурс', 'тендерная заявк'],
             'advance_accounting' => ['подотчет', 'подотчёт', 'авансовый отчет', 'авансовый отчёт'],
@@ -327,11 +327,14 @@ class AssistantCapabilityRegistry
             if ($normalizedGoal !== '' && str_contains($normalizedGoal, $capabilityId)) {
                 $score += 4;
             }
+            $specificity = 0;
             foreach ($capability['keywords'] as $keyword) {
                 if ($this->matchesKeyword($normalizedQuery, $keyword)) {
                     $score += 2;
+                    $specificity = max($specificity, mb_strlen($keyword));
                 }
             }
+            $score += min(20, $specificity);
             if ($explicitDomains !== []) {
                 $score += 10;
             }

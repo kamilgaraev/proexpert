@@ -87,6 +87,8 @@ final readonly class DiscoverAssistantDomainCapabilitiesTool implements AIToolIn
             }
             if ($allowedTypes !== []) {
                 $rows[] = ['domain' => $definition->domain, 'primary_entity_type' => $allowedTypes[0],
+                    'label' => trans_message('ai_assistant.capability_'.$definition->domain),
+                    'entity_examples' => array_slice($allowedTypes, 0, 2),
                     'entity_type_count' => count($allowedTypes), 'operations' => $definition->operations];
             }
         }

@@ -869,6 +869,15 @@ class AIAssistantService
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
+            if ($terminalToolResponse && ($structuredCheck['source_refs'] ?? []) === [] && $proposedActions === []
+                && ! $rejectedFinancialPlan && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
+                $terminalProof = $this->structuredFacts->confirmedResults($verificationToolResults, $query);
+                if (($terminalProof['source_refs'] ?? []) !== []) {
+                    $terminalProof['needs_clarification'] = (bool) ($structuredCheck['needs_clarification'] ?? false);
+                    $assistantContent = $terminalProof['text'];
+                    $structuredCheck = $terminalProof;
+                }
+            }
             $clarificationSelection = is_array($conversation->context['selected_estimate'] ?? null)
                 ? $conversation->context['selected_estimate'] : null;
             $clarificationPinnedId = isset($clarificationSelection['estimate_id']) ? (int) $clarificationSelection['estimate_id'] : null;
@@ -935,6 +944,23 @@ class AIAssistantService
                 }
             }
 
+            foreach (array_reverse($verificationToolResults) as $toolResult) {
+                if (($toolResult['_tool_name'] ?? null) === 'get_bim_model_elements' && $proposedActions === []) {
+                    $verifiedBim = $this->verifyBimModel($toolResult, $user, $organizationId);
+                    if (($structuredCheck['source_refs'] ?? []) !== []) {
+                        $verifiedBim['text'] .= "\n\n".$structuredCheck['text'];
+                        $verifiedBim['source_refs'] = array_merge($verifiedBim['source_refs'], $structuredCheck['source_refs']);
+                        if (($verifiedBim['validation_status'] ?? null) !== 'verified' || ($structuredCheck['validation_status'] ?? null) !== 'verified') {
+                            $verifiedBim['validation_status'] = 'partial';
+                        }
+                        $verifiedBim['needs_clarification'] = (bool) ($verifiedBim['needs_clarification'] ?? false)
+                            || (bool) ($structuredCheck['needs_clarification'] ?? false);
+                    }
+                    $assistantContent = $verifiedBim['text'];
+                    $structuredCheck = $verifiedBim;
+                    break;
+                }
+            }
             $documentNotices = [];
             $documentUnavailable = false;
             foreach ($this->activeToolResults as $toolResult) {
@@ -998,7 +1024,8 @@ class AIAssistantService
             $validationStatus = $structuredCheck['validation_status'] ?? $financialCheck['validation_status'] ?? 'unverified';
             $assistantPayload['validation_status'] = $validationStatus === 'unverified' && $assistantPayload['source_refs'] !== []
                 ? 'partial' : $validationStatus;
-            if ($stockDomainResolved && $validationStatus === 'verified' && empty($taskPlan['capability'])
+            if (($stockDomainResolved || (($structuredCheck['replaced'] ?? false)
+                && in_array($validationStatus, ['verified', 'partial'], true) && $assistantPayload['source_refs'] !== [])) && empty($taskPlan['capability'])
                 && is_array($assistantPayload['missing_data'] ?? null)) {
                 $assistantPayload['missing_data'] = array_values(array_filter($assistantPayload['missing_data'],
                     static fn (mixed $reason): bool => $reason !== self::UNRESOLVED_DOMAIN_MESSAGE));
@@ -1536,6 +1563,26 @@ class AIAssistantService
         return $verified;
     }
 
+    protected function verifyBimModel(array $result, User $actor, int $organizationId): array
+    {
+        $this->executionCheckpoint();
+        try {
+            $verified = $this->readPhase(fn (): ?array => app(AssistantBimModelReader::class)
+                ->verifiedAnswer($result, $actor, $organizationId), $actor, $organizationId);
+        } catch (QueryException $exception) {
+            if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '57014') {
+                throw $exception;
+            }
+            $verified = null;
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+            $verified = null;
+        }
+        $this->executionCheckpoint();
+
+        return $verified ?? ['text' => trans_message('ai_assistant_bim.unavailable'), 'replaced' => true,
+            'validation_status' => 'unverified', 'needs_clarification' => true, 'source_refs' => []];
+    }
+
     private function progress(?string $code, string $state): void
     {
         if ($code !== null && $this->activeRequest !== null && $this->activeActor !== null) {
@@ -1836,7 +1883,7 @@ class AIAssistantService
             'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
             'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
-            'search_assistant_documents', 'get_estimate_answer', 'get_material_stock',
+            'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
         ], true);
     }
 
@@ -1857,6 +1904,15 @@ class AIAssistantService
         $toolName = (string) ($toolCall['function']['name'] ?? '');
         $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        if ($toolName === 'get_bim_model_elements' && ($args['project_id'] ?? null) === null) {
+            $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+        }
+        if ($toolName === 'assistant_domain_search' && ($args['project_id'] ?? null) === null) {
+            $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
+            if ($definition !== null && in_array('project_id', $definition->fields, true)) {
+                $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            }
+        }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
         if ($toolName === 'assistant_domain_search' && $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding)) {
             $args = $this->normalizePaymentOnlyDomainSearchArguments($args);
@@ -1967,7 +2023,7 @@ class AIAssistantService
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
-                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock',
+                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_bim_model_elements',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             ], true);
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool
@@ -3078,6 +3134,7 @@ class AIAssistantService
             'content' => $this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.trusted_instruction_boundary'),
         ]];
         $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
+        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
         if ($this->currentAttachmentIds !== []) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_instruction_boundary');
         }
@@ -3496,6 +3553,7 @@ class AIAssistantService
             'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
             'estimates' => ['resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'],
             'measurement_units' => ['create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units'],
+            'design', 'design_detail' => ['get_bim_model_elements'],
             default => [],
         };
 
@@ -3539,7 +3597,7 @@ class AIAssistantService
 
         $toolNames = array_merge($toolNames, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
             'assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_estimate_answer', 'get_material_stock',
-            'get_published_report_financial_evidence', 'get_live_project_financial_evidence']);
+            'get_published_report_financial_evidence', 'get_live_project_financial_evidence', 'get_bim_model_elements']);
 
         if ($paymentOnlyRequest) {
             $toolNames = array_values(array_filter(
