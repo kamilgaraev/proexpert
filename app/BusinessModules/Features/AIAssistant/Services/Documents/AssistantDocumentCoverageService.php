@@ -68,6 +68,8 @@ final class AssistantDocumentCoverageService
         }
         if ($checkpoint !== null) { $checkpoint(); }
         $documents = $this->policy->accessibleDocuments($actor, $organizationId);
+        $visibleDocuments = $documents->toBase();
+        $documents = $documents->getModel()->newQueryWithoutScopes()->from('assistant_coverage_documents as ai_assistant_documents');
         $types = [];
         if ($checkpoint !== null) { $checkpoint(); }
         foreach ((clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type') as $fileType) {
@@ -112,7 +114,7 @@ final class AssistantDocumentCoverageService
         }
         foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(SUM('.$metric.'), 0) AS '.$metric);
         if ($checkpoint !== null) { $checkpoint(); }
-        $result = $aggregate->first();
+        $result = $this->withVisibleDocuments($aggregate, $visibleDocuments)->first();
         $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
         $nativeCandidates = $this->nativeCandidateTypes($organizationId, $actor, $checkpoint, $guard);
         $nativeCoverage = [];
@@ -181,7 +183,8 @@ final class AssistantDocumentCoverageService
                 ->selectRaw('COALESCE(SUM(processed_units), 0) AS processed_units')
                 ->selectRaw('COALESCE(SUM(ocr_completed_pages), 0) AS ocr_completed_pages')
                 ->selectRaw('COALESCE(SUM(total_pages), 0) AS total_pages')
-                ->groupBy('native_coverage_state')->get();
+                ->groupBy('native_coverage_state');
+            $nativeAggregate = $this->withVisibleDocuments($nativeAggregate, $visibleDocuments)->get();
             $mapped = 0;
             foreach ($nativeAggregate as $stateCount) {
                 $state = $stateCount->native_coverage_state;
@@ -410,6 +413,14 @@ final class AssistantDocumentCoverageService
         }
 
         return $files;
+    }
+
+    private function withVisibleDocuments(QueryBuilder $aggregate, QueryBuilder $documents): QueryBuilder
+    {
+        return DB::query()->fromRaw(
+            '(WITH assistant_coverage_documents AS MATERIALIZED ('.$documents->toSql().') '.$aggregate->toSql().') as document_coverage',
+            [...$documents->getBindings(), ...$aggregate->getBindings()],
+        )->select('document_coverage.*');
     }
 
     private function nativeCandidateTypes(int $organizationId, User $actor, ?callable $checkpoint, ?callable $guard): array
