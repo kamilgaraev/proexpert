@@ -263,6 +263,7 @@ final class DesignManagementApiTest extends TestCase
         $version->update(['file_format' => 'pdf']);
         $this->postJson($url, $payload, $context->authHeaders())->assertForbidden();
         $version->update(['file_format' => 'ifc']);
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project->users()->updateExistingPivot($context->user->id, ['is_active' => false]);
         $this->postJson($url, $payload, $context->authHeaders())->assertForbidden();
     }
@@ -346,6 +347,7 @@ final class DesignManagementApiTest extends TestCase
     public function test_saved_model_set_opens_exact_revision_without_creating_a_session(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->attachProjectUser($project, $context->user);
         $this->allowAdminAccess();
@@ -391,6 +393,7 @@ final class DesignManagementApiTest extends TestCase
     public function test_project_model_catalog_spans_packages_and_excludes_other_projects(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->attachProjectUser($project, $context->user);
@@ -435,6 +438,7 @@ final class DesignManagementApiTest extends TestCase
     public function test_model_set_reads_require_active_membership_in_the_requested_project(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->attachProjectUser($project, $context->user);
