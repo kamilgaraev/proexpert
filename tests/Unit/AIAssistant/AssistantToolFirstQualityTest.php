@@ -76,10 +76,16 @@ final class AssistantToolFirstQualityTest extends TestCase
         $application->instance('translator', new Translator(new FileLoader(new Filesystem, dirname(__DIR__, 3).'/lang'), 'ru'));
         Facade::setFacadeApplication($application);
         Facade::clearResolvedInstances();
+        $coverage = \Mockery::mock((new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class))->newInstanceWithoutConstructor());
+        $coverage->shouldReceive('coverage')->andReturn(['document_coverage' => ['total' => 1, 'ready' => 1, 'pending' => 0,
+            'ocr_required' => 0, 'ocr_processing' => 0, 'failed' => 0, 'unsupported' => 0, 'empty' => 0],
+            'archive_scan' => ['processing' => false, 'expected_file_count' => 1, 'scanned_file_count' => 1]]);
+        $application->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class, $coverage);
     }
 
     protected function tearDown(): void
     {
+        \Mockery::close();
         Facade::clearResolvedInstances();
         Facade::setFacadeApplication($this->previousApplication);
         Container::setInstance($this->previousContainer);
@@ -151,7 +157,7 @@ final class AssistantToolFirstQualityTest extends TestCase
 
         $response = $service->ask($query, 15, $this->actor(), 7);
 
-        $this->assertStringStartsWith("Проект:\nСтатус: Активный\nНазвание: \\[Корпус\\]", $response['message']['content']);
+        $this->assertStringStartsWith("- Проект:\n  - Статус: Активный\n  - Название: \\[Корпус\\]", $response['message']['content']);
         $this->assertStringNotContainsString('](https://evil.test)', $response['message']['content']);
         $this->assertSame('partial', $response['message']['metadata']['validation_status']);
         $this->assertCount(1, $response['message']['metadata']['source_refs']);
@@ -170,7 +176,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         [$completeService] = $this->moneyPlanService(true, [0, 1]);
         $complete = $completeService->ask('Какая сумма по документам?', 15, $this->actor(), 7);
 
-        $this->assertStringStartsWith('Платёжный документ:', $complete['message']['content']);
+        $this->assertStringStartsWith('- Платёжный документ:', $complete['message']['content']);
         $this->assertTrue(strpos($complete['message']['content'], '20.50') < strpos($complete['message']['content'], '10.25'), $complete['message']['content']);
         $this->assertCount(2, $complete['message']['metadata']['source_refs']);
         $this->assertSame('partial', $complete['message']['metadata']['validation_status']);
@@ -498,6 +504,70 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame('Правила проверки получены.', $response['message']['content']);
     }
 
+    public function test_verified_bim_answer_replaces_generic_freshness_warning_and_hides_internal_receipt(): void
+    {
+        $refs = [['entity_type' => 'design_artifact_version', 'entity_id' => 8, 'organization_id' => 15]];
+        $answer = 'У гаражной найдены балки. Перекрытия в IFC отдельно не выделены.';
+        $service = $this->service(['get_bim_model_elements' => ['status' => 'success', 'source_refs' => $refs,
+            'server_formatted_answer' => $answer, 'bim_evidence' => ['private_receipt_marker' => 'bim-internal-secret']]], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_bim_model_elements')]],
+            ['content' => trans_message('ai_assistant_facts.live_proof_required')],
+        ]);
+        $service->verifiedBim = ['text' => $answer, 'source_refs' => $refs, 'validation_status' => 'verified',
+            'replaced' => true, 'needs_clarification' => false];
+        $response = $service->ask('Какие перекрытия у гаражной?', 15, $this->actor(), 7);
+        $this->assertSame($answer, $response['message']['content']);
+        $this->assertSame($refs, $response['message']['metadata']['source_refs']);
+        $this->assertSame('verified', $response['message']['metadata']['validation_status']);
+        $this->assertStringNotContainsString('bim-internal-secret', json_encode($this->providerCalls, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_last_allowed_read_returns_proven_rows_instead_of_generic_freshness_warning(): void
+    {
+        $fetchedAt = now()->toISOString();
+        $model = new class extends \Illuminate\Database\Eloquent\Model {};
+        $model->setRawAttributes(['id' => 8, 'name' => 'Гаражная'], true);
+        $ref = ['entity_type' => 'project', 'entity_id' => 8, 'organization_id' => 15, 'fetched_at' => $fetchedAt,
+            'content_scope' => 'structured', 'checked_fields' => ['name']];
+        $row = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::row($model, 'project', ['name'], $ref);
+        $read = ['source_refs' => [$ref], ...\App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload([$row], $fetchedAt)];
+        $responses = array_fill(0, 3, ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_discover_capabilities')]]);
+        $responses[] = ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]];
+        $service = $this->service(['assistant_domain_discover_capabilities' => ['capabilities' => []], 'assistant_domain_read' => $read], $responses);
+        $response = $service->ask('Найди гаражную', 15, $this->actor(), 7);
+        $this->assertCount(4, $this->providerCalls);
+        $this->assertStringContainsString('Гаражная', $response['message']['content']);
+        $this->assertStringNotContainsString('не подтверждены свежими данными', $response['message']['content']);
+        $this->assertSame([$ref], $response['message']['metadata']['source_refs']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('compoundBimStockStatuses')]
+    public function test_compound_bim_and_stock_question_preserves_both_checked_answers(string $stockStatus, bool $needsClarification): void
+    {
+        $bimRefs = [['entity_type' => 'design_artifact_version', 'entity_id' => 8, 'organization_id' => 15]];
+        $stockRefs = [['entity_type' => 'warehouse_balance', 'entity_id' => 41, 'organization_id' => 15]];
+        $service = $this->service(['get_bim_model_elements' => ['status' => 'success'],
+            'get_material_stock' => ['status' => 'success', 'stock_evidence' => ['version' => 'stock-v1']]], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_bim_model_elements'), $this->toolCall('get_material_stock')]],
+            ['content' => 'Неподтверждённое утверждение.'],
+        ]);
+        $service->verifiedBim = ['text' => 'В модели 10 колонн.', 'source_refs' => $bimRefs,
+            'validation_status' => 'verified', 'replaced' => true, 'needs_clarification' => false];
+        $service->verifiedStock = ['text' => 'На складе 5 м³ бетона.', 'source_refs' => $stockRefs,
+            'validation_status' => $stockStatus, 'replaced' => true, 'needs_clarification' => $needsClarification];
+        $response = $service->ask('Сколько колонн у гаражной и сколько бетона на складе?', 15, $this->actor(), 7);
+        $this->assertStringContainsString('В модели 10 колонн.', $response['message']['content']);
+        $this->assertStringContainsString('На складе 5 м³ бетона.', $response['message']['content']);
+        $this->assertSame([...$bimRefs, ...$stockRefs], $response['message']['metadata']['source_refs']);
+        $this->assertSame($stockStatus, $response['message']['metadata']['validation_status']);
+        $this->assertSame($needsClarification, $response['message']['metadata']['needs_clarification']);
+    }
+
+    public static function compoundBimStockStatuses(): array
+    {
+        return [['verified', false], ['partial', true]];
+    }
+
     public function test_stock_answer_preserves_all_proof_sources_without_sending_receipt_to_provider(): void
     {
         $refs = array_map(static fn (int $id): array => ['entity_type' => 'warehouse_balance', 'entity_id' => $id,
@@ -633,9 +703,9 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertArrayNotHasKey('document_context', $unavailable);
         $this->assertSame([], $unavailable['source_refs']);
         $this->assertSame('partial', $partial['status']);
-        $this->assertSame('Проверенный текст.', $partial['document_context']);
+        $this->assertArrayNotHasKey('document_context', $partial);
         $this->assertFalse($partial['search_diagnostics']['semantic_available']);
-        $this->assertSame('11', $partial['source_refs'][0]['entity_id']);
+        $this->assertSame([], $partial['source_refs']);
         $this->assertSame('success', $healthyEmpty['status']);
         $this->assertSame([], $healthyEmpty['source_refs']);
         $this->assertArrayNotHasKey('error_code', $healthyEmpty['search_diagnostics']);
@@ -1179,7 +1249,8 @@ final class AssistantToolFirstQualityTest extends TestCase
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn($name);
             $tool->method('getDescription')->willReturn('Readonly tool');
-            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [], 'additionalProperties' => false]);
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object',
+                'properties' => $name === 'get_bim_model_elements' ? ['project_id' => ['type' => ['integer', 'null']]] : [], 'additionalProperties' => false]);
             $tool->method('execute')->willReturnCallback(function () use ($result): array {
                 $this->assertNotEmpty($this->providerCalls);
                 $this->toolExecutions++;
@@ -1257,6 +1328,8 @@ final class ToolFirstStubService extends AIAssistantService
 
     public ?array $verifiedStock = null;
 
+    public array $verifiedBim = [];
+
     public int $stockVerifications = 0;
 
     public array $providerSourceResults = [];
@@ -1281,6 +1354,11 @@ final class ToolFirstStubService extends AIAssistantService
     {
         $this->stockVerifications++;
         return $this->verifiedStock;
+    }
+
+    protected function verifyBimModel(array $result, User $actor, int $organizationId): array
+    {
+        return $this->verifiedBim;
     }
 
     protected function getOrCreateConversation(?int $conversationId, int $organizationId, User $user): Conversation

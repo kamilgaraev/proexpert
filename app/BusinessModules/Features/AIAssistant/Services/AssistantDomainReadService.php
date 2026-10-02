@@ -85,17 +85,22 @@ final class AssistantDomainReadService
             if (mb_strlen($term) > 200) {
                 throw ValidationException::withMessages(['query' => ['query_too_long']]);
             }
-            $columns = array_values(array_intersect($fields, $query->getModel()->getFillable(), ['name', 'title', 'number', 'address', 'description', 'subject', 'document_number', 'order_number', 'asset_code', 'worker_name', 'slug']));
+            $searchFields = array_filter($definition->fields, function (string $field) use ($definition, $actor, $organizationId): bool {
+                foreach ((array) ($definition->fieldPermissions[$field] ?? []) as $permission) {
+                    if (! $this->access->canCurrentPermission($actor, $organizationId, $permission)) { return false; }
+                }
+                return true;
+            });
+            $columns = array_values(array_intersect($searchFields, $query->getModel()->getFillable(), $safeColumns, $columns,
+                ['name', 'title', 'document_title', 'source_original_name', 'number', 'request_number', 'rfi_number', 'code', 'document_code',
+                    'address', 'description', 'subject', 'question', 'answer', 'body', 'response', 'category', 'global_id',
+                    'document_number', 'order_number', 'asset_code', 'worker_name', 'slug']));
             if ($term !== '') {
                 if ($columns === []) {
                     return ['results' => [], 'source_refs' => [], 'fetched_at' => now()->toISOString(),
                         'result_window' => ['limit' => $limit, 'returned' => 0, 'has_more' => null]];
                 }
-                $query->where(static function (Builder $search) use ($columns, $term, $table): void {
-                    foreach ($columns as $column) {
-                        $search->orWhere($table.'.'.$column, 'ilike', '%'.addcslashes($term, '%_\\').'%');
-                    }
-                });
+                AssistantTextSearch::apply($query, array_map(static fn (string $column): string => $table.'.'.$column, $columns), $term);
             }
             if (is_numeric($arguments['project_id'] ?? null)) {
                 if (! \Illuminate\Support\Facades\Schema::hasColumn($table, 'project_id')) {

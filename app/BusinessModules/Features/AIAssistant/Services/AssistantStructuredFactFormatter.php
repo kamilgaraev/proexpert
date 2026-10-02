@@ -28,6 +28,7 @@ final class AssistantStructuredFactFormatter
         'package_id', 'artifact_id', 'document_title', 'document_code', 'artifact_type', 'stage', 'project_stage', 'discipline',
         'planned_issue_date', 'issued_at', 'resolved_at', 'body', 'response', 'author_id', 'assignee_id', 'version_number',
         'revision', 'revision_label', 'source_format', 'file_format', 'source_original_name', 'source_mime_type', 'source_size_bytes', 'model_date', 'is_current',
+        'rfi_number', 'question', 'answer', 'addressee_type', 'response_due_date', 'answered_at',
         'priority', 'request_type', 'user_id', 'assigned_to', 'material_name', 'material_quantity', 'material_unit',
         'personnel_count', 'equipment_count', 'work_start_date', 'work_end_date', 'rental_start_date', 'rental_end_date', 'equipment_start_at', 'equipment_end_at',
     ];

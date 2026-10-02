@@ -28,6 +28,8 @@ return [
         'cancelled' => 'Отменён',
     ],
     'fields' => [
+        'rfi_number' => 'Номер запроса', 'question' => 'Вопрос', 'answer' => 'Ответ', 'addressee_type' => 'Адресат',
+        'response_due_date' => 'Срок ответа', 'answered_at' => 'Дата ответа',
         'package_id' => 'Комплект', 'artifact_id' => 'Документ или модель', 'document_title' => 'Название документа',
         'document_code' => 'Обозначение документа', 'artifact_type' => 'Тип документа', 'stage' => 'Этап', 'project_stage' => 'Стадия проекта',
         'discipline' => 'Раздел', 'planned_issue_date' => 'Плановая дата выпуска', 'issued_at' => 'Дата выпуска',

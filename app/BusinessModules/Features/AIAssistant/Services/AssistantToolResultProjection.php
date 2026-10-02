@@ -11,6 +11,9 @@ final class AssistantToolResultProjection
         if ($toolName === 'get_material_stock') {
             return array_intersect_key($result, array_flip(['status', 'stock', 'quantity_scope', 'server_formatted_answer', 'validation_status', 'error', 'reason']));
         }
+        if ($toolName === 'get_bim_model_elements') {
+            return array_intersect_key($result, array_flip(['status', 'server_formatted_answer', 'needs_clarification', 'validation_status', 'error', 'reason']));
+        }
         $view = $result;
         $primaryRows = self::primaryRows($result);
         foreach (['structured_fact_evidence', 'financial_evidence'] as $key) {

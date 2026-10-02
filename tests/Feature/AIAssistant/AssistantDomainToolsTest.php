@@ -80,7 +80,8 @@ final class AssistantDomainToolsTest extends TestCase
 
         $unsupportedSearch = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
             'limit' => 2, 'fields' => ['id']], $actor, $organization->id);
-        self::assertSame(['limit' => 2, 'returned' => 0, 'has_more' => null], $unsupportedSearch['result_window']);
+        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true], $unsupportedSearch['result_window']);
+        self::assertSame(['id' => $visible[0]->id], $unsupportedSearch['results'][0]['fields']);
 
         $unlabelled = $this->reader->execute('read', ['domain' => 'projects', 'entity_type' => 'project', 'id' => $visible[0]->id,
             'fields' => ['id']], $actor, $organization->id);

@@ -235,6 +235,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 'assistant_domain_discover_capabilities' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\DiscoverAssistantDomainCapabilitiesTool::class,
                 'search_assistant_documents' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDocumentsTool::class,
                 'get_material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetMaterialStockTool::class,
+                'get_bim_model_elements' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool::class,
                 'get_published_report_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetPublishedReportFinancialEvidenceTool::class,
                 'get_live_project_financial_evidence' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool::class,
                 'assistant_domain_search' => \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool::class,

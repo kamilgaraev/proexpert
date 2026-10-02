@@ -137,6 +137,10 @@ class AIPermissionChecker
         }
 
         $policy = app(AssistantDataAccessPolicy::class);
+        if ($toolName === 'get_bim_model_elements') {
+            return $policy->canReadDomain($user, $organizationId, 'design')
+                && $policy->canCurrentPermission($user, $organizationId, 'design-management.models.view');
+        }
         if (in_array($toolName, self::ASSISTANT_SCOPE_TOOLS, true)) {
             return $policy->canReadDomain($user, $organizationId, 'assistant');
         }
@@ -259,6 +263,7 @@ class AIPermissionChecker
     {
         return match ($toolName) {
             'search_projects', 'send_project_notification' => ['projects'],
+            'get_bim_model_elements' => ['design'],
             'get_project_snapshot' => ['projects', 'contracts', 'finance'],
             'search_warehouse', 'get_material_stock' => ['warehouse'], 'generate_warehouse_stock_report' => ['warehouse', 'finance'],
             'search_materials' => ['materials'], 'search_users' => ['people'], 'search_contractors' => ['contractors'],
