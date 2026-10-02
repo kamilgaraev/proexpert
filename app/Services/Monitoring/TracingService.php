@@ -14,8 +14,10 @@ use Illuminate\Redis\Events\CommandExecuted;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Log;
 use OpenTelemetry\API\Common\Time\Clock;
+use OpenTelemetry\API\Trace\NoopTracerProvider;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use OpenTelemetry\API\Trace\Span;
+use OpenTelemetry\API\Trace\SpanContext;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
@@ -88,7 +90,18 @@ final class TracingService
 
     private static function withoutExport(): self
     {
+        if (! class_exists(TracerProviderBuilder::class)) {
+            return new self(new NoopTracerProvider);
+        }
+
         return new self((new TracerProviderBuilder())->setSampler(new AlwaysOffSampler())->build());
+    }
+
+    private function withCorrelation(SpanInterface $span): SpanInterface
+    {
+        return $span->getContext()->isValid()
+            ? $span
+            : Span::wrap(SpanContext::create(bin2hex(random_bytes(16)), bin2hex(random_bytes(8))));
     }
 
     public function executionContext(): array
@@ -113,6 +126,7 @@ final class TracingService
         $name = preg_match('/^[A-Za-z0-9_:-]{1,100}$/D', $event->command) === 1 ? $event->command : 'command';
         $span = $this->provider->getTracer('most.laravel')->spanBuilder('console '.$name)
             ->setAttribute('console.command', $name)->startSpan();
+        $span = $this->withCorrelation($span);
         $this->activeCommands[] = [$event->input, $name, $span, $span->activate()];
     }
 
@@ -141,7 +155,7 @@ final class TracingService
     public function slowQueryTrace(QueryExecuted $event): array
     {
         $parent = Span::getCurrent()->getContext();
-        if ($parent->isValid() && $parent->isSampled()) {
+        if ($parent->isValid() && $parent->isSampled() && Span::getCurrent()->isRecording()) {
             return ['trace_id' => $parent->getTraceId(), 'span_id' => $parent->getSpanId(), 'trace_sampled' => true, 'trace_kind' => 'execution'];
         }
         try {
@@ -194,6 +208,7 @@ final class TracingService
             ->setSpanKind(SpanKind::KIND_SERVER)
             ->setAttribute('http.request.method', $request->method())
             ->startSpan();
+        $span = $this->withCorrelation($span);
 
         $scope = $span->activate();
         $this->activeHttp[spl_object_id($request)] = $request;
@@ -303,6 +318,7 @@ final class TracingService
                 ->setAttribute('messaging.operation.name', 'process')
                 ->setAttribute('job.type', $jobName)
                 ->startSpan();
+            $span = $this->withCorrelation($span);
 
             $jobId = $payload['uuid'] ?? null;
             $this->activeJobs[spl_object_id($event->job)] = [$span, $span->activate(), [

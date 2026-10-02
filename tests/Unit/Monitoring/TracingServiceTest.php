@@ -21,6 +21,10 @@ use OpenTelemetry\SDK\Trace\Sampler\ParentBased;
 use OpenTelemetry\SDK\Trace\SpanExporter\InMemoryExporter;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProviderBuilder;
+use OpenTelemetry\API\Trace\NoopTracerProvider;
+use OpenTelemetry\API\Trace\Span;
+use OpenTelemetry\API\Trace\SpanContext;
+use OpenTelemetry\API\Trace\TraceFlags;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -211,5 +215,42 @@ final class TracingServiceTest extends TestCase
         self::assertSame(['kind' => 'console', 'command' => 'octane:start'], $tracing->executionContext());
         $tracing->finishCommand(new CommandFinished('octane:start', $input, $output, 0));
         self::assertNull(TracingService::currentTraceId());
+    }
+
+    public function test_noop_provider_without_sdk_keeps_http_and_console_job_correlation(): void
+    {
+        $tracing = new TracingService(new NoopTracerProvider);
+        $response = (new TraceHttpRequest($tracing))->handle(Request::create('/api/projects', 'GET'), static fn (): Response => new Response('ok'));
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $response->headers->get('X-Trace-ID'));
+        self::assertNull(TracingService::currentTraceId());
+        $input = new ArrayInput([]);
+        $output = new NullOutput();
+        $tracing->startCommand(new CommandStarting('ai-assistant:index', $input, $output));
+        $traceId = TracingService::currentTraceId();
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $traceId);
+        $payload = $tracing->queuePayload() + ['displayName' => 'App\\Jobs\\ExampleJob'];
+        self::assertArrayHasKey('otel_traceparent', $payload);
+        $tracing->finishCommand(new CommandFinished('ai-assistant:index', $input, $output, 0));
+        $job = Mockery::mock(Job::class);
+        $job->shouldReceive('payload')->andReturn($payload);
+        $tracing->startJob(new JobProcessing('redis', $job));
+        self::assertSame($traceId, TracingService::currentTraceId());
+        $tracing->finishJob($job);
+        self::assertNull(TracingService::currentTraceId());
+    }
+
+    public function test_sampled_remote_context_with_noop_provider_does_not_claim_local_export(): void
+    {
+        $tracing = new TracingService(new NoopTracerProvider);
+        $context = SpanContext::create(str_repeat('a', 32), str_repeat('b', 16), TraceFlags::SAMPLED);
+        $scope = Span::wrap($context)->activate();
+        try {
+            $connection = new class { public function getName(): string { return 'primary'; } };
+            $slow = $tracing->slowQueryTrace(new QueryExecuted('select 1', [], 501.0, $connection));
+            self::assertFalse($slow['trace_sampled']);
+            self::assertSame($context->getTraceId(), $slow['parent_trace_id']);
+        } finally {
+            $scope->detach();
+        }
     }
 }
