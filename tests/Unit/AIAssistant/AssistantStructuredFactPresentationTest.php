@@ -14,6 +14,35 @@ final class AssistantStructuredFactPresentationTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_project_table_translates_all_supported_statuses_without_changing_evidence(): void
+    {
+        $statuses = [
+            'draft' => 'Черновик',
+            'active' => 'Активный',
+            'completed' => 'Завершён',
+            'paused' => 'Приостановлен',
+            'cancelled' => 'Отменён',
+        ];
+        $rows = [];
+        foreach (array_keys($statuses) as $index => $status) {
+            $payload = $this->payload('project', ['name' => 'Проект '.($index + 1), 'status' => $status], $index + 1);
+            $rows[] = $payload['structured_fact_evidence']['rows'][0];
+        }
+        $combined = AssistantStructuredFactFormatter::payload($rows, '2026-09-30T12:00:00Z');
+        $before = $combined['structured_fact_evidence'];
+
+        $result = (new AssistantStructuredFactVerifier)->confirmedResults([$combined], 'Покажи проекты и их статусы');
+
+        $this->assertStringContainsString('| Запись | Статус |', $result['text']);
+        foreach ($statuses as $raw => $label) {
+            $this->assertStringContainsString(' | '.$label.' |', $result['text']);
+            $this->assertStringNotContainsString(' | '.$raw.' |', $result['text']);
+        }
+        $this->assertSame($before, $combined['structured_fact_evidence']);
+        $this->assertSame(array_keys($statuses), array_column(array_column($before['rows'], 'fields'), 'status'));
+        $this->assertSame($before['source_refs'], $result['source_refs']);
+    }
+
     public function test_default_presentation_shows_business_identity_and_status_across_domains_without_technical_fields(): void
     {
         foreach ([
