@@ -29,7 +29,7 @@ final class TracingServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $tracing = $this->app->make(TracingService::class);
-        if (config('monitoring.tracing_enabled')) {
+        if (config('monitoring.tracing_enabled') && $tracing->supportsSpans()) {
             DB::listen(static fn (QueryExecuted $event) => $tracing->recordSql($event));
             Event::listen(CommandExecuted::class, static fn (CommandExecuted $event) => $tracing->recordRedis($event));
             $redis = $this->app->make('redis');
