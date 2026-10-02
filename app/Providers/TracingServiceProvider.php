@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Services\Monitoring\TracingService;
+use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobFailed;
@@ -26,21 +28,21 @@ final class TracingServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        if (! config('monitoring.tracing_enabled')) {
-            return;
-        }
-
         $tracing = $this->app->make(TracingService::class);
-
-        DB::listen(static fn (QueryExecuted $event) => $tracing->recordSql($event));
-        Event::listen(CommandExecuted::class, static fn (CommandExecuted $event) => $tracing->recordRedis($event));
-        $redis = $this->app->make('redis');
-        if ($redis instanceof RedisManager) {
-            $redis->enableEvents();
-            foreach ($redis->connections() ?? [] as $connection) {
-                $connection->setEventDispatcher($this->app->make('events'));
+        if (config('monitoring.tracing_enabled')) {
+            DB::listen(static fn (QueryExecuted $event) => $tracing->recordSql($event));
+            Event::listen(CommandExecuted::class, static fn (CommandExecuted $event) => $tracing->recordRedis($event));
+            $redis = $this->app->make('redis');
+            if ($redis instanceof RedisManager) {
+                $redis->enableEvents();
+                foreach ($redis->connections() ?? [] as $connection) {
+                    $connection->setEventDispatcher($this->app->make('events'));
+                }
             }
         }
+        Event::listen(CommandStarting::class, static fn (CommandStarting $event) => $tracing->startCommand($event));
+        Event::listen(CommandFinished::class, static fn (CommandFinished $event) => $tracing->finishCommand($event));
+        $this->app->terminating(static fn () => $tracing->flush());
         Queue::createPayloadUsing(static fn (): array => $tracing->queuePayload());
         Event::listen(JobProcessing::class, static fn (JobProcessing $event) => $tracing->startJob($event));
         Event::listen(JobProcessed::class, static fn (JobProcessed $event) => $tracing->finishJob($event->job));

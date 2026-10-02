@@ -18,7 +18,7 @@ final class TraceHttpRequest
 
     public function handle(Request $request, Closure $next): Response
     {
-        if (! config('monitoring.tracing_enabled') || in_array($request->path(), ['up', 'ready', 'metrics'], true)) {
+        if (in_array($request->path(), ['up', 'ready', 'metrics'], true)) {
             return $next($request);
         }
 
@@ -32,7 +32,7 @@ final class TraceHttpRequest
             $response = $next($request);
             $this->tracing->finishHttp($span, $request, $response);
 
-            if ($span->getContext()->isSampled()) {
+            if ($span->getContext()->isValid()) {
                 $response->headers->set('X-Trace-ID', $span->getContext()->getTraceId());
             }
 
@@ -44,10 +44,11 @@ final class TraceHttpRequest
         } finally {
             $span->end();
             $scope->detach();
+            $this->tracing->endHttpContext($request);
             if ($span->getContext()->isSampled()) {
                 $this->tracing->logCompletedTrace($span, 'http');
-                $this->tracing->flush();
             }
+            $this->tracing->flush();
         }
     }
 }
