@@ -258,7 +258,7 @@ class RagIndexingCoordinator
         $entityIds = array_values(array_unique(array_map(static fn (string|int $id): string => (string) $id, $entityIds)));
 
         DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityIds): void {
-            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            Organization::query()->whereKey($organizationId)->lock('FOR NO KEY UPDATE')->firstOrFail(['id']);
             $pending = RagIndexRun::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
                 ->where('entity_type', $entityType)->whereIn('entity_id', $entityIds)
                 ->where('status', RagIndexRun::STATUS_QUEUED)->get(['id', 'entity_id', 'mode']);
@@ -305,7 +305,7 @@ class RagIndexingCoordinator
     private function queueEntityRun(int $organizationId, ?int $projectId, string $sourceType, string $entityType, string|int $entityId, string $mode): RagIndexRun
     {
         return DB::transaction(function () use ($organizationId, $projectId, $sourceType, $entityType, $entityId, $mode): RagIndexRun {
-            Organization::query()->whereKey($organizationId)->lockForUpdate()->firstOrFail(['id']);
+            Organization::query()->whereKey($organizationId)->lock('FOR NO KEY UPDATE')->firstOrFail(['id']);
             $this->invalidateCoverageAfterCommit($organizationId);
             $pending = RagIndexRun::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
                 ->where('entity_type', $entityType)->where('entity_id', (string) $entityId)->where('status', RagIndexRun::STATUS_QUEUED)->first();
@@ -1085,16 +1085,16 @@ class RagIndexingCoordinator
         $organizationTable = (new Organization)->getTable();
         $runTable = (new RagIndexRun)->getTable();
         $latestAttemptSql = sprintf(
-            '(select max(%s.created_at) from %s where %s.organization_id = %s.id)',
+            '(select %s.created_at from %s where %s.organization_id = %s.id order by %s.created_at desc nulls last limit 1)',
             $runTable,
             $runTable,
             $runTable,
-            $organizationTable
+            $organizationTable,
+            $runTable
         );
 
         $query
-            ->orderByRaw("{$latestAttemptSql} is not null")
-            ->orderByRaw("{$latestAttemptSql} asc")
+            ->orderByRaw("{$latestAttemptSql} asc nulls first")
             ->orderBy("{$organizationTable}.id");
     }
 }

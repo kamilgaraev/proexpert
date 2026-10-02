@@ -123,6 +123,17 @@
             <directory>tests/Unit/DesignManagement</directory>
             <file>tests/Unit/Authorization/PermissionTranslatorTest.php</file>
         </testsuite>
+        <testsuite name="SlowSqlRegression">
+            <file>tests/Feature/AIAssistant/SlowSqlQueryPlanTest.php</file>
+            <file>tests/Feature/AIAssistant/RagForeignKeyLockTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantLegalNativeFileAdapterTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantOrganizationReportingTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSalesBusinessCoverageTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantFinanceTenderSourceSchemaTest.php</file>
+            <file>tests/Feature/AIAssistant/RagProducerDurabilityTest.php</file>
+            <file>tests/Feature/AIAssistant/AICreditEconomicsMonitorTest.php</file>
+            <file>tests/Feature/AIAssistant/RagIndexingCoordinatorEntitlementTest.php</file>
+        </testsuite>
         <testsuite name="AIAssistantFullRelease">
             <file>tests/Feature/AIAssistant/RagStatusBudgetTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantIndexStatusBudgetTest.php</file>

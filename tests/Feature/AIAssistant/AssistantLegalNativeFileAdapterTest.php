@@ -41,6 +41,7 @@ use Aws\S3\Exception\S3Exception;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
@@ -57,6 +58,29 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
     private string $content = 'Invoice total 1234.56';
     private int $reads = 0;
     private ?S3Exception $storageFailure = null;
+
+    public function test_storage_read_does_not_hold_mapping_locks_and_source_change_is_rejected(): void
+    {
+        [$fixture,$version] = $this->fixture(true);
+        $transactionLevel = DB::connection()->transactionLevel();
+        $storage = Mockery::mock(FileService::class)->makePartial();
+        $storage->shouldReceive('readCurrentBounded')->once()->andReturnUsing(function () use ($transactionLevel,$version): mixed {
+            self::assertSame($transactionLevel, DB::connection()->transactionLevel());
+            DB::table('legal_archive_document_files')->where('id',$version->document_file_id)->update(['updated_at'=>now()->addMinute()]);
+            $stream = fopen('php://temp','w+b');
+            fwrite($stream,$this->content);
+            rewind($stream);
+            return $stream;
+        });
+        $adapter = new AssistantLegalNativeFileAdapter(app(AssistantDataAccessPolicy::class),app(AuthorizationService::class),$storage);
+        try {
+            $adapter->map($fixture->member,$fixture->organization->id,'legal_document_version',$version->id);
+            self::fail('Changed source must not create a mapping.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('ai_assistant_document_source_changed',$exception->getMessage());
+        }
+        self::assertSame(0,File::query()->count());
+    }
 
     public function test_nonfinancial_legal_pdf_maps_without_finance_or_download_permission_under_current_preview_grant(): void
     {
@@ -296,7 +320,7 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         ]);
         $queue = app(AssistantNativeAttachmentPreparationQueue::class);
         self::assertTrue($queue->dispatchQueuedRun($run));
-        $job = Queue::pushed(PrepareAssistantNativeAttachmentsJob::class)->first();
+        $job = Queue::getFacadeRoot()->pushed(PrepareAssistantNativeAttachmentsJob::class)->first();
         self::assertInstanceOf(PrepareAssistantNativeAttachmentsJob::class, $job);
         $legal = app(AssistantLegalNativeFileIndexer::class);
         $operations = app(AssistantOperationsNativeFileIndexer::class);
@@ -334,7 +358,7 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertSame(1, $coverage['native_attachment_coverage']['legal_document_version']['unmapped_file_count']);
         self::assertSame(1, $coverage['document_coverage']['needs_access_review']);
         self::assertFalse($queue->dispatchQueuedRun($run->fresh()));
-        self::assertCount(1, Queue::pushed(PrepareAssistantNativeAttachmentsJob::class));
+        self::assertCount(1, Queue::getFacadeRoot()->pushed(PrepareAssistantNativeAttachmentsJob::class));
         self::assertCount(1, $missingEvents);
         $context = $missingEvents[0]->context;
         self::assertSame($run->id, $context['run_id']);
@@ -444,7 +468,7 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         ]);
         $queue = app(AssistantNativeAttachmentPreparationQueue::class);
         self::assertTrue($queue->dispatchQueuedRun($run));
-        $job = Queue::pushed(PrepareAssistantNativeAttachmentsJob::class)->first();
+        $job = Queue::getFacadeRoot()->pushed(PrepareAssistantNativeAttachmentsJob::class)->first();
         self::assertInstanceOf(PrepareAssistantNativeAttachmentsJob::class, $job);
         $missing = $this->s3Exception('NoSuchKey', 404);
         $storage = Mockery::mock(FileService::class)->makePartial();

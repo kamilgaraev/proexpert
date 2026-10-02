@@ -73,14 +73,25 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
             } else {
                 $inherits = ! $hasProject && $this->hasProjectLineage($parent['type']);
                 $inheritedProject = $inheritedProject || $inherits;
-                $parentQuery = $this->scopedQuery($parent['type'], $organizationId, $inherits ? $projectId : null, [...$seen,$type]);
+                $parentQuery = $type === 'approved_estimate_norm' && $column === 'section_id'
+                    ? Metadata::records()[$parent['type']][0]::query()
+                    : $this->scopedQuery($parent['type'], $organizationId, $inherits ? $projectId : null, [...$seen,$type]);
             }
             $parentTable = $parentQuery->getModel()->getTable();
             if ($parent['match_project'] ?? false) { $parentQuery->whereRaw($parentTable.'.project_id IS NOT DISTINCT FROM '.$table.'.project_id'); }
             foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
-            $query->where(static function (Builder $scope) use ($column,$parent,$parentQuery,$parentTable,$table): void {
-                if ($parent['nullable']) { $scope->whereNull($table.'.'.$column)->orWhereIn($table.'.'.$column, $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'))); }
-                else { $scope->whereIn($table.'.'.$column, $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'))); }
+            if (empty($parent['matches']) && ! ($parent['match_project'] ?? false)) {
+                $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'));
+                $query->where(static function (Builder $scope) use ($column,$parent,$parentQuery,$table): void {
+                    if ($parent['nullable']) { $scope->whereNull($table.'.'.$column)->orWhereIn($table.'.'.$column, $parentQuery); }
+                    else { $scope->whereIn($table.'.'.$column, $parentQuery); }
+                });
+                continue;
+            }
+            $parentQuery->whereColumn($parentTable.'.'.($parent['key'] ?? 'id'), $table.'.'.$column)->selectRaw('1');
+            $query->where(static function (Builder $scope) use ($column,$parent,$parentQuery,$table): void {
+                if ($parent['nullable']) { $scope->whereNull($table.'.'.$column)->orWhereExists($parentQuery->toBase()); }
+                else { $scope->whereExists($parentQuery->toBase()); }
             });
         }
         if ($projectId !== null && ! $hasProject && ! $inheritedProject) { $query->whereRaw('1 = 0'); }

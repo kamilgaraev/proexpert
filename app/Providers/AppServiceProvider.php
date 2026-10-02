@@ -263,12 +263,7 @@ class AppServiceProvider extends ServiceProvider
                     return;
                 }
 
-                Log::channel('slow_queries')->warning('slow_database_query', [
-                    'duration_ms' => round($query->time, 2),
-                    'connection' => $query->connectionName,
-                    'sql' => mb_substr($query->sql, 0, 4000),
-                    'trace_id' => \App\Services\Monitoring\TracingService::currentTraceId(),
-                ]);
+                Log::channel('slow_queries')->warning('slow_database_query', app(\App\Services\Monitoring\SlowQueryContext::class)->forQuery($query));
             });
         }
 

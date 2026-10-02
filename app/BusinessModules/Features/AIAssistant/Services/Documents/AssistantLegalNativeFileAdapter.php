@@ -52,28 +52,32 @@ final class AssistantLegalNativeFileAdapter
     public function map(User $actor,int $organizationId,string $type,string|int $id,?string $requestedPath = null): File
     {
         $this->assertAccess($actor,$organizationId,$type,$id);
-        $missingObjectException = null;
-        $missingSourcePath = null;
-        $missingSourceMorph = null;
-        $file = DB::transaction(function () use ($actor,$organizationId,$type,$id,$requestedPath,&$missingObjectException,&$missingSourcePath,&$missingSourceMorph): ?File {
+        $snapshot = $this->source($organizationId,$type,$id);
+        AssistantLegalNativeFileMetadata::assertSource($type,$snapshot);
+        $path = (string)$snapshot[AssistantLegalNativeFileMetadata::definitions()[$type]['path']];
+        if ($requestedPath !== null && $requestedPath !== $path) { throw new RuntimeException('ai_assistant_document_native_source_invalid'); }
+        $model = new (AssistantLegalNativeFileMetadata::definitions()[$type]['model']);
+        $snapshotFingerprint = AssistantLegalNativeFileMetadata::fingerprint(AssistantLegalNativeFileMetadata::versionData($type,$snapshot));
+        try {
+            [$checksum,$size] = $this->checksum($type,$snapshot);
+        } catch (S3Exception $exception) {
+            if ($exception->getStatusCode() === 404 && $exception->getAwsErrorCode() === 'NoSuchKey') {
+                DB::transaction(function () use ($organizationId,$type,$id,$path,$model,$snapshotFingerprint): void {
+                    $source = $this->source($organizationId,$type,$id,true);
+                    if (! hash_equals($snapshotFingerprint, AssistantLegalNativeFileMetadata::fingerprint(AssistantLegalNativeFileMetadata::versionData($type,$source)))) {
+                        throw new RuntimeException('ai_assistant_document_source_changed');
+                    }
+                    $this->invalidateMissingMapping($organizationId,$type,$id,$path,$model->getMorphClass());
+                });
+            }
+            throw $exception;
+        }
+        $file = DB::transaction(function () use ($actor,$organizationId,$type,$id,$path,$model,$checksum,$size,$snapshotFingerprint): File {
             $this->assertAccess($actor,$organizationId,$type,$id);
             $source = $this->source($organizationId,$type,$id,true);
             AssistantLegalNativeFileMetadata::assertSource($type,$source);
-            $path = (string)$source[AssistantLegalNativeFileMetadata::definitions()[$type]['path']];
-            if ($requestedPath !== null && $requestedPath !== $path) { throw new RuntimeException('ai_assistant_document_native_source_invalid'); }
-            $model = new (AssistantLegalNativeFileMetadata::definitions()[$type]['model']);
-            try {
-                [$checksum,$size] = $this->checksum($type,$source);
-            } catch (S3Exception $exception) {
-                if ($exception->getStatusCode() === 404 && $exception->getAwsErrorCode() === 'NoSuchKey') {
-                    $missingObjectException = $exception;
-                    $missingSourcePath = $path;
-                    $missingSourceMorph = $model->getMorphClass();
-
-                    return null;
-                }
-
-                throw $exception;
+            if (! hash_equals($snapshotFingerprint, AssistantLegalNativeFileMetadata::fingerprint(AssistantLegalNativeFileMetadata::versionData($type,$source)))) {
+                throw new RuntimeException('ai_assistant_document_source_changed');
             }
             $this->assertAccess($actor,$organizationId,$type,$id);
             $version = AssistantLegalNativeFileMetadata::versionData($type,$source);
@@ -94,15 +98,6 @@ final class AssistantLegalNativeFileAdapter
             $this->assertMapping($file);
             return $file;
         });
-
-        if ($missingObjectException instanceof S3Exception) {
-            if (is_string($missingSourcePath) && is_string($missingSourceMorph)) {
-                $this->invalidateMissingMapping($organizationId,$type,$id,$missingSourcePath,$missingSourceMorph);
-            }
-
-            throw $missingObjectException;
-        }
-        if (! $file instanceof File) { throw new RuntimeException('ai_assistant_document_native_source_invalid'); }
 
         return $file;
     }

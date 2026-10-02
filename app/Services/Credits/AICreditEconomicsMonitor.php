@@ -22,6 +22,7 @@ final class AICreditEconomicsMonitor
             $canonical = DB::table('ai_credit_provider_usages')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)
                 ->orderBy('id')->cursor();
             $legacy = DB::table('ai_usage_records')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)
+                ->select(['id', 'organization_id', 'provider', 'model', 'operation', 'total_cost_rub', 'currency', 'metadata'])
                 ->orderBy('id')->cursor();
             $settlements = DB::table('ai_credit_lots')->whereIn('source', ['purchase', 'subscription'])->whereNotNull('commercial_order_id')
                 ->select('commercial_order_id')->selectRaw('MIN(created_at) AS settled_at')->groupBy('commercial_order_id');

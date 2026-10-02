@@ -93,7 +93,8 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
         $hasProject = in_array('project_id', $definition['fields'], true);
         if ($hasProject) {
             $projectQuery = self::projectQuery($organizationId);
-            $query->where(static fn (Builder $scope) => $scope->whereNull($table.'.project_id')->orWhereIn($table.'.project_id', $projectQuery->select('projects.id')));
+            $projectQuery->whereColumn('projects.id', $table.'.project_id')->selectRaw('1');
+            $query->where(static fn (Builder $scope) => $scope->whereNull($table.'.project_id')->orWhereExists($projectQuery->toBase()));
             if ($projectId !== null) {
                 $query->where($table.'.project_id', $projectId);
             }
@@ -115,12 +116,23 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
             foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) {
                 $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn);
             }
-            $parentQuery->select($parentTable.'.'.$parentKey);
+            if ($parentTable === $table) {
+                $parentQuery->select($parentTable.'.'.$parentKey);
+                $query->where(static function (Builder $scope) use ($parent, $column, $table, $parentQuery): void {
+                    if ($parent['nullable']) {
+                        $scope->whereNull($table.'.'.$column)->orWhereIn($table.'.'.$column, $parentQuery);
+                    } else {
+                        $scope->whereIn($table.'.'.$column, $parentQuery);
+                    }
+                });
+                continue;
+            }
+            $parentQuery->whereColumn($parentTable.'.'.$parentKey, $table.'.'.$column)->selectRaw('1');
             $query->where(static function (Builder $scope) use ($parent, $column, $table, $parentQuery): void {
                 if ($parent['nullable']) {
-                    $scope->whereNull($table.'.'.$column)->orWhereIn($table.'.'.$column, $parentQuery);
+                    $scope->whereNull($table.'.'.$column)->orWhereExists($parentQuery->toBase());
                 } else {
-                    $scope->whereIn($table.'.'.$column, $parentQuery);
+                    $scope->whereExists($parentQuery->toBase());
                 }
             });
         }
@@ -192,7 +204,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
                 if (! isset(AssistantSalesBusinessMetadata::scopeDefinitions()[$parent['type']]) || ! self::hasProjectLineage($parent['type'])) {
                     continue;
                 }
-                $projection = self::projectProjection($parent['type'], $organizationId);
+                $projection = self::projectProjection($parent['type'], $organizationId, in_array($type, ['purchase_receipt_return', 'commercial_proposal_line_item', 'commercial_proposal_approval'], true));
                 $parentTable = $projection->getModel()->getTable();
                 $projection->whereColumn($parentTable.'.'.($parent['key'] ?? 'id'), $table.'.'.$column)->limit(1);
                 $query->addSelect(['assistant_project_id' => $projection]);
@@ -203,9 +215,10 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
         return $query;
     }
 
-    private static function projectProjection(string $type, int $organizationId): Builder
+    private static function projectProjection(string $type, int $organizationId, bool $validatedLineage = false): Builder
     {
-        $query = self::scopedQuery($type, $organizationId);
+        $definition = AssistantSalesBusinessMetadata::scopeDefinitions()[$type];
+        $query = $validatedLineage ? $definition['model']::query() : self::scopedQuery($type, $organizationId);
         $table = $query->getModel()->getTable();
         if (in_array('project_id', AssistantSalesBusinessMetadata::scopeDefinitions()[$type]['fields'], true)) {
             return $query->select($table.'.project_id');
@@ -216,7 +229,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
             if (! isset(AssistantSalesBusinessMetadata::scopeDefinitions()[$parent['type']]) || ! self::hasProjectLineage($parent['type'])) {
                 continue;
             }
-            $projection = self::projectProjection($parent['type'], $organizationId);
+            $projection = self::projectProjection($parent['type'], $organizationId, $validatedLineage);
             $parentTable = $projection->getModel()->getTable();
             $projection->whereColumn($parentTable.'.'.($parent['key'] ?? 'id'), $table.'.'.$column)->limit(1);
             $projections[] = '('.$projection->toSql().')';
