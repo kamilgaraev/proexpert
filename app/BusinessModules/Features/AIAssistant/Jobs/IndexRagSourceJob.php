@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeAttachmentPreparationQueue;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
@@ -121,6 +122,14 @@ class IndexRagSourceJob implements ShouldQueue
             ? $indexer->indexEntity($this->organizationId, $this->sourceType, $this->entityType, $this->entityId, $progress)
             : $indexer->indexOrganization($this->organizationId, $this->projectId, $this->sourceType, $progress);
         } catch (Throwable $exception) {
+            if ($exception instanceof RagEmbeddingDimensionMismatch) {
+                if ($run instanceof RagIndexRun && $coordinator !== null) {
+                    $coordinator->markFailed($run->id, $exception, $run->lease_token);
+                }
+                $this->fail($exception);
+
+                return;
+            }
             if ($run instanceof RagIndexRun && $coordinator !== null) {
                 $coordinator->releaseForRetry($run->id, $run->lease_token, $exception);
             }

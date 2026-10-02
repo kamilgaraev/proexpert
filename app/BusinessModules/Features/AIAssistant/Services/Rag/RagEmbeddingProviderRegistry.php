@@ -16,7 +16,7 @@ final class RagEmbeddingProviderRegistry
     {
         $provider = (string) config('ai-assistant.rag.new_index_embedding_provider', 'timeweb');
         $model = (string) config('ai-assistant.rag.new_index_embedding_model', 'dashscope/text-embedding-v4');
-        $dimensions = (int) config('ai-assistant.rag.new_index_embedding_dimensions', 256);
+        $dimensions = (int) config('ai-assistant.rag.new_index_embedding_dimensions', $model === 'dashscope/text-embedding-v4' ? 1024 : 256);
 
         return $this->forProfile($provider, $model, $dimensions)
             ?? throw new InvalidArgumentException('ai_rag_embedding_profile_invalid');
@@ -34,7 +34,8 @@ final class RagEmbeddingProviderRegistry
             'openai' => ['text-embedding-3-large', 'text-embedding-3-small'],
             default => [],
         };
-        if ($dimensions !== 256 || ! in_array($model, $supportedModels, true)) {
+        $supportedDimensions = $provider === 'timeweb' && $model === 'dashscope/text-embedding-v4' ? 1024 : 256;
+        if ($dimensions !== $supportedDimensions || ! in_array($model, $supportedModels, true)) {
             return null;
         }
 
