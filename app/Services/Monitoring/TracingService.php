@@ -155,7 +155,7 @@ final class TracingService
     public function slowQueryTrace(QueryExecuted $event): array
     {
         $parent = Span::getCurrent()->getContext();
-        if ($parent->isValid() && $parent->isSampled()) {
+        if ($parent->isValid() && $parent->isSampled() && Span::getCurrent()->isRecording()) {
             return ['trace_id' => $parent->getTraceId(), 'span_id' => $parent->getSpanId(), 'trace_sampled' => true, 'trace_kind' => 'execution'];
         }
         try {

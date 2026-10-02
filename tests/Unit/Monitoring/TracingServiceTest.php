@@ -22,6 +22,9 @@ use OpenTelemetry\SDK\Trace\SpanExporter\InMemoryExporter;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProviderBuilder;
 use OpenTelemetry\API\Trace\NoopTracerProvider;
+use OpenTelemetry\API\Trace\Span;
+use OpenTelemetry\API\Trace\SpanContext;
+use OpenTelemetry\API\Trace\TraceFlags;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -234,5 +237,20 @@ final class TracingServiceTest extends TestCase
         self::assertSame($traceId, TracingService::currentTraceId());
         $tracing->finishJob($job);
         self::assertNull(TracingService::currentTraceId());
+    }
+
+    public function test_sampled_remote_context_with_noop_provider_does_not_claim_local_export(): void
+    {
+        $tracing = new TracingService(new NoopTracerProvider);
+        $context = SpanContext::create(str_repeat('a', 32), str_repeat('b', 16), TraceFlags::SAMPLED);
+        $scope = Span::wrap($context)->activate();
+        try {
+            $connection = new class { public function getName(): string { return 'primary'; } };
+            $slow = $tracing->slowQueryTrace(new QueryExecuted('select 1', [], 501.0, $connection));
+            self::assertFalse($slow['trace_sampled']);
+            self::assertSame($context->getTraceId(), $slow['parent_trace_id']);
+        } finally {
+            $scope->detach();
+        }
     }
 }
