@@ -24,7 +24,8 @@ final class AssistantStructuredFactDistinctProofTest extends TestCase
         $this->assertCount(3, $result['source_refs']);
         $this->assertStringContainsString('9007199254740993.17', $result['text']);
         $this->assertStringContainsString('Платёж А', $result['text']);
-        $this->assertStringContainsString('Статус:', $result['text']);
+        $this->assertStringContainsString('Статус', $result['text']);
+        $this->assertStringContainsString('Оплачен', $result['text']);
     }
 
     public function test_overflow_discloses_partial_evidence_and_never_answers_from_a_dropped_amount(): void

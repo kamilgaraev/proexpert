@@ -16,7 +16,7 @@ final class AssistantDesignAdditionalMetadataTest extends TestCase
         self::assertCount(20, $definitions);
         $actualModels = glob(dirname(__DIR__, 3).'/app/BusinessModules/Features/DesignManagement/Models/*.php');
         self::assertIsArray($actualModels);
-        $alreadyCovered = ['DesignPackage','DesignArtifact','DesignArtifactVersion','DesignReviewComment','DesignModelSet'];
+        $alreadyCovered = ['DesignPackage','DesignArtifact','DesignArtifactVersion','DesignReviewComment','DesignModelSet','DesignModelSessionEventOrder'];
         $expected = array_values(array_filter(array_map(static fn (string $path): string => pathinfo($path, PATHINFO_FILENAME), $actualModels),
             static fn (string $name): bool => ! in_array($name, $alreadyCovered, true)));
         $classes = array_map(static fn (array $record): string => $record[0], Metadata::records());
@@ -38,5 +38,6 @@ final class AssistantDesignAdditionalMetadataTest extends TestCase
         self::assertSame(['type' => 'design_normative_source', 'nullable' => true, 'match_project' => false], Metadata::parentColumns()['design_document_template']['normative_source_id']);
         self::assertSame(['design-management.normative_catalog.view'], Metadata::entityPermissions()['design_document_template']);
         self::assertArrayNotHasKey('design_package', $definitions);
+        self::assertNotContains('DesignModelSessionEventOrder', $classes);
     }
 }

@@ -65,9 +65,14 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
         $facts = is_array($answer['financial_evidence'] ?? null)
             ? AssistantEstimateStructuredFacts::positions($answer['financial_evidence'], self::receipt($answer)['positions'], (int) $organization->id)
             : [];
+        $receipt = self::receipt($answer);
+        if ($receipt !== null && $facts !== []) {
+            $receipt['source_refs'] = array_merge($receipt['source_refs'], $facts['structured_fact_evidence']['source_refs']);
+            $receipt['positions'] = array_map(static fn (array $position): array => $position + ['currency' => null], $receipt['positions']);
+        }
 
         return ['status' => $answer['resolution']['status'], 'server_formatted_answer' => $answer['text'],
-            'financial_evidence' => self::receipt($answer), 'source_refs' => $sourceRefs,
+            'financial_evidence' => $receipt, 'source_refs' => $sourceRefs,
             'validation_status' => $answer['validation_status'], 'needs_clarification' => $answer['needs_clarification'],
             'selection' => $answer['selection'] ?? null, 'resolution' => $answer['resolution'], ...$facts];
     }

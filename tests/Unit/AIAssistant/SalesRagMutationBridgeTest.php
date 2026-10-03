@@ -69,5 +69,7 @@ final class SalesRagMutationBridgeTest extends TestCase
 
 final class SalesMutationPureTransactions
 {
+    public function transactionLevel(): int { return 0; }
+
     public function transaction(callable $operation): mixed { return $operation(); }
 }

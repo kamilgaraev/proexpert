@@ -13,7 +13,11 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\Models\Estimate;
 use App\Models\Organization;
+use App\Models\Module;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Models\Project;
+use App\Services\Modules\PackageCatalogService;
 use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
@@ -26,6 +30,15 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         parent::setUp();
 
         config(['ai-assistant.rag.scheduled_project_scoped_source_types' => []]);
+    }
+
+    public function artisan($command, $parameters = [])
+    {
+        if ($command === 'ai-assistant:rag-backfill' && ($parameters['--all'] ?? false)) {
+            $this->enableAssistantAccess();
+        }
+
+        return parent::artisan($command, $parameters);
     }
 
     public function test_sync_backfill_calls_indexer_with_requested_scope(): void
@@ -607,7 +620,32 @@ class AIAssistantRagBackfillCommandTest extends TestCase
      */
     private function enabledSourceTypes(): array
     {
+        $this->enableAssistantAccess();
+
         return app(RagSourceRegistry::class)->enabledSourceTypes();
+    }
+
+    private function enableAssistantAccess(): void
+    {
+        $definition = app(PackageCatalogService::class)->moduleDefinitions()['ai-assistant'];
+        Module::withoutEvents(fn () => Module::query()->updateOrCreate(['slug' => 'ai-assistant'], [
+            'name' => $definition['name'], 'version' => $definition['version'] ?? '1.0.0',
+            'type' => $definition['type'], 'billing_model' => $definition['billing_model'] ?? 'free',
+            'category' => $definition['category'] ?? 'general', 'is_active' => true,
+        ]));
+        foreach (Organization::query()->get() as $organization) {
+            $account = OrganizationCommercialAccount::withoutEvents(fn () => OrganizationCommercialAccount::query()->firstOrCreate(['organization_id' => $organization->id], [
+                'status' => 'active', 'offer_type' => 'packages', 'quote_version' => 1,
+                'current_period_start_at' => now()->subDay(), 'current_period_end_at' => now()->addDays(30),
+                'auto_renew_enabled' => false,
+            ]));
+            OrganizationPackageSubscription::withoutEvents(fn () => OrganizationPackageSubscription::query()->firstOrCreate([
+                'organization_id' => $organization->id, 'package_slug' => 'working-entry',
+            ], [
+                'commercial_account_id' => $account->id, 'status' => 'active', 'access_source' => 'paid_package',
+                'price_paid' => 39900, 'current_period_start_at' => now()->subDay(), 'current_period_end_at' => now()->addDays(30),
+            ]));
+        }
     }
 }
 

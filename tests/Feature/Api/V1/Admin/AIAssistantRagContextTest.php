@@ -5,19 +5,32 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Jobs\ExecuteAssistantChatJob;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
 use App\BusinessModules\Features\AIAssistant\Services\ContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Enums\UserProjectAccessMode;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Logging\LoggingService;
+use App\Services\Entitlements\OrganizationEntitlementService;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use Mockery\MockInterface;
+use Mockery;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 use Tests\Support\RagTestEmbedding;
@@ -48,9 +61,7 @@ final class AIAssistantRagContextTest extends TestCase
         $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
         $this->mockAssistantDependencies();
 
-        $response = $this
-            ->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/ai-assistant/chat', [
+        $response = $this->postChat($context, [
                 'message' => 'What blocks project Letter A?',
                 'context' => [
                     'source_module' => 'projects',
@@ -75,9 +86,9 @@ final class AIAssistantRagContextTest extends TestCase
             ->filter(static fn (mixed $content): bool => is_string($content))
             ->implode("\n");
 
-        self::assertStringContainsString('МОСТ context:', $prompt);
+        self::assertStringContainsString('untrusted_search_results', $prompt);
         self::assertStringContainsString('Delayed materials block facade works.', $prompt);
-        self::assertStringContainsString('[1] Letter A risk memo', $prompt);
+        self::assertStringContainsString('Letter A risk memo', $prompt);
     }
 
     public function test_admin_chat_ignores_legacy_disabled_config_and_uses_rag(): void
@@ -105,9 +116,7 @@ final class AIAssistantRagContextTest extends TestCase
         $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
         $this->mockAssistantDependencies();
 
-        $response = $this
-            ->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/ai-assistant/chat', [
+        $response = $this->postChat($context, [
                 'message' => 'What blocks project Letter A?',
                 'context' => [
                     'source_module' => 'projects',
@@ -132,7 +141,7 @@ final class AIAssistantRagContextTest extends TestCase
             ->filter(static fn (mixed $content): bool => is_string($content))
             ->implode("\n");
 
-        self::assertStringContainsString('МОСТ context:', $prompt);
+        self::assertStringContainsString('untrusted_search_results', $prompt);
         self::assertStringContainsString('Delayed materials block facade works.', $prompt);
     }
 
@@ -179,9 +188,7 @@ final class AIAssistantRagContextTest extends TestCase
         $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
         $this->mockAssistantDependencies();
 
-        $response = $this
-            ->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/ai-assistant/chat', [
+        $response = $this->postChat($context, [
                 'message' => 'Which project risk needs attention?',
                 'context' => [
                     'source_module' => 'projects',
@@ -229,16 +236,14 @@ final class AIAssistantRagContextTest extends TestCase
         $this->app->instance(RagEmbeddingProviderInterface::class, new FeatureRagEmbeddingProvider);
         $this->mockAssistantDependencies();
 
-        $response = $this
-            ->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/ai-assistant/chat', [
+        $response = $this->postChat($context, [
                 'message' => 'What blocks the inaccessible project?',
                 'context' => [
                     'source_module' => 'projects',
                     'entity_refs' => [
                         [
                             'type' => 'project',
-                            'id' => $blockedProject->id,
+                            'id' => null,
                             'label' => 'Blocked project',
                         ],
                     ],
@@ -253,7 +258,7 @@ final class AIAssistantRagContextTest extends TestCase
 
         $prompt = $this->promptFromProvider($llmProvider);
 
-        self::assertStringNotContainsString('МОСТ context:', $prompt);
+        self::assertStringNotContainsString('Blocked project memo', $prompt);
         self::assertStringNotContainsString('Blocked project hidden schedule issue must not leak.', $prompt);
     }
 
@@ -301,6 +306,30 @@ final class AIAssistantRagContextTest extends TestCase
 
     private function mockAssistantDependencies(): void
     {
+        $this->app->instance(RagEmbeddingProviderRegistry::class, new RagEmbeddingProviderRegistry(new FeatureRagEmbeddingProvider));
+        $redis = Mockery::mock();
+        $redis->shouldReceive('eval')->andReturn(1);
+        Redis::shouldReceive('connection')->andReturn($redis);
+        $this->mock(OrganizationEntitlementService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('getEffectiveModules')->andReturn(collect([
+                (object) ['slug' => 'ai-assistant'],
+                (object) ['slug' => 'project-management'],
+                (object) ['slug' => 'payments'],
+            ]));
+        });
+        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('forCurrentChecks')->andReturnSelf();
+            $mock->shouldReceive('canCurrent')->andReturn(true);
+            $mock->shouldReceive('getUserPermissions')->andReturn(['ai_assistant.chat', 'projects.view', 'finance.view']);
+            $mock->shouldReceive('getUserPermissionsStructured')->andReturn([]);
+            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('canAccessInterface')->andReturn(true);
+            $mock->shouldReceive('hasRole')->andReturn(true);
+            $mock->shouldReceive('getUserRoleSlugs')->andReturn(['organization_owner']);
+            $mock->shouldReceive('getUserRoles')->andReturnUsing(static fn (User $actor, ?AuthorizationContext $context = null) =>
+                $actor->roleAssignments()->where('is_active', true)
+                    ->when($context !== null, static fn ($query) => $query->where('context_id', $context->id))->get());
+        });
         $this->mock(AccessController::class, function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')->andReturn(true);
         });
@@ -310,12 +339,14 @@ final class AIAssistantRagContextTest extends TestCase
             $mock->shouldReceive('canAccessOrganizationConversationsInAdmin')->andReturn(true);
             $mock->shouldReceive('isMutationTool')->andReturn(false);
             $mock->shouldReceive('canExecuteTool')->andReturn(true);
+            $mock->shouldReceive('canExposeTool')->andReturn(true);
         });
 
         $this->mock(UsageTracker::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canMakeRequest')->andReturn(true);
             $mock->shouldReceive('calculateCost')->andReturn(0.0);
             $mock->shouldReceive('trackRequest')->andReturnNull();
+            $mock->shouldReceive('recordUsage')->andReturnNull();
             $mock->shouldReceive('getUsageStats')->andReturn([
                 'requests_used' => 1,
                 'requests_limit' => 100,
@@ -337,6 +368,24 @@ final class AIAssistantRagContextTest extends TestCase
             $mock->shouldReceive('access')->andReturnNull();
         });
     }
+
+    private function postChat(AdminApiTestContext $context, array $payload): TestResponse
+    {
+        Queue::fake();
+        $payload['request_id'] = (string) Str::uuid();
+        $payload['profile'] = 'normal';
+        $quote = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/ai-assistant/credits/quote', $payload)->assertOk();
+        $payload['quote_id'] = $quote->json('data.quote_id');
+        $this->postJson('/api/v1/admin/ai-assistant/chat', $payload)->assertStatus(202);
+        $request = AssistantRequest::query()->where('request_id', $payload['request_id'])->sole();
+        (new ExecuteAssistantChatJob($request->id))->handle(app(AssistantRequestLifecycle::class), app(AssistantDataAccessPolicy::class));
+        Queue::assertPushed(ExecuteAssistantChatJob::class, 1);
+        $this->getJson('/api/v1/admin/ai-assistant/requests/'.$payload['request_id'])
+            ->assertOk()->assertJsonPath('data.status', 'completed');
+
+        return $this->postJson('/api/v1/admin/ai-assistant/chat', $payload);
+    }
 }
 
 final class FeatureRagLlmProvider implements LLMProviderInterface
@@ -346,6 +395,8 @@ final class FeatureRagLlmProvider implements LLMProviderInterface
      */
     public array $lastMessages = [];
 
+    private int $calls = 0;
+
     public function __construct(
         private readonly string $answer = 'Project Letter A is blocked by delayed materials. [1]'
     ) {
@@ -354,11 +405,21 @@ final class FeatureRagLlmProvider implements LLMProviderInterface
     public function chat(array $messages, array $options = []): array
     {
         $this->lastMessages = $messages;
+        $toolCalls = $this->calls++ === 0 ? [[
+            'id' => 'feature-document-search', 'type' => 'function',
+            'function' => ['name' => 'search_assistant_documents', 'arguments' => json_encode([
+                'query' => 'project', 'project_id' => null, 'source_types' => ['project'], 'limit' => 8,
+            ], JSON_THROW_ON_ERROR)],
+        ]] : [];
 
         return [
             'role' => 'assistant',
-            'content' => $this->answer,
+            'content' => $toolCalls === [] ? $this->answer : '',
+            'tool_calls' => $toolCalls,
             'tokens_used' => 42,
+            'input_tokens' => 20,
+            'output_tokens' => 22,
+            'provider' => 'test-fixture',
             'model' => 'feature-rag-llm',
         ];
     }

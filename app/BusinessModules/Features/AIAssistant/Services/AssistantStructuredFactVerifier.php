@@ -36,6 +36,29 @@ final class AssistantStructuredFactVerifier
 
     private function verifiedResults(?string $query, string $text, array $toolResults, ?string $presentationQuery = null): array
     {
+        $planner = new AssistantPresentationPlanner;
+        $selectedRows = $planner->selectedRows($text, $toolResults, $presentationQuery ?? $query);
+        if ($selectedRows === null && AssistantPresentationPlanner::isPlanCandidate($text)) {
+            return ['text' => trans_message('ai_assistant_facts.live_proof_required'), 'validation_status' => 'partial',
+                'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
+        }
+        if ($selectedRows !== null
+            && ! AssistantEstimateCompositionIntent::matches($presentationQuery ?? $query ?? '', $this->hasEstimateContext($toolResults))) {
+            $formatted = $planner->render($text, $toolResults, $presentationQuery ?? $query);
+            $selectedSources = array_column($selectedRows, 'source_ref');
+            $selectionTruncated = false;
+            foreach ($toolResults as $result) {
+                $evidence = is_array($result) ? ($result['structured_fact_evidence'] ?? []) : [];
+                if (($evidence['truncated'] ?? false) === true && $this->trusted($evidence)) {
+                    foreach ($evidence['source_refs'] as $source) {
+                        $selectionTruncated = $selectionTruncated || in_array($source, $selectedSources, true);
+                    }
+                }
+            }
+
+            return ['text' => $formatted, 'validation_status' => 'partial', 'source_refs' => $selectedSources,
+                'replaced' => $text !== $formatted, 'needs_clarification' => false, 'structured_evidence_truncated' => $selectionTruncated];
+        }
         $rows = [];
         $seen = [];
         $truncated = false;
@@ -107,8 +130,12 @@ final class AssistantStructuredFactVerifier
                 $rows[] = $row;
             }
         }
+        if ($selectedRows !== null) {
+            $rows = $selectedRows;
+        }
         if ($rows === [] || ($query !== null && ! $this->requestedFactsPresent($query, $rows))) {
-            if ($query !== null && AssistantFactIntentClassifier::isMoneyOnly($query)) {
+            if ($query !== null && AssistantFactIntentClassifier::isMoneyOnly($query) && ! AssistantFactIntentClassifier::requiresUnitPrice($query)) {
+                $candidates = [];
                 foreach ($toolResults as $result) {
                     $financial = is_array($result) ? ($result['financial_evidence'] ?? null) : null;
                     if (is_array($financial) && is_string($result['server_formatted_answer'] ?? null)
@@ -116,10 +143,14 @@ final class AssistantStructuredFactVerifier
                         && $financial['fetched_at'] !== '' && is_array($financial['source_refs'] ?? null)
                         && $financial['source_refs'] !== [] && is_string($financial['version'] ?? null)
                         && $financial['version'] !== '' && in_array($financial['validation_status'] ?? null, ['verified', 'partial'], true)) {
-                        return ['text' => $result['server_formatted_answer'], 'validation_status' => $financial['validation_status'],
+                        $candidate = ['text' => $result['server_formatted_answer'], 'validation_status' => $financial['validation_status'],
                             'source_refs' => $financial['source_refs'], 'replaced' => $text !== $result['server_formatted_answer'],
                             'needs_clarification' => false, 'structured_evidence_truncated' => $truncated];
+                        $candidates[hash('sha256', json_encode($candidate, JSON_THROW_ON_ERROR))] = $candidate;
                     }
+                }
+                if (count($candidates) === 1) {
+                    return reset($candidates);
                 }
             }
 

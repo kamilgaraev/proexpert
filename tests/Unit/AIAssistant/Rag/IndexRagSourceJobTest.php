@@ -13,6 +13,16 @@ use PHPUnit\Framework\TestCase;
 
 class IndexRagSourceJobTest extends TestCase
 {
+    use \Tests\Unit\AIAssistant\UsesAssistantUnitTranslations {
+        setUp as private setUpTranslations;
+    }
+
+    protected function setUp(): void
+    {
+        $this->setUpTranslations();
+        app()->instance('cache', new \Illuminate\Cache\Repository(new \Illuminate\Cache\ArrayStore));
+    }
+
     public function test_dimension_mismatch_fails_the_job_without_retrying(): void
     {
         $failure = new RagEmbeddingDimensionMismatch(256, 1024);
@@ -68,7 +78,8 @@ class IndexRagSourceJobTest extends TestCase
         $job = new IndexRagSourceJob(10, null, 'estimate', 30);
         $indexer = new RecordingRagIndexer();
         $coordinator = new TestRagIndexingCoordinator();
-        $run = new RagIndexRun();
+        $run = (new RagIndexRun)->forceFill(['id' => 30, 'organization_id' => 10, 'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_RUNNING, 'lease_token' => 'unit-lease']);
         $run->mode = RagIndexRun::MODE_SCHEDULED;
         $coordinator->markRunningResult = $run;
         $coordinator->shouldSplit = true;
@@ -87,7 +98,8 @@ class IndexRagSourceJobTest extends TestCase
         $job = new IndexRagSourceJob(10, null, 'estimate', 30);
         $indexer = new RecordingRagIndexer();
         $coordinator = new TestRagIndexingCoordinator();
-        $run = new RagIndexRun();
+        $run = (new RagIndexRun)->forceFill(['id' => 30, 'organization_id' => 10, 'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_RUNNING, 'lease_token' => 'unit-lease']);
         $run->mode = RagIndexRun::MODE_MANUAL;
         $coordinator->markRunningResult = $run;
         $coordinator->shouldSplit = true;

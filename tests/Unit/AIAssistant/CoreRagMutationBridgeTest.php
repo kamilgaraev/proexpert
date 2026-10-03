@@ -80,5 +80,7 @@ final class CoreRagMutationBridgeTest extends TestCase
 
 final class CoreMutationPureTransactions
 {
+    public function transactionLevel(): int { return 0; }
+
     public function transaction(callable $operation): mixed { return $operation(); }
 }

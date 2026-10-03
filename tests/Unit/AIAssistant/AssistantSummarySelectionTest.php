@@ -62,7 +62,11 @@ final class AssistantSummarySelectionTest extends TestCase
     {
         $service = $this->service();
         $actor = (new User)->forceFill(['id' => 7, 'current_organization_id' => 15, 'is_active' => false]);
-        $policy = new AssistantDataAccessPolicy($this->createMock(AuthorizationService::class), $this->createMock(UserProjectAccessService::class));
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('forCurrentChecks')->willReturnSelf();
+        $policy = new AssistantDataAccessPolicy($authorization, $this->createMock(UserProjectAccessService::class));
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class,
+            new \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService($policy));
         (new ReflectionProperty(AIAssistantService::class, 'dataAccess'))->setValue($service, $policy);
         (new ReflectionProperty(AIAssistantService::class, 'estimateResolutionAttempted'))->setValue($service, true);
         (new ReflectionProperty(AIAssistantService::class, 'resolvedEstimateId'))->setValue($service, 32);

@@ -749,7 +749,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame(['4.23500000', '0.14385000', '0.14385000', '0.01050000', '0.00056000'], array_column($result['composition']['items'], 'quantity'));
         self::assertSame(['1354.65', '147.63', '69.60', '0.30', '6.55'], array_column($result['composition']['items'], 'total_amount'));
         self::assertSame('1354.65', $result['composition']['items'][0]['total_amount']);
-        self::assertStringNotContainsString('currency', json_encode($result['composition'], JSON_THROW_ON_ERROR));
+        self::assertSame(array_fill(0, 5, null), array_column($result['composition']['items'], 'currency'));
 
         $childReferences = array_values(array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
         self::assertCount(5, $childReferences);
@@ -787,7 +787,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertStringContainsString('ОТ', $guarded['text']);
         self::assertStringContainsString('4.23500000', $guarded['text']);
         self::assertStringNotContainsString('Чужой ресурс', $guarded['text']);
-        self::assertStringNotContainsString('валют', mb_strtolower($guarded['text']));
+        self::assertStringContainsString('Валюта денежных значений в записях не указана.', $guarded['text']);
     }
 
     public function test_reader_rejects_unbounded_direct_calls(): void

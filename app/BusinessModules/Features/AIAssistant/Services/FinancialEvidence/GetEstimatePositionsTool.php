@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainNumericEvidence;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter;
 use App\Models\Organization;
 use App\Models\User;
@@ -106,7 +107,7 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
             (int) ($arguments['composition_per_page'] ?? 20),
             isset($arguments['position_number']) ? trim($arguments['position_number']) : null);
         $evidence = $result['evidence'];
-        $positions = $evidence['positions'];
+        $positions = array_map(static fn (array $position): array => $position + ['currency' => null], $evidence['positions']);
         $facts = AssistantEstimateStructuredFacts::positions($evidence, $positions, (int) $organization->id);
         $facts['structured_fact_evidence']['validation_scope'] = $evidence['validation_scope'];
         $sourceRefs = AssistantEstimateEvidenceService::publicSourceReferences($evidence, $positions);
@@ -129,7 +130,20 @@ final class GetEstimatePositionsTool extends ReadonlyEstimateTool
             unset($composition['source_refs'], $composition['fact_rows']);
         }
 
-        return ['estimate' => $evidence['estimate'], 'positions' => $positions, 'meta' => $result['meta'],
+        $numericRows = [];
+        foreach ($facts['structured_fact_evidence']['rows'] as $row) {
+            $numbers = array_filter($row['fields'], static fn (mixed $value, string $field): bool => in_array($field,
+                ['quantity', 'quantity_per_unit', 'total_quantity', 'unit_price', 'total_amount'], true)
+                && (is_string($value) || is_int($value)) && preg_match('/^-?\d+(?:\.\d+)?$/D', (string) $value) === 1, ARRAY_FILTER_USE_BOTH);
+            if ($numbers !== []) {
+                $row['fields'] = $numbers;
+                $row['version'] = hash('sha256', json_encode(array_diff_key($row, ['version' => true]), JSON_THROW_ON_ERROR));
+                $numericRows[] = $row;
+            }
+        }
+        $financial = AssistantDomainNumericEvidence::payload($numericRows, $evidence['fetched_at']);
+
+        return [...$financial, 'estimate' => $evidence['estimate'], 'positions' => $positions, 'meta' => $result['meta'],
             ...($composition !== null ? ['composition' => $composition] : []),
             'source_refs' => $sourceRefs,
             'server_formatted_facts' => $facts['server_formatted_facts'],

@@ -191,7 +191,10 @@ final class AssistantApiContractTest extends TestCase
                 $this->getJson($prefix.'/conversations/'.$conversation->id.'/history')->assertOk()->assertJsonPath('success', true);
             }
         }
-        Queue::assertPushed(ExecuteAssistantChatJob::class, 9);
+        Queue::assertPushed(ExecuteAssistantChatJob::class, 18);
+        $this->assertCount(9, Queue::pushed(ExecuteAssistantChatJob::class)->pluck('assistantRequestId')->unique());
+        $this->assertSame(9, \App\BusinessModules\Features\AIAssistant\Models\AssistantRequest::query()
+            ->where('organization_id', $this->organization->id)->count());
         $this->assertSame(['provider' => 0, 'tools' => 0], $resolutions);
     }
 
@@ -337,11 +340,11 @@ final class CountingAssistantPermissionChecker extends AIPermissionChecker
 {
     public int $calls = 0;
 
-    public function canUseAssistant(User $user, int $organizationId): bool
+    public function canUseAssistant(User $user, int $organizationId, bool $fresh = true): bool
     {
         $this->calls++;
 
-        return parent::canUseAssistant($user, $organizationId);
+        return parent::canUseAssistant($user, $organizationId, $fresh);
     }
 
     public function resetCalls(): void

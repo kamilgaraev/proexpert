@@ -38,11 +38,11 @@ final class AssistantShadowEvaluationTest extends TestCase
     }
     protected function setUp(): void
     {
+        parent::setUp();
         if (getenv('AI_SHADOW_EVALUATION') !== '1') {
             self::markTestSkipped('Opt-in real shadow evaluation is disabled.');
         }
         ShadowObservationVerifier::progress('bootstrap', 'setup');
-        parent::setUp();
         $connection = config('database.connections.'.config('database.default'));
         self::assertSame('testing', app()->environment());
         self::assertSame('pgsql', $connection['driver']);

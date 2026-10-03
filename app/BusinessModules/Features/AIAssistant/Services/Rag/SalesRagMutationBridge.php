@@ -26,8 +26,11 @@ final class SalesRagMutationBridge
 
     public static function changedRows(string $modelClass, Builder $rows, ?int $organizationId = null, ?int $projectId = null): void
     {
+        if (self::definition($modelClass) === null) {
+            return;
+        }
         self::safely(function () use ($modelClass, $rows, $organizationId, $projectId): void {
-            if (self::definition($modelClass) === null || $rows->getModel()::class !== $modelClass) {
+            if ($rows->getModel()::class !== $modelClass) {
                 return;
             }
             $selected = clone $rows;
@@ -38,10 +41,11 @@ final class SalesRagMutationBridge
 
     public static function queue(string $modelClass, int $organizationId, ?int $projectId, string|int $id): void
     {
+        if (self::definition($modelClass) === null) {
+            return;
+        }
         self::safely(function () use ($modelClass, $organizationId, $projectId, $id): void {
-            if (self::definition($modelClass) !== null) {
-                app(CoreRagMutationBridge::class)->queue($modelClass, $organizationId, $projectId, $id);
-            }
+            app(CoreRagMutationBridge::class)->queue($modelClass, $organizationId, $projectId, $id);
         });
     }
 

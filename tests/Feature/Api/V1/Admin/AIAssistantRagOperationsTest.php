@@ -8,16 +8,37 @@ use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Services\Entitlements\OrganizationEntitlementService;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\DB;
+use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 class AIAssistantRagOperationsTest extends TestCase
 {
-    public function test_status_returns_current_organization_counts_and_latest_runs(): void
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Queue::fake();
+        $this->mock(OrganizationEntitlementService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('getEffectiveModules')->andReturn(collect([
+                (object) ['slug' => 'ai-assistant'], (object) ['slug' => 'project-management'],
+                (object) ['slug' => 'payments'],
+            ]));
+        });
+        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('forCurrentChecks')->andReturnSelf();
+            $mock->shouldReceive('canCurrent')->andReturn(true);
+            $mock->shouldReceive('getUserRoles')->andReturn(collect());
+        });
+    }
+
+    public function test_status_returns_current_organization_counts_without_legacy_run_history(): void
     {
         $this->withoutMiddleware();
         $context = AdminApiTestContext::create(roleSlug: 'organization_admin');
@@ -26,7 +47,7 @@ class AIAssistantRagOperationsTest extends TestCase
         $this->createIndexedSource($context->organization->id);
         $this->createIndexedSource($foreignOrganization->id);
 
-        $failedRun = RagIndexRun::query()->create([
+        RagIndexRun::query()->create([
             'organization_id' => $context->organization->id,
             'status' => RagIndexRun::STATUS_FAILED,
             'mode' => RagIndexRun::MODE_ASYNC,
@@ -35,7 +56,7 @@ class AIAssistantRagOperationsTest extends TestCase
             'finished_at' => now()->subMinutes(8),
             'last_error' => 'Embedding provider unavailable',
         ]);
-        $successRun = RagIndexRun::query()->create([
+        RagIndexRun::query()->create([
             'organization_id' => $context->organization->id,
             'status' => RagIndexRun::STATUS_SUCCEEDED,
             'mode' => RagIndexRun::MODE_SYNC,
@@ -54,7 +75,7 @@ class AIAssistantRagOperationsTest extends TestCase
         ]);
 
         $response = $this
-            ->actingAs($context->user, 'api_admin')
+            ->actingAs($context->user->refresh(), 'api_admin')
             ->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/ai-assistant/rag/status');
 
@@ -64,11 +85,12 @@ class AIAssistantRagOperationsTest extends TestCase
             ->assertJsonPath('data.ready', true)
             ->assertJsonPath('data.source_count', 1)
             ->assertJsonPath('data.chunk_count', 1)
-            ->assertJsonPath('data.latest_run.id', $successRun->id)
-            ->assertJsonPath('data.last_successful_run.id', $successRun->id)
-            ->assertJsonPath('data.last_failed_run.id', $failedRun->id)
-            ->assertJsonPath('data.source_catalog.0.type', 'project')
-            ->assertJsonPath('data.source_catalog.0.enabled', true);
+            ->assertJsonPath('data.latest_run', null)
+            ->assertJsonPath('data.last_successful_run', null)
+            ->assertJsonPath('data.last_failed_run', null);
+        $projectSource = collect($response->json('data.source_catalog'))->firstWhere('type', 'project');
+        $this->assertTrue($projectSource['enabled']);
+        $this->assertSame(1, $projectSource['stored_count']);
     }
 
     public function test_reindex_queues_current_organization_run(): void
@@ -79,7 +101,7 @@ class AIAssistantRagOperationsTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
 
         $response = $this
-            ->actingAs($context->user, 'api_admin')
+            ->actingAs($context->user->refresh(), 'api_admin')
             ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/rag/reindex', [
                 'project_id' => $project->id,
@@ -111,7 +133,7 @@ class AIAssistantRagOperationsTest extends TestCase
         $foreignProject = Project::factory()->create();
 
         $response = $this
-            ->actingAs($context->user, 'api_admin')
+            ->actingAs($context->user->refresh(), 'api_admin')
             ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/rag/reindex', [
                 'project_id' => $foreignProject->id,
@@ -126,7 +148,7 @@ class AIAssistantRagOperationsTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'organization_admin');
 
         $response = $this
-            ->actingAs($context->user, 'api_admin')
+            ->actingAs($context->user->refresh(), 'api_admin')
             ->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/ai-assistant/rag/reindex', [
                 'source_type' => 'missing_source',
@@ -142,28 +164,31 @@ class AIAssistantRagOperationsTest extends TestCase
 
         $this->assertNotNull($statusRoute);
         $this->assertNotNull($reindexRoute);
-        $this->assertContains('authorize:admin.ai_assistant.rag.view', $statusRoute->gatherMiddleware());
+        $this->assertContains('organization.context', $statusRoute->gatherMiddleware());
         $this->assertContains('authorize:admin.ai_assistant.rag.manage', $reindexRoute->gatherMiddleware());
     }
 
     private function createIndexedSource(int $organizationId): void
     {
+        $project = Project::withoutEvents(fn () => Project::factory()->create([
+            'organization_id' => $organizationId, 'is_archived' => false,
+        ]));
         $source = RagSource::query()->create([
             'organization_id' => $organizationId,
-            'project_id' => null,
+            'project_id' => $project->id,
             'source_type' => 'project',
             'entity_type' => 'project',
-            'entity_id' => (string) $organizationId,
+            'entity_id' => (string) $project->id,
             'title' => 'Project source',
             'checksum' => str_repeat('c', 64),
             'metadata' => [],
             'indexed_at' => now(),
         ]);
 
-        RagChunk::query()->create([
+        $chunk = RagChunk::query()->create([
             'source_id' => $source->id,
             'organization_id' => $organizationId,
-            'project_id' => null,
+            'project_id' => $project->id,
             'chunk_index' => 0,
             'content' => 'Indexed content',
             'content_hash' => str_repeat('d', 64),
@@ -171,6 +196,9 @@ class AIAssistantRagOperationsTest extends TestCase
             'embedding_provider' => 'test',
             'embedding_model' => 'test',
             'embedding_created_at' => now(),
+        ]);
+        DB::update('UPDATE ai_rag_chunks SET embedding = ?::vector WHERE id = ?', [
+            '['.implode(',', \Tests\Support\RagTestEmbedding::fromLeadingValues([1.0])).']', $chunk->id,
         ]);
     }
 }

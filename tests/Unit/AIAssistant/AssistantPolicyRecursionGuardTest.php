@@ -17,6 +17,7 @@ final class AssistantPolicyRecursionGuardTest extends TestCase
     public function test_revisited_type_and_excessive_depth_fail_closed_without_loading_a_database(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldNotReceive('canCurrent');
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService);
         $path = new ReflectionProperty($policy, 'entityQueryPath');

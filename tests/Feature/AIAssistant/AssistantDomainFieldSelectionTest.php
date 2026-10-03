@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Estimate;
 use App\Models\Organization;
@@ -56,6 +57,22 @@ final class AssistantDomainFieldSelectionTest extends TestCase
             'fields' => ['id', 'name']], $actor, $organization->id);
     }
 
+    public function test_nonfinancial_reference_keeps_project_scope_and_cannot_hide_money_fields(): void
+    {
+        [$actor, $organization, $estimate, $reader, $policy] = $this->fixture();
+        $result = $reader->execute('read', ['domain' => 'estimates', 'entity_type' => 'estimate', 'id' => $estimate->id,
+            'fields' => ['id', 'name']], $actor, $organization->id);
+        $reference = $result['source_refs'][0];
+        $guard = new AssistantSourceReferenceGuard($policy);
+        self::assertTrue($guard->fresh($actor, $organization->id, [$reference]));
+        self::assertFalse($guard->fresh($actor, $organization->id, [$reference + ['estimate_id' => $estimate->id + 1]]));
+        $moneyReference = $reference;
+        $moneyReference['checked_fields'][] = 'total_amount';
+        self::assertFalse($guard->fresh($actor, $organization->id, [$moneyReference]));
+        $actor->assignedProjects()->updateExistingPivot($estimate->project_id, ['is_active' => false]);
+        self::assertFalse($guard->fresh($actor, $organization->id, [$reference]));
+    }
+
     private function fixture(): array
     {
         $organization = Organization::withoutEvents(fn () => Organization::factory()->create());
@@ -72,6 +89,7 @@ final class AssistantDomainFieldSelectionTest extends TestCase
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $entitlements);
+        $this->app->instance(AssistantEstimatePositionReadService::class, new AssistantEstimatePositionReadService($policy));
         return [$actor, $organization, $estimate, new AssistantDomainReadService(new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $policy, $authorization), $policy];
     }
 }

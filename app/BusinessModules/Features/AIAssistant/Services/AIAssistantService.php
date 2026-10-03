@@ -839,7 +839,7 @@ class AIAssistantService
             $verificationTimer = AssistantRequestPhaseTimer::start($this->runtimeTimingEnabled ? $this->activeRequest?->request_id : null, 'final_verification');
             $assistantContent = trim((string) ($response['content'] ?? ''));
             $plannedPresentation = $proposedActions === [] ? (new AssistantPresentationPlanner)->render($assistantContent, $verificationToolResults, $query) : null;
-            $rawPresentationPlan = $plannedPresentation !== null
+            $rawPresentationPlan = $proposedActions === [] && AssistantPresentationPlanner::isPlanCandidate($assistantContent)
                 ? $assistantContent : null;
             $this->stage('verifying');
             if ($assistantContent === '') {
@@ -852,7 +852,7 @@ class AIAssistantService
             ]);
             $assistantContent = $this->softenUnsupportedCriticalClaims($assistantContent, $ragMetadata);
 
-            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults);
+            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults, $rawPresentationPlan, $query);
             if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
                 $assistantContent = $financialCheck['text'];
             }
@@ -893,7 +893,7 @@ class AIAssistantService
             }
             $financialIntentSupported = $this->financialAnswers?->supports($query, $clarificationPinnedId) ?? false;
             $stockDomainResolved = false;
-            foreach ($rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
+            foreach ($rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
                 if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
                     $verifiedStock = $this->verifyMaterialStock($toolResult, $user, $organizationId);
                     if ($verifiedStock !== null) {
@@ -946,7 +946,7 @@ class AIAssistantService
                 }
             }
 
-            foreach (array_reverse($verificationToolResults) as $toolResult) {
+            foreach ($rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($verificationToolResults) as $toolResult) {
                 if (($toolResult['_tool_name'] ?? null) === 'get_bim_model_elements' && $proposedActions === []) {
                     $verifiedBim = $this->verifyBimModel($toolResult, $user, $organizationId);
                     if (($structuredCheck['source_refs'] ?? []) !== []) {

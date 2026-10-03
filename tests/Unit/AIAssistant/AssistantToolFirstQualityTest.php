@@ -171,6 +171,37 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertStringNotContainsString('все готово', $response['message']['content']);
     }
 
+    public function test_checked_model_selection_is_not_overridden_by_unrelated_stock_or_bim_reads(): void
+    {
+        $fetchedAt = now()->toISOString();
+        $reference = ['entity_type' => 'project', 'entity_id' => 17, 'organization_id' => 15, 'content_scope' => 'structured',
+            'checked_fields' => ['name', 'status'], 'required_permissions' => ['projects.view'], 'required_domains' => ['projects'],
+            'source_version' => 'project-current', 'fetched_at' => $fetchedAt];
+        $model = new class extends \Illuminate\Database\Eloquent\Model {};
+        $model->setRawAttributes(['id' => 17, 'name' => 'Нужный проект', 'status' => 'active'], true);
+        $formatter = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::class;
+        $read = $formatter::payload([$formatter::row($model, 'project', ['name', 'status'], $reference)], $fetchedAt);
+        $plan = json_encode(['kind' => 'verified_rows', 'version' => 1, 'result_sets' => [[
+            'result_set' => \App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner::providerView($read)['result_set'],
+            'layout' => 'list', 'columns' => ['name', 'status'], 'order' => ['r01'], 'group_by' => null,
+        ]]], JSON_THROW_ON_ERROR);
+        foreach (['get_material_stock', 'get_bim_model_elements'] as $unrelatedTool) {
+            $service = $this->service(['assistant_domain_read' => $read, $unrelatedTool => ['status' => 'success']], [
+                ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read'), $this->toolCall($unrelatedTool)]],
+                ['content' => $plan],
+            ]);
+            $unrelated = ['text' => 'Лишний результат', 'replaced' => true, 'validation_status' => 'verified',
+                'needs_clarification' => false, 'source_refs' => [['entity_type' => 'material', 'entity_id' => 99]]];
+            $service->verifiedStock = $unrelated;
+            $service->verifiedBim = $unrelated;
+            $response = $service->ask('Какой статус у проекта?', 15, $this->actor(), 7);
+
+            $this->assertStringContainsString('Нужный проект', $response['message']['content'], $unrelatedTool);
+            $this->assertStringNotContainsString('Лишний результат', $response['message']['content'], $unrelatedTool);
+            $this->assertSame([17], array_column($response['message']['metadata']['source_refs'], 'entity_id'), $unrelatedTool);
+        }
+    }
+
     public function test_actual_ask_allows_money_plan_only_when_financial_receipt_covers_every_selected_row(): void
     {
         [$completeService] = $this->moneyPlanService(true, [0, 1]);
@@ -189,9 +220,53 @@ final class AssistantToolFirstQualityTest extends TestCase
 
         [$partialService] = $this->moneyPlanService(true, [0]);
         $partial = $partialService->ask('Какая сумма по документам?', 15, $this->actor(), 7);
-        $this->assertSame('Сумма документа: 10.25 RUB', $partial['message']['content']);
-        $this->assertCount(1, $partial['message']['metadata']['source_refs']);
+        $this->assertSame(trans_message('ai_assistant_financial.unverified_claim'), $partial['message']['content']);
+        $this->assertSame([], $partial['message']['metadata']['source_refs']);
         $this->assertStringNotContainsString('20.50', $partial['message']['content']);
+    }
+
+    public function test_actual_ask_preserves_selected_unit_price_after_search_and_unrelated_financial_snapshot(): void
+    {
+        $formatter = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::class;
+        $planner = \App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner::class;
+        $fetchedAt = now()->toISOString();
+        $make = static function (int $id, string $type, array $fields) use ($formatter, $fetchedAt): array {
+            $model = new class extends \Illuminate\Database\Eloquent\Model {};
+            $model->setRawAttributes(['id' => $id] + $fields, true);
+            $source = ['entity_type' => $type, 'entity_id' => $id, 'organization_id' => 15, 'content_scope' => 'structured',
+                'checked_fields' => array_keys($fields), 'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
+                'required_domains' => ['estimates'], 'source_version' => 'version-'.$id, 'fetched_at' => $fetchedAt];
+
+            return $formatter::row($model, $type, array_keys($fields), $source);
+        };
+        $searchRows = [];
+        for ($id = 100; $id < 125; $id++) {
+            $searchRows[] = $make($id, 'estimate', ['number' => 'СМ-'.$id, 'name' => 'Смета из поиска']);
+        }
+        $search = $formatter::payload($searchRows, $fetchedAt);
+        $positions = $formatter::payload([$make(91, 'estimate_item',
+            ['name' => 'Бетон В25', 'unit_price' => '6100.0000', 'unit' => 'м³', 'currency' => null])], $fetchedAt);
+        $positions += \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainNumericEvidence::payload($positions['structured_fact_evidence']['rows'], $fetchedAt);
+        $snapshot = $formatter::payload([$make(99, 'estimate', ['number' => 'СМ-99', 'total_amount' => '53350561.75'])], $fetchedAt);
+        $snapshot += \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainNumericEvidence::payload($snapshot['structured_fact_evidence']['rows'], $fetchedAt);
+        $plan = json_encode(['kind' => 'verified_rows', 'version' => 1, 'result_sets' => [[
+            'result_set' => $planner::providerView($positions)['result_set'], 'layout' => 'list',
+            'columns' => ['name', 'unit_price', 'unit', 'currency'], 'order' => ['r01'], 'group_by' => null,
+        ]]], JSON_THROW_ON_ERROR);
+        $service = $this->service(['assistant_domain_search' => $search, 'get_estimate_positions' => $positions, 'get_estimate_financial_snapshot' => $snapshot], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_search')]],
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_positions')]],
+            ['content' => '', 'tool_calls' => [$this->toolCall('get_estimate_financial_snapshot')]],
+            ['content' => $plan],
+        ]);
+        $result = $service->ask('Найди в любой смете цену за 1м3 бетона', 15, $this->actor(), 7);
+
+        $this->assertStringContainsString('6100.0000', $result['message']['content']);
+        $this->assertStringContainsString('м³', $result['message']['content']);
+        $this->assertStringContainsString('Валюта: не указано', $result['message']['content']);
+        $this->assertStringNotContainsString('53350561.75', $result['message']['content']);
+        $this->assertSame([91], array_column($result['message']['metadata']['source_refs'], 'entity_id'));
+        $this->assertFalse($result['message']['metadata']['needs_clarification']);
     }
 
     public function test_document_search_runs_only_after_luna_choice_and_preserves_sources(): void

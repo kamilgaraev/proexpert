@@ -26,13 +26,13 @@ final class AssistantDocumentIndexObserver
     {
         $transactional = \Illuminate\Support\Facades\DB::transactionLevel() > 0;
         try {
+            if (app(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class)->paused()) {
+                return;
+            }
             if ($document->status !== AIAssistantDocument::STATUS_READY || ! $document->exists) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class)->deleteIndexedEntity(
                     (int) $document->organization_id, 'file_document', 'assistant_document', (string) $document->id,
                 );
-            }
-            if (app(\App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState::class)->paused()) {
-                return;
             }
             app(RagIndexingCoordinator::class)->queueEntity((int) $document->organization_id,
                 $document->project_id, 'file_document', 'assistant_document', (string) $document->id);

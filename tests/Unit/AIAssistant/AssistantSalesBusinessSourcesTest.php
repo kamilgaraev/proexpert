@@ -28,6 +28,7 @@ final class AssistantSalesBusinessSourcesTest extends TestCase
         $resolver = new ConnectionResolver(['unit' => new PostgresConnection(null, 'isolated_no_connection', '', ['driver' => 'pgsql'])]);
         $resolver->setDefaultConnection('unit');
         Model::setConnectionResolver($resolver);
+        app()->instance('db', $resolver->connection());
         $network = \Mockery::mock(MarketplaceSearchService::class);
         $network->shouldReceive('networkOrganizationIds')->with(17)->andReturn([23, 31]);
         app()->instance(MarketplaceSearchService::class, $network);
@@ -176,7 +177,7 @@ final class AssistantSalesBusinessSourcesTest extends TestCase
     public function test_procurement_lines_and_crm_polymorphic_records_keep_real_parent_restrictions(): void
     {
         $query = SalesBusinessRagSource::scopedQuery('purchase_order_item', 17, 29)->limit(20);
-        self::assertStringContainsString('"purchase_order_id" in (select "purchase_orders"."id"', $query->toSql());
+        self::assertStringContainsString('"purchase_orders"."id" = "purchase_order_items"."purchase_order_id"', $query->toSql());
         self::assertStringContainsString('"project_organization"."is_active"', $query->toSql());
         self::assertContains(29, $query->getBindings());
         $timeline = SalesBusinessRagSource::scopedQuery('crm_timeline_event', 17)->toSql();
@@ -196,7 +197,8 @@ final class AssistantSalesBusinessSourcesTest extends TestCase
             self::assertSame('organization_id', $record['organization_column']);
             $query = SalesBusinessRagSource::scopedQuery($type, 17);
             $table = $query->getModel()->getTable();
-            self::assertStringContainsString('"'.$table.'"."'.$column.'" is null or "'.$table.'"."'.$column.'" in (select', $query->toSql());
+            self::assertStringContainsString('"'.$table.'"."'.$column.'" is null or exists (select', $query->toSql());
+            self::assertStringContainsString(' = "'.$table.'"."'.$column.'"', $query->toSql());
             self::assertStringContainsString('"'.$table.'"."organization_id" = ?', $query->toSql());
             self::assertContains(17, $query->getBindings());
             self::assertNotEmpty(Metadata::entityPermissions()[$type]);

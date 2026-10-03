@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\Observers\AssistantDocumentIndexObserver;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
@@ -26,6 +27,12 @@ final class AssistantDocumentObserverIsolationTest extends TestCase
             public function log($level, string|\Stringable $message, array $context = []): void { $this->entries[] = [$level, $message, $context]; }
         };
         $container->instance('log', $logger);
+        $container->instance('db', new class {
+            public function transactionLevel(): int { return 0; }
+        });
+        $indexer = $this->createMock(RagIndexer::class);
+        $indexer->expects(self::once())->method('deleteIndexedEntity')->with(1, 'file_document', 'assistant_document', '7');
+        $container->instance(RagIndexer::class, $indexer);
         $container->instance(AssistantIndexingState::class, new AssistantIndexingState);
         $container->bind(RagIndexingCoordinator::class, static function (): never { throw new RuntimeException('queue_unavailable'); });
         Container::setInstance($container);
