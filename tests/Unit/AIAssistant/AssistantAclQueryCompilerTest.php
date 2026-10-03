@@ -253,16 +253,47 @@ final class AssistantAclQueryCompilerTest extends TestCase
         self::assertStringStartsWith('select "projects"."name"', $finished->select('projects.name')->toSql());
     }
 
+    public function test_discovery_drops_unreferenced_ctes_and_bindings_but_keeps_current_actor_guards(): void
+    {
+        $compiler = new AssistantAclQueryCompiler(1, 1);
+        $compiler->register('unrelated', Project::query()->where('name', str_repeat('unused', 10000)), ['id']);
+        $query = Project::query()->where('organization_id', 1)->select('projects.id');
+        $finished = $compiler->finish($query)->distinct();
+
+        self::assertStringNotContainsString('AS MATERIALIZED', $finished->toSql());
+        self::assertLessThan(1000, strlen($finished->toSql()));
+        self::assertSame([1, 1, true, 1, 1, 1, true], $finished->getBindings());
+        self::assertStringContainsString('"current_organization_id" = ?', $finished->toSql());
+        self::assertStringContainsString('"organization_user"', $finished->toSql());
+        self::assertSame(substr_count($finished->toSql(), '?'), count($finished->getBindings()));
+    }
+
+    public function test_finish_keeps_transitive_cte_dependencies_in_binding_order(): void
+    {
+        $compiler = new AssistantAclQueryCompiler(1, 1);
+        $unused = $compiler->register('unused', Project::query()->where('organization_id', 999), ['id']);
+        $leaf = $compiler->register('leaf', Project::query()->where('organization_id', 1), ['id']);
+        $branch = $compiler->register('branch', Project::query()->whereIn('projects.id', $leaf->select('projects.id'))->where('name', 'visible'), ['id']);
+        $root = $compiler->register('root', Project::query()->whereIn('projects.id', $branch->select('projects.id')), ['id']);
+        $finished = $compiler->finish($root->where('projects.id', 11));
+
+        self::assertStringNotContainsString('"assistant_acl_0" AS MATERIALIZED', $finished->toSql());
+        self::assertSame(3, substr_count($finished->toSql(), 'AS MATERIALIZED'));
+        self::assertSame([1, 'visible', 11, 1, true, 1, 1, 1, true], $finished->getBindings());
+        self::assertSame(substr_count($finished->toSql(), '?'), count($finished->getBindings()));
+        self::assertSame(1, substr_count($compiler->finish($unused)->toSql(), 'AS MATERIALIZED'));
+    }
+
     public function test_outer_bound_projection_precedes_cte_and_filter_bindings(): void
     {
         $compiler = new AssistantAclQueryCompiler(1, 1);
         $compiler->register('project', Project::query()->where('organization_id', 1), ['id']);
         $query = Project::query()->selectRaw('? as probe', ['marker'])->where('projects.id', 11);
         $finished = $compiler->finish($query);
-        self::assertSame(9, substr_count($finished->toSql(), '?'));
-        self::assertSame(['marker', 1, 11, 1, true, 1, 1, 1, true], $finished->getBindings());
+        self::assertSame(8, substr_count($finished->toSql(), '?'));
+        self::assertSame(['marker', 11, 1, true, 1, 1, 1, true], $finished->getBindings());
         self::assertSame(['marker'], $finished->getQuery()->getRawBindings()['select']);
-        self::assertSame([1, 11], $finished->getQuery()->getRawBindings()['from']);
+        self::assertSame([11], $finished->getQuery()->getRawBindings()['from']);
         self::assertSame(['marker', 11], $query->getBindings());
     }
 

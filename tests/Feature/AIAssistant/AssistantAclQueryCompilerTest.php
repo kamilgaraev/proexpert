@@ -7,6 +7,7 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantAclQueryCompiler;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -47,6 +48,31 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $this->visible = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]));
         $this->hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]));
         $this->actor->assignedProjects()->attach($this->visible->id, ['is_active' => true, 'role' => 'member']);
+    }
+
+    public function test_pruned_discovery_executes_without_ctes_and_rechecks_membership(): void
+    {
+        $compiler = new AssistantAclQueryCompiler((int) $this->actor->id, (int) $this->organization->id);
+        $compiler->register('unrelated', Project::query()->where('name', 'irrelevant'), ['id']);
+        $query = $compiler->finish(Project::query()->whereKey($this->visible->id)->select('projects.id'))->distinct();
+
+        $this->assertStringNotContainsString('AS MATERIALIZED', $query->toSql());
+        $this->assertSame([$this->visible->id], (clone $query)->pluck('id')->all());
+        $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+        $this->assertSame([], $query->pluck('id')->all());
+    }
+
+    public function test_pruned_query_executes_transitive_ctes_with_original_bindings(): void
+    {
+        $compiler = new AssistantAclQueryCompiler((int) $this->actor->id, (int) $this->organization->id);
+        $compiler->register('unrelated', Project::query()->whereKey($this->hidden->id), ['id']);
+        $leaf = $compiler->register('leaf', Project::query()->where('organization_id', $this->organization->id)->whereKey($this->visible->id), ['id']);
+        $branch = $compiler->register('branch', Project::query()->whereIn('projects.id', $leaf->select('projects.id'))->where('is_archived', false), ['id']);
+        $root = Project::query()->whereIn('projects.id', $branch->select('projects.id'));
+        $query = $compiler->finish($root);
+
+        $this->assertSame(2, substr_count($query->toSql(), 'AS MATERIALIZED'));
+        $this->assertSame([$this->visible->id], $query->pluck('id')->all());
     }
 
     public function test_materialized_source_acl_filters_hidden_high_rank_rows_before_limit_and_rechecks_revocation(): void
