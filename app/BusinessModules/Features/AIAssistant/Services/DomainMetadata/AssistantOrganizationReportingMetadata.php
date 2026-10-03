@@ -236,18 +236,8 @@ final class AssistantOrganizationReportingMetadata
         }
         if (self::records()[$type][2] !== 'report_cards' || $type === 'report_delivery_card') { return; }
         $table = $query->getModel()->getTable();
-        $allowed = [];
         try {
-            $registry = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class);
-            $modules = app(\App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer::class);
-            $moduleDecision = $modules->decision($organizationId);
-            foreach ($registry->publishedCodes() as $code) {
-                $definition = $registry->published($code)->definition;
-                if (! $moduleDecision->allows($organizationId,$definition)) { continue; }
-                $permissions = $definition->permissionPolicy->viewPermissions;
-                if ($permissions === [] || array_filter($permissions,static fn (string $permission): bool => ! $authorization->canCurrent($actor,$permission,['organization_id' => $organizationId])) !== []) { continue; }
-                $allowed[] = $code;
-            }
+            $allowed = $policy->allowedReportCodes($actor, $organizationId, $authorization);
         } catch (\Throwable) {
             $query->whereRaw('1 = 0');
             return;

@@ -8,7 +8,6 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
-use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -318,7 +317,7 @@ final class AssistantOperationsBusinessMetadata
                 : $policy->entityQuery($actor, $organizationId, 'workforce_employee');
             if ($employee === null) { $query->whereRaw('1 = 0'); return; }
             $employeeTable = $employee->getModel()->getTable();
-            $accessibleProjects = app(UserProjectAccessService::class)->queryAccessibleProjects($actor, $organizationId)->select('projects.id');
+            $accessibleProjects = $policy->accessibleProjects($actor, $organizationId)->select('projects.id');
             $employee->whereNotExists(static function ($assignments) use ($organizationId, $employeeTable, $accessibleProjects): void {
                 $assignments->selectRaw('1')->from('workforce_employee_assignments as operations_subject_assignment')
                     ->whereColumn('operations_subject_assignment.employee_id', $employeeTable.'.id')

@@ -19,16 +19,17 @@ final class RagStatusBudget
     {
         return $this->connection->transaction(function () use ($compute): array {
             $previous = $this->connection->getDriverName() === 'pgsql'
-                ? $this->connection->selectOne("SELECT current_setting('statement_timeout') AS timeout, current_setting('jit') AS jit", [], false)
+                ? $this->connection->selectOne("SELECT current_setting('statement_timeout') AS timeout, current_setting('jit') AS jit, current_setting('work_mem') AS work_mem, (SELECT setting::int FROM pg_settings WHERE name = 'work_mem') AS work_mem_kb", [], false)
                 : null;
             $this->checkpoint();
             if ($previous !== null) {
                 $this->connection->statement('SET LOCAL jit = off');
+                if ((int) $previous->work_mem_kb < 16384) { $this->connection->statement("SET LOCAL work_mem = '16MB'"); }
             }
             $result = $compute($this->checkpoint(...));
             $this->checkpoint();
             if ($previous !== null) {
-                $this->connection->selectOne("SELECT set_config('statement_timeout', ?, true), set_config('jit', ?, true)", [$previous->timeout, $previous->jit], false);
+                $this->connection->selectOne("SELECT set_config('statement_timeout', ?, true), set_config('jit', ?, true), set_config('work_mem', ?, true)", [$previous->timeout, $previous->jit, $previous->work_mem], false);
             }
 
             return $result;

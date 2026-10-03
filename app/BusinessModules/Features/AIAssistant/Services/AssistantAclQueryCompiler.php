@@ -22,7 +22,7 @@ final class AssistantAclQueryCompiler
         return $this->decisions[$key];
     }
 
-    public function __construct(private readonly int $actorId, private readonly int $organizationId) {}
+    public function __construct(private readonly int $actorId, private readonly int $organizationId, private readonly bool $compact = false) {}
 
     public function accepts(int $actorId, int $organizationId): bool
     {
@@ -51,13 +51,18 @@ final class AssistantAclQueryCompiler
         $selected = $query->getQuery()->columns;
         $selectBindings = $query->getQuery()->getRawBindings()['select'];
         $materialized = clone $query;
+        if ($this->compact && $internalColumns !== [] && $selectBindings === []) {
+            $selected = array_map(static fn (string $column): string => $table.'.'.$column, $internalColumns);
+            $materialized->select($selected);
+        }
         if ($selected !== null) {
             foreach ($internalColumns as $column) {
                 $materialized->addSelect($table.'.'.$column);
             }
         }
         $base = $materialized->toBase();
-        $this->queries[] = ['name' => $name, 'sql' => $base->toSql(), 'bindings' => $base->getBindings(), 'materialize' => $materialize];
+        $this->queries[] = ['name' => $name, 'sql' => $base->toSql(), 'bindings' => $base->getBindings(), 'materialize' => $materialize,
+            'query' => $base, 'table' => $table, 'compactColumns' => $this->compact && $internalColumns !== [] && $selectBindings === [] ? $internalColumns : []];
         $reference = $model->newQueryWithoutScopes()->from($name.' as '.$table)->select($selected ?? [$table.'.*']);
         $reference->getQuery()->setBindings($selectBindings, 'select');
         $this->references[$type] = $reference;
@@ -94,9 +99,29 @@ final class AssistantAclQueryCompiler
         }
         $parts = [];
         $bindings = [];
+        $referencedColumns = [];
+        if ($this->compact) {
+            $fragments = [$sql];
+            foreach ($this->queries as $definition) {
+                if (! isset($required[$definition['name']])) { continue; }
+                $fragments[] = $definition['compactColumns'] === [] ? $definition['sql']
+                    : $definition['query']->cloneWithout(['columns'])->cloneWithoutBindings(['select'])->selectRaw('1')->toSql();
+            }
+            foreach ($fragments as $fragment) {
+                preg_match_all('/(?:"([a-zA-Z_][a-zA-Z_0-9]*)"|([a-zA-Z_][a-zA-Z_0-9]*))\.(?:"([a-zA-Z_][a-zA-Z_0-9]*)"|([a-zA-Z_][a-zA-Z_0-9]*))/', $fragment, $columns, PREG_SET_ORDER);
+                foreach ($columns as $column) {
+                    $referencedColumns[$column[1] ?: $column[2]][$column[3] ?: $column[4]] = true;
+                }
+            }
+        }
         foreach ($this->queries as $definition) {
             if (! isset($required[$definition['name']])) {
                 continue;
+            }
+            if ($definition['compactColumns'] !== []) {
+                $table = $definition['table'];
+                $columns = array_unique([...$definition['compactColumns'], ...array_keys($referencedColumns[$table] ?? [])]);
+                $definition['sql'] = (clone $definition['query'])->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns))->toSql();
             }
             $parts[] = '"'.$definition['name'].'" AS '.($definition['materialize'] ? 'MATERIALIZED' : 'NOT MATERIALIZED').' ('.$definition['sql'].')';
             array_push($bindings, ...$definition['bindings']);

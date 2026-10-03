@@ -254,7 +254,7 @@ final class AssistantLegalBusinessMetadata
     }
     private static function sourceQuery(User $actor,int $organizationId,string $entityType,AssistantDataAccessPolicy $policy): ?Builder
     {
-        if ($entityType === 'estimate' && ! app(AuthorizationService::class)->canCurrent($actor,'budget-estimates.finance.view',['organization_id'=>$organizationId])) { return null; }
+        if ($entityType === 'estimate' && ! $policy->canCurrentPermission($actor,$organizationId,'budget-estimates.finance.view')) { return null; }
         if ($entityType === 'supplementary_agreement') {
             $contracts = $policy->entityQuery($actor,$organizationId,'contract');
             return $contracts === null ? null : \App\Models\SupplementaryAgreement::query()->whereIn('contract_id',$contracts->select('contracts.id'));

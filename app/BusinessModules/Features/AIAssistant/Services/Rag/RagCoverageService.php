@@ -52,6 +52,21 @@ final class RagCoverageService
             })->groupBy('accessible_sources.source_type')
             ->selectRaw('accessible_sources.source_type, COUNT(DISTINCT accessible_sources.id) AS stored_count, COUNT(accessible_chunks.id) AS chunk_count, COUNT(DISTINCT CASE WHEN accessible_chunks.embedding IS NOT NULL THEN accessible_sources.id END) AS indexed_count');
         if ($countsOnly) {
+            $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
+                ->leftJoinSub(DB::table('ai_rag_chunks')->where('organization_id', $organizationId)
+                    ->groupBy('source_id', 'project_id')->selectRaw('source_id, project_id, COUNT(*) AS chunk_count'),
+                    'accessible_chunks', static function (JoinClause $join): void {
+                        $join->on('accessible_chunks.source_id', '=', 'accessible_sources.id')
+                            ->whereRaw('accessible_chunks.project_id IS NOT DISTINCT FROM accessible_sources.project_id');
+                    })
+                ->leftJoinSub(DB::table('ai_rag_chunks')->where('organization_id', $organizationId)->whereNotNull('embedding')
+                    ->groupBy('source_id', 'project_id')->select(['source_id', 'project_id']),
+                    'accessible_indexed_sources', static function (JoinClause $join): void {
+                        $join->on('accessible_indexed_sources.source_id', '=', 'accessible_sources.id')
+                            ->whereRaw('accessible_indexed_sources.project_id IS NOT DISTINCT FROM accessible_sources.project_id');
+                    })
+                ->groupBy('accessible_sources.source_type')
+                ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(SUM(accessible_chunks.chunk_count), 0) AS chunk_count, COUNT(accessible_indexed_sources.source_id) AS indexed_count');
             $scoped = $policy->aggregateSourceIdentities($sources, $actor, $organizationId,
                 ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'], $aggregate, $checkpoint);
             if ($scoped !== null) {
