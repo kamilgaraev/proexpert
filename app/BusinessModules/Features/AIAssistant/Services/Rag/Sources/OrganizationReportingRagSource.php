@@ -81,7 +81,7 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
             if ($parent['match_project'] ?? false) { $parentQuery->whereRaw($parentTable.'.project_id IS NOT DISTINCT FROM '.$table.'.project_id'); }
             foreach ($parent['matches'] ?? [] as $parentColumn => $childColumn) { $parentQuery->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn); }
             if (empty($parent['matches']) && ! ($parent['match_project'] ?? false)
-                && $type !== 'approved_estimate_norm_resource') {
+                && ! in_array($type, ['approved_estimate_norm_resource', 'approved_estimate_resource_price'], true)) {
                 $parentQuery->select($parentTable.'.'.($parent['key'] ?? 'id'));
                 $query->where(static function (Builder $scope) use ($column,$parent,$parentQuery,$table): void {
                     if ($parent['nullable']) { $scope->whereNull($table.'.'.$column)->orWhereIn($table.'.'.$column, $parentQuery); }
@@ -92,6 +92,11 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
             $parentQuery->whereColumn($parentTable.'.'.($parent['key'] ?? 'id'), $table.'.'.$column)->selectRaw('1');
             if ($type === 'approved_estimate_norm_resource' && $column === 'estimate_norm_id') {
                 $query->whereRaw('(SELECT EXISTS ('.$parentQuery->toSql().'))', $parentQuery->getBindings());
+                continue;
+            }
+            if ($type === 'approved_estimate_resource_price' && $column === 'construction_resource_id') {
+                $query->where(static fn (Builder $scope): Builder => $scope->whereNull($table.'.'.$column)
+                    ->orWhereRaw('(SELECT EXISTS ('.$parentQuery->toSql().'))', $parentQuery->getBindings()));
                 continue;
             }
             $query->where(static function (Builder $scope) use ($column,$parent,$parentQuery,$table): void {
