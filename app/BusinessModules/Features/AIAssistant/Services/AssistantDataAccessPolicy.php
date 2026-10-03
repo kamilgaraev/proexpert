@@ -494,28 +494,27 @@ final class AssistantDataAccessPolicy
             }
         }
         if ($splitIdentities) {
-            $identities = [];
+            $union = null;
             foreach ($this->entities() as $entityType => $definition) {
-                if (isset($sourceIdentities[$entityType][$definition[0]])) {
-                    $identities[] = [$definition[0], $entityType];
-                }
+                if (! isset($sourceIdentities[$entityType][$definition[0]])
+                    || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { continue; }
+                $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $entityType) : null;
+                if ($entities === null) { continue; }
+                $branch = $entities->select([])->selectRaw('? AS source_type, ? AS entity_type, CAST('.$entities->getModel()->getQualifiedKeyName().' AS TEXT) AS entity_id',
+                    [$definition[0], $entityType])->toBase();
+                if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
             }
             if (isset($sourceIdentities['assistant_document']['file_document'])) {
-                $identities[] = ['file_document', 'assistant_document'];
-            }
-            $union = null;
-            foreach ($identities as [$sourceType, $entityType]) {
-                $branch = $this->applySourceIdentityScope(clone $query, $user, $organizationId, $expectedProjection,
-                    $sourceType, $entityType, preparedCandidates: true)->toBase();
-                if ($union === null) {
-                    $union = $branch;
-                } else {
-                    $union->unionAll($branch);
-                }
+                $documentCandidates = AIAssistantDocument::query()->where('organization_id', $organizationId)
+                    ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
+                        (clone $query)->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')->select($table.'.entity_id'));
+                $branch = $this->accessibleDocuments($user, $organizationId, $documentCandidates)->select([])
+                    ->selectRaw('? AS source_type, ? AS entity_type, CAST(ai_assistant_documents.id AS TEXT) AS entity_id', ['file_document', 'assistant_document'])->toBase();
+                if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
             }
 
             return $union === null ? $query->whereRaw('1 = 0')
-                : $query->getModel()->newQueryWithoutScopes()->fromSub($union, $table)->select($table.'.*');
+                : $query->whereIn(\Illuminate\Support\Facades\DB::raw('('.$table.'.source_type, '.$table.'.entity_type, '.$table.'.entity_id)'), $union);
         }
         return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities, $query): void {
             $matched = false;
