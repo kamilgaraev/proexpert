@@ -16,12 +16,13 @@ final class RagStatusBudgetTest extends TestCase
     {
         $connection = DB::connection();
         $connection->statement('SET LOCAL statement_timeout = 4000');
+        $connection->statement('SET LOCAL jit = on');
         $level = $connection->transactionLevel();
 
         try {
-            (new RagStatusBudget($connection, 50))->run(function (callable $checkpoint) use ($connection): array {
+            (new RagStatusBudget($connection, 500))->run(function (callable $checkpoint) use ($connection): array {
                 $checkpoint();
-                $connection->select('SELECT pg_sleep(0.2)');
+                $connection->select('SELECT pg_sleep(1)');
 
                 return [];
             });
@@ -32,6 +33,7 @@ final class RagStatusBudgetTest extends TestCase
 
         $this->assertSame($level, $connection->transactionLevel());
         $this->assertSame('4s', $connection->selectOne("SELECT current_setting('statement_timeout') AS timeout")->timeout);
+        $this->assertSame('on', $connection->selectOne("SELECT current_setting('jit') AS jit")->jit);
         $this->assertSame(1, (int) $connection->selectOne('SELECT 1 AS value')->value);
     }
 
@@ -58,10 +60,11 @@ final class RagStatusBudgetTest extends TestCase
     {
         $connection = DB::connection();
         $connection->statement('SET LOCAL statement_timeout = 4000');
+        $connection->statement('SET LOCAL jit = on');
         try {
-            (new RagStatusBudget($connection, 40))->run(function (callable $checkpoint) use ($connection): array {
+            (new RagStatusBudget($connection, 200))->run(function (callable $checkpoint) use ($connection): array {
                 $connection->select('SELECT 1');
-                usleep(60_000);
+                usleep(250_000);
                 $checkpoint();
 
                 return [];
@@ -69,6 +72,28 @@ final class RagStatusBudgetTest extends TestCase
             $this->fail('Total budget must expire');
         } catch (RagStatusBudgetExceeded) {
             $this->assertSame('4s', $connection->selectOne("SELECT current_setting('statement_timeout') AS timeout")->timeout);
+            $this->assertSame('on', $connection->selectOne("SELECT current_setting('jit') AS jit")->jit);
+        }
+    }
+
+    public function test_short_status_queries_skip_jit_and_restore_the_callers_setting(): void
+    {
+        $connection = DB::connection();
+        $connection->statement('SET LOCAL jit_above_cost = 0');
+
+        foreach (['on', 'off'] as $previous) {
+            $connection->statement('SET LOCAL jit = '.$previous);
+            $result = (new RagStatusBudget($connection, 500))->run(function (callable $checkpoint) use ($connection): array {
+                $checkpoint();
+                $this->assertSame('off', $connection->selectOne("SELECT current_setting('jit') AS jit")->jit);
+                $plan = json_decode($connection->selectOne('EXPLAIN (FORMAT JSON) SELECT SUM(relpages) FROM pg_class')->{'QUERY PLAN'}, true);
+                $this->assertArrayNotHasKey('JIT', $plan[0]);
+
+                return ['source_count' => 1];
+            });
+
+            $this->assertSame(['source_count' => 1], $result);
+            $this->assertSame($previous, $connection->selectOne("SELECT current_setting('jit') AS jit")->jit);
         }
     }
 

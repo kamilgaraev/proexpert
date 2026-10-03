@@ -19,13 +19,16 @@ final class RagStatusBudget
     {
         return $this->connection->transaction(function () use ($compute): array {
             $previous = $this->connection->getDriverName() === 'pgsql'
-                ? $this->connection->selectOne("SELECT current_setting('statement_timeout') AS timeout", [], false)->timeout
+                ? $this->connection->selectOne("SELECT current_setting('statement_timeout') AS timeout, current_setting('jit') AS jit", [], false)
                 : null;
             $this->checkpoint();
+            if ($previous !== null) {
+                $this->connection->statement('SET LOCAL jit = off');
+            }
             $result = $compute($this->checkpoint(...));
             $this->checkpoint();
             if ($previous !== null) {
-                $this->connection->selectOne("SELECT set_config('statement_timeout', ?, true)", [$previous], false);
+                $this->connection->selectOne("SELECT set_config('statement_timeout', ?, true), set_config('jit', ?, true)", [$previous->timeout, $previous->jit], false);
             }
 
             return $result;
