@@ -56,7 +56,13 @@ final readonly class MobileDesignManagementService
     {
         $projectId = (int) $filters['project_id'];
         $this->access->project($actor, $organizationId, $projectId);
-        $query = $this->versionsQuery($organizationId, $projectId)->with(['artifact', 'derivatives' => fn ($derivatives) => $derivatives->where('organization_id', $organizationId)->where('project_id', $projectId)]);
+        $query = $this->versionsQuery($organizationId, $projectId)
+            ->select(['id', 'artifact_id', 'project_id', 'title', 'version_number', 'revision', 'is_current', 'status'])
+            ->with(['artifact:id,package_id,title', 'derivatives' => fn ($derivatives) => $derivatives
+                ->where('organization_id', $organizationId)->where('project_id', $projectId)
+                ->where('viewer_provider', 'thatopen')->where('derivative_format', 'thatopen_frag')
+                ->select(['id', 'version_id', 'viewer_provider', 'derivative_format', 'status', 'progress_percent', 'processing_stage'])
+                ->selectRaw("jsonb_build_object('converter_version', metadata->'converter_version') AS metadata")]);
         $search = trim((string) ($filters['search'] ?? ''));
         if ($search !== '') {
             $pattern = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search).'%';
