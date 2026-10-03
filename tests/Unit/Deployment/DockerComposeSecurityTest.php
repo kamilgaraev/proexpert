@@ -6,9 +6,19 @@ namespace Tests\Unit\Deployment;
 
 use App\Enums\Billing\PaymentProviderMode;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Yaml\Yaml;
 
 final class DockerComposeSecurityTest extends TestCase
 {
+    public function test_scheduler_uses_an_init_process_to_reap_background_tasks(): void
+    {
+        $compose = Yaml::parseFile(dirname(__DIR__, 3).'/docker-compose.yml');
+        $scheduler = $compose['services']['scheduler'];
+
+        self::assertTrue($scheduler['init'] ?? false);
+        self::assertSame('php artisan schedule:work', $scheduler['command']);
+    }
+
     public function test_api_octane_port_is_bound_to_host_loopback(): void
     {
         $compose = file_get_contents(dirname(__DIR__, 3).'/docker-compose.yml');
