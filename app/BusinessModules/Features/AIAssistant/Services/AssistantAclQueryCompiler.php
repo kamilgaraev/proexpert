@@ -75,22 +75,37 @@ final class AssistantAclQueryCompiler
         if ($this->queries === []) {
             return $query;
         }
-        $parts = [];
-        $bindings = [];
-        foreach ($this->queries as $definition) {
-            $parts[] = '"'.$definition['name'].'" AS MATERIALIZED ('.$definition['sql'].')';
-            array_push($bindings, ...$definition['bindings']);
-        }
         $base = $query->toBase();
         $selected = $base->columns;
         $selectBindings = $base->getRawBindings()['select'];
         $base = clone $base;
         $base->select($query->getModel()->getTable().'.*');
+        $sql = $base->toSql();
+        preg_match_all('/\bassistant_acl_\d+\b/', $sql, $matches);
+        $required = array_fill_keys($matches[0], true);
+        foreach (array_reverse($this->queries) as $definition) {
+            if (! isset($required[$definition['name']])) {
+                continue;
+            }
+            preg_match_all('/\bassistant_acl_\d+\b/', $definition['sql'], $dependencies);
+            foreach ($dependencies[0] as $dependency) {
+                $required[$dependency] = true;
+            }
+        }
+        $parts = [];
+        $bindings = [];
+        foreach ($this->queries as $definition) {
+            if (! isset($required[$definition['name']])) {
+                continue;
+            }
+            $parts[] = '"'.$definition['name'].'" AS MATERIALIZED ('.$definition['sql'].')';
+            array_push($bindings, ...$definition['bindings']);
+        }
         array_push($bindings, ...$base->getBindings());
         $model = $query->getModel();
 
         $finished = $model->newQueryWithoutScopes()
-            ->fromRaw('(WITH '.implode(', ', $parts).' '.$base->toSql().') as "'.$model->getTable().'"', $bindings)
+            ->fromRaw('('.($parts === [] ? '' : 'WITH '.implode(', ', $parts).' ').$sql.') as "'.$model->getTable().'"', $bindings)
             ->select($selected ?? [$model->getTable().'.*'])
             ->setEagerLoads($query->getEagerLoads());
         $finished->getQuery()->setBindings($selectBindings, 'select');

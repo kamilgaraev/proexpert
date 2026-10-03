@@ -443,7 +443,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $proofSelectQueries = 0;
         $schemaMetadataQueries = 0;
         $queryCategories = [];
-        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries, &$schemaMetadataQueries, &$queryCategories): void {
+        $documentDiscoverySql = [];
+        DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries, &$schemaMetadataQueries, &$queryCategories, &$documentDiscoverySql): void {
             $queries++;
             $sql = strtolower($query->sql);
             $category = match (true) {
@@ -468,6 +469,9 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             if (str_contains($sql, 'from "ai_rag_sources"') && str_contains($sql, '"ai_rag_sources"."id" in')) {
                 $proofSelectQueries++;
             }
+            if (str_contains($sql, 'select distinct "parent_entity_type"')) {
+                $documentDiscoverySql[] = $query->sql;
+            }
         });
         $status = $service->status($organization->id, $actor);
 
@@ -476,6 +480,11 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertSame(1, $identityScopeQueries, 'Status proof validation must compile the complete source identity ACL once.');
         $this->assertSame(0, $proofSelectQueries, 'Current counts must not select cached identity proofs.');
         $this->assertSame(1, $schemaMetadataQueries, 'Status proof validation must prefetch policy schema metadata in one query.');
+        $this->assertNotEmpty($documentDiscoverySql);
+        foreach ($documentDiscoverySql as $sql) {
+            $this->assertStringNotContainsString('from "contracts"', $sql);
+            $this->assertLessThan(5000, strlen($sql));
+        }
         $timeoutQueries = $queryCategories['timeout_setting'] ?? 0;
         $this->assertLessThanOrEqual(45, $queries - $timeoutQueries, 'Current status read queries: '.json_encode($queryCategories));
         $this->assertLessThanOrEqual(20, $timeoutQueries, 'Deadline checkpoints must stay bounded for repeated identity parts.');

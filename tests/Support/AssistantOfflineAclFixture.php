@@ -24,6 +24,12 @@ final class AssistantOfflineAclFixture
             {
                 $this->fake++;
                 if (str_contains($q,'authorization_contexts')) { return []; }
+                if (str_contains($q,'candidate_reports.candidate_refs')) {
+                    return array_map(static fn (string $type): object => (object) ['entity_type' => $type], array_keys(P::entityDefinitions()));
+                }
+                if (str_contains($q,'distinct') && str_contains($q,'from "ai_assistant_documents"') && str_contains($q,'"parent_entity_type"')) {
+                    return [(object)['parent_entity_type'=>'project']];
+                }
                 if (str_contains($q,'from "ai_rag_sources"') || str_contains($q,'from "ai_rag_expected_sources"')) {
                     if (str_contains($q,'distinct') && str_contains($q,'"source_type"') && str_contains($q,'"entity_type"')) {
                         $identities=[];
@@ -34,9 +40,6 @@ final class AssistantOfflineAclFixture
                         return $identities;
                     }
                 }
-                if (str_contains($q,'distinct') && str_contains($q,'from "ai_assistant_documents"') && str_contains($q,'"parent_entity_type"')) {
-                    return [(object)['parent_entity_type'=>'project']];
-                }
                 if (str_contains($q,'distinct') && str_contains($q,'from "files"') && str_contains($q,'"fileable_type"')) {
                     return [(object)['fileable_type'=>\App\Models\Project::class]];
                 }
@@ -44,7 +47,7 @@ final class AssistantOfflineAclFixture
             }
         };
         $dr=new \Illuminate\Database\ConnectionResolver(['offline'=>$c]);$dr->setDefaultConnection('offline');\Illuminate\Database\Eloquent\Model::setConnectionResolver($dr);
-        $a->instance('db',new class($c){function __construct(private $c){}function connection($n=null){return $this->c;}function table($n){return $this->c->table($n);}function raw($n){return new \Illuminate\Database\Query\Expression($n);}});
+        $a->instance('db',new class($c){function __construct(private $c){}function connection($n=null){return $this->c;}function table($n){return $this->c->table($n);}function query(){return $this->c->query();}function raw($n){return new \Illuminate\Database\Query\Expression($n);}});
         $cols=[];foreach(P::entityDefinitions()as$t=>$d){$m=new $d[1];$cols[$m->getTable()]=array_values(array_unique([...$m->getFillable(),...array_keys($m->getCasts()),...(R::values('safeSelectColumns')[$t]??[]),'id','organization_id']));}
         $a->instance('db.schema',new class($cols){function __construct(private $cols){}function hasColumn($t,$c){return true;}function getColumnListing($t){return $this->cols[$t]??['id','organization_id'];}});
         $au=Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);$au->shouldReceive('canCurrent')->andReturn(true);$au->shouldReceive('forCurrentChecks')->andReturnSelf();$au->shouldReceive('getUserRoles')->andReturn(collect());$a->instance(\App\Domain\Authorization\Services\AuthorizationService::class,$au);
