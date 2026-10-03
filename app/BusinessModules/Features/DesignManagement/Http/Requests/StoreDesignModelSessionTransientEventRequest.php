@@ -21,8 +21,8 @@ final class StoreDesignModelSessionTransientEventRequest extends FormRequest
 
         return [
             'schema_version' => ['sometimes', 'integer', 'in:2'],
-            'client_id' => [$versioned ? 'required' : 'sometimes', 'string', 'max:100', 'regex:/^[A-Za-z0-9_-]+$/'],
-            'sequence' => [$versioned ? 'required' : 'sometimes', 'integer', 'min:0', 'max:9007199254740991'],
+            'client_id' => [$versioned ? 'required' : 'missing', 'string', 'max:100', 'regex:/^(?!legacy-)[A-Za-z0-9_-]+$/'],
+            'sequence' => [$versioned ? 'required' : 'missing', 'integer', 'min:0', 'max:9007199254740991'],
             'type' => ['required', 'string', 'in:cursor,select,camera,view,heartbeat,leave'],
             'payload' => ['present', 'nullable', 'array', 'max:7'],
         ];

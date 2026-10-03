@@ -11,6 +11,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelSess
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSession;
+use App\BusinessModules\Features\DesignManagement\Models\DesignModelSessionEventOrder;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSet;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSetRevision;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
@@ -22,10 +23,13 @@ use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use DomainException;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
 use Tests\TestCase;
 
 final class DesignModelSessionStateTest extends TestCase
@@ -84,6 +88,156 @@ final class DesignModelSessionStateTest extends TestCase
         Event::assertDispatchedTimes(DesignModelSessionTransientEvent::class, 3);
     }
 
+    public function test_leave_order_survives_live_expiry_and_preserves_other_clients(): void
+    {
+        self::assertNotNull($this->relay('heartbeat', 4, null, 'desktop'));
+        self::assertNotNull($this->relay('select', 2, ['model_version_id' => $this->version->id, 'element_id' => 12], 'desktop'));
+        self::assertNotNull($this->relay('leave', 8, null, 'desktop'));
+        self::assertSame([], $this->participants());
+        $this->travel(121)->seconds();
+        self::assertNull($this->relay('cursor', 6, ['x' => 1, 'y' => 2, 'z' => 3], 'desktop'));
+        self::assertNull($this->relay('heartbeat', 7, null, 'desktop'));
+        self::assertSame([], $this->participants());
+
+        self::assertNotNull($this->relay('cursor', 9, ['x' => 1, 'y' => 2, 'z' => 3], 'desktop'));
+        self::assertNotNull($this->relay('cursor', 6, ['x' => 3, 'y' => 2, 'z' => 1], 'mobile'));
+        self::assertNull($this->relay('leave', 8, null, 'desktop'));
+        $participants = collect($this->participants())->keyBy('client_id');
+        self::assertCount(2, $participants);
+        self::assertSame(9, $participants['desktop']['max_sequence']);
+        self::assertSame(6, $participants['mobile']['max_sequence']);
+
+        $order = DesignModelSessionEventOrder::query()->where('session_id', $this->session->id)
+            ->where('client_id', 'desktop')->firstOrFail();
+        self::assertSame((int) $this->session->organization_id, (int) $order->organization_id);
+        self::assertSame((int) $this->session->model_set_revision_id, (int) $order->model_set_revision_id);
+        self::assertSame((int) $this->actor->id, (int) $order->user_id);
+        self::assertSame(9, $order->max_sequence);
+        self::assertSame(8, $order->leave_sequence);
+        foreach (['heartbeat' => 4, 'select' => 2, 'leave' => 8, 'cursor' => 9] as $type => $sequence) {
+            self::assertSame($sequence, $order->sequences[$type]);
+        }
+
+        self::assertNotNull($this->relay('leave', 10, null, 'desktop'));
+        self::assertSame(['mobile'], array_column($this->participants(), 'client_id'));
+        $this->session->delete();
+        self::assertSame(0, DesignModelSessionEventOrder::query()->where('session_id', $this->session->id)->count());
+    }
+
+    public function test_ordering_ownership_survives_live_state_expiry(): void
+    {
+        self::assertNotNull($this->relay('heartbeat', 1, null, 'desktop'));
+        $this->travel(46)->seconds();
+        self::assertSame([], $this->participants());
+        $other = User::factory()->create(['current_organization_id' => $this->session->organization_id]);
+        Organization::query()->findOrFail($this->session->organization_id)->users()->attach($other->id, [
+            'is_owner' => true, 'is_active' => true, 'project_access_mode' => 'all_projects',
+        ]);
+        $service = app(DesignModelSessionStateService::class);
+        $this->assertInvalid(fn () => $service->relay((int) $this->session->organization_id, $other, $this->session->id, [
+            'schema_version' => '2', 'type' => 'heartbeat', 'sequence' => 2, 'client_id' => 'desktop', 'payload' => null,
+        ]));
+        $this->assertInvalid(fn () => $service->relay((int) $this->session->organization_id, $other, $this->session->id, [
+            'type' => 'heartbeat', 'client_id' => 'desktop', 'sequence' => 2, 'payload' => null,
+        ]));
+    }
+
+    public function test_cache_failure_rolls_back_ordering_and_allows_same_sequence_retry(): void
+    {
+        $store = new class extends ArrayStore
+        {
+            public bool $failNextClientPut = true;
+
+            public function put($key, $value, $seconds)
+            {
+                if ($this->failNextClientPut && str_contains($key, ':client:')) {
+                    $this->failNextClientPut = false;
+
+                    throw new RuntimeException('simulated_cache_failure');
+                }
+
+                return parent::put($key, $value, $seconds);
+            }
+        };
+        Cache::extend('fail-first-client-put', fn (): Repository => new Repository($store));
+        config(['cache.stores.fail-first-client-put' => ['driver' => 'fail-first-client-put'],
+            'design_management.session_cache_store' => 'fail-first-client-put']);
+
+        try {
+            $this->relay('heartbeat', 1, null);
+            self::fail('Expected cache failure.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('simulated_cache_failure', $exception->getMessage());
+        }
+        self::assertSame(0, DesignModelSessionEventOrder::query()->where('session_id', $this->session->id)->count());
+        self::assertNotNull($this->relay('heartbeat', 1, null));
+        self::assertNotNull($this->relay('cursor', 1, ['x' => 1, 'y' => 2, 'z' => 3]));
+        self::assertSame(1, DesignModelSessionEventOrder::query()->where('session_id', $this->session->id)->count());
+    }
+
+    public function test_real_legacy_wire_receives_positive_durable_sequences(): void
+    {
+        $service = app(DesignModelSessionStateService::class);
+        $relay = function (string $type, ?array $payload) use ($service): ?array {
+            $data = ['type' => $type, 'payload' => $payload];
+            $request = new StoreDesignModelSessionTransientEventRequest;
+            $request->replace($data);
+            $validator = Validator::make($data, $request->rules());
+            $request->withValidator($validator);
+            self::assertTrue($validator->passes(), $validator->errors()->toJson());
+
+            return $service->relay((int) $this->session->organization_id, $this->actor, $this->session->id,
+                $validator->validated());
+        };
+        $clientId = 'legacy-'.$this->actor->id;
+        $camera = $relay('camera', ['position' => [1, 2, 3], 'target' => [0, 0, 0]]);
+        self::assertSame(1, $camera['sequence']);
+        self::assertSame(2, $camera['schema_version']);
+        self::assertSame($clientId, $camera['client_id']);
+        $select = $relay('select', ['model_version_id' => $this->version->id, 'element_id' => 'legacy-guid']);
+        self::assertSame(2, $select['sequence']);
+        self::assertSame('legacy-guid', $select['payload']['element_id']);
+        self::assertSame(3, $relay('leave', null)['sequence']);
+        self::assertSame([], $this->participants());
+        $this->travel(121)->seconds();
+        self::assertSame(4, $relay('heartbeat', null)['sequence']);
+        self::assertSame(5, $relay('camera', ['position' => [1, 2, 3], 'target' => [0, 0, 0]])['sequence']);
+        self::assertSame([$clientId], array_column($this->participants(), 'client_id'));
+        $order = DesignModelSessionEventOrder::query()->where('session_id', $this->session->id)->firstOrFail();
+        self::assertSame((int) $this->actor->id, (int) $order->user_id);
+        self::assertSame(5, $order->max_sequence);
+        self::assertSame(3, $order->leave_sequence);
+    }
+
+    public function test_string_version_two_uses_durable_leave_barrier_after_live_expiry(): void
+    {
+        $service = app(DesignModelSessionStateService::class);
+        self::assertNotNull($this->relay('leave', 8, null));
+        $this->travel(121)->seconds();
+        $data = [
+            'schema_version' => '2', 'type' => 'cursor', 'sequence' => 6, 'client_id' => 'desktop',
+            'payload' => ['x' => 1, 'y' => 2, 'z' => 3],
+        ];
+        $request = new StoreDesignModelSessionTransientEventRequest;
+        $request->replace($data);
+        $validator = Validator::make($data, $request->rules());
+        $request->withValidator($validator);
+        self::assertTrue($validator->passes(), $validator->errors()->toJson());
+        self::assertSame('2', $validator->validated()['schema_version']);
+        self::assertNull($service->relay((int) $this->session->organization_id, $this->actor, $this->session->id, $validator->validated()));
+        self::assertSame([], $this->participants());
+        self::assertSame(8, DesignModelSessionEventOrder::query()->where('session_id', $this->session->id)->firstOrFail()->max_sequence);
+    }
+
+    public function test_version_two_cannot_claim_legacy_namespace_in_event_or_view_state(): void
+    {
+        $clientId = 'legacy-'.$this->actor->id;
+        $this->assertInvalid(fn () => $this->relay('heartbeat', 1, null, $clientId));
+        $service = app(DesignModelSessionStateService::class);
+        $this->assertInvalid(fn () => $service->storeViewState((int) $this->session->organization_id,
+            $this->actor, $this->session->id, ['client_id' => $clientId, 'sequence' => 1, 'view_state' => $this->viewState()]));
+    }
+
     public function test_snapshot_heartbeat_expiry_leave_and_cursor_clear(): void
     {
         $this->relay('cursor', 1, ['x' => 1, 'y' => 2, 'z' => 3]);
@@ -122,7 +276,7 @@ final class DesignModelSessionStateTest extends TestCase
         $this->relay('heartbeat', 1, null, 'desktop');
         $this->travel(30)->seconds();
         self::assertNotNull($service->viewState((int) $this->session->organization_id, $this->actor, $this->session->id, 'desktop', 2));
-        $this->relay('leave', 1, null, 'desktop');
+        $this->relay('leave', 7, null, 'desktop');
         self::assertNull($service->viewState((int) $this->session->organization_id, $this->actor, $this->session->id, 'desktop'));
     }
 
@@ -187,6 +341,7 @@ final class DesignModelSessionStateTest extends TestCase
     {
         self::assertTrue($this->validEvent(['type' => 'camera', 'payload' => ['position' => [1, 2, 3], 'target' => [0, 0, 0]]]));
         self::assertTrue($this->validEvent(['schema_version' => 2, 'client_id' => 'desktop', 'sequence' => 1, 'type' => 'cursor', 'payload' => null]));
+        self::assertTrue($this->validEvent(['schema_version' => '2', 'client_id' => 'desktop', 'sequence' => 1, 'type' => 'cursor', 'payload' => null]));
         self::assertTrue($this->validEvent(['type' => 'select', 'payload' => ['model_version_id' => null, 'element_id' => null]]));
         self::assertTrue($this->validEvent(['type' => 'select', 'payload' => ['model_version_id' => $this->version->id, 'element_id' => 'wall']]));
         self::assertTrue($this->validEvent(['schema_version' => 2, 'client_id' => 'desktop', 'sequence' => 1, 'type' => 'select', 'payload' => ['model_version_id' => $this->version->id, 'element_id' => 12]]));
@@ -194,6 +349,9 @@ final class DesignModelSessionStateTest extends TestCase
         self::assertFalse($this->validEvent(['schema_version' => 2, 'client_id' => 'desktop', 'sequence' => 1, 'type' => 'select', 'payload' => ['model_version_id' => $this->version->id, 'element_id' => 'wall']]));
         self::assertFalse($this->validEvent(['type' => 'cursor', 'payload' => ['x' => '1', 'y' => 2, 'z' => 3]]));
         self::assertFalse($this->validEvent(['schema_version' => 2, 'type' => 'camera', 'payload' => $this->camera()]));
+        self::assertFalse($this->validEvent(['type' => 'heartbeat', 'client_id' => 'desktop', 'payload' => null]));
+        self::assertFalse($this->validEvent(['type' => 'heartbeat', 'sequence' => 1, 'payload' => null]));
+        self::assertFalse($this->validEvent(['schema_version' => 2, 'client_id' => 'legacy-1', 'sequence' => 1, 'type' => 'heartbeat', 'payload' => null]));
         $state = $this->viewState();
         $request = new StoreDesignModelSessionViewStateRequest;
         $data = ['client_id' => 'desktop', 'sequence' => 1, 'view_state' => $state];
@@ -260,6 +418,16 @@ final class DesignModelSessionStateTest extends TestCase
             $operation();
             self::fail('Session access must be denied.');
         } catch (DomainException) {
+            self::assertTrue(true);
+        }
+    }
+
+    private function assertInvalid(callable $operation): void
+    {
+        try {
+            $operation();
+            self::fail('Invalid session event must be rejected.');
+        } catch (ValidationException) {
             self::assertTrue(true);
         }
     }
