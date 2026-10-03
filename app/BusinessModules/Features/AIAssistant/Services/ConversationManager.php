@@ -19,7 +19,7 @@ class ConversationManager
 {
     private readonly AssistantSourceReferenceGuard $references;
 
-    public function __construct(AssistantDataAccessPolicy $dataAccessPolicy)
+    public function __construct(private readonly AssistantDataAccessPolicy $dataAccessPolicy)
     {
         $this->references = new AssistantSourceReferenceGuard($dataAccessPolicy);
     }
@@ -112,17 +112,25 @@ class ConversationManager
             return collect();
         }
 
-        return $conversation->messages()->orderByDesc('created_at')->orderByDesc('id')->limit(max(1, min($limit, 100)))->get()
-            ->filter(fn (Message $message): bool => $this->canReadMessage($message, $conversation, $actor))->reverse()->values();
+        $messages = $conversation->messages()->orderByDesc('created_at')->orderByDesc('id')->limit(max(1, min($limit, 100)))->get();
+
+        return $this->visibleHistory($messages, $conversation, $actor);
     }
 
     public function getHistoryPage(Conversation $conversation, User $actor, int $perPage = 30, int $page = 1): LengthAwarePaginator
     {
         $this->assertAccessible($conversation, $actor);
         $result = $conversation->messages()->orderByDesc('created_at')->orderByDesc('id')->paginate(max(1, min($perPage, 100)), ['*'], 'page', max(1, $page));
-        $result->setCollection($result->getCollection()->filter(fn (Message $message): bool => $this->canReadMessage($message, $conversation, $actor))->reverse()->values());
+        $result->setCollection($this->visibleHistory($result->getCollection(), $conversation, $actor));
 
         return $result;
+    }
+
+    private function visibleHistory(Collection $messages, Conversation $conversation, User $actor): Collection
+    {
+        return $this->dataAccessPolicy->withCurrentChecks($actor, (int) $conversation->organization_id,
+            fn (): Collection => $messages->filter(fn (Message $message): bool => $this->canReadMessage($message, $conversation, $actor, fresh: false))->reverse()->values(),
+            fresh: true);
     }
 
     public function canReadMessage(Message $message, Conversation $conversation, User $actor, bool $fresh = true): bool

@@ -235,8 +235,10 @@ final readonly class MobileDesignManagementService
 
     private function versionActions(User $actor, int $organizationId, int $projectId): array
     {
-        return [$this->action('prepare_viewer', $this->access->can($actor, $organizationId, $projectId, 'design-management.models.edit')),
-            $this->action('create_issue', $this->access->can($actor, $organizationId, $projectId, 'design-management.review'))];
+        $permissions = $this->access->permissions($actor, $organizationId, $projectId, ['design-management.models.edit', 'design-management.review']);
+
+        return [$this->action('prepare_viewer', $permissions['design-management.models.edit']),
+            $this->action('create_issue', $permissions['design-management.review'])];
     }
 
     private function action(string $key, bool $enabled): array

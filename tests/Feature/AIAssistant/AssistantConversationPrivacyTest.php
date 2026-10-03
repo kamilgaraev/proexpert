@@ -122,6 +122,34 @@ final class AssistantConversationPrivacyTest extends TestCase
         $this->assertSame(array_fill(0, 30, null), array_column($nextRows, 'last_message_preview'));
     }
 
+    public function test_history_shares_current_checks_and_rechecks_sources_between_reads(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $this->app->instance(AIPermissionChecker::class, new AIPermissionChecker());
+        $project = Project::factory()->create(['organization_id' => $this->organization->id]);
+        $conversation = $this->conversation();
+        $this->share($conversation);
+        for ($i = 0; $i < 30; $i++) {
+            $this->manager->addMessage($conversation, 'assistant', 'Ответ '.$i, metadata: [
+                'validation_status' => 'verified', 'source_refs' => [$this->ref($project)],
+            ]);
+        }
+        $this->moduleReads = 0;
+        $this->assertCount(30, $this->manager->getHistoryPage($conversation, $this->viewer)->items());
+        $this->assertLessThanOrEqual(2, $this->moduleReads);
+        $this->moduleReads = 0;
+        $this->assertCount(30, $this->manager->getHistory($conversation, 30, $this->viewer));
+        $this->assertLessThanOrEqual(2, $this->moduleReads);
+
+        $this->denied[] = $this->viewer->id.':'.$project->id;
+        $this->assertCount(0, $this->manager->getHistoryPage($conversation, $this->viewer)->items());
+        $this->assertCount(0, $this->manager->getHistory($conversation, 30, $this->viewer));
+        DB::table('organization_user')->where('organization_id', $this->organization->id)->where('user_id', $this->viewer->id)->update(['is_active' => false]);
+        $this->assertCount(0, $this->manager->getHistory($conversation, 30, $this->viewer));
+        $this->expectException(RuntimeException::class);
+        $this->manager->getHistoryPage($conversation, $this->viewer);
+    }
+
     public function test_list_previews_recheck_sources_and_sharing_between_responses(): void
     {
         $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);

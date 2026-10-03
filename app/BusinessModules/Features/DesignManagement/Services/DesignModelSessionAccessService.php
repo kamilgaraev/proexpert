@@ -61,17 +61,38 @@ final readonly class DesignModelSessionAccessService
 
     public function canAccessProject(User $user, int $organizationId, int $projectId, string $permission = 'design-management.models.view'): bool
     {
+        return $this->hasProjectAccess($user, $organizationId, $projectId) && $this->authorization->can($user, $permission, [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+        ]);
+    }
+
+    public function projectPermissions(User $user, int $organizationId, int $projectId, array $permissions): array
+    {
+        if (! $this->hasProjectAccess($user, $organizationId, $projectId)) {
+            return array_fill_keys($permissions, false);
+        }
+        $authorization = $this->authorization->forCurrentChecks(true);
+        $result = [];
+        foreach ($permissions as $permission) {
+            $result[$permission] = $authorization->canCurrent($user, $permission, [
+                'organization_id' => $organizationId, 'project_id' => $projectId,
+            ]) && $authorization->canCurrent($user, $permission, [
+                'organization_id' => $organizationId, 'project_id' => $projectId, 'strict_project_scope' => true,
+            ]);
+        }
+
+        return $result;
+    }
+
+    private function hasProjectAccess(User $user, int $organizationId, int $projectId): bool
+    {
         if (! $user->belongsToOrganization($organizationId) || ! $this->accessController->hasModuleAccess($organizationId, 'design-management')) {
             return false;
         }
 
-        $projectMembership = $this->projectAccess->queryAccessibleProjects($user, $organizationId)
+        return $this->projectAccess->queryAccessibleProjects($user, $organizationId)
             ->where('projects.id', $projectId)
             ->exists();
-
-        return $projectMembership && $this->authorization->can($user, $permission, [
-            'organization_id' => $organizationId,
-            'project_id' => $projectId,
-        ]);
     }
 }

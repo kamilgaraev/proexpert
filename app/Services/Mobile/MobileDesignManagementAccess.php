@@ -35,6 +35,11 @@ final readonly class MobileDesignManagementAccess
             && $this->authorization->can($actor, $permission, ['organization_id' => $organizationId, 'project_id' => $projectId, 'strict_project_scope' => true]);
     }
 
+    public function permissions(User $actor, int $organizationId, int $projectId, array $permissions): array
+    {
+        return $this->access->projectPermissions($actor, $organizationId, $projectId, $permissions);
+    }
+
     public function version(User $actor, int $organizationId, int $versionId, string $permission = 'design-management.models.view'): DesignArtifactVersion
     {
         $version = DesignArtifactVersion::query()->where('organization_id', $organizationId)->where('file_format', 'ifc')

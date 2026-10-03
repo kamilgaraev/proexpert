@@ -133,6 +133,57 @@ final class MobileDesignManagementHttpContractTest extends TestCase
         $this->withHeaders($headers)->getJson($this->base().'/model-sets/'.$id.'/revisions/1/open')->assertOk()->assertJsonPath('data.models.0', $version->id);
     }
 
+    public function test_model_actions_check_project_access_once_and_recheck_revocation(): void
+    {
+        [$context, $project] = $this->fixture();
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => UserProjectAccessMode::ASSIGNED_PROJECTS->value]);
+        $access = app(\App\Services\Mobile\MobileDesignManagementAccess::class);
+        $permissions = ['design-management.models.edit', 'design-management.review'];
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $result = $access->permissions($context->user, $context->organization->id, $project->id, $permissions);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $this->assertSame(array_fill_keys($permissions, true), $result);
+        $projectQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "projects"') && str_contains($query['query'], 'exists'));
+        $this->assertCount(1, $projectQueries);
+        DB::table('project_user')->where('user_id', $context->user->id)->where('project_id', $project->id)->update(['is_active' => false]);
+        $this->assertSame(array_fill_keys($permissions, false), $access->permissions($context->user, $context->organization->id, $project->id, $permissions));
+    }
+
+    public function test_viewer_returns_signed_files_without_loading_unused_relations(): void
+    {
+        [$context, $project, $version] = $this->fixture();
+        $path = 'org-'.$context->organization->id.'/viewer/model.frag';
+        DesignModelDerivative::query()->create(['organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'version_id' => $version->id, 'created_by' => $context->user->id, 'viewer_provider' => 'thatopen',
+            'derivative_format' => 'thatopen_frag', 'derivative_file_path' => $path, 'status' => 'ready',
+            'metadata' => ['converter_version' => config('design_management.viewer_converter_version')]]);
+        $files = $this->mock(FileService::class);
+        $files->shouldReceive('temporaryUrl')->once()->with($version->source_file_path, 60, \Mockery::type(\App\Models\Organization::class))->andReturn('https://files.example.test/source');
+        $files->shouldReceive('temporaryUrl')->once()->with($path, 60, \Mockery::type(\App\Models\Organization::class))->andReturn('https://files.example.test/viewer');
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $this->withHeaders($context->mobileAuthHeaders())->getJson($this->base().'/model-versions/'.$version->id.'/viewer')
+                ->assertOk()->assertJsonPath('data.version.id', $version->id)
+                ->assertJsonPath('data.source.download_url', 'https://files.example.test/source')
+                ->assertJsonPath('data.derivative.download_url', 'https://files.example.test/viewer');
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $sql = implode("\n", array_column($queries, 'query'));
+        $this->assertStringNotContainsString('from "design_document_sheets"', $sql);
+        $this->assertStringNotContainsString('from "design_package_sections"', $sql);
+        $this->assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'from "design_model_derivatives"')));
+    }
+
     public function test_foreign_and_unassigned_versions_are_hidden(): void
     {
         [$context, , $version] = $this->fixture();

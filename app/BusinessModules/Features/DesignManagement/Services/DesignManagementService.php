@@ -341,7 +341,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
 
     public function viewerPayload(DesignArtifactVersion $version): array
     {
-        $version->loadMissing(self::versionRelations());
+        $version->loadMissing(['derivatives' => static fn ($query) => $query->forResponse()]);
 
         $organization = Organization::query()->find((int) $version->organization_id);
         $derivative = $version->derivatives
