@@ -160,6 +160,84 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertSame([], $source->scopedQuery('approved_estimate_norm_resource', 1, 1)->get()->all());
     }
 
+    public function test_resource_price_pagination_preserves_nullable_resources_and_dataset_and_regional_publication(): void
+    {
+        $source = new OrganizationReportingRagSource;
+        $published = [];
+        $stale = [];
+        $finishedAt = now()->startOfSecond();
+        foreach (['fsnb_2022', 'fsbc', 'fgis_labor_prices'] as $type) {
+            foreach (['old', 'current-tie', 'current', 'unfinished', 'errors', 'empty'] as $version) {
+                $dataset = DB::table('estimate_dataset_versions')->insertGetId([
+                    'source_type' => $type, 'version_key' => 'price-'.$version, 'bucket' => 'testing', 'prefix' => 'prices', 'status' => 'parsed',
+                    'finished_at' => $version === 'unfinished' ? null : $finishedAt->copy()->addDays($version === 'old' ? -1 : (in_array($version, ['current-tie', 'current'], true) ? 0 : 1)),
+                    'rows_imported' => $version === 'empty' ? 0 : 100, 'errors_count' => $version === 'errors' ? 1 : 0,
+                ]);
+                $resource = DB::table('construction_resources')->insertGetId(['dataset_version_id' => $dataset, 'ksr_code' => 'price-'.$version, 'name' => 'Ресурс', 'resource_type' => 'material']);
+                if ($version === 'current') { $published[$type] = ['dataset' => $dataset, 'resource' => $resource]; }
+                else { $stale[] = ['dataset' => $dataset, 'resource' => $resource]; }
+            }
+        }
+        $priceNumber = 0;
+        $insertPrice = static function (array $attributes = []) use ($published, &$priceNumber): int {
+            return DB::table('estimate_resource_prices')->insertGetId([
+                'dataset_version_id' => $published['fsnb_2022']['dataset'], 'construction_resource_id' => null,
+                'resource_code' => 'price-'.++$priceNumber, 'base_price' => 10, 'price_type' => 'material', ...$attributes,
+            ]);
+        };
+        $expected = [];
+        $resources = [null, ...array_column($published, 'resource')];
+        $datasets = array_column($published, 'dataset');
+        for ($n = 0; $n < 65; $n++) {
+            $insertPrice(['construction_resource_id' => $stale[$n % count($stale)]['resource']]);
+            $insertPrice(['dataset_version_id' => $stale[$n % count($stale)]['dataset']]);
+            $expected[] = $insertPrice(['dataset_version_id' => $datasets[$n % count($datasets)], 'construction_resource_id' => $resources[$n % count($resources)]]);
+        }
+        foreach ([null, 0, -1] as $basePrice) { $insertPrice(['base_price' => $basePrice]); }
+        $regions = [];
+        $zones = [];
+        foreach ([true, false] as $n => $supported) {
+            $regions[] = DB::table('estimate_regions')->insertGetId(['code' => 'price-'.$n, 'name' => 'Регион '.$n, 'fgiscs_subject_id' => 10001 + $n, 'is_supported' => $supported]);
+            $zones[] = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $regions[$n], 'name' => 'Зона '.$n, 'fgiscs_price_zone_id' => 10001 + $n]);
+        }
+        $periods = [];
+        foreach ([1, 2] as $quarter) {
+            $periods[] = DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => 10000 + $quarter, 'name' => 'Период '.$quarter, 'year' => 2091, 'quarter' => $quarter]);
+        }
+        $versions = [];
+        foreach (['active', 'unactivated', 'draft', 'unsupported'] as $status) {
+            $scope = $status === 'unsupported' ? 1 : 0;
+            $versions[$status] = DB::table('estimate_regional_price_versions')->insertGetId([
+                'source' => 'testing', 'region_id' => $regions[$scope], 'price_zone_id' => $zones[$scope],
+                'period_id' => $periods[0], 'version_key' => $status, 'status' => 'draft',
+            ]);
+            $attributes = ['dataset_version_id' => $stale[0]['dataset'], 'regional_price_version_id' => $versions[$status],
+                'region_id' => $regions[$scope], 'price_zone_id' => $zones[$scope], 'period_id' => $periods[0]];
+            foreach ([null, $published['fsbc']['resource'], $stale[0]['resource']] as $resource) {
+                $id = $insertPrice([...$attributes, 'construction_resource_id' => $resource]);
+                if ($status === 'active' && $resource !== $stale[0]['resource']) { $expected[] = $id; }
+            }
+            if ($status === 'active') {
+                foreach (['region_id' => $regions[1], 'price_zone_id' => $zones[1], 'period_id' => $periods[1]] as $dimension => $value) {
+                    $insertPrice([...$attributes, $dimension => $value]);
+                }
+            }
+        }
+        DB::table('estimate_regional_price_versions')->whereIn('id', [$versions['active'], $versions['unactivated'], $versions['unsupported']])->update(['status' => 'active']);
+        foreach (['active' => 0, 'unsupported' => 1] as $status => $scope) {
+            DB::table('estimate_regional_price_activations')->insert(['region_id' => $regions[$scope], 'price_zone_id' => $zones[$scope], 'active_version_id' => $versions[$status], 'activated_at' => now(), 'activation_reason' => 'testing']);
+        }
+        $query = $source->scopedQuery('approved_estimate_resource_price', 1);
+        DB::enableQueryLog();
+        try {
+            self::assertSame($expected, $query->lazyById(50)->pluck('id')->all());
+            self::assertCount(2, DB::getQueryLog());
+        } finally { DB::disableQueryLog(); DB::flushQueryLog(); }
+        self::assertSame($expected, $source->scopedQuery('approved_estimate_resource_price', 2)->lazyById(50)->pluck('id')->all());
+        self::assertSame([], $source->scopedQuery('approved_estimate_resource_price', 0)->get()->all());
+        self::assertSame([], $source->scopedQuery('approved_estimate_resource_price', 1, 1)->get()->all());
+    }
+
     public function test_saved_report_is_private_to_current_owner_before_limit_and_after_role_revoke(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(),'slug'));

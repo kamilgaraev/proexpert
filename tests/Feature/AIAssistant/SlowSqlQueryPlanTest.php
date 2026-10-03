@@ -17,6 +17,33 @@ use Tests\TestCase;
 
 final class SlowSqlQueryPlanTest extends TestCase
 {
+    public function test_resource_price_pages_do_not_materialize_the_published_resource_catalog(): void
+    {
+        $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fsnb_2022', 'version_key' => 'price-plan', 'bucket' => 'testing', 'prefix' => 'prices', 'status' => 'parsed', 'rows_imported' => 20000, 'finished_at' => now()]);
+        DB::statement("INSERT INTO construction_resources (dataset_version_id, ksr_code, name, resource_type) SELECT ?, 'price-resource-' || n, 'Ресурс ' || n, 'material' FROM generate_series(1, 20000) n", [$dataset]);
+        DB::statement("INSERT INTO estimate_resource_prices (dataset_version_id, construction_resource_id, resource_code, base_price, price_type) SELECT ?, id, ksr_code, 10, 'material' FROM construction_resources", [$dataset]);
+        DB::statement('ANALYZE construction_resources');
+        DB::statement('ANALYZE estimate_resource_prices');
+        DB::statement("SET LOCAL work_mem = '64kB'");
+        $query = (new OrganizationReportingRagSource)->scopedQuery('approved_estimate_resource_price', 1);
+        foreach ([0, 10000] as $cursor) {
+            $page = (clone $query)->where('estimate_resource_prices.id', '>', $cursor)->orderBy('id')->limit(50);
+            $this->assertCheapPlan($page);
+            $plan = json_decode(DB::select('EXPLAIN (FORMAT JSON) '.$page->toSql(), $page->getBindings())[0]->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
+            $nodes = [$plan['Plan']];
+            $resourceNodes = 0;
+            while ($nodes !== []) {
+                $node = array_pop($nodes);
+                if (($node['Relation Name'] ?? null) === 'construction_resources') {
+                    $resourceNodes++;
+                    self::assertLessThanOrEqual(1, $node['Plan Rows'], 'Price parent check must not scan the resource catalog');
+                }
+                array_push($nodes, ...($node['Plans'] ?? []));
+            }
+            self::assertGreaterThan(0, $resourceNodes);
+        }
+    }
+
     public function test_norm_resource_pages_validate_parents_without_materializing_the_resource_catalog(): void
     {
         $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fsnb_2022', 'version_key' => 'resource-plan', 'bucket' => 'testing', 'prefix' => 'norms', 'status' => 'parsed', 'rows_imported' => 20000, 'finished_at' => now()]);
