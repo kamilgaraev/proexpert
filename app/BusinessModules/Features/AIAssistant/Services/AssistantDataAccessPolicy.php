@@ -350,8 +350,12 @@ final class AssistantDataAccessPolicy
             $registry = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class);
             $modules = app(\App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer::class)->decision($organizationId);
             $allowed = [];
-            foreach ($registry->publishedCodes() as $code) {
-                $definition = $registry->published($code)->definition;
+            $definitions = $registry instanceof \App\BusinessModules\Core\Reporting\Domain\Contracts\PublishedReportDefinitionCatalog ? $registry->publishedDefinitions() : [];
+            if (! $registry instanceof \App\BusinessModules\Core\Reporting\Domain\Contracts\PublishedReportDefinitionCatalog) {
+                foreach ($registry->publishedCodes() as $code) { $definitions[$code] = $registry->published($code); }
+            }
+            foreach ($definitions as $code => $published) {
+                $definition = $published->definition;
                 if (! $modules->allows($organizationId, $definition)) { continue; }
                 $permissions = $definition->permissionPolicy->viewPermissions;
                 if ($permissions === [] || array_filter($permissions, static fn (string $permission): bool => ! $authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) !== []) { continue; }

@@ -45,15 +45,19 @@ final class AssistantIndexStatusService
             throw new AuthorizationException;
         }
 
+        $phase = (object) ['value' => 'schema'];
+        $started = hrtime(true);
         try {
             $budget = new RagStatusBudget(DB::connection(), 2500);
             $result = $this->inRepeatableRead(fn (): array => $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks(
                 $actor,
                 $organizationId,
-                function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section): array {
+                function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase): array {
                     $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
                     $projectionProof = null;
-                    $coverage = $section === 'documents' ? [] : $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true);
+                    $coverage = $section === 'documents' ? [] : $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true,
+                        progress: static function (string $value) use ($phase): void { $phase->value = $value; });
+                    $phase->value = 'documents';
                     $documents = $section === 'sources' ? [] : $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
 
                     return array_merge($coverage, $documents, [
@@ -69,6 +73,10 @@ final class AssistantIndexStatusService
             if ($exception instanceof QueryException && ($exception->errorInfo[0] ?? null) !== '57014') {
                 throw $exception;
             }
+            \Illuminate\Support\Facades\Log::warning('assistant.rag_status_budget_exceeded', [
+                'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'section' => $section,
+                'phase' => $phase->value, 'elapsed_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
+            ]);
             $result = $this->unavailableStatus();
         }
 

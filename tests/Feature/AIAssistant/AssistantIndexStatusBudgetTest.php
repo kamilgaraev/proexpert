@@ -214,6 +214,10 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $actor->organizations()->attach($organization->id, ['is_active' => true]);
         $service = $this->service();
         Cache::put('ai-rag-status:'.$organization->id.':'.$actor->id.':lk', ['status' => ['source_count' => 987654]], 60);
+        $budgetContext = null;
+        \Illuminate\Support\Facades\Event::listen(\Illuminate\Log\Events\MessageLogged::class, static function ($event) use (&$budgetContext): void {
+            if ($event->message === 'assistant.rag_status_budget_exceeded') { $budgetContext = $event->context; }
+        });
         $expired = false;
         DB::listen(static function ($query) use (&$expired): void {
             if (! $expired && str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')) {
@@ -225,6 +229,10 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $status = (new RagIndexStatusResource($service->status($organization->id, $actor)))->toArray(new Request);
 
         $this->assertTrue($expired);
+        $this->assertSame('source_counts', $budgetContext['phase'] ?? null);
+        $this->assertSame($organization->id, $budgetContext['organization_id'] ?? null);
+        $this->assertSame($actor->id, $budgetContext['actor_id'] ?? null);
+        $this->assertGreaterThanOrEqual(2500, $budgetContext['elapsed_ms'] ?? 0);
         $this->assertFalse($status['status_available']);
         $this->assertNull($status['source_count']);
         $this->assertNull($status['chunk_count']);

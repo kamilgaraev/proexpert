@@ -6,7 +6,7 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Catalog;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\PublishedReportDefinitionCatalog;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
@@ -14,7 +14,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationFeatureMode
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 
-final readonly class DatabasePublishedReportDefinitionRegistry implements ReportDefinitionRegistry
+final readonly class DatabasePublishedReportDefinitionRegistry implements PublishedReportDefinitionCatalog
 {
     public function __construct(
         private ReportPublicationRegistry $publications,
@@ -49,6 +49,19 @@ final readonly class DatabasePublishedReportDefinitionRegistry implements Report
         }
 
         return $codes;
+    }
+
+    public function publishedDefinitions(): array
+    {
+        $definitions = [];
+        foreach ($this->publications->publishedCodes() as $code) {
+            try {
+                $definitions[$code] = $this->published($code);
+            } catch (ReportContractException) {
+            }
+        }
+
+        return $definitions;
     }
 
     public function manifestSha256(): Sha256Hash

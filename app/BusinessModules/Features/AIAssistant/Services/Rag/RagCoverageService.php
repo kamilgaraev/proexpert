@@ -23,7 +23,7 @@ final class RagCoverageService
 {
     public function __construct(private readonly RagSourceRegistry $registry, private readonly RagIndexer $indexer, private readonly ?AssistantDataAccessPolicy $access = null, private readonly ?RagExpectedSourceProjection $projection = null) {}
 
-    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, ?array &$projectionProof = null, bool $countsOnly = false): array
+    public function coverageForActor(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, ?array &$projectionProof = null, bool $countsOnly = false, ?callable $progress = null): array
     {
         $projectionProof = null;
         $guard = $checkDeadline ?? $checkpoint;
@@ -52,6 +52,7 @@ final class RagCoverageService
             })->groupBy('accessible_sources.source_type')
             ->selectRaw('accessible_sources.source_type, COUNT(DISTINCT accessible_sources.id) AS stored_count, COUNT(accessible_chunks.id) AS chunk_count, COUNT(DISTINCT CASE WHEN accessible_chunks.embedding IS NOT NULL THEN accessible_sources.id END) AS indexed_count');
         if ($countsOnly) {
+            $progress?->__invoke('source_acl');
             $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
                 ->leftJoinSub(DB::table('ai_rag_chunks')->where('organization_id', $organizationId)
                     ->groupBy('source_id', 'project_id')->selectRaw('source_id, project_id, COUNT(*) AS chunk_count'),
@@ -71,6 +72,7 @@ final class RagCoverageService
                 ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'], $aggregate, $checkpoint);
             if ($scoped !== null) {
                 if ($checkpoint !== null) { $checkpoint(); }
+                $progress?->__invoke('source_counts');
                 $counts = $scoped->get()->keyBy('source_type');
             }
         } else {
@@ -122,6 +124,7 @@ final class RagCoverageService
             if (! $countsOnly) { $projectionProof = ['projection_generation' => $snapshot['projection_generation']]; }
             $projection = $this->projection ?? new RagExpectedSourceProjection($this->indexer);
             $expectedProof = null;
+            $progress?->__invoke('expected_counts');
             $expectedCounts = $projection->actorCounts($organizationId, $actor, $policy, $allowedTypes, $snapshot['projection_generation'], $checkpoint, $expectedProof, collectProof: ! $countsOnly);
             if (! $countsOnly) { $projectionProof['expected'] = $expectedProof; }
             if ($key === $this->key($organizationId, null, null)) {
