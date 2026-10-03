@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
+use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionStateService;
 use BackedEnum;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -23,7 +24,7 @@ final class DesignModelSessionResource extends JsonResource
             'title' => $this->title,
             'models' => $revision?->version_ids ?? [],
             'model_versions' => $this->when(
-                $this->relationLoaded('modelVersions'),
+                $this->resource->relationLoaded('modelVersions'),
                 fn () => $this->modelVersions->map(static function (DesignArtifactVersion $version): array {
                     $derivativeStatus = $version->readyDerivative?->status;
 
@@ -43,6 +44,20 @@ final class DesignModelSessionResource extends JsonResource
             ),
             'transforms' => $revision?->transforms ?? [],
             'channel' => "design-model-session.{$this->id}",
+            'participants' => $this->whenLoaded('participants', fn () => $this->participants->values()),
+            'realtime' => [
+                'enabled' => config('broadcasting.default') === 'reverb',
+                'broadcaster' => 'reverb',
+                'key' => config('reverb.apps.apps.0.key'),
+                'host' => config('reverb.apps.apps.0.options.host'),
+                'port' => (int) config('reverb.apps.apps.0.options.port', 443),
+                'scheme' => config('reverb.apps.apps.0.options.scheme', 'https'),
+                'auth_endpoint' => '/api/v1/admin/broadcasting/auth',
+                'event' => 'design-model-session.transient',
+                'schema_version' => 2,
+                'participant_ttl_seconds' => DesignModelSessionStateService::TTL,
+                'heartbeat_interval_seconds' => DesignModelSessionStateService::HEARTBEAT_INTERVAL,
+            ],
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

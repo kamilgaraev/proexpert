@@ -94,14 +94,7 @@ final class DesignModelSetService
 
     public function sessionBootstrap(int $organizationId, User $user, int $sessionId): DesignModelSession
     {
-        if (! $this->sessionAccess->canJoin($user, $sessionId)) {
-            throw new DomainException(trans_message('design_bim.errors.session_access_denied'));
-        }
-
-        $session = DesignModelSession::query()
-            ->where('organization_id', $organizationId)
-            ->with('modelSetRevision')
-            ->findOrFail($sessionId);
+        $session = $this->sessionAccess->requireSession($user, $sessionId, $organizationId);
         $versionIds = array_values(array_unique(array_map('intval', $session->modelSetRevision->version_ids ?? [])));
         $versions = DesignArtifactVersion::query()
             ->where('organization_id', $organizationId)
@@ -112,6 +105,7 @@ final class DesignModelSetService
             ->sortBy(static fn (DesignArtifactVersion $version): int => array_search((int) $version->id, $versionIds, true))
             ->values();
         $session->setRelation('modelVersions', $versions);
+        $session->setRelation('participants', collect(app(DesignModelSessionStateService::class)->snapshot($session)));
 
         return $session;
     }

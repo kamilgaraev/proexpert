@@ -1,0 +1,200 @@
+{
+  "ifc_metadata": {
+    "coordination_matrix": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1
+    ],
+    "indexed_element_count": 120,
+    "units": [
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "LENGTHUNIT",
+        "name": "METRE",
+        "prefix": "MILLI"
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "LENGTHUNIT",
+        "name": "METRE",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "AREAUNIT",
+        "name": "SQUARE_METRE",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "VOLUMEUNIT",
+        "name": "CUBIC_METRE",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "PLANEANGLEUNIT",
+        "name": "RADIAN",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "MASSUNIT",
+        "name": "GRAM",
+        "prefix": "KILO"
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "TIMEUNIT",
+        "name": "SECOND",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "FREQUENCYUNIT",
+        "name": "HERTZ",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "THERMODYNAMICTEMPERATUREUNIT",
+        "name": "KELVIN",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "THERMODYNAMICTEMPERATUREUNIT",
+        "name": "DEGREE_CELSIUS",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "ELECTRICCURRENTUNIT",
+        "name": "AMPERE",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "ELECTRICVOLTAGEUNIT",
+        "name": "VOLT",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "POWERUNIT",
+        "name": "WATT",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "FORCEUNIT",
+        "name": "NEWTON",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "ILLUMINANCEUNIT",
+        "name": "LUX",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "LUMINOUSFLUXUNIT",
+        "name": "LUMEN",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "LUMINOUSINTENSITYUNIT",
+        "name": "CANDELA",
+        "prefix": null
+      },
+      {
+        "type": "IFCSIUNIT",
+        "unit_type": "PRESSUREUNIT",
+        "name": "PASCAL",
+        "prefix": null
+      },
+      {
+        "type": "IFCCONVERSIONBASEDUNIT",
+        "unit_type": "PLANEANGLEUNIT",
+        "name": "DEGREE",
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "MASSDENSITYUNIT",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "MOMENTOFINERTIAUNIT",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "THERMALTRANSMITTANCEUNIT",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "VOLUMETRICFLOWRATEUNIT",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "USERDEFINED",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "LINEARVELOCITYUNIT",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "USERDEFINED",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "LINEARFORCEUNIT",
+        "name": null,
+        "prefix": null
+      },
+      {
+        "type": "IFCDERIVEDUNIT",
+        "unit_type": "PLANARFORCEUNIT",
+        "name": null,
+        "prefix": null
+      }
+    ]
+  },
+  "profile": "ifc_properties_geometry_v2",
+  "runtime": {
+    "fragments": "3.4.5",
+    "web_ifc": "0.0.77",
+    "three": "0.184.0",
+    "node": "22.22.2"
+  }
+}

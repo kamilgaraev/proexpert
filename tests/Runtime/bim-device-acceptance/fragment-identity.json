@@ -1,0 +1,16 @@
+{
+  "fragments_version": "3.4.5",
+  "source_sha256": "db372f3f57796e2f572958c1c144bf3d8be7912493738636a2152cf18f08a14d",
+  "geometry_sha256": "51e67c50201c8f179c827d6b8920248b0d6d8697e9c0e022742a716aefca155c",
+  "properties_sha256": "35f4637f85697b8d010f2b0aa670120d3a7fd3fb7dae4a1e71bd20cfe3e93572",
+  "geometry_bytes": 44115,
+  "indexed_element_count": 120,
+  "fragment_local_ids_count": 121,
+  "fragment_item_count": 116,
+  "missing_sidecar_ids": 0,
+  "source_global_id_mismatches": 0,
+  "express_id": 2863,
+  "category": "IFCBEAM",
+  "wall_express_id": 12954,
+  "wall_category": "IFCWALLSTANDARDCASE"
+}

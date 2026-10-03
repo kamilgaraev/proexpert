@@ -13,9 +13,12 @@ use App\BusinessModules\Features\DesignManagement\Services\DesignManagementServi
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignIfcToFragmentsConverterContract;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConversionResult;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Project;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Mockery\MockInterface;
 use RuntimeException;
 use Tests\Support\AdminApiTestContext;
@@ -56,6 +59,7 @@ final class PrepareDesignModelViewerJobTest extends TestCase
                     return DesignViewerConversionResult::fromPayload([
                         'metrics' => [
                             'format' => 'thatopen_frag',
+                            'runtime' => ['fragments' => '3.4.5', 'web_ifc' => '0.0.77', 'three' => '0.184.0', 'node' => '22.0.0'],
                             'local_id_count' => 12,
                             'category_count' => 4,
                             'sample_count' => 24,
@@ -90,7 +94,20 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertSame('fragment binary', Storage::disk('s3')->get($derivative->derivative_file_path));
         $this->assertSame(strlen('IFC source'), $derivative->metadata['source_size_bytes']);
         $this->assertSame(strlen('fragment binary'), $derivative->metadata['derivative_size_bytes']);
-        $this->assertSame(5, $derivative->metadata['converter_version']);
+        $this->assertSame(DesignViewerConverter::version(), $derivative->metadata['converter_version']);
+        $offline = $derivative->metadata['offline_package'];
+        $this->assertSame($derivative->metadata['generation'], $offline['generation']);
+        $this->assertSame($derivative->derivative_file_path, $offline['geometry']['path']);
+        $this->assertSame(hash('sha256', 'fragment binary'), $offline['geometry']['sha256']);
+        $this->assertSame('3.4.5', $derivative->metadata['runtime']['fragments']);
+        $sidecar = Storage::disk('s3')->get($offline['properties']['path']);
+        $this->assertSame(strlen($sidecar), $offline['properties']['size']);
+        $this->assertSame(hash('sha256', $sidecar), $offline['properties']['sha256']);
+        $canonical = json_decode(trim($sidecar), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(42, $canonical['express_id']);
+        $this->assertSame(['BaseQuantities' => ['Length' => 5000]], $canonical['quantities']);
+        $this->assertSame(['Concrete'], $canonical['materials']);
+        $this->assertSame(['Structural'], $canonical['classifications']);
         $this->assertSame(1, $derivative->metadata['indexed_element_count']);
         $this->assertSame('LENGTHUNIT', $derivative->metadata['ifc_units'][0]['unit_type']);
         $element = DesignIfcModelElement::query()->where('version_id', $version->id)->where('express_id', 42)->firstOrFail();
@@ -137,6 +154,148 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         );
         $this->assertNotNull($derivative->processing_finished_at);
         $this->assertNull($derivative->derivative_file_path);
+    }
+
+    public function test_stale_queued_and_processing_jobs_are_dispatched_once_after_recovery(): void
+    {
+        $this->freezeTime();
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+
+        foreach (['queued', 'processing'] as $status) {
+            Bus::fake();
+            $derivative->refresh();
+            $derivative->forceFill([
+                'status' => $status,
+                'updated_at' => now()->subSeconds(8000),
+                'processing_started_at' => $status === 'processing' ? now()->subSeconds(8000) : null,
+            ])->save();
+            $this->assertTrue($derivative->refresh()->updated_at->lte(now()->subSeconds(8000)));
+
+            $recovered = $service->queuePreparation($version, (int) $context->user->id);
+            $service->queuePreparation($version, (int) $context->user->id);
+
+            $this->assertSame('queued', $recovered->status->value);
+            $this->assertNull($recovered->processing_started_at);
+            Bus::assertDispatchedTimes(PrepareDesignModelViewerJob::class, 1);
+        }
+    }
+
+    public function test_ready_fragment_without_sidecar_can_be_prepared_for_offline_use(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+        $derivative->forceFill(['status' => 'ready', 'metadata' => DesignViewerConverter::preparedMetadata()])->save();
+
+        $result = $this->app->make(DesignModelViewerPreparationService::class)->queuePreparation($version, (int) $context->user->id);
+
+        $this->assertSame('queued', $result->status->value);
+        Bus::assertDispatchedTimes(PrepareDesignModelViewerJob::class, 1);
+    }
+
+    public function test_active_converter_lock_prevents_stale_recovery_and_a_competing_converter(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+        $derivative->forceFill(['status' => 'processing', 'updated_at' => now()->subSeconds(8000)])->save();
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
+            $mock->shouldNotReceive('convert');
+        });
+
+        $lock = Cache::lock('design-management:viewer-preparation:'.$derivative->id, 8000);
+        $this->assertTrue($lock->get());
+        try {
+            $service = $this->app->make(DesignModelViewerPreparationService::class);
+            $result = $service->queuePreparation($version, (int) $context->user->id);
+            $service->processQueuedDerivative((int) $derivative->id);
+            $service->markJobFailed((int) $derivative->id, new RuntimeException('Older job timed out'));
+
+            $this->assertSame('processing', $result->status->value);
+            $this->assertSame('processing', $derivative->refresh()->status->value);
+            Bus::assertNotDispatched(PrepareDesignModelViewerJob::class);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function test_second_job_cannot_convert_while_the_first_converter_is_running(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        Storage::disk('s3')->put($version->source_file_path, 'IFC source');
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock) use ($derivative): void {
+            $mock->shouldReceive('convert')->once()->andReturnUsing(function () use ($derivative): never {
+                $this->app->make(DesignModelViewerPreparationService::class)->processQueuedDerivative((int) $derivative->id);
+                throw new RuntimeException('First converter completed its protected section');
+            });
+        });
+
+        $this->app->make(DesignModelViewerPreparationService::class)->processQueuedDerivative((int) $derivative->id);
+        $this->assertSame('failed', $derivative->refresh()->status->value);
+    }
+
+    public function test_superseded_job_cannot_convert_or_fail_the_recovered_generation(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+        $derivative->forceFill(['updated_at' => now()->subSeconds(8000), 'metadata' => ['generation' => 'older-generation']])->save();
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
+            $mock->shouldNotReceive('convert');
+        });
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $recovered = $service->queuePreparation($version, (int) $context->user->id);
+
+        $service->processQueuedDerivative((int) $derivative->id, 'older-generation');
+        $service->markJobFailed((int) $derivative->id, new RuntimeException('Older job failed'), 'older-generation');
+
+        $this->assertSame('queued', $derivative->refresh()->status->value);
+        $this->assertSame($recovered->metadata['generation'], $derivative->metadata['generation']);
+        $this->assertNotSame('older-generation', $derivative->metadata['generation']);
+    }
+
+    public function test_uploaded_sidecar_hash_mismatch_never_publishes_ready_package(): void
+    {
+        $this->fakeFileStorage(corruptSidecar: true);
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        Storage::disk('s3')->put($version->source_file_path, 'IFC source');
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('convert')->once()->andReturnUsing(static function (string $source, string $target): DesignViewerConversionResult {
+                file_put_contents($target, 'fragment binary');
+                file_put_contents($target.'.ifc-index.ndjson', '{"express_id":42,"properties":{},"quantities":{},"materials":[],"classifications":[]}'."\n");
+
+                return DesignViewerConversionResult::fromPayload(['metrics' => [
+                    'local_id_count' => 1, 'sample_count' => 1, 'representation_count' => 1,
+                    'bounding_box' => ['min' => ['x' => 0, 'y' => 0, 'z' => 0], 'max' => ['x' => 1, 'y' => 1, 'z' => 1]],
+                    'runtime' => ['fragments' => '3.4.5', 'web_ifc' => '0.0.77', 'three' => '0.184.0', 'node' => '22.0.0'],
+                ]]);
+            });
+        });
+
+        $this->app->make(DesignModelViewerPreparationService::class)->processQueuedDerivative((int) $derivative->id);
+
+        $this->assertSame('failed', $derivative->refresh()->status->value);
+        $this->assertNull($derivative->derivative_file_path);
+        $this->assertArrayNotHasKey('offline_package', $derivative->metadata);
     }
 
     public function test_job_marks_derivative_failed_when_converter_creates_empty_file(): void
@@ -213,15 +372,30 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         );
     }
 
-    private function fakeFileStorage(): void
+    private function fakeFileStorage(bool $corruptSidecar = false): void
     {
         Storage::fake('s3');
         $disk = Storage::disk('s3');
+        $serviceDisk = $disk;
+        if ($corruptSidecar) {
+            $serviceDisk = \Mockery::mock(\Illuminate\Filesystem\FilesystemAdapter::class);
+            $serviceDisk->shouldReceive('put')->andReturnUsing(static fn ($path, $contents, $options) => $disk->put($path, $contents, $options));
+            $serviceDisk->shouldReceive('readStream')->andReturnUsing(static function (string $path) use ($disk): mixed {
+                if (! str_ends_with($path, '/properties.ndjson')) {
+                    return $disk->readStream($path);
+                }
+                $stream = fopen('php://temp', 'w+b');
+                fwrite($stream, 'corrupted sidecar');
+                rewind($stream);
+
+                return $stream;
+            });
+        }
 
         $this->app->forgetInstance(DesignManagementService::class);
         $this->app->forgetInstance(DesignModelViewerPreparationService::class);
-        $this->mock(FileService::class, function (MockInterface $mock) use ($disk): void {
-            $mock->shouldReceive('disk')->andReturn($disk)->byDefault();
+        $this->mock(FileService::class, function (MockInterface $mock) use ($serviceDisk): void {
+            $mock->shouldReceive('disk')->andReturn($serviceDisk)->byDefault();
             $mock->shouldReceive('temporaryUrl')->andReturnUsing(
                 static fn (?string $path, int $minutes = 5, mixed $organization = null): ?string => $path
                     ? 'https://files.example.test/' . ltrim($path, '/')

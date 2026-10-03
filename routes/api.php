@@ -168,6 +168,7 @@ Route::prefix('v1/mobile')->name('api.v1.mobile.')->group(function () {
     require __DIR__.'/api/v1/mobile/companions.php';
     require __DIR__.'/api/v1/mobile/legal_archive.php';
     require __DIR__.'/api/v1/mobile/pto.php';
+    require __DIR__.'/api/v1/mobile/design_management.php';
     require __DIR__.'/api/v1/mobile/knowledge_hub.php';
     require __DIR__.'/api/v1/mobile/projects.php';
     require __DIR__.'/api/v1/mobile/warehouse.php';

@@ -21,6 +21,11 @@ class BroadcastServiceProvider extends ServiceProvider
             'middleware' => ['api', 'auth:api_landing', 'auth.jwt:api_landing', 'throttle:dashboard'],
         ]);
 
+        Broadcast::routes([
+            'prefix' => 'api/v1/mobile',
+            'middleware' => ['api', 'auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app', 'throttle:dashboard'],
+        ]);
+
         require base_path('routes/channels.php');
     }
 }

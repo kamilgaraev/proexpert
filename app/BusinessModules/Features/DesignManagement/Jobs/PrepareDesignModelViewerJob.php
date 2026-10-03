@@ -23,6 +23,7 @@ final class PrepareDesignModelViewerJob implements ShouldQueue
 
     public function __construct(
         public readonly int $derivativeId,
+        public readonly ?string $generation = null,
     ) {
         $this->timeout = (int) config('design_management.viewer_job_timeout', 6900);
         $this->onConnection('redis_ifc');
@@ -31,11 +32,11 @@ final class PrepareDesignModelViewerJob implements ShouldQueue
 
     public function handle(DesignModelViewerPreparationService $service): void
     {
-        $service->processQueuedDerivative($this->derivativeId);
+        $service->processQueuedDerivative($this->derivativeId, $this->generation);
     }
 
     public function failed(Throwable $exception): void
     {
-        app(DesignModelViewerPreparationService::class)->markJobFailed($this->derivativeId, $exception);
+        app(DesignModelViewerPreparationService::class)->markJobFailed($this->derivativeId, $exception, $this->generation);
     }
 }

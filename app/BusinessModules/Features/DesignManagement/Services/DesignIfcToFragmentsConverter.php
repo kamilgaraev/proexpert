@@ -71,6 +71,12 @@ final class DesignIfcToFragmentsConverter implements DesignIfcToFragmentsConvert
 
         $result = DesignViewerConversionResult::fromPayload($resultPayload);
         $result->assertRenderableGeometry();
+        $result->assertOfflineRuntime();
+
+        $indexPath = $targetPath.'.ifc-index.ndjson';
+        if (! is_file($indexPath) || filesize($indexPath) === 0) {
+            throw new RuntimeException('IFC converter did not create canonical BIM properties.');
+        }
 
         return $result;
     }

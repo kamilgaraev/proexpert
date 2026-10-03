@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Features\DesignManagement\Http\Middleware;
+namespace App\Http\Middleware;
 
+use App\Http\Responses\MobileResponse;
 use Closure;
-use App\Http\Responses\AdminResponse;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-final readonly class ThrottleDesignModelSessionEvents
+final readonly class MobileDesignModelSessionThrottle
 {
     public function __construct(private RateLimiter $limiter) {}
 
@@ -18,12 +18,10 @@ final readonly class ThrottleDesignModelSessionEvents
     {
         $actorId = (int) $request->user()?->id;
         $sessionId = (int) $request->route('sessionId');
-        $type = $request->input('type');
-        $budget = in_array($type, ['cursor', 'camera'], true) ? 'motion' : 'control';
+        $budget = in_array($request->input('type'), ['cursor', 'camera'], true) ? 'motion' : 'control';
         $key = "design-model-session-events:{$actorId}:{$sessionId}:{$budget}";
-
         if ($actorId <= 0 || $sessionId <= 0 || $this->limiter->hit($key, 1) > 10) {
-            return AdminResponse::error(trans_message('design_bim.errors.events_rate_limited'), 429);
+            return MobileResponse::error(trans_message('design_bim.errors.events_rate_limited'), 429);
         }
 
         return $next($request);

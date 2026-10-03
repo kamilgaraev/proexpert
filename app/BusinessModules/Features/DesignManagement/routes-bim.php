@@ -41,4 +41,11 @@ Route::prefix('api/v1/admin/design-management')
         Route::post('/model-sessions/{sessionId}/events', [DesignModelSetController::class, 'transientEvent'])
             ->middleware(['authorize:design-management.models.view', ThrottleDesignModelSessionEvents::class])
             ->name('sessions.events.store');
+        Route::get('/model-sessions/{sessionId}/participants', [DesignModelSetController::class, 'participants'])
+            ->whereNumber('sessionId')->middleware('authorize:design-management.models.view')->name('sessions.participants');
+        Route::post('/model-sessions/{sessionId}/view-state', [DesignModelSetController::class, 'storeViewState'])
+            ->whereNumber('sessionId')->middleware(['authorize:design-management.models.view', ThrottleDesignModelSessionEvents::class])->name('sessions.view-state.store');
+        Route::get('/model-sessions/{sessionId}/view-state/{clientId}', [DesignModelSetController::class, 'viewState'])
+            ->whereNumber('sessionId')->where('clientId', '[A-Za-z0-9_-]{1,100}')
+            ->middleware('authorize:design-management.models.view')->name('sessions.view-state.show');
     });
