@@ -20,6 +20,7 @@ final class DesignModelSessionListResource extends JsonResource
             'id' => $session->id,
             'project_id' => $session->project_id,
             'model_set_id' => $session->model_set_id,
+            'model_set_revision_id' => $revision?->id,
             'model_set_revision' => $revision?->revision,
             'title' => $session->title,
             'models' => $revision?->version_ids ?? [],
