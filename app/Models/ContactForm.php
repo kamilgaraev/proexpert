@@ -54,6 +54,7 @@ class ContactForm extends Model
         'escalated_at',
         'escalated_by_system_admin_id',
         'telegram_data',
+        'notification_delivery',
         'is_processed',
         'processed_at',
     ];
@@ -61,6 +62,7 @@ class ContactForm extends Model
     protected $casts = [
         'consent_to_personal_data' => 'boolean',
         'telegram_data' => 'array',
+        'notification_delivery' => 'array',
         'internal_notes' => 'array',
         'is_processed' => 'boolean',
         'processed_at' => 'datetime',
