@@ -42,6 +42,11 @@ class AIToolRegistry
         $this->factories[$name] = Closure::fromCallable($factory);
     }
 
+    public function getToolNames(): array
+    {
+        return $this->toolNames;
+    }
+
     /**
      * Retrieve all registered tools.
      *

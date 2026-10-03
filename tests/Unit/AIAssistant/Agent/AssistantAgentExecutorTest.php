@@ -73,7 +73,7 @@ final class AssistantAgentExecutorTest extends TestCase
         $this->assertSame('missing_tool', $result['tool_name']);
     }
 
-    public function test_payment_only_domain_search_blocks_cross_domain_arguments(): void
+    public function test_model_selected_domain_search_can_read_related_sources(): void
     {
         $tool = new class implements AIToolInterface
         {
@@ -115,8 +115,8 @@ final class AssistantAgentExecutorTest extends TestCase
             'entity_type' => 'contract',
         ], new User, new Organization, $understanding);
 
-        $this->assertSame('blocked_by_request_policy', $crossDomain['raw']['status']);
-        $this->assertFalse($tool->executed);
+        $this->assertSame('success', $crossDomain['status']);
+        $this->assertTrue($tool->executed);
 
         $paymentSearch = $executor->execute('assistant_domain_search', [
             'domain' => 'finance',

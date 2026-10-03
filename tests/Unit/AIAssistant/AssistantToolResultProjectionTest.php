@@ -21,13 +21,57 @@ final class AssistantToolResultProjectionTest extends TestCase
 
         $view = AssistantToolResultProjection::forProvider('assistant_domain_read', $result);
 
-        self::assertSame(['organization_id' => 15], $view['source_context']);
+        self::assertSame(['entity_type' => 'estimate_item', 'organization_id' => 15], $view['source_context']);
         foreach ($references as $index => $reference) {
             self::assertEquals($reference, $view['source_refs'][$index] + $view['source_context']);
             self::assertSame($reference['estimate_id'], $view['source_refs'][$index]['estimate_id']);
             self::assertSame($reference['fetched_at'], $view['source_refs'][$index]['fetched_at']);
         }
         self::assertSame($references, $result['source_refs']);
+    }
+
+    public function test_estimate_search_preserves_matches_and_continuation_without_repeating_server_evidence(): void
+    {
+        $matches = [
+            ['estimate' => ['id' => 41, 'number' => 'СМ-41', 'name' => 'Корпус', 'project_id' => 5],
+                'position' => ['id' => 10, 'estimate_id' => 41, 'name' => 'Бетон', 'position_number' => '1', 'version' => str_repeat('a', 64)]],
+            ['estimate' => ['id' => 42, 'number' => 'СМ-42', 'name' => 'Гараж', 'project_id' => 6],
+                'position' => ['id' => 11, 'estimate_id' => 42, 'name' => 'Бетон', 'position_number' => '2', 'version' => str_repeat('b', 64)]],
+        ];
+        $result = ['status' => 'success', 'search_complete' => false, 'has_more' => true, 'next_cursor' => 'opaque-cursor',
+            'meta' => ['returned' => 2, 'per_page' => 12], 'matches' => $matches,
+            'structured_fact_evidence' => ['rows' => [['fields' => ['name' => 'Бетон']]], 'version' => 'server-version'],
+            'source_refs' => [['organization_id' => 15, 'estimate_id' => 41]], 'server_formatted_facts' => 'Проверенные позиции'];
+
+        $view = AssistantToolResultProjection::forProvider('search_estimate_positions', $result);
+
+        self::assertSame('opaque-cursor', $view['next_cursor']);
+        self::assertFalse($view['search_complete']);
+        self::assertTrue($view['has_more']);
+        foreach ($matches as $index => $match) {
+            self::assertSame($match['estimate'], $view['matches'][$index]['estimate']);
+            self::assertSame(array_diff_key($match['position'], ['version' => true]), $view['matches'][$index]['position']);
+        }
+        self::assertArrayNotHasKey('source_refs', $view);
+        self::assertArrayNotHasKey('structured_fact_evidence', $view);
+        self::assertArrayNotHasKey('server_formatted_facts', $view);
+        self::assertSame('server-version', $result['structured_fact_evidence']['version']);
+    }
+
+    public function test_only_navigation_already_present_on_the_same_primary_record_is_deduplicated(): void
+    {
+        $navigation = ['url' => '/estimates/41?position_id=10'];
+        $result = ['results' => [['entity_type' => 'estimate_item', 'id' => 10,
+            'fields' => ['name' => 'Бетон'], 'navigation' => $navigation]],
+            'source_refs' => [['entity_type' => 'estimate_item', 'entity_id' => 10, 'navigation' => $navigation],
+                ['entity_type' => 'estimate_item', 'entity_id' => 11, 'navigation' => $navigation]]];
+
+        $view = AssistantToolResultProjection::forProvider('assistant_domain_read', $result);
+
+        self::assertArrayNotHasKey('navigation', $view['source_refs'][0]);
+        self::assertSame($navigation, $view['source_refs'][1]['navigation']);
+        self::assertSame($result['results'], $view['results']);
+        self::assertSame($navigation, $result['source_refs'][0]['navigation']);
     }
 
     public function test_nonduplicated_fields_windows_notices_and_minimal_references_are_preserved(): void

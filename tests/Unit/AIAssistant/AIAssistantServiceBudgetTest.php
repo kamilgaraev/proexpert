@@ -41,7 +41,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         \Illuminate\Support\Facades\Facade::setFacadeApplication($application);
     }
 
-    public function test_generic_summary_request_skips_tool_definitions(): void
+    public function test_generic_request_exposes_reads_without_exposing_unconfirmed_actions(): void
     {
         $toolRegistry = new AIToolRegistry;
         $toolRegistry->registerTool($this->makeTool('search_projects'));
@@ -58,7 +58,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             ],
         ]);
 
-        $this->assertSame([], $tools);
+        $this->assertSame(['search_projects'], array_column(array_column($tools, 'function'), 'name'));
     }
 
     public function test_domain_capabilities_expose_snapshot_tools(): void
@@ -95,7 +95,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertContains('get_project_snapshot', $toolNames);
     }
 
-    public function test_payment_only_capability_exposes_payment_search_and_explicit_contract_request_keeps_contract_snapshot(): void
+    public function test_payment_classification_keeps_model_selected_related_reads_available(): void
     {
         $toolRegistry = new AIToolRegistry;
         foreach ([
@@ -132,10 +132,10 @@ class AIAssistantServiceBudgetTest extends TestCase
         $paymentToolNames = array_column(array_column($service->exposeResolveToolDefinitions($paymentPlan), 'function'), 'name');
 
         $this->assertContains('assistant_domain_search', $paymentToolNames);
-        $this->assertNotContains('get_contract_snapshot', $paymentToolNames);
-        $this->assertNotContains('get_project_snapshot', $paymentToolNames);
-        $this->assertNotContains('search_projects', $paymentToolNames);
-        $this->assertNotContains('get_schedule_snapshot', $paymentToolNames);
+        $this->assertContains('get_contract_snapshot', $paymentToolNames);
+        $this->assertContains('get_project_snapshot', $paymentToolNames);
+        $this->assertContains('search_projects', $paymentToolNames);
+        $this->assertContains('get_schedule_snapshot', $paymentToolNames);
         $this->assertNotContains('generate_contract_payments_report', $paymentToolNames);
         foreach ([
             'assistant_domain_discover_capabilities',
@@ -145,7 +145,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             'get_published_report_financial_evidence',
             'get_live_project_financial_evidence',
         ] as $toolName) {
-            $this->assertNotContains($toolName, $paymentToolNames);
+            $this->assertContains($toolName, $paymentToolNames);
         }
 
         $contractPlan = $paymentPlan;
@@ -161,7 +161,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame('generate_report', $reportPlan['request_understanding']['primary_intent']);
         $reportToolNames = array_column(array_column($service->exposeResolveToolDefinitions($reportPlan), 'function'), 'name');
         $this->assertContains('generate_contract_payments_report', $reportToolNames);
-        $this->assertNotContains('get_live_project_financial_evidence', $reportToolNames);
+        $this->assertContains('get_live_project_financial_evidence', $reportToolNames);
 
         $mixedPlan = $paymentPlan;
         $mixedPlan['task_type'] = 'summary';
@@ -172,297 +172,47 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertContains('get_estimate_answer', $mixedToolNames);
     }
 
-    public function test_payment_only_tool_calls_block_unrelated_tools_and_scope_domain_reads(): void
+    public function test_model_selected_related_read_still_requires_current_tool_permission(): void
     {
-        $contractTool = new class implements AIToolInterface
-        {
-            public bool $executed = false;
-
-            public function getName(): string
-            {
-                return 'get_contract_snapshot';
-            }
-
-            public function getDescription(): string
-            {
-                return 'Test contract snapshot';
-            }
-
-            public function getParametersSchema(): array
-            {
-                return ['type' => 'object', 'properties' => [], 'required' => [], 'additionalProperties' => false];
-            }
-
-            public function execute(array $arguments, ?User $user, Organization $organization): array|string
-            {
-                $this->executed = true;
-
-                return ['status' => 'success'];
-            }
-        };
-        $searchTool = new class implements AIToolInterface
-        {
-            public bool $executed = false;
-
-            public function getName(): string
-            {
-                return 'assistant_domain_search';
-            }
-
-            public function getDescription(): string
-            {
-                return 'Test domain search';
-            }
-
-            public function getParametersSchema(): array
-            {
-                return ['type' => 'object', 'properties' => [
-                    'domain' => ['type' => 'string', 'enum' => ['finance', 'contracts']],
-                    'entity_type' => ['type' => 'string', 'enum' => ['payment_document', 'contract']],
-                    'query' => ['type' => 'string', 'maxLength' => 200],
-                    'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
-                    'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20],
-                    'fields' => ['type' => ['array', 'null'], 'items' => ['type' => 'string', 'enum' => ['id', 'document_number']]],
-                ], 'required' => ['domain', 'entity_type', 'query', 'project_id', 'limit', 'fields'], 'additionalProperties' => false];
-            }
-            public function execute(array $arguments, ?User $user, Organization $organization): array|string
-            {
-                $this->executed = true;
-
-                return ['status' => 'success'];
-            }
-        };
-        $toolRegistry = new AIToolRegistry;
-        $toolRegistry->registerTool($contractTool);
-        $toolRegistry->registerTool($searchTool);
-        $reportTool = new class implements AIToolInterface
-        {
-            public bool $executed = false;
-
-            public function getName(): string
-            {
-                return 'generate_contract_payments_report';
-            }
-
-            public function getDescription(): string
-            {
-                return 'Test payment report';
-            }
-
-            public function getParametersSchema(): array
-            {
-                return ['type' => 'object', 'properties' => [], 'required' => [], 'additionalProperties' => false];
-            }
-
-            public function execute(array $arguments, ?User $user, Organization $organization): array|string
-            {
-                $this->executed = true;
-
-                return ['status' => 'success'];
-            }
-        };
-        $toolRegistry->registerTool($reportTool);
-        $blockedTools = [];
-        foreach ([
-            'assistant_domain_discover_capabilities',
-            'get_estimate_answer',
-            'get_live_project_financial_evidence',
-            'get_material_stock',
-            'get_published_report_financial_evidence',
-            'search_assistant_documents',
-            'search_projects',
-        ] as $toolName) {
-            $blockedTool = new class($toolName) implements AIToolInterface
-            {
-                public bool $executed = false;
-
-                public function __construct(private readonly string $name) {}
-
-                public function getName(): string
-                {
-                    return $this->name;
-                }
-
-                public function getDescription(): string
-                {
-                    return 'Test blocked tool';
-                }
-
-                public function getParametersSchema(): array
-                {
-                    return ['type' => 'object', 'properties' => [], 'required' => [], 'additionalProperties' => false];
-                }
-
-                public function execute(array $arguments, ?User $user, Organization $organization): array|string
-                {
-                    $this->executed = true;
-
-                    return ['status' => 'success'];
-                }
-            };
-            $toolRegistry->registerTool($blockedTool);
-            $blockedTools[$toolName] = $blockedTool;
-        }
-        $scopedTools = [];
-        foreach (['assistant_domain_read', 'assistant_domain_navigation'] as $toolName) {
-            $scopedTool = new class($toolName) implements AIToolInterface
-            {
-                public bool $executed = false;
-
-                public function __construct(private readonly string $name) {}
-
-                public function getName(): string
-                {
-                    return $this->name;
-                }
-
-                public function getDescription(): string
-                {
-                    return 'Test scoped domain tool';
-                }
-
-                public function getParametersSchema(): array
-                {
-                    return ['type' => 'object', 'properties' => [
-                        'domain' => ['type' => 'string'],
-                        'entity_type' => ['type' => 'string'],
-                    ], 'required' => ['domain', 'entity_type'], 'additionalProperties' => false];
-                }
-
-                public function execute(array $arguments, ?User $user, Organization $organization): array|string
-                {
-                    $this->executed = true;
-
-                    return ['status' => 'success'];
-                }
-            };
-            $toolRegistry->registerTool($scopedTool);
-            $scopedTools[$toolName] = $scopedTool;
-        }
-        $service = $this->makeService($toolRegistry, true);
-        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray()];
-        $failures = [];
-
-        $contractResult = $service->exposeHandleToolCall([
-            'function' => ['name' => 'get_contract_snapshot', 'arguments' => '{}'],
-        ], $plan, $failures);
-        $searchResult = $service->exposeHandleToolCall([
-            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{"domain":"contracts","entity_type":"contract"}'],
-        ], $plan, $failures);
-
-        $this->assertSame('blocked_by_request_policy', $contractResult['status']);
-        $this->assertSame('blocked_by_request_policy', $searchResult['status']);
-        $this->assertFalse($contractTool->executed);
-        $this->assertFalse($searchTool->executed);
-
-        foreach ($blockedTools as $toolName => $tool) {
-            $result = $service->exposeHandleToolCall([
-                'function' => ['name' => $toolName, 'arguments' => '{}'],
-            ], $plan, $failures);
-
-            $this->assertSame('blocked_by_request_policy', $result['status'], $toolName);
-            $this->assertFalse($tool->executed, $toolName);
-        }
-
-        $paymentSearch = $service->exposeHandleToolCall([
-            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{"domain":"finance","entity_type":"payment_document"}'],
-        ], $plan, $failures);
-
-        $this->assertSame('success', $paymentSearch['status']);
-        $this->assertTrue($searchTool->executed);
-
-        foreach ($scopedTools as $toolName => $tool) {
-            $crossDomainResult = $service->exposeHandleToolCall([
-                'function' => ['name' => $toolName, 'arguments' => '{"domain":"contracts","entity_type":"contract"}'],
-            ], $plan, $failures);
-            $this->assertSame('blocked_by_request_policy', $crossDomainResult['status'], $toolName);
-            $this->assertFalse($tool->executed, $toolName);
-
-            $paymentResult = $service->exposeHandleToolCall([
-                'function' => ['name' => $toolName, 'arguments' => '{"domain":"finance","entity_type":"payment_document"}'],
-            ], $plan, $failures);
-            $this->assertSame('success', $paymentResult['status'], $toolName);
-            $this->assertTrue($tool->executed, $toolName);
-        }
-
-        $reportPlan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Сделай отчет по платежам')->toArray()];
-        $reportResult = $service->exposeHandleToolCall([
-            'function' => ['name' => 'generate_contract_payments_report', 'arguments' => '{}'],
-        ], $reportPlan, $failures);
-        $this->assertSame('success', $reportResult['status']);
-        $this->assertTrue($reportTool->executed);
-
-        $mixedPlan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Покажи платежи проекта')->toArray()];
-        $estimateResult = $service->exposeHandleToolCall([
-            'function' => ['name' => 'get_estimate_answer', 'arguments' => '{}'],
-        ], $mixedPlan, $failures);
-        $this->assertSame('success', $estimateResult['status']);
-        $this->assertTrue($blockedTools['get_estimate_answer']->executed);
-    }
-
-    public function test_payment_only_domain_search_normalizes_missing_arguments_and_preserves_explicit_scope(): void
-    {
-        $searchTool = new class implements AIToolInterface
-        {
-            public array $executedArguments = [];
-
-            public function getName(): string
-            {
-                return 'assistant_domain_search';
-            }
-
-            public function getDescription(): string
-            {
-                return 'Test payment search';
-            }
-
-            public function getParametersSchema(): array
-            {
-                return ['type' => 'object', 'properties' => [
-                    'domain' => ['type' => 'string', 'enum' => ['finance', 'contracts']],
-                    'entity_type' => ['type' => 'string', 'enum' => ['payment_document', 'contract']],
-                    'query' => ['type' => 'string', 'maxLength' => 200],
-                    'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
-                    'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20],
-                    'fields' => ['type' => ['array', 'null'], 'items' => ['type' => 'string', 'enum' => ['id', 'document_number']]],
-                ], 'required' => ['domain', 'entity_type', 'query', 'project_id', 'limit', 'fields'], 'additionalProperties' => false];
-            }
-
-            public function execute(array $arguments, ?User $user, Organization $organization): array|string
-            {
-                $this->executedArguments = $arguments;
-
-                return ['status' => 'success'];
-            }
-        };
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_contract_snapshot');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->willReturn(['status' => 'success']);
         $registry = new AIToolRegistry;
-        $registry->registerTool($searchTool);
-        $service = $this->makeService($registry, true);
+        $registry->registerTool($tool);
         $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray()];
+        $call = ['function' => ['name' => 'get_contract_snapshot', 'arguments' => '{}']];
         $failures = [];
-
-        $result = $service->exposeHandleToolCall([
-            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{}'],
-        ], $plan, $failures);
-
-        $this->assertSame('success', $result['status']);
-        $this->assertSame([
-            'domain' => 'finance',
-            'entity_type' => 'payment_document',
-            'query' => '',
-            'project_id' => null,
-            'limit' => 5,
-            'fields' => null,
-        ], $searchTool->executedArguments);
-
-        $wrongScopeResult = $service->exposeHandleToolCall([
-            'function' => ['name' => 'assistant_domain_search', 'arguments' => '{"domain":"contracts","entity_type":"contract"}'],
-        ], $plan, $failures);
-
-        $this->assertSame('blocked_by_request_policy', $wrongScopeResult['status']);
-        $this->assertSame('finance', $searchTool->executedArguments['domain']);
-        $this->assertSame('payment_document', $searchTool->executedArguments['entity_type']);
+        $allowed = $this->makeService($registry, true)->exposeHandleToolCall($call, $plan, $failures);
+        self::assertSame('success', $allowed['status']);
+        $denied = $this->makeService($registry, false)->exposeHandleToolCall($call, $plan, $failures);
+        self::assertArrayHasKey('error', $denied);
+        self::assertNotEmpty($failures);
     }
+
+
+    public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void
+    {
+        $arguments = ['domain' => 'contracts', 'entity_type' => 'contract', 'query' => 'Подрядчик', 'project_id' => null];
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('assistant_domain_search');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+            'domain' => ['type' => 'string'], 'entity_type' => ['type' => 'string'], 'query' => ['type' => 'string'],
+            'project_id' => ['type' => ['integer', 'null']],
+        ], 'required' => ['domain', 'entity_type', 'query'], 'additionalProperties' => false]);
+        $tool->expects($this->once())->method('execute')->with($arguments, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray(),
+            'request' => ['context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['function' => ['name' => 'assistant_domain_search',
+            'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)]], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertSame([], $failures);
+    }
+
 
     public function test_reports_capability_exposes_schedule_report_tools(): void
     {
@@ -481,6 +231,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             'capability' => [
                 'id' => 'reports',
             ],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Сделай отчет по графику работ')->toArray(),
             'request' => [
                 'allow_actions' => false,
                 'context' => [

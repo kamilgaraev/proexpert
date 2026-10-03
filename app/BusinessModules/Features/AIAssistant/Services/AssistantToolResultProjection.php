@@ -8,6 +8,17 @@ final class AssistantToolResultProjection
 {
     public static function forProvider(string $toolName, array $result): array
     {
+        if ($toolName === 'search_estimate_positions') {
+            $view = array_intersect_key($result, array_flip(['status', 'search_status', 'search_scope',
+                'search_complete', 'has_more', 'next_cursor', 'meta', 'matches', 'error', 'reason']));
+            foreach ($view['matches'] ?? [] as $index => $match) {
+                if (is_array($match['position'] ?? null)) {
+                    $view['matches'][$index]['position'] = self::position($match['position']);
+                }
+            }
+
+            return $view;
+        }
         if ($toolName === 'get_material_stock') {
             return array_intersect_key($result, array_flip(['status', 'stock', 'quantity_scope', 'server_formatted_answer', 'validation_status', 'error', 'reason']));
         }
@@ -41,6 +52,16 @@ final class AssistantToolResultProjection
         if (is_array($view['source_refs'] ?? null)) {
             $view['source_refs'] = array_map(self::reference(...), $view['source_refs']);
             $view = self::sharedSourceContext($view);
+            foreach ($view['source_refs'] as $index => $reference) {
+                if (! is_array($reference)) {
+                    continue;
+                }
+                $identity = $reference + ($view['source_context'] ?? []);
+                $primary = $primaryRows[self::identity($identity['entity_type'] ?? '', $identity['entity_id'] ?? '')] ?? [];
+                if (isset($reference['navigation'], $primary['navigation']) && $reference['navigation'] === $primary['navigation']) {
+                    unset($view['source_refs'][$index]['navigation']);
+                }
+            }
         }
         if (is_array($view['positions'] ?? null)) {
             $view['positions'] = array_map(self::position(...), $view['positions']);
@@ -91,7 +112,8 @@ final class AssistantToolResultProjection
         $rows = [];
         foreach (is_array($result['results'] ?? null) ? $result['results'] : [] as $row) {
             if (is_array($row) && is_array($row['fields'] ?? null)) {
-                $rows[self::identity($row['entity_type'] ?? '', $row['id'] ?? $row['entity_id'] ?? '')] = $row['fields'];
+                $rows[self::identity($row['entity_type'] ?? '', $row['id'] ?? $row['entity_id'] ?? '')] = $row['fields']
+                    + (is_array($row['navigation'] ?? null) ? ['navigation' => $row['navigation']] : []);
             }
         }
         foreach ([$result, $result['financial_evidence'] ?? []] as $collection) {
@@ -144,7 +166,7 @@ final class AssistantToolResultProjection
         if (count($references) < 2 || array_key_exists('source_context', $view)) { return $view; }
         $first = reset($references);
         if (!is_array($first)) { return $view; }
-        $common = array_intersect_key($first, array_flip(['organization_id', 'content_scope', 'fetched_at',
+        $common = array_intersect_key($first, array_flip(['entity_type', 'organization_id', 'content_scope', 'fetched_at',
             'project_id', 'estimate_id', 'contract_id']));
         foreach ($references as $reference) {
             if (!is_array($reference)) { return $view; }

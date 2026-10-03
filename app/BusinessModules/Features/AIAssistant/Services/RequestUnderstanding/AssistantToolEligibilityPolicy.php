@@ -35,6 +35,11 @@ final class AssistantToolEligibilityPolicy
         'create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units',
     ];
 
+    public function isReadOnlyTool(string $toolName): bool
+    {
+        return in_array($toolName, self::READ_TOOLS, true);
+    }
+
     public function canExposeTool(string $toolName, AssistantRequestUnderstanding $understanding, bool $allowActions = false): AssistantToolEligibility
     {
         return $this->toolEligibility($toolName, $understanding, false, $allowActions);
@@ -79,6 +84,10 @@ final class AssistantToolEligibilityPolicy
 
         if ($category === 'unknown') {
             return AssistantToolEligibility::block($category, trans_message('ai_assistant.eligibility_unknown_tool'));
+        }
+
+        if ($category === 'read') {
+            return AssistantToolEligibility::allow($category);
         }
 
         if ($category === 'report' && $understanding->blocksFileGeneration()) {
