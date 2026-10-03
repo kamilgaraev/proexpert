@@ -234,6 +234,23 @@ final class AssistantAclQueryCompilerTest extends TestCase
         self::assertSame([], $compiler->reference('project')?->getBindings());
     }
 
+    public function test_compact_aggregate_ctes_keep_only_identity_and_parent_columns(): void
+    {
+        $compiler = new AssistantAclQueryCompiler(1, 1, compact: true);
+        $reference = $compiler->register('project', Project::query()->select(['projects.id', 'projects.name'])->where('organization_id', 1), ['id', 'organization_id']);
+        $finished = $compiler->finish($reference->select('projects.id'));
+
+        self::assertStringContainsString('select "projects"."id", "projects"."organization_id", "projects"."deleted_at" from "projects"', $finished->toSql());
+        self::assertStringNotContainsString('"projects"."name"', $finished->toSql());
+        self::assertStringContainsString('"organization_user"', $finished->toSql());
+        self::assertSame(substr_count($finished->toSql(), '?'), count($finished->getBindings()));
+
+        $bound = new AssistantAclQueryCompiler(1, 1, compact: true);
+        $reference = $bound->register('project', Project::query()->select('projects.id')->selectRaw('? AS probe', ['marker']), ['id']);
+        self::assertContains('marker', $bound->finish($reference)->getBindings());
+        self::assertStringContainsString('? AS probe', $bound->finish($reference)->toSql());
+    }
+
     public function test_cached_subtree_keeps_depth_guard_and_internal_projection_columns_stay_private(): void
     {
         $compiler = new AssistantAclQueryCompiler(1, 1);

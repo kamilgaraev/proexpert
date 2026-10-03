@@ -273,10 +273,14 @@ final class AssistantOrganizationReportingTest extends TestCase
         $this->app->instance(ReportModuleEntitlement::class, $entitlements);
         $policy = app(AssistantDataAccessPolicy::class);
         $first = ReportSavedViewRecord::query();
-        AssistantOrganizationReportingMetadata::applyActorScope(
-            'report_saved_view_card', $first, $fixture->owner, $organizationId,
-            app(AuthorizationService::class)->forCurrentChecks(true), $policy,
-        );
+        $policy->withCurrentChecks($fixture->owner, $organizationId, function ($authorization) use ($first, $fixture, $organizationId, $policy): void {
+            AssistantOrganizationReportingMetadata::applyActorScope('report_saved_view_card', $first, $fixture->owner, $organizationId, $authorization, $policy);
+            for ($read = 0; $read < 4; $read++) {
+                $next = ReportSavedViewRecord::query();
+                AssistantOrganizationReportingMetadata::applyActorScope('report_saved_view_card', $next, $fixture->owner, $organizationId, $authorization, $policy);
+                self::assertSame($first->getBindings(), $next->getBindings());
+            }
+        }, fresh: true);
 
         self::assertSame(array_fill_keys($modules, 1), $entitlements->calls);
         $allowedCodes = $first->getBindings();

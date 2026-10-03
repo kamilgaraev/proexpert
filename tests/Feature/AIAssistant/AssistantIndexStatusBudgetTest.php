@@ -86,11 +86,20 @@ final class AssistantIndexStatusBudgetTest extends TestCase
     {
         $fixture = AssistantRealAuthorizationFixture::create();
         $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]));
-        RagSource::query()->create([
+        $source = RagSource::query()->create([
             'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
             'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
             'title' => 'Проект', 'checksum' => hash('sha256', 'fixture'),
         ]);
+        $otherProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id, 'is_archived' => false]));
+        foreach ([[$project->id, true], [$project->id, false], [$otherProject->id, true]] as $index => [$chunkProject, $indexed]) {
+            DB::table('ai_rag_chunks')->insert([
+                'source_id' => $source->id, 'organization_id' => $fixture->organization->id, 'project_id' => $chunkProject,
+                'chunk_index' => $index, 'content' => 'Фрагмент', 'content_hash' => hash('sha256', 'chunk-'.$index),
+                'embedding' => $indexed ? '['.implode(',', RagTestEmbedding::fromLeadingValues([1.0])).']' : null,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
         $service = app(AssistantIndexStatusService::class);
         $this->warmSnapshot($service, $fixture->organization->id, $fixture->owner->id);
         DB::flushQueryLog();
@@ -114,7 +123,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         if (getenv('MOST_RAG_STATUS_PROFILE') === '1') { fwrite(STDERR, 'RAG status fixture '.json_encode($metrics).PHP_EOL); }
         $this->assertTrue($status['status_available'], json_encode($metrics));
         $this->assertSame(1, $status['source_count']);
-        $this->assertSame(0, $status['chunk_count']);
+        $this->assertSame(2, $status['chunk_count']);
+        $this->assertSame(1, $status['indexed_source_count']);
         $subscriptions = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'organization_package_subscriptions'));
         $this->assertLessThan(4, count($subscriptions));
     }
@@ -180,7 +190,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         Cache::put('ai-rag-status:'.$organization->id.':'.$actor->id.':lk', ['status' => ['source_count' => 987654]], 60);
         $delayed = false;
         DB::listen(static function ($query) use (&$delayed): void {
-            if (! $delayed && str_contains(strtolower($query->sql), 'count(distinct accessible_sources.id)')) {
+            if (! $delayed && str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')) {
                 $delayed = true;
                 usleep(1_600_000);
             }
@@ -206,7 +216,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         Cache::put('ai-rag-status:'.$organization->id.':'.$actor->id.':lk', ['status' => ['source_count' => 987654]], 60);
         $expired = false;
         DB::listen(static function ($query) use (&$expired): void {
-            if (! $expired && str_contains(strtolower($query->sql), 'count(distinct accessible_sources.id)')) {
+            if (! $expired && str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')) {
                 $expired = true;
                 usleep(2_600_000);
             }
@@ -450,7 +460,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             $category = match (true) {
                 str_starts_with($sql, 'set local statement_timeout'), str_contains($sql, "set_config('statement_timeout'") => 'timeout_setting',
                 str_contains($sql, 'pg_catalog'), str_contains($sql, 'information_schema') => 'schema',
-                str_contains($sql, 'count(distinct accessible_sources.id)') => 'stored_counts',
+                str_contains($sql, 'accessible_sources.source_type, count(*) as stored_count') => 'stored_counts',
                 str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"') => 'source_discovery',
                 str_contains($sql, 'organization_package_subscriptions') => 'entitlements',
                 str_contains($sql, '"roles"'), str_contains($sql, '"permissions"') => 'authorization',

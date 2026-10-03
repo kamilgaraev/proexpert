@@ -40,6 +40,7 @@ final class AssistantAclParentQueryPlanTest extends TestCase
             $query = $policy->aggregateSourceIdentities(RagSource::query(), $fixture->owner, $fixture->organization->id,
                 ['ai_rag_sources.id'], fn ($visible) => DB::query()->fromSub($visible, 'visible_sources')->selectRaw('COUNT(*) AS total'));
             self::assertNotNull($query);
+            self::assertStringNotContainsString('"construction_resources"."name"', $query->toSql());
             $plan = json_decode(DB::select('EXPLAIN (FORMAT JSON) '.$query->toSql(), $query->getBindings())[0]->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0];
             self::assertLessThan(100000, $plan['Plan']['Total Cost']);
             DB::statement('SET LOCAL statement_timeout = 10000');
@@ -67,6 +68,7 @@ final class AssistantAclParentQueryPlanTest extends TestCase
         $otherSection = DB::table('estimate_norm_sections')->insertGetId(['collection_id' => $collections[1], 'name' => 'Other', 'path' => 'other']);
         $invalid = DB::table('estimate_norms')->insertGetId(['collection_id' => $collections[0], 'section_id' => $otherSection, 'code' => 'invalid', 'name' => 'Invalid', 'unit' => 'm2']);
         $withoutSection = DB::table('estimate_norms')->insertGetId(['collection_id' => $collections[0], 'code' => 'without-section', 'name' => 'Without section', 'unit' => 'm2']);
+        DB::statement("INSERT INTO ai_rag_sources (organization_id, source_type, entity_type, entity_id, title, checksum) SELECT ?, 'organization_reporting', 'approved_estimate_norm', id::text, name, md5(id::text) FROM estimate_norms WHERE collection_id = ?", [$fixture->organization->id, $collections[0]]);
         DB::statement('ANALYZE estimate_norm_sections');
         DB::statement('ANALYZE estimate_norms');
         $policy = app(AssistantDataAccessPolicy::class);
@@ -79,6 +81,30 @@ final class AssistantAclParentQueryPlanTest extends TestCase
             self::assertSame(10001, (clone $query)->count());
             self::assertFalse((clone $query)->where('estimate_norms.id', $invalid)->exists());
             self::assertTrue((clone $query)->where('estimate_norms.id', $withoutSection)->exists());
+            $aggregate = $policy->aggregateSourceIdentities(RagSource::query(), $fixture->owner, $fixture->organization->id,
+                ['ai_rag_sources.id'], fn ($visible) => DB::query()->fromSub($visible, 'visible_sources')->selectRaw('COUNT(*) AS total'));
+            self::assertNotNull($aggregate);
+            self::assertSame(10001, (int) $aggregate->first()->total);
+        }, fresh: true);
+    }
+
+    public function test_compact_aggregate_validates_every_declared_identity_without_opening_missing_entities(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        foreach (AssistantDataAccessPolicy::entityDefinitions() as $type => $definition) {
+            RagSource::query()->create([
+                'organization_id' => $fixture->organization->id, 'source_type' => $definition[0],
+                'entity_type' => $type, 'entity_id' => '0', 'title' => $type, 'checksum' => hash('sha256', $type),
+                'metadata' => ['assistant_public_schema_revision' => \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revision($type)],
+            ]);
+        }
+        $policy = app(AssistantDataAccessPolicy::class);
+        $policy->withCurrentChecks($fixture->owner, $fixture->organization->id, function () use ($policy, $fixture): void {
+            $policy->prefetchEntitySchemaMetadata();
+            $query = $policy->aggregateSourceIdentities(RagSource::query(), $fixture->owner, $fixture->organization->id,
+                ['ai_rag_sources.id'], fn ($visible) => DB::query()->fromSub($visible, 'visible_sources')->selectRaw('COUNT(*) AS total'));
+            self::assertNotNull($query);
+            self::assertSame(0, (int) $query->first()->total);
         }, fresh: true);
     }
 }

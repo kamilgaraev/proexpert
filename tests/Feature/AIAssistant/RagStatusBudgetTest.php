@@ -17,6 +17,7 @@ final class RagStatusBudgetTest extends TestCase
         $connection = DB::connection();
         $connection->statement('SET LOCAL statement_timeout = 4000');
         $connection->statement('SET LOCAL jit = on');
+        $connection->statement("SET LOCAL work_mem = '64kB'");
         $level = $connection->transactionLevel();
 
         try {
@@ -34,6 +35,7 @@ final class RagStatusBudgetTest extends TestCase
         $this->assertSame($level, $connection->transactionLevel());
         $this->assertSame('4s', $connection->selectOne("SELECT current_setting('statement_timeout') AS timeout")->timeout);
         $this->assertSame('on', $connection->selectOne("SELECT current_setting('jit') AS jit")->jit);
+        $this->assertSame('64kB', $connection->selectOne("SELECT current_setting('work_mem') AS value")->value);
         $this->assertSame(1, (int) $connection->selectOne('SELECT 1 AS value')->value);
     }
 
@@ -110,6 +112,30 @@ final class RagStatusBudgetTest extends TestCase
             $this->assertSame('22012', $exception->errorInfo[0]);
         }
         $this->assertSame(1, (int) DB::selectOne('SELECT 1 AS value')->value);
+    }
+
+    public function test_status_hash_memory_is_bounded_and_restored_after_success_and_expiry(): void
+    {
+        $connection = DB::connection();
+        foreach (['64kB', '32MB'] as $previous) {
+            $connection->statement("SET LOCAL work_mem = '".$previous."'");
+            (new RagStatusBudget($connection, 500))->run(function () use ($connection, $previous): array {
+                $this->assertSame($previous === '64kB' ? '16MB' : '32MB', $connection->selectOne("SELECT current_setting('work_mem') AS value")->value);
+                return [];
+            });
+            $this->assertSame($previous, $connection->selectOne("SELECT current_setting('work_mem') AS value")->value);
+        }
+        $connection->statement("SET LOCAL work_mem = '64kB'");
+        try {
+            (new RagStatusBudget($connection, 100))->run(function (callable $checkpoint): array {
+                usleep(150_000);
+                $checkpoint();
+                return [];
+            });
+            $this->fail('The status deadline must expire');
+        } catch (RagStatusBudgetExceeded) {
+            $this->assertSame('64kB', $connection->selectOne("SELECT current_setting('work_mem') AS value")->value);
+        }
     }
 
     public function test_deadline_only_checkpoint_does_not_issue_sql(): void

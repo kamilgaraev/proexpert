@@ -342,6 +342,26 @@ final class AssistantDataAccessPolicy
         return $this->currentEffectiveModuleSlugs($user, $organizationId);
     }
 
+    public function allowedReportCodes(User $actor, int $organizationId, AuthorizationService $authorization): array
+    {
+        if (! $this->belongsToOrganization($actor, $organizationId)) { return []; }
+
+        return $this->rememberCurrent($actor, $organizationId, 'report-definition-codes', static function () use ($actor, $organizationId, $authorization): array {
+            $registry = app(\App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry::class);
+            $modules = app(\App\BusinessModules\Core\Reporting\Application\Access\ReportDefinitionModuleAuthorizer::class)->decision($organizationId);
+            $allowed = [];
+            foreach ($registry->publishedCodes() as $code) {
+                $definition = $registry->published($code)->definition;
+                if (! $modules->allows($organizationId, $definition)) { continue; }
+                $permissions = $definition->permissionPolicy->viewPermissions;
+                if ($permissions === [] || array_filter($permissions, static fn (string $permission): bool => ! $authorization->canCurrent($actor, $permission, ['organization_id' => $organizationId])) !== []) { continue; }
+                $allowed[] = $code;
+            }
+
+            return $allowed;
+        });
+    }
+
     private function currentEffectiveModuleSlugs(User $user, int $organizationId): array
     {
         $loadModules = fn (): array => ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))
@@ -435,19 +455,23 @@ final class AssistantDataAccessPolicy
                 $scope->where($table.'.source_type', 'file_document')->orWhereNull($table.'.project_id');
                 if ($projects !== null) { $scope->orWhereIn($table.'.project_id', $projects->select('projects.id')); }
             });
-            if (! $expectedProjection) {
-                \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($query, $table);
-            }
             $candidateColumns = in_array($table.'.*', $columns, true) ? $columns : array_values(array_unique(array_merge($columns,
                 array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
-            $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query->select($candidateColumns), [], materialize: false);
+            $query->select($candidateColumns);
+            if (! $expectedProjection) {
+                $revised = array_keys(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revisions());
+                $guarded = (clone $query)->whereIn($table.'.entity_type', $revised);
+                \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($guarded, $table);
+                $query->whereNotIn($table.'.entity_type', $revised)->unionAll($guarded);
+            }
+            $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query, [], materialize: false);
             $checkpoint?->__invoke();
             $visible = $this->applySourceIdentityScope($candidates, $user, $organizationId, $expectedProjection, preparedCandidates: true, splitIdentities: true)
                 ->select($columns)->toBase();
             $checkpoint?->__invoke();
 
             return $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible), $table)->select($table.'.*');
-        });
+        }, compact: true);
 
         return $scoped?->toBase();
     }
@@ -732,6 +756,7 @@ final class AssistantDataAccessPolicy
             }
             if (in_array('deleted_at', $columns, true)) { $internal[] = 'deleted_at'; }
             if (in_array('project_id', $columns, true)) { $internal[] = 'project_id'; }
+            if (in_array('organization_id', $columns, true)) { $internal[] = 'organization_id'; }
 
             return $this->aclCompiler->register($type, $query, array_values(array_intersect(array_unique($internal), $columns)), $this->entityQueryPath);
         } finally {
@@ -748,10 +773,10 @@ final class AssistantDataAccessPolicy
         return $this->aclCompiler->finish($wrapped)->toBase();
     }
 
-    private function compileAcl(User $user, int $organizationId, callable $callback): ?Builder
+    private function compileAcl(User $user, int $organizationId, callable $callback, bool $compact = false): ?Builder
     {
         $this->currentCheckpoint?->__invoke();
-        $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId);
+        $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId, $compact);
         $this->aclCompiler = $compiler;
         $this->compiledAuthorization = $this->batchAuthorization ?? $this->authorization->forCurrentChecks(true);
         try {
@@ -768,8 +793,9 @@ final class AssistantDataAccessPolicy
         return $this->compiledAuthorization ?? $this->batchAuthorization ?? $this->authorization;
     }
 
-    private function accessibleProjects(User $user, int $organizationId): Builder
+    public function accessibleProjects(User $user, int $organizationId): Builder
     {
+        if (! $this->belongsToOrganization($user, $organizationId)) { return Project::query()->whereRaw('1 = 0'); }
         $load = fn (): Builder => $this->projectAccess->queryAccessibleProjects($user, $organizationId);
         $query = $this->rememberCurrent($user, $organizationId, 'projects', $load);
         if ($this->aclCompiler === null) { return clone $query; }
