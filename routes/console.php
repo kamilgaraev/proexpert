@@ -9,6 +9,8 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::command('contacts:recover-notifications')->everyFiveMinutes()->withoutOverlapping(5)->onOneServer();
+
 Schedule::command('contracts:apply-due-revisions')->everyMinute()->withoutOverlapping(5)->onOneServer();
 Schedule::call(fn () => app(\App\BusinessModules\Features\ExecutiveDocumentation\Services\ExecutiveDocumentImportService::class)->expireStagedFiles())
     ->name('executive-document-imports:expire-staging')->hourly()->withoutOverlapping(30)->onOneServer();
