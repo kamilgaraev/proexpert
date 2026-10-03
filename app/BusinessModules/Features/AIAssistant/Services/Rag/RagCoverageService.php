@@ -258,24 +258,33 @@ final class RagCoverageService
         }
     }
 
-    public function refreshCoverage(int $organizationId, ?int $projectId = null, ?string $sourceType = null): array
+    public function refreshCoverage(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?string $expectedCacheKey = null): array
     {
-        if ($projectId !== null || $sourceType !== null) {
-            return $this->buildCoverageSnapshot($organizationId, $projectId, $sourceType);
+        $cacheKey = $this->key($organizationId, $projectId, $sourceType);
+        $snapshot = $expectedCacheKey === null ? null : Cache::get($cacheKey);
+        if ($expectedCacheKey !== null && ($expectedCacheKey !== $cacheKey || (is_array($snapshot) && ($snapshot['eligible_count_known'] ?? false) === true))) {
+            return $this->coverage($organizationId, $projectId, $sourceType);
         }
-        $lease = Cache::lock('ai-rag-coverage-projection:'.$organizationId, 7500);
+        $scope = $projectId === null && $sourceType === null ? '' : ':'.($projectId ?? 0).':'.($sourceType ?? '*');
+        $lease = Cache::lock('ai-rag-coverage-projection:'.$organizationId.$scope, 7500);
         if (! $lease->get()) {
-            return $this->coverage($organizationId);
+            return $this->coverage($organizationId, $projectId, $sourceType);
         }
-        $cacheKey = $this->key($organizationId, null, null);
         $deadline = microtime(true) + 7200;
-        $guard = function () use ($organizationId, $cacheKey, $deadline): void {
-            if (microtime(true) >= $deadline || $cacheKey !== $this->key($organizationId, null, null)) {
+        $guard = function () use ($organizationId, $projectId, $sourceType, $cacheKey, $deadline): void {
+            if (microtime(true) >= $deadline || $cacheKey !== $this->key($organizationId, $projectId, $sourceType)) {
                 throw new RuntimeException('rag_coverage_projection_expired');
             }
         };
         try {
-            return $this->buildCoverageSnapshot($organizationId, null, null, (string) Str::uuid(), $guard);
+            $snapshot = $expectedCacheKey === null ? null : Cache::get($cacheKey);
+            if ($expectedCacheKey !== null && ($cacheKey !== $this->key($organizationId, $projectId, $sourceType)
+                || (is_array($snapshot) && ($snapshot['eligible_count_known'] ?? false) === true))) {
+                return $this->coverage($organizationId, $projectId, $sourceType);
+            }
+            $generation = $projectId === null && $sourceType === null ? (string) Str::uuid() : null;
+
+            return $this->buildCoverageSnapshot($organizationId, $projectId, $sourceType, $generation, $guard);
         } finally {
             $lease->release();
         }
@@ -387,25 +396,22 @@ final class RagCoverageService
         if ($guard !== null) {
             $guard();
         }
-        if ($generation !== null) {
-            ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->stage($organizationId, $sourceType, $generation, $batch);
+        foreach ($batch as $chunk) {
+            if ($chunk->organizationId !== $organizationId || $chunk->sourceType !== $sourceType) {
+                throw new RuntimeException('rag_coverage_collector_scope_mismatch');
+            }
         }
-        $sources = RagSource::query()->where('organization_id', $organizationId)->where('source_type', $sourceType)
-            ->withCount('chunks')->where(static function (Builder $query) use ($batch): void {
-                foreach ($batch as $chunk) {
-                    $query->orWhere(static function (Builder $identity) use ($chunk): void {
-                        $identity->where('identity_project_id', $chunk->projectId ?? 0)
-                            ->where('identity_part_key', (string) ($chunk->metadata['unit_id'] ?? ''))
-                            ->where('entity_type', $chunk->entityType)->where('entity_id', (string) $chunk->entityId);
-                    });
-                }
-            })->get()->keyBy(static fn (RagSource $source): string => json_encode([$source->identity_project_id, $source->identity_part_key, $source->entity_type, $source->entity_id], JSON_THROW_ON_ERROR));
+        $coverage = $this->indexer->coverageBatch($batch, $guard);
+        if ($generation !== null) {
+            if ($guard !== null) {
+                $guard();
+            }
+            ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->stage($organizationId, $sourceType, $generation, $batch, $coverage['identities']);
+        }
         $indexed = 0;
         $oldestPending = null;
-        foreach ($batch as $chunk) {
-            $identity = json_encode([$chunk->projectId ?? 0, (string) ($chunk->metadata['unit_id'] ?? ''), $chunk->entityType, (string) $chunk->entityId], JSON_THROW_ON_ERROR);
-            $source = $sources->get($identity);
-            if ($source instanceof RagSource && (int) $source->getAttribute('chunks_count') > 0 && $this->indexer->matchesSource($source, $chunk)) {
+        foreach ($batch as $key => $chunk) {
+            if ($coverage['matches'][$key]) {
                 $indexed++;
                 continue;
             }
