@@ -26,7 +26,7 @@ final class RefreshRagCoverageJob implements ShouldQueue
     public function handle(RagCoverageService $coverage): void
     {
         try {
-            $coverage->refreshCoverage($this->organizationId, $this->projectId, $this->sourceType);
+            $coverage->refreshCoverage($this->organizationId, $this->projectId, $this->sourceType, $this->cacheKey);
         } finally {
             Cache::forget($this->cacheKey.':queued');
         }

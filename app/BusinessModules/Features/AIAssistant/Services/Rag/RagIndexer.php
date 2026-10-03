@@ -25,6 +25,8 @@ class RagIndexer
 
     private const SOURCE_INDEX_LOCK_WAIT_MAX_SECONDS = 120;
 
+    private const COVERAGE_CHUNK_PACKET_SIZE = 200;
+
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly RagSourceRegistry $sourceRegistry,
@@ -52,10 +54,10 @@ class RagIndexer
             ->where('source_type', $chunk->sourceType)
             ->where('entity_type', $chunk->entityType)
             ->where('entity_id', (string) $chunk->entityId)
-            ->withCount('chunks')
             ->first();
 
-        $embeddingProvider = $this->providerForIndexing($existing instanceof RagSource ? $existing : null);
+        $loadedChunks = $existing instanceof RagSource ? $this->loadSourceChunks($existing) : null;
+        $embeddingProvider = $this->providerForIndexing($existing instanceof RagSource ? $existing : null, $loadedChunks);
         $checksum = $this->checksum($chunk, true, $embeddingProvider);
 
         $contentChunks = $this->splitContent($chunk->content);
@@ -64,11 +66,11 @@ class RagIndexer
         }
 
         $storedChunks = $existing instanceof RagSource
-            ? $this->matchingContentChunks($existing, $contentChunks)
+            ? $this->matchingContentChunks($existing, $contentChunks, $loadedChunks)
             : null;
         $vectorsCompatible = $existing instanceof RagSource
             && $storedChunks !== null
-            && $this->compatibleSourceEmbeddings($existing, count($contentChunks), $embeddingProvider);
+            && $this->compatibleSourceEmbeddings($existing, count($contentChunks), $embeddingProvider, $storedChunks);
         $sourceChecksumMatches = $existing instanceof RagSource
             && in_array($existing->checksum, [$checksum, $this->sourceFingerprint($chunk)], true);
 
@@ -99,7 +101,7 @@ class RagIndexer
                 }
 
                 $storedChunks = $this->matchingContentChunks($source, $contentChunks);
-                if ($storedChunks === null || ! $this->compatibleSourceEmbeddings($source, count($contentChunks), $embeddingProvider)) {
+                if ($storedChunks === null || ! $this->compatibleSourceEmbeddings($source, count($contentChunks), $embeddingProvider, $storedChunks)) {
                     return false;
                 }
 
@@ -143,7 +145,7 @@ class RagIndexer
             $source->chunks()->delete();
 
             foreach ($embeddedChunks as $index => $embeddedChunk) {
-                $ragChunk = RagChunk::query()->create([
+                RagChunk::query()->forceCreate([
                     'source_id' => $source->id,
                     'organization_id' => $chunk->organizationId,
                     'project_id' => $chunk->projectId,
@@ -157,9 +159,8 @@ class RagIndexer
                     'embedding_provider' => $embeddingProvider->provider(),
                     'embedding_model' => $embeddingProvider->model(),
                     'embedding_created_at' => now(),
+                    'embedding' => $embeddedChunk['vector'],
                 ]);
-
-                $this->storeVector($ragChunk, $embeddedChunk['vector']);
             }
         });
     }
@@ -395,22 +396,22 @@ class RagIndexer
         return [$sourceType => $collector];
     }
 
-    private function providerForIndexing(?RagSource $source): RagEmbeddingProviderInterface
+    private function providerForIndexing(?RagSource $source, ?\Illuminate\Database\Eloquent\Collection $chunks = null): RagEmbeddingProviderInterface
     {
         if ($source === null) {
             return $this->embeddingProviderRegistry?->newIndexProvider() ?? $this->embeddingProvider;
         }
 
-        return $this->providerForExistingSource($source, true) ?? $this->embeddingProvider;
+        return $this->providerForExistingSource($source, true, $chunks) ?? $this->embeddingProvider;
     }
 
-    private function providerForExistingSource(RagSource $source, bool $strict): ?RagEmbeddingProviderInterface
+    private function providerForExistingSource(RagSource $source, bool $strict, ?\Illuminate\Database\Eloquent\Collection $chunks = null): ?RagEmbeddingProviderInterface
     {
         if ($this->embeddingProviderRegistry === null) {
             return $this->embeddingProvider;
         }
 
-        $chunksCount = $source->getAttribute('chunks_count');
+        $chunksCount = $chunks?->count() ?? $source->getAttribute('chunks_count');
         if ($chunksCount === null) {
             $chunksCount = $source->chunks()->count();
         }
@@ -418,7 +419,9 @@ class RagIndexer
             return $this->embeddingProvider;
         }
 
-        $profile = $this->embeddingProfilesBySourceIds([(int) $source->id])[(int) $source->id] ?? null;
+        $profile = $chunks === null
+            ? ($this->embeddingProfilesBySourceIds([(int) $source->id])[(int) $source->id] ?? null)
+            : $this->embeddingProfileForChunks($chunks);
         if ($profile === null) {
             if ($strict) {
                 throw new RuntimeException('rag_embedding_profile_unavailable');
@@ -480,6 +483,56 @@ class RagIndexer
         return $identities;
     }
 
+    public function coverageBatch(array $chunks, ?callable $guard = null): array
+    {
+        $sources = $this->existingSourcesForChunks($chunks);
+        $identities = [];
+        $matches = [];
+        $packets = [];
+        $packet = [];
+        $chunkCount = 0;
+        foreach ($sources as $source) {
+            $count = (int) $source->getAttribute('chunks_count');
+            if ($packet !== [] && $chunkCount + $count > self::COVERAGE_CHUNK_PACKET_SIZE) {
+                $packets[] = $packet;
+                $packet = [];
+                $chunkCount = 0;
+            }
+            $packet[] = (int) $source->id;
+            $chunkCount += $count;
+        }
+        if ($packet !== []) {
+            $packets[] = $packet;
+        }
+        foreach ($packets as $sourceIds) {
+            if ($guard !== null) {
+                $guard();
+            }
+            $loaded = $this->sourceChunksQuery(RagChunk::query()->whereIn('source_id', $sourceIds))->get()->groupBy('source_id');
+            $sourceIds = array_fill_keys($sourceIds, true);
+            foreach ($chunks as $key => $chunk) {
+                $source = $sources[$this->sourceIdentityKey($chunk)] ?? null;
+                if (! $source instanceof RagSource || ! isset($sourceIds[(int) $source->id])) {
+                    continue;
+                }
+                $storedChunks = $loaded->get((int) $source->id) ?? new \Illuminate\Database\Eloquent\Collection;
+                $provider = $this->providerForExistingSource($source, false, $storedChunks);
+                $identities[$key] = $provider === null
+                    ? $this->coverageIdentityForUnavailableProfile($chunk)
+                    : $this->coverageIdentity($chunk, $provider);
+                $matches[$key] = $this->matchesLoadedSource($source, $chunk, $storedChunks);
+            }
+        }
+        foreach ($chunks as $key => $chunk) {
+            if (! array_key_exists($key, $identities)) {
+                $identities[$key] = $this->coverageIdentity($chunk, $this->embeddingProviderRegistry?->newIndexProvider() ?? $this->embeddingProvider);
+                $matches[$key] = false;
+            }
+        }
+
+        return ['identities' => $identities, 'matches' => $matches];
+    }
+
     private function existingSourcesForChunks(array $chunks): array
     {
         $first = reset($chunks);
@@ -498,7 +551,7 @@ class RagIndexer
         $sources = RagSource::query()
             ->where('organization_id', $first->organizationId)
             ->where('source_type', $first->sourceType)
-            ->select(['id', 'organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id'])
+            ->select(['id', 'organization_id', 'project_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'])
             ->withCount('chunks')
             ->where(static function (Builder $identities) use ($uniqueChunks): void {
                 foreach ($uniqueChunks as $chunk) {
@@ -518,6 +571,53 @@ class RagIndexer
         }
 
         return $sourcesByIdentity;
+    }
+
+    private function sourceChunksQuery(Builder $query): Builder
+    {
+        $query->select(['id', 'source_id', 'chunk_index', 'content', 'content_hash', 'embedding_provider', 'embedding_model']);
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            return $query->selectRaw('vector_dims(embedding) AS embedding_dimensions');
+        }
+
+        return $query->addSelect('embedding');
+    }
+
+    private function loadSourceChunks(RagSource $source): \Illuminate\Database\Eloquent\Collection
+    {
+        return $this->sourceChunksQuery($source->chunks()->getQuery())->get();
+    }
+
+    private function chunkDimensions(RagChunk $chunk): int
+    {
+        if (array_key_exists('embedding_dimensions', $chunk->getAttributes())) {
+            return (int) $chunk->getAttribute('embedding_dimensions');
+        }
+        $vector = is_array($chunk->embedding) ? $chunk->embedding : json_decode((string) $chunk->embedding, true);
+
+        return is_array($vector) && array_is_list($vector) ? count($vector) : 0;
+    }
+
+    private function embeddingProfileForChunks(\Illuminate\Database\Eloquent\Collection $chunks): ?array
+    {
+        $providers = [];
+        $models = [];
+        $dimensions = [];
+        foreach ($chunks as $chunk) {
+            if ($chunk->embedding_provider !== null) {
+                $providers[$chunk->embedding_provider] = $chunk->embedding_provider;
+            }
+            if ($chunk->embedding_model !== null) {
+                $models[$chunk->embedding_model] = $chunk->embedding_model;
+            }
+            $dimension = $this->chunkDimensions($chunk);
+            if ($dimension > 0) {
+                $dimensions[$dimension] = true;
+            }
+        }
+
+        return $this->embeddingProfileFromSummary($chunks->count(), count($providers), $providers === [] ? null : reset($providers),
+            count($models), $models === [] ? null : reset($models), count($dimensions), array_key_first($dimensions));
     }
 
     private function embeddingProfilesBySourceIds(array $sourceIds): array
@@ -688,7 +788,12 @@ class RagIndexer
 
     public function matchesSource(RagSource $source, RagChunkData $chunk): bool
     {
-        $embeddingProvider = $this->providerForExistingSource($source, false);
+        return $this->matchesLoadedSource($source, $chunk, $this->loadSourceChunks($source));
+    }
+
+    private function matchesLoadedSource(RagSource $source, RagChunkData $chunk, \Illuminate\Database\Eloquent\Collection $storedChunks): bool
+    {
+        $embeddingProvider = $this->providerForExistingSource($source, false, $storedChunks);
         if ($embeddingProvider === null
             || ! in_array($source->checksum, [$this->checksum($chunk, true, $embeddingProvider), $this->sourceFingerprint($chunk)], true)) {
             return false;
@@ -697,22 +802,21 @@ class RagIndexer
         $contentChunks = $this->splitContent($chunk->content);
 
         return $contentChunks !== []
-            && $this->matchingContentChunks($source, $contentChunks) !== null
-            && $this->compatibleSourceEmbeddings($source, count($contentChunks), $embeddingProvider);
+            && $this->matchingContentChunks($source, $contentChunks, $storedChunks) !== null
+            && $this->compatibleSourceEmbeddings($source, count($contentChunks), $embeddingProvider, $storedChunks);
     }
 
     /**
      * @param  array<int, string>  $contentChunks
      * @return \Illuminate\Database\Eloquent\Collection<int, RagChunk>|null
      */
-    private function matchingContentChunks(RagSource $source, array $contentChunks): ?\Illuminate\Database\Eloquent\Collection
+    private function matchingContentChunks(RagSource $source, array $contentChunks, ?\Illuminate\Database\Eloquent\Collection $storedChunks = null): ?\Illuminate\Database\Eloquent\Collection
     {
         if ($contentChunks === []) {
             return null;
         }
 
-        $storedChunks = $source->chunks()->get(['id', 'chunk_index', 'content', 'content_hash'])
-            ->sortBy('chunk_index')->values();
+        $storedChunks = ($storedChunks ?? $this->loadSourceChunks($source))->sortBy('chunk_index')->values();
         if ($storedChunks->count() !== count($contentChunks)) {
             return null;
         }
@@ -732,23 +836,17 @@ class RagIndexer
         return $storedChunks;
     }
 
-    private function compatibleSourceEmbeddings(RagSource $source, int $expectedChunkCount, RagEmbeddingProviderInterface $embeddingProvider): bool
+    private function compatibleSourceEmbeddings(RagSource $source, int $expectedChunkCount, RagEmbeddingProviderInterface $embeddingProvider, \Illuminate\Database\Eloquent\Collection $chunks): bool
     {
-        if (DB::connection()->getDriverName() === 'pgsql') {
-            $counts = $source->chunks()->selectRaw('COUNT(*) AS total, SUM(CASE WHEN embedding IS NOT NULL AND embedding_provider = ? AND embedding_model = ? AND vector_dims(embedding) = ? THEN 1 ELSE 0 END) AS compatible',
-                [$embeddingProvider->provider(), $embeddingProvider->model(), $embeddingProvider->dimensions()])->first();
-
-            return $counts !== null
-                && (int) $counts->getAttribute('total') === $expectedChunkCount
-                && (int) $counts->getAttribute('compatible') === $expectedChunkCount;
+        if ($chunks->count() !== $expectedChunkCount) {
+            return false;
         }
-        $chunks = $source->chunks()->get(['embedding_provider', 'embedding_model', 'embedding']);
-        if ($chunks->count() !== $expectedChunkCount) return false;
         foreach ($chunks as $storedChunk) {
-            $vector = json_decode((string) $storedChunk->getAttribute('embedding'), true);
             if ($storedChunk->embedding_provider !== $embeddingProvider->provider()
                 || $storedChunk->embedding_model !== $embeddingProvider->model()
-                || ! is_array($vector) || count($vector) !== $embeddingProvider->dimensions()) return false;
+                || $this->chunkDimensions($storedChunk) !== $embeddingProvider->dimensions()) {
+                return false;
+            }
         }
 
         return true;
@@ -998,15 +1096,6 @@ class RagIndexer
         }
 
         return is_numeric($value) && (int) $value > 0 ? (int) $value : $default;
-    }
-
-    private function storeVector(RagChunk $chunk, string $vector): void
-    {
-        $sql = DB::connection()->getDriverName() === 'pgsql'
-            ? 'UPDATE ai_rag_chunks SET embedding = ?::vector WHERE id = ?'
-            : 'UPDATE ai_rag_chunks SET embedding = ? WHERE id = ?';
-
-        DB::update($sql, [$vector, $chunk->id]);
     }
 
     /**

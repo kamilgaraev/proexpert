@@ -7,10 +7,12 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
@@ -22,7 +24,9 @@ use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\DB;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\RagTestEmbedding;
 use Tests\TestCase;
 
@@ -266,6 +270,122 @@ final class RagActorCoverageTest extends TestCase
         $this->assertArrayNotHasKey('title', $row->getAttributes());
         $this->assertArrayNotHasKey('content', $row->getAttributes());
         $this->assertArrayNotHasKey('metadata', $row->getAttributes());
+        $this->assertSame(1, $this->collector->collections);
+    }
+
+    #[DataProvider('embeddingRegistryModes')]
+    public function test_current_source_coverage_queries_grow_by_batch_instead_of_source(bool $withRegistry): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        if ($withRegistry) {
+            $registry = new RagSourceRegistry([$this->collector]);
+            $provider = new ActorCoverageEmbedding;
+            $this->indexer = new RagIndexer($provider, $registry, embeddingProviderRegistry: new RagEmbeddingProviderRegistry($provider));
+            $this->coverage = new RagCoverageService($registry, $this->indexer);
+        }
+        $vector = json_encode(RagTestEmbedding::fromLeadingValues([0.1, 0.2]), JSON_THROW_ON_ERROR);
+        for ($part = 0; $part < 101; $part++) {
+            $chunk = new RagChunkData($organization->id, $visible->id, 'project', 'project', $visible->id,
+                'Проект', 'Content '.$part, ['unit_id' => $part]);
+            $this->collector->chunks[] = $chunk;
+            $source = RagSource::query()->create($this->indexer->coverageIdentity($chunk) + ['title' => 'Проект', 'metadata' => $chunk->metadata]);
+            DB::table('ai_rag_chunks')->insert([
+                'source_id' => $source->id, 'organization_id' => $organization->id, 'project_id' => $visible->id,
+                'chunk_index' => 0, 'content' => $chunk->content, 'content_hash' => hash('sha256', $chunk->content),
+                'embedding_provider' => 'fake', 'embedding_model' => 'fake', 'embedding' => $vector,
+            ]);
+        }
+        $queries = [];
+        DB::listen(static function ($event) use (&$queries): void {
+            if (str_starts_with(strtolower($event->sql), 'select') && str_contains($event->sql, 'ai_rag_chunks')) {
+                $queries[] = $event->sql;
+            }
+        });
+        $snapshot = $this->coverage->refreshCoverage($organization->id);
+        $this->assertSame(101, $snapshot['indexed_source_count']);
+        $this->assertTrue($snapshot['coverage_complete']);
+        fwrite(STDERR, json_encode(['coverage_sources' => 101, 'provider_registry' => $withRegistry, 'chunk_read_queries' => count($queries)], JSON_THROW_ON_ERROR).PHP_EOL);
+        $this->assertLessThanOrEqual(6, count($queries));
+        $this->assertCount(0, array_filter($queries, static fn (string $sql): bool => str_contains($sql, 'COUNT(*) AS total')));
+    }
+
+    public static function embeddingRegistryModes(): array
+    {
+        return [[false], [true]];
+    }
+
+    public function test_duplicate_source_checks_reuse_the_same_chunk_read(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $queries = [];
+        DB::listen(static function ($event) use (&$queries): void {
+            if (str_starts_with(strtolower($event->sql), 'select') && str_contains($event->sql, 'ai_rag_chunks')) {
+                $queries[] = $event->sql;
+            }
+        });
+        $state = $this->indexer->coverageBatch(array_fill(0, 100, $this->collector->chunks[0]));
+        $this->assertCount(100, $state['matches']);
+        $this->assertSame([true], array_values(array_unique($state['matches'])));
+        $this->assertCount(2, $queries);
+    }
+
+    public function test_batch_coverage_rejects_corrupt_content_missing_vectors_and_incompatible_profiles(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $registry = new RagSourceRegistry([$this->collector]);
+        $provider = new ActorCoverageEmbedding;
+        $indexer = new RagIndexer($provider, $registry, embeddingProviderRegistry: new RagEmbeddingProviderRegistry($provider));
+        $this->index($organization->id, $visible);
+        $source = RagSource::query()->where('organization_id', $organization->id)->firstOrFail();
+        $batch = [$this->collector->chunks[0]];
+        $this->assertSame([true], $indexer->coverageBatch($batch)['matches']);
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->update(['embedding' => null]);
+        $this->assertSame([false], $indexer->coverageBatch($batch)['matches']);
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->update([
+            'embedding' => json_encode(RagTestEmbedding::fromLeadingValues([0.1, 0.2]), JSON_THROW_ON_ERROR), 'content' => 'corrupt',
+        ]);
+        $this->assertSame([false], $indexer->coverageBatch($batch)['matches']);
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->update(['content' => $batch[0]->content, 'embedding_provider' => 'other']);
+        $this->assertSame([false], $indexer->coverageBatch($batch)['matches']);
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->update(['embedding_provider' => 'fake', 'embedding_model' => 'other']);
+        $this->assertSame([false], $indexer->coverageBatch($batch)['matches']);
+        DB::table('ai_rag_chunks')->where('source_id', $source->id)->update([
+            'embedding_model' => 'fake', 'embedding' => json_encode(array_fill(0, 1024, 0.1), JSON_THROW_ON_ERROR),
+        ]);
+        $this->assertSame([false], $indexer->coverageBatch($batch)['matches']);
+    }
+
+    public function test_scoped_refresh_does_not_collect_while_the_same_scope_is_locked(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $lease = Cache::lock('ai-rag-coverage-projection:'.$organization->id.':'.$visible->id.':project', 7500);
+        $this->assertTrue($lease->get());
+        try {
+            $snapshot = $this->coverage->refreshCoverage($organization->id, $visible->id, 'project');
+            $this->assertSame(0, $this->collector->collections);
+            $this->assertFalse($snapshot['eligible_count_known']);
+        } finally {
+            $lease->release();
+        }
+        $this->coverage->refreshCoverage($organization->id, $visible->id, 'project');
+        $this->assertSame(1, $this->collector->collections);
+    }
+
+    public function test_obsolete_and_already_completed_coverage_jobs_do_not_repeat_collection(): void
+    {
+        [$organization] = $this->scope();
+        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
+        $oldKey = 'ai-rag-coverage:'.$organization->id.':0:*:'.$revision;
+        RagCoverageService::invalidate($organization->id);
+        (new RefreshRagCoverageJob($organization->id, null, null, $oldKey))->handle($this->coverage);
+        $this->assertSame(0, $this->collector->collections);
+        $currentKey = 'ai-rag-coverage:'.$organization->id.':0:*:'.($revision + 1);
+        Queue::assertPushed(RefreshRagCoverageJob::class, static fn ($job): bool => $job->cacheKey === $currentKey);
+        $job = new RefreshRagCoverageJob($organization->id, null, null, $currentKey);
+        $job->handle($this->coverage);
+        $this->assertSame(1, $this->collector->collections);
+        $job->handle($this->coverage);
         $this->assertSame(1, $this->collector->collections);
     }
 
