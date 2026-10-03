@@ -111,7 +111,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $this->assertLessThanOrEqual(8192, $prepared['input_tokens']);
     }
 
-    public function test_payment_only_hints_contain_only_the_acl_checked_payment_document(): void
+    public function test_payment_classification_preserves_the_full_acl_checked_catalog(): void
     {
         app()->instance('request', \Illuminate\Http\Request::create('/api/v1/admin/ai-assistant'));
         $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
@@ -125,10 +125,11 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
         $hints = $references['registered_domain_capabilities'];
 
-        $this->assertSame([
-            ['domain' => 'finance', 'primary_entity_type' => 'payment_document', 'entity_type_count' => 1, 'operations' => ['search', 'read', 'navigation']],
-        ], $hints['domains']);
-        $this->assertArrayNotHasKey('details_tool', $hints);
+        $projectMessages = $service->messages($this->plan());
+        $projectReferences = json_decode($projectMessages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame($projectReferences['registered_domain_capabilities'], $hints);
+        $this->assertContains('projects', array_column($hints['domains'], 'domain'));
+        $this->assertSame('assistant_domain_discover_capabilities', $hints['details_tool']);
         $this->assertSame('checked_on_read', $hints['record_access']);
     }
 
@@ -146,7 +147,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
         $hints = $references['registered_domain_capabilities'] ?? [];
 
-        $this->assertSame([], $hints['domains'] ?? []);
+        $this->assertContains('projects', array_column($hints['domains'] ?? [], 'domain'));
     }
 
     public function test_payment_only_hints_omit_payment_document_when_invoice_access_denies_it(): void
@@ -163,7 +164,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
         $hints = $references['registered_domain_capabilities'] ?? [];
 
-        $this->assertSame([], $hints['domains'] ?? []);
+        $this->assertContains('projects', array_column($hints['domains'] ?? [], 'domain'));
     }
 
     private function plan(): array

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
@@ -33,9 +34,9 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         self::assertSame('read_only', $understanding->actionPolicy);
         $names = $this->toolNames($query, $capability['id']);
         self::assertContains('get_estimate_positions', $names);
-        self::assertNotContains('get_estimate_answer', $names);
-        self::assertNotContains('get_material_stock', $names);
-        self::assertNotContains('search_warehouse', $names);
+        self::assertContains('get_estimate_answer', $names);
+        self::assertContains('get_material_stock', $names);
+        self::assertContains('search_warehouse', $names);
         self::assertTrue((new AssistantToolEligibilityPolicy)->canExposeTool('get_estimate_positions', $understanding)->allowed);
     }
 
@@ -44,8 +45,8 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         $names = $this->toolNames(self::productionQuery(), 'warehouse');
 
         self::assertContains('get_estimate_positions', $names);
-        self::assertNotContains('get_estimate_answer', $names);
-        self::assertNotContains('get_material_stock', $names);
+        self::assertContains('get_estimate_answer', $names);
+        self::assertContains('get_material_stock', $names);
     }
 
     public function test_broad_estimate_question_exposes_cross_estimate_position_search(): void
@@ -53,7 +54,8 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         $query = 'Есть ли у нас в сметах бетонирование?';
 
         foreach (['estimates', 'warehouse'] as $capabilityId) {
-            self::assertSame(['search_estimate_positions'], $this->toolNames($query, $capabilityId));
+            self::assertContains('search_estimate_positions', $this->toolNames($query, $capabilityId));
+            self::assertContains('get_estimate_answer', $this->toolNames($query, $capabilityId));
         }
     }
 
@@ -77,7 +79,8 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         $registry->registerTool((new ReflectionClass(GetEstimatePositionsTool::class))->newInstanceWithoutConstructor());
         $class = new ReflectionClass(AIAssistantService::class);
         $service = $class->newInstanceWithoutConstructor();
-        foreach (['activeActor' => $actor, 'permissionChecker' => $checker, 'dataAccess' => null, 'toolRegistry' => $registry] as $property => $value) {
+        foreach (['activeActor' => $actor, 'permissionChecker' => $checker, 'dataAccess' => null,
+            'toolRegistry' => $registry, 'toolEligibilityPolicy' => new AssistantToolEligibilityPolicy] as $property => $value) {
             $class->getProperty($property)->setValue($service, $value);
         }
 
@@ -98,7 +101,7 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
 
         self::assertContains($expectedTool, $names);
         if ($capabilityId === 'warehouse') {
-            self::assertNotContains('get_estimate_positions', $names);
+            self::assertContains('get_estimate_positions', $names);
         }
     }
 
@@ -136,8 +139,16 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
 
     private function toolNames(string $query, string $capabilityId): array
     {
+        $registry = new AIToolRegistry;
+        foreach (['search_estimate_positions', 'get_estimate_answer', 'get_estimate_positions',
+            'get_material_stock', 'search_warehouse', 'search_assistant_documents'] as $name) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn($name);
+            $registry->registerTool($tool);
+        }
         $class = new ReflectionClass(AIAssistantService::class);
         $service = $class->newInstanceWithoutConstructor();
+        $class->getProperty('toolRegistry')->setValue($service, $registry);
         $class->getProperty('toolEligibilityPolicy')->setValue($service, new AssistantToolEligibilityPolicy);
 
         return $class->getMethod('resolveRelevantToolNames')->invoke($service, [

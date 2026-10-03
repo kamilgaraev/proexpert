@@ -106,57 +106,22 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
         }
     }
 
-    public function test_payment_only_scope_blocks_contract_reads_and_cross_domain_searches(): void
+    public function test_classified_payment_scope_does_not_block_model_selected_read_sources(): void
     {
-        $resolver = new AssistantRequestUnderstandingResolver;
-        $paymentOnly = $resolver->resolve('Что с платежами?');
-        $organizationPayments = $resolver->resolve('Покажи платежи организации');
-        $explicitContract = $resolver->resolve('Покажи платежи по договору');
-        $explicitReport = $resolver->resolve('Сделай отчет по платежам');
-        $mixedEntities = $resolver->resolve('Покажи платежи проекта');
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?');
         $policy = new AssistantToolEligibilityPolicy;
-
-        $this->assertSame(['payment'], $paymentOnly->requestedEntities);
-        $this->assertSame(['payment'], $organizationPayments->requestedEntities);
-        $this->assertFalse($policy->canExposeTool('get_contract_snapshot', $paymentOnly)->allowed);
-        $this->assertFalse($policy->canExecuteTool('get_contract_snapshot', $paymentOnly)->allowed);
-        $this->assertFalse($policy->canExecuteTool('get_project_snapshot', $paymentOnly)->allowed);
-        $this->assertTrue($policy->canExposeTool('get_contract_snapshot', $explicitContract)->allowed);
-
-        foreach ([
-            'assistant_domain_discover_capabilities',
-            'get_estimate_answer',
-            'get_live_project_financial_evidence',
-            'get_material_stock',
-            'get_published_report_financial_evidence',
-            'search_assistant_documents',
-            'search_projects',
-        ] as $toolName) {
-            $this->assertFalse($policy->canExposeTool($toolName, $paymentOnly)->allowed, $toolName);
-            $this->assertFalse($policy->canExecuteTool($toolName, $paymentOnly)->allowed, $toolName);
+        foreach (['get_contract_snapshot', 'get_project_snapshot', 'get_estimate_answer',
+            'get_live_project_financial_evidence', 'get_material_stock', 'search_assistant_documents',
+            'assistant_domain_discover_capabilities', 'assistant_domain_search', 'assistant_domain_read'] as $name) {
+            self::assertTrue($policy->canExposeTool($name, $understanding)->allowed, $name);
+            self::assertTrue($policy->canExecuteTool($name, $understanding, false, [
+                'domain' => 'contracts', 'entity_type' => 'contract',
+            ])->allowed, $name);
         }
-
-        foreach (['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation'] as $toolName) {
-            $this->assertTrue($policy->canExposeTool($toolName, $paymentOnly)->allowed, $toolName);
-            $this->assertTrue($policy->canExecuteTool($toolName, $paymentOnly, false, [
-                'domain' => 'finance',
-                'entity_type' => 'payment_document',
-            ])->allowed, $toolName);
-            $this->assertFalse($policy->canExecuteTool($toolName, $paymentOnly, false, [
-                'domain' => 'contracts',
-                'entity_type' => 'contract',
-            ])->allowed, $toolName);
-            $this->assertFalse($policy->canExecuteTool($toolName, $paymentOnly, false, [
-                'domain' => 'finance',
-                'entity_type' => 'contract',
-            ])->allowed, $toolName);
-        }
-        $this->assertTrue($policy->canExposeTool('generate_contract_payments_report', $explicitReport)->allowed);
-        $this->assertTrue($policy->canExecuteTool('generate_contract_payments_report', $explicitReport)->allowed);
-        $this->assertFalse($policy->canExposeTool('get_live_project_financial_evidence', $explicitReport)->allowed);
-        $this->assertTrue($policy->canExposeTool('get_estimate_answer', $mixedEntities)->allowed);
-        $this->assertTrue($policy->canExecuteTool('get_estimate_answer', $mixedEntities)->allowed);
+        self::assertFalse($policy->canExposeTool('generate_contract_payments_report', $understanding)->allowed);
+        self::assertFalse($policy->canExecuteTool('approve_payment_request', $understanding)->allowed);
     }
+
 
     public function test_unknown_tools_are_denied_even_with_read_prefix(): void
     {

@@ -55,6 +55,11 @@ final class AssistantToolSchemaBudgetTest extends TestCase
 
     public function test_registered_and_pending_finite_catalogues_have_bounded_tool_schemas(): void
     {
+        config(['ai-assistant-credits.profiles' => [
+            'short' => ['input_tokens' => 12288, 'output_tokens' => 1024, 'max_calls' => 3],
+            'normal' => ['input_tokens' => 24576, 'output_tokens' => 2048, 'max_calls' => 5],
+            'detailed' => ['input_tokens' => 32768, 'output_tokens' => 4096, 'max_calls' => 6],
+        ]]);
         $defaults = AssistantDomainCatalog::defaults();
         $merged = $defaults;
         foreach (glob(dirname(__DIR__, 3).'/app/BusinessModules/Features/AIAssistant/Services/DomainMetadata/*.php') ?: [] as $path) {
@@ -103,7 +108,7 @@ final class AssistantToolSchemaBudgetTest extends TestCase
                 foreach (['short', 'normal', 'detailed'] as $profile) {
                     $prepared = (new TokenBudgetService($counter))->prepare($messages, $relevant, $profile);
                     $this->assertSame($messages, $prepared['messages']);
-                    $this->assertLessThanOrEqual(TokenBudgetService::limits($profile)['input'], $prepared['input_tokens']);
+                    $this->assertLessThanOrEqual(config('ai-assistant-credits.profiles.'.$profile.'.input_tokens'), $prepared['input_tokens']);
                     $measurements[$name]['relevance'][$intent]['profiles'][$profile] = $prepared['input_tokens'];
                 }
                 $measurements[$name]['relevance'][$intent] += ['before' => $counter->tools($before), 'after' => $counter->tools($relevant), 'tools' => count($relevant), 'preserved_message_tokens' => $counter->messages($messages)];

@@ -25,7 +25,7 @@ final class SearchEstimatePositionsTool extends ReadonlyEstimateTool
 
     public function getDescription(): string
     {
-        return 'Ищи позиции по словам из названия или точному нормативному коду во всех доступных сметах. Передавай поисковую фразу без вопроса и без названия сметы. Результаты содержат номер и название сметы, номер, название и код позиции, а также ссылки; финансовые суммы не возвращаются. Если search_complete=false, продолжай с тем же query и next_cursor; неполный пустой результат не подтверждает отсутствие совпадений.';
+        return trans_message('ai_assistant.estimate_position_search_description');
     }
 
     public function getParametersSchema(): array

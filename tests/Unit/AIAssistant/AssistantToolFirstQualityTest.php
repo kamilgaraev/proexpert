@@ -296,9 +296,9 @@ final class AssistantToolFirstQualityTest extends TestCase
         foreach ($tools as $index => $tool) {
             $view = json_decode($tool['content'], true, 512, JSON_THROW_ON_ERROR);
             $this->assertSame(['limit' => 20, 'returned' => 20, 'has_more' => true], $view['result_window']);
-            $this->assertSame(['organization_id' => 15, 'estimate_id' => 99, 'content_scope' => 'structured',
-                'fetched_at' => $fetchedAt], $view['source_context']);
             $originalReferences = array_values($toolResults)[$index]['source_refs'];
+            $this->assertSame(['entity_type' => $originalReferences[0]['entity_type'], 'organization_id' => 15, 'estimate_id' => 99, 'content_scope' => 'structured',
+                'fetched_at' => $fetchedAt], $view['source_context']);
             foreach ($view['source_refs'] as $rowIndex => $reference) {
                 $restored = $reference + $view['source_context'];
                 foreach ($restored as $field => $value) { $this->assertSame($originalReferences[$rowIndex][$field], $value); }
@@ -322,6 +322,23 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->expectException(\DomainException::class);
         $this->expectExceptionMessage('ai_token_limits_invalid');
         $service->ask('Покажи данные позиции.', 15, $this->actor(), 7);
+    }
+
+    public function test_context_exhaustion_without_price_proof_preserves_the_actual_stop_reason(): void
+    {
+        $service = $this->service(['search_estimate_positions' => ['status' => 'success', 'matches' => [],
+            'search_complete' => false, 'has_more' => true, 'next_cursor' => 'opaque-cursor']], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('search_estimate_positions')]],
+        ]);
+        $service->preparationFailure = new \DomainException('ai_token_budget_exhausted');
+
+        $response = $service->ask('найди в любой смете цену на 1м3 бетона', 15, $this->actor(), 7);
+
+        self::assertSame(trans_message('ai_assistant.context_budget_exhausted'), $response['message']['content']);
+        self::assertStringNotContainsString('не подтверждены свежими данными', $response['message']['content']);
+        self::assertTrue($response['message']['metadata']['degraded_mode']);
+        self::assertFalse($response['message']['metadata']['needs_clarification']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
     }
 
     public function test_oversized_nonduplicated_facts_stop_with_explicit_partial_and_keep_original_receipt(): void
@@ -539,6 +556,19 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertStringContainsString('Гаражная', $response['message']['content']);
         $this->assertStringNotContainsString('не подтверждены свежими данными', $response['message']['content']);
         $this->assertSame([$ref], $response['message']['metadata']['source_refs']);
+    }
+
+    public function test_configured_call_budget_allows_the_model_to_finish_a_four_read_chain(): void
+    {
+        config(['ai-assistant-credits.profiles.normal.max_calls' => 5]);
+        $responses = array_fill(0, 4, ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_discover_capabilities')]]);
+        $responses[] = ['content' => 'Поиск завершён.'];
+        $service = $this->service(['assistant_domain_discover_capabilities' => ['capabilities' => []]], $responses);
+
+        $service->ask('Найди сведения о бетоне', 15, $this->actor(), 7);
+
+        $this->assertCount(5, $this->providerCalls);
+        $this->assertSame(4, $this->toolExecutions);
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('compoundBimStockStatuses')]

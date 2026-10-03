@@ -18,8 +18,6 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanne
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
-use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCompositionIntent;
-use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -549,6 +547,7 @@ class AIAssistantService
             $proposedActions = [];
             $trustedDownloadUrls = [];
             $degradedMode = false;
+            $budgetStopNotice = null;
 
             $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
             $response = $responseEnvelope['response'];
@@ -559,7 +558,8 @@ class AIAssistantService
             }
 
             $loopCount = 0;
-            $maxLoops = $this->activeRequest !== null ? max(0, $this->activeRequest->max_calls - 1) : TokenBudgetService::limits($this->activeProfile)['calls'] - 1;
+            $maxLoops = $this->activeRequest !== null ? max(0, $this->activeRequest->max_calls - 1)
+                : (int) config('ai-assistant-credits.profiles.'.$this->activeProfile.'.max_calls', TokenBudgetService::limits($this->activeProfile)['calls']) - 1;
             $organization = null;
 
             while (! empty($response['tool_calls']) && $loopCount < $maxLoops) {
@@ -755,7 +755,8 @@ class AIAssistantService
                 try {
                     $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
                 } catch (AssistantBudgetExceeded) {
-                    $toolFailures[] = trans_message('ai_assistant.approved_budget_exceeded');
+                    $budgetStopNotice = trans_message('ai_assistant.approved_budget_exceeded');
+                    $toolFailures[] = $budgetStopNotice;
                     $response['content'] = trans_message('ai_assistant.budget_partial_answer');
                     $response['tool_calls'] = [];
                     $degradedMode = true;
@@ -764,7 +765,8 @@ class AIAssistantService
                     if ($exception->getMessage() !== 'ai_token_budget_exhausted') {
                         throw $exception;
                     }
-                    $toolFailures[] = trans_message('ai_assistant.context_budget_exhausted');
+                    $budgetStopNotice = trans_message('ai_assistant.context_budget_exhausted');
+                    $toolFailures[] = $budgetStopNotice;
                     $response['content'] = trans_message('ai_assistant.context_budget_exhausted');
                     $response['tool_calls'] = [];
                     $degradedMode = true;
@@ -1005,6 +1007,15 @@ class AIAssistantService
                 if (is_array($structuredCheck)) {
                     $structuredCheck['text'] = $assistantContent;
                     $structuredCheck['validation_status'] = 'partial';
+                }
+            }
+
+            if ($budgetStopNotice !== null) {
+                $hasConfirmedAnswer = ($structuredCheck['source_refs'] ?? []) !== []
+                    || ($financialCheck['source_refs'] ?? []) !== [];
+                $assistantContent = $hasConfirmedAnswer ? $assistantContent."\n\n".$budgetStopNotice : $budgetStopNotice;
+                if (! $hasConfirmedAnswer && is_array($structuredCheck)) {
+                    $structuredCheck['needs_clarification'] = false;
                 }
             }
 
@@ -1904,19 +1915,16 @@ class AIAssistantService
         $toolName = (string) ($toolCall['function']['name'] ?? '');
         $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
-        if ($toolName === 'get_bim_model_elements' && ($args['project_id'] ?? null) === null) {
+        if ($toolName === 'get_bim_model_elements' && ! array_key_exists('project_id', $args)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
         }
-        if ($toolName === 'assistant_domain_search' && ($args['project_id'] ?? null) === null) {
+        if ($toolName === 'assistant_domain_search' && ! array_key_exists('project_id', $args)) {
             $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
             if ($definition !== null && in_array('project_id', $definition->fields, true)) {
                 $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             }
         }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
-        if ($toolName === 'assistant_domain_search' && $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding)) {
-            $args = $this->normalizePaymentOnlyDomainSearchArguments($args);
-        }
         $tool = $this->toolRegistry->getTool($toolName);
 
         if (! $tool) {
@@ -3134,6 +3142,7 @@ class AIAssistantService
             'content' => $this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.trusted_instruction_boundary'),
         ]];
         $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
+        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.model_tool_selection');
         $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
         if ($this->currentAttachmentIds !== []) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_instruction_boundary');
@@ -3479,6 +3488,9 @@ class AIAssistantService
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
 
         if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            $toolNames = array_values(array_filter($toolNames,
+                fn (string $toolName): bool => $this->toolEligibilityPolicy->isReadOnlyTool($toolName)));
+
             return $this->toolRegistry->getToolsDefinitions($toolNames);
         }
 
@@ -3530,91 +3542,11 @@ class AIAssistantService
 
     protected function resolveRelevantToolNames(array $taskPlan): array
     {
-        $taskType = (string) ($taskPlan['task_type'] ?? 'summary');
-        $capabilityId = $taskPlan['capability']['id'] ?? null;
-        $query = (string) ($taskPlan['request']['message'] ?? '');
-        if (AssistantEstimateCrossSearchIntent::matches($query)) {
-            return ['search_estimate_positions'];
-        }
-        if (AssistantEstimateCompositionIntent::matches($query, $capabilityId === 'estimates')) {
-            return ['get_estimate_positions'];
-        }
-        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
-        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($requestUnderstanding);
-
-        $capabilityTools = match ($capabilityId) {
-            'projects' => ['get_project_snapshot', 'search_projects'],
-            'contracts' => ['get_contract_snapshot', 'search_contractors'],
-            'reports' => ['get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report', 'generate_operational_pdf_report', 'generate_rag_pdf_report'],
-            'warehouse' => ['search_warehouse', 'search_materials'],
-            'payments' => ['approve_payment_request', 'generate_contract_payments_report'],
-            'schedules' => ['get_schedule_snapshot', 'search_projects', 'create_schedule_task', 'update_schedule_task_status'],
-            'procurement' => ['get_procurement_snapshot', 'get_project_snapshot', 'search_materials', 'search_contractors'],
-            'notifications' => ['search_projects', 'search_users', 'send_project_notification'],
-            'estimates' => ['resolve_estimate', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot'],
-            'measurement_units' => ['create_measurement_unit', 'update_measurement_unit', 'delete_measurement_unit', 'mass_create_measurement_units'],
-            'design', 'design_detail' => ['get_bim_model_elements'],
-            default => [],
-        };
-
-        $toolNames = $capabilityTools;
-        if ($capabilityId === 'payments' && $requestUnderstanding instanceof AssistantRequestUnderstanding) {
-            if (in_array('contract', $requestUnderstanding->requestedEntities, true)) {
-                $toolNames[] = 'get_contract_snapshot';
-            }
-            if (in_array('project', $requestUnderstanding->requestedEntities, true)) {
-                $toolNames[] = 'get_project_snapshot';
-            }
-        }
-        if (in_array($capabilityId, ['reports', 'payments'], true)
-            || in_array($taskPlan['domain'] ?? $taskPlan['capability']['domain'] ?? null, ['finance', 'reports', 'budgeting', 'holding_finance', 'organization_reporting'], true)) {
-            $toolNames[] = 'get_published_report_financial_evidence';
-            $toolNames[] = 'get_live_project_financial_evidence';
-        }
-
-        if ($taskType === 'find' && ! $paymentOnlyRequest) {
-            $toolNames = array_merge($toolNames, [
-                'search_projects',
-                'search_contractors',
-                'search_materials',
-                'search_users',
-                'search_warehouse',
-                'get_project_snapshot',
-                'get_procurement_snapshot',
-                'get_contract_snapshot',
-                'get_schedule_snapshot',
-            ]);
-        }
-
-        if (in_array($taskType, ['act', 'wizard'], true)) {
-            $toolNames = array_merge($toolNames, [
-                'create_schedule_task',
-                'update_schedule_task_status',
-                'send_project_notification',
-                'approve_payment_request',
-            ]);
-        }
-
-        $toolNames = array_merge($toolNames, ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
-            'assistant_domain_discover_capabilities', 'search_assistant_documents', 'get_estimate_answer', 'get_material_stock',
-            'get_published_report_financial_evidence', 'get_live_project_financial_evidence', 'get_bim_model_elements']);
-
-        if ($paymentOnlyRequest) {
-            $toolNames = array_values(array_filter(
-                $toolNames,
-                fn (string $toolName): bool => $this->toolEligibilityPolicy->isAllowedForPaymentOnlyRequest($toolName)
-            ));
-        }
-
-        return array_values(array_unique(array_filter(
-            $toolNames,
-            static fn (mixed $toolName): bool => is_string($toolName) && $toolName !== ''
-        )));
+        return $this->toolRegistry->getToolNames();
     }
 
     protected function buildDomainCapabilityHints(array $taskPlan): array
     {
-        $paymentOnlyRequest = $this->toolEligibilityPolicy->isPaymentOnlyRequest($this->requestUnderstandingFromPlan($taskPlan));
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $actor = $this->activeActor;
         $tool = $this->toolRegistry->getTool('assistant_domain_discover_capabilities');
@@ -3625,14 +3557,10 @@ class AIAssistantService
             if (! $metadataFrameActive) {
                 $this->executionCheckpoint();
             }
-            $read = function () use ($actor, $tool, $metadataFrameActive, $paymentOnlyRequest): array {
+            $read = function () use ($actor, $tool, $metadataFrameActive): array {
                 if (! $this->permissionChecker->canUseAssistant($actor, (int) $actor->current_organization_id, ! $metadataFrameActive)
                     || ! $this->permissionChecker->canExecuteTool($actor, $tool->getName(), [], ! $metadataFrameActive)) {
                     return [];
-                }
-
-                if ($paymentOnlyRequest) {
-                    return $this->buildPaymentOnlyDomainCapabilityHints($tool, $actor, (int) $actor->current_organization_id);
                 }
 
                 return $tool->compactForActor($actor, (int) $actor->current_organization_id, ! $metadataFrameActive);
@@ -3656,59 +3584,6 @@ class AIAssistantService
             }
             throw $exception;
         }
-    }
-
-    private function normalizePaymentOnlyDomainSearchArguments(array $arguments): array
-    {
-        return $arguments + [
-            'domain' => 'finance',
-            'entity_type' => 'payment_document',
-            'query' => '',
-            'project_id' => null,
-            'limit' => 5,
-            'fields' => null,
-        ];
-    }
-
-    private function buildPaymentOnlyDomainCapabilityHints(
-        DiscoverAssistantDomainCapabilitiesTool $tool,
-        User $actor,
-        int $organizationId
-    ): array {
-        $organization = new Organization;
-        $organization->id = $organizationId;
-        $capabilityResult = $tool->execute([
-            'domain' => 'finance',
-            'entity_type' => 'payment_document',
-            'offset' => 0,
-            'limit' => 1,
-            'field_offset' => 0,
-            'field_limit' => 16,
-        ], $actor, $organization);
-        if (! is_array($capabilityResult)) {
-            return [];
-        }
-
-        $domains = [];
-        foreach ($capabilityResult['capabilities'] ?? [] as $capability) {
-            if (! is_array($capability)
-                || ($capability['domain'] ?? null) !== 'finance'
-                || ($capability['entity_type'] ?? null) !== 'payment_document') {
-                continue;
-            }
-
-            $domains[] = [
-                'domain' => 'finance',
-                'primary_entity_type' => 'payment_document',
-                'entity_type_count' => 1,
-                'operations' => is_array($capability['operations'] ?? null) ? $capability['operations'] : [],
-            ];
-        }
-
-        return [
-            'domains' => count($domains) === 1 ? $domains : [],
-            'record_access' => $capabilityResult['record_access'] ?? 'checked_on_read',
-        ];
     }
 
     protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array

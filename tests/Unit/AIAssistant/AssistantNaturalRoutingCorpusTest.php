@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AIAssistantService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantCapabilityRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
@@ -60,6 +61,11 @@ final class AssistantNaturalRoutingCorpusTest extends TestCase
         $eligibility = new AssistantToolEligibilityPolicy;
         $reflection = new ReflectionClass(AIAssistantService::class);
         $service = $reflection->newInstanceWithoutConstructor();
+        $registry = new AIToolRegistry;
+        foreach (['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_discover_capabilities', 'get_bim_model_elements'] as $name) {
+            $registry->registerFactory($name, static fn () => throw new \LogicException('Routing must not instantiate tools'));
+        }
+        $reflection->getProperty('toolRegistry')->setValue($service, $registry);
         $reflection->getProperty('toolEligibilityPolicy')->setValue($service, $eligibility);
         $questions = [];
         foreach ($subjects as [$subject, $expectedDomain]) {
@@ -79,9 +85,7 @@ final class AssistantNaturalRoutingCorpusTest extends TestCase
                     'request' => ['message' => $query, 'context' => $context, 'allow_actions' => false],
                     'request_understanding' => $understanding->toArray()];
                 $tools = $reflection->getMethod('resolveRelevantToolNames')->invoke($service, $plan);
-                $readTools = $eligibility->isPaymentOnlyRequest($understanding)
-                    ? ['assistant_domain_search', 'assistant_domain_read']
-                    : ['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_discover_capabilities', 'get_bim_model_elements'];
+                $readTools = $registry->getToolNames();
                 foreach ($readTools as $tool) {
                     self::assertContains($tool, $tools, $query);
                     self::assertTrue($eligibility->canExposeTool($tool, $understanding)->allowed, $query.':'.$tool);
