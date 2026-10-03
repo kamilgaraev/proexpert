@@ -185,6 +185,12 @@ final class MobileDesignManagementHttpContractTest extends TestCase
             'title' => 'Совместный просмотр', 'model_set_revision_id' => $open->json('data.model_set_revision_id')])
             ->assertCreated()->assertJsonPath('data.models.0', $version->id)->assertJsonPath('data.realtime.auth_endpoint', '/api/v1/mobile/broadcasting/auth');
         $id = $session->json('data.id');
+        $this->withHeaders($headers)->getJson($this->base().'/model-sessions?project_id='.$project->id)
+            ->assertOk()->assertJsonPath('data.0.id', $id)
+            ->assertJsonPath('data.0.model_set_id', $set->json('data.id'))
+            ->assertJsonPath('data.0.model_set_revision_id', $open->json('data.model_set_revision_id'))
+            ->assertJsonPath('data.0.model_set_revision', 1)
+            ->assertJsonPath('data.0.models.0', $version->id);
         $this->withHeaders($headers)->postJson($this->base().'/model-sessions/'.$id.'/events', ['schema_version' => 2,
             'type' => 'heartbeat', 'client_id' => 'native_client_1', 'sequence' => 1, 'payload' => null])
             ->assertOk()->assertJsonPath('data.sender.id', $context->user->id);
