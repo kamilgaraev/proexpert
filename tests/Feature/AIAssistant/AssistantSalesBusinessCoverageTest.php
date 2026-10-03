@@ -199,10 +199,65 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
         }
     }
 
+    public function test_receipt_return_shared_scopes_keep_legacy_results_pagination_and_project_projection(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]);
+        $ownEvent = $this->receiptEvent($fixture->organization, $project, true);
+        $foreignEvent = $this->receiptEvent($fixture->foreignOrganization, $foreignProject, true);
+        $lineClass = \App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine::class;
+        $ownLine = $lineClass::query()->where('purchase_order_item_id', $ownEvent->purchase_order_item_id)->firstOrFail();
+        $foreignLine = $lineClass::query()->where('purchase_order_item_id', $foreignEvent->purchase_order_item_id)->firstOrFail();
+        $create = static function ($line, int $actorId): int {
+            $occurredAt = \Carbon\CarbonImmutable::now('UTC')->startOfSecond();
+            $key = (string) Str::uuid();
+            $movement = app(\App\BusinessModules\Features\Procurement\Services\PurchaseReceiptInventoryService::class)
+                ->returnQuantity($line, '0.001', 'testing', $actorId, $occurredAt);
+            $event = app(\App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder::class)
+                ->returned($line, $movement->id, '0.001', 'testing', $occurredAt, $key);
+            return DB::table('purchase_receipt_returns')->insertGetId([
+                'organization_id' => $line->purchaseReceipt->organization_id, 'purchase_receipt_line_id' => $line->id,
+                'warehouse_movement_id' => $movement->id, 'supply_lifecycle_event_id' => $event->id, 'source_type' => 'warehouse_movement',
+                'source_id' => $movement->id, 'source_version' => 1, 'quantity' => '0.001', 'reason_code' => 'testing',
+                'actor_id' => $actorId, 'occurred_at' => $occurredAt, 'idempotency_key' => $key, 'payload_fingerprint' => str_repeat('a', 64),
+            ]);
+        };
+        $expected = [];
+        for ($n = 0; $n < 65; $n++) {
+            $create($foreignLine, $fixture->foreignOwner->id);
+            $expected[] = $create($ownLine, $fixture->owner->id);
+        }
+        $source = new ProcurementBusinessRagSource;
+        foreach ([null, $project->id, $foreignProject->id] as $projectId) {
+            $legacy = $source::scopedQuery('purchase_receipt_return', $fixture->organization->id, $projectId, false, ['reference'])->orderBy('id')->pluck('id')->all();
+            $query = $source::scopedQuery('purchase_receipt_return', $fixture->organization->id, $projectId);
+            self::assertSame($projectId === $foreignProject->id ? [] : $expected, $legacy);
+            self::assertSame($legacy, $query->lazyById(50)->pluck('id')->all());
+        }
+        foreach ([$expected[0], $expected[64]] as $id) {
+            $chunks = [...$source->collectEntity($fixture->organization->id, 'purchase_receipt_return', $id)];
+            self::assertCount(1, $chunks);
+            self::assertSame($project->id, $chunks[0]->projectId);
+        }
+        self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'purchase_receipt_return', $expected[0])]);
+    }
+
     private function receiptEvent(Organization $organization, Project $project, bool $withPromise): \App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent
     {
         return Model::withoutEvents(function () use ($organization, $project, $withPromise) {
             $order = $this->order($organization, $project);
+            if ($withPromise) {
+                $actor = \App\Models\User::factory()->create(['current_organization_id' => $organization->id]);
+                $siteRequest = \App\BusinessModules\Features\SiteRequests\Models\SiteRequest::query()->create([
+                    'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
+                    'title' => 'Материалы для приёмки', 'status' => 'approved', 'priority' => 'medium',
+                    'request_type' => 'material_request', 'material_name' => 'Материал приёмки', 'material_quantity' => 1, 'material_unit' => 'м3']);
+                $purchaseRequest = \App\BusinessModules\Features\Procurement\Models\PurchaseRequest::query()->create([
+                    'organization_id' => $organization->id, 'site_request_id' => $siteRequest->id,
+                    'request_number' => 'QA-'.Str::uuid(), 'status' => 'approved', 'budget_currency' => 'RUB']);
+                $order->updateQuietly(['purchase_request_id' => $purchaseRequest->id]);
+            }
             $warehouse = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::query()->create([
                 'organization_id' => $organization->id, 'project_id' => $project->id, 'name' => 'Склад приёмки',
                 'code' => 'QA-'.Str::uuid(), 'warehouse_type' => 'project', 'is_active' => true]);
@@ -230,7 +285,7 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
             $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::query()->create([
                 'organization_id' => $organization->id, 'warehouse_id' => $warehouse->id, 'material_id' => $material->id,
                 'project_id' => $project->id, 'movement_type' => 'receipt', 'quantity' => '2.500', 'movement_date' => $occurredAt,
-                'operation_category' => 'procurement_receipt', 'metadata' => ['purchase_order_item_id' => $item->id, 'batch_number' => $batch,
+                'operation_category' => 'procurement_receipt', 'metadata' => ['purchase_order_item_id' => $item->id, 'batch_number' => $batch, 'reporting_source_version' => 1,
                     'unit_dimension' => 'volume', 'unit_code' => 'м3', 'unit_conversion_version' => 'qa-v1']]);
             \App\BusinessModules\Features\Procurement\Models\PurchaseReceiptInventoryLot::query()->create([
                 'organization_id' => $organization->id, 'purchase_receipt_line_id' => $line->id, 'warehouse_balance_id' => $balance->id,

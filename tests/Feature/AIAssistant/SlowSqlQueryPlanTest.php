@@ -17,6 +17,22 @@ use Tests\TestCase;
 
 final class SlowSqlQueryPlanTest extends TestCase
 {
+    public function test_norm_resource_pages_validate_parents_without_materializing_the_resource_catalog(): void
+    {
+        $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fsnb_2022', 'version_key' => 'resource-plan', 'bucket' => 'testing', 'prefix' => 'norms', 'status' => 'parsed', 'rows_imported' => 20000, 'finished_at' => now()]);
+        $collection = DB::table('estimate_norm_collections')->insertGetId(['dataset_version_id' => $dataset, 'code' => 'resource-plan', 'name' => 'Нормы', 'norm_type' => 'gesn', 'source_file' => 'testing.xml']);
+        $norm = DB::table('estimate_norms')->insertGetId(['collection_id' => $collection, 'code' => 'resource-plan', 'name' => 'Норма', 'unit' => 'м2']);
+        DB::statement("INSERT INTO construction_resources (dataset_version_id, ksr_code, name, resource_type) SELECT ?, 'resource-' || n, 'Ресурс ' || n, 'material' FROM generate_series(1, 20000) n", [$dataset]);
+        DB::statement('INSERT INTO estimate_norm_resources (estimate_norm_id, construction_resource_id) SELECT ?, id FROM construction_resources', [$norm]);
+        DB::statement('ANALYZE construction_resources');
+        DB::statement('ANALYZE estimate_norm_resources');
+        DB::statement("SET LOCAL work_mem = '64kB'");
+        $query = (new OrganizationReportingRagSource)->scopedQuery('approved_estimate_norm_resource', 1);
+        foreach ([0, 10000] as $cursor) {
+            $this->assertCheapPlan((clone $query)->where('estimate_norm_resources.id', '>', $cursor)->orderBy('id')->limit(50));
+        }
+    }
+
     public function test_norm_first_and_following_pages_do_not_trigger_jit_compilation(): void
     {
         $dataset = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fsnb_2022', 'version_key' => 'slow-sql-test', 'bucket' => 'testing', 'prefix' => 'norms', 'status' => 'parsed', 'rows_imported' => 56000, 'finished_at' => now()]);
@@ -38,6 +54,9 @@ final class SlowSqlQueryPlanTest extends TestCase
             'commercial_proposal_approval' => new CommercialProposalBusinessRagSource,
         ] as $type => $source) {
             $query = (new ReflectionMethod($source, 'collectionQuery'))->invoke($source, $type, 1);
+            if ($type === 'purchase_receipt_return') {
+                self::assertLessThan(30000, strlen($query->toSql()));
+            }
             $this->assertCheapPlan($query->orderBy('id')->limit(50));
         }
     }

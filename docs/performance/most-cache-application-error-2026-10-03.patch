@@ -1,0 +1,11 @@
+--- most-loki-rules.before.yaml
++++ most-loki-rules.after.yaml
+@@ -2,7 +2,7 @@
+     - name: most-application-logs
+       rules:
+         - alert: MostCacheApplicationError
+-          expr: sum(count_over_time({service_name="most-api"} |~ "(?i)(redis|predis|cache).*(error|exception|failed|timeout|refused)|(error|exception|failed|timeout|refused).*(redis|predis|cache)" != "monitoring-smoke-test" [5m])) > 0
++          expr: sum(count_over_time({service_name="most-api"} != "monitoring-smoke-test" |~ "(?i)(redisexception|predis[^\\r\\n]{0,160}exception)" [5m])) > 0 or sum(count_over_time({service_name="most-api"} != "monitoring-smoke-test" !~ "(?i)(SQLSTATE\\[[A-Z0-9]+\\]|Connection: (pgsql|postgres|postgresql)[, )])" |~ "(?i)(redis|predis|cache).*(error|exception|failed|timeout|refused)|(error|exception|failed|timeout|refused).*(redis|predis|cache)" [5m])) > 0
+           labels:
+             severity: warning
+           annotations:

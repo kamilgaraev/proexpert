@@ -21,7 +21,7 @@ final class SlowQueryContext
             'sql_fingerprint' => hash('sha256', $query->sql),
             'bindings' => self::safeBindings($query->sql, $query->bindings),
             'bindings_count' => count($query->bindings),
-            'bindings_truncated' => count($query->bindings) > 100,
+            'bindings_truncated' => false,
             'transaction_level' => $query->connection->transactionLevel(),
             'execution_context' => $this->tracing->executionContext(),
             'source' => self::source(),
@@ -33,7 +33,7 @@ final class SlowQueryContext
     {
         $sensitiveQuery = preg_match('/password|token|secret|authorization|credential|private_key|api_key|email|phone|passport|\binn\b|snils|\botp\b|\bpin\b|card_number/i', $sql) === 1;
         $result = [];
-        foreach (array_slice(array_values($bindings), 0, 100) as $position => $value) {
+        foreach (array_values($bindings) as $position => $value) {
             $item = ['position' => $position, 'type' => get_debug_type($value)];
             if ($value === null) {
                 $item['value'] = null;

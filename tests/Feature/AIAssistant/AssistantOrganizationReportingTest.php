@@ -120,6 +120,46 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertSame($dataset->id,(new OrganizationReportingRagSource)->scopedQuery('approved_estimate_dataset',$fixture->organization->id)->orderBy('id')->limit(1)->firstOrFail()->id);
     }
 
+    public function test_norm_resource_pagination_keeps_only_published_parents_and_same_collection_sections(): void
+    {
+        $source = new OrganizationReportingRagSource;
+        $published = [];
+        $stale = [];
+        foreach (['fsnb_2022', 'fsbc', 'fgis_labor_prices'] as $type) {
+            foreach (['old', 'current', 'unfinished', 'errors', 'empty'] as $version) {
+                $id = DB::table('estimate_dataset_versions')->insertGetId([
+                    'source_type' => $type, 'version_key' => $version, 'bucket' => 'testing', 'prefix' => 'norms', 'status' => 'parsed',
+                    'finished_at' => $version === 'unfinished' ? null : now()->addDays($version === 'old' ? -1 : ($version === 'current' ? 0 : 1)),
+                    'rows_imported' => $version === 'empty' ? 0 : 100, 'errors_count' => $version === 'errors' ? 1 : 0,
+                ]);
+                $resource = DB::table('construction_resources')->insertGetId(['dataset_version_id' => $id, 'ksr_code' => $version, 'name' => 'Ресурс', 'resource_type' => 'material']);
+                if ($version === 'current') { $published[$type] = ['dataset' => $id, 'resource' => $resource]; }
+                else { $stale[] = $resource; }
+            }
+        }
+        $collection = DB::table('estimate_norm_collections')->insertGetId(['dataset_version_id' => $published['fsnb_2022']['dataset'], 'code' => 'current', 'name' => 'Сборник', 'norm_type' => 'gesn', 'source_file' => 'testing.xml']);
+        $otherCollection = DB::table('estimate_norm_collections')->insertGetId(['dataset_version_id' => $published['fsnb_2022']['dataset'], 'code' => 'other', 'name' => 'Другой сборник', 'norm_type' => 'gesn', 'source_file' => 'testing.xml']);
+        $wrongSourceCollection = DB::table('estimate_norm_collections')->insertGetId(['dataset_version_id' => $published['fsbc']['dataset'], 'code' => 'wrong-source', 'name' => 'Не нормы', 'norm_type' => 'gesn', 'source_file' => 'testing.xml']);
+        $section = DB::table('estimate_norm_sections')->insertGetId(['collection_id' => $collection, 'name' => 'Раздел', 'path' => '1']);
+        $otherSection = DB::table('estimate_norm_sections')->insertGetId(['collection_id' => $otherCollection, 'name' => 'Другой раздел', 'path' => '2']);
+        $norm = DB::table('estimate_norms')->insertGetId(['collection_id' => $collection, 'section_id' => $section, 'code' => 'valid', 'name' => 'Норма', 'unit' => 'м2']);
+        $wrongSectionNorm = DB::table('estimate_norms')->insertGetId(['collection_id' => $collection, 'section_id' => $otherSection, 'code' => 'wrong-section', 'name' => 'Норма', 'unit' => 'м2']);
+        $wrongSourceNorm = DB::table('estimate_norms')->insertGetId(['collection_id' => $wrongSourceCollection, 'code' => 'wrong-source', 'name' => 'Норма', 'unit' => 'м2']);
+        $expected = [];
+        $resources = [null, ...array_column($published, 'resource')];
+        for ($n = 0; $n < 65; $n++) {
+            DB::table('estimate_norm_resources')->insert(['estimate_norm_id' => $norm, 'construction_resource_id' => $stale[$n % count($stale)]]);
+            DB::table('estimate_norm_resources')->insert(['estimate_norm_id' => $n % 2 === 0 ? $wrongSectionNorm : $wrongSourceNorm]);
+            $expected[] = DB::table('estimate_norm_resources')->insertGetId(['estimate_norm_id' => $norm, 'construction_resource_id' => $resources[$n % count($resources)]]);
+        }
+        $query = $source->scopedQuery('approved_estimate_norm_resource', 1);
+        self::assertSame($expected, $query->lazyById(50)->pluck('id')->all());
+        self::assertSame([$norm], $source->scopedQuery('approved_estimate_norm', 1)->orderBy('id')->pluck('id')->all());
+        self::assertSame(array_column($published, 'resource'), $source->scopedQuery('approved_construction_resource', 1)->orderBy('id')->pluck('id')->all());
+        self::assertSame([], $source->scopedQuery('approved_estimate_norm_resource', 0)->get()->all());
+        self::assertSame([], $source->scopedQuery('approved_estimate_norm_resource', 1, 1)->get()->all());
+    }
+
     public function test_saved_report_is_private_to_current_owner_before_limit_and_after_role_revoke(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(),'slug'));
