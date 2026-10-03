@@ -440,9 +440,9 @@ final class AssistantDataAccessPolicy
             }
             $candidateColumns = in_array($table.'.*', $columns, true) ? $columns : array_values(array_unique(array_merge($columns,
                 array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
-            $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query->select($candidateColumns), []);
+            $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query->select($candidateColumns), [], materialize: false);
             $checkpoint?->__invoke();
-            $visible = $this->applySourceIdentityScope($candidates, $user, $organizationId, $expectedProjection, preparedCandidates: true)
+            $visible = $this->applySourceIdentityScope($candidates, $user, $organizationId, $expectedProjection, preparedCandidates: true, splitIdentities: true)
                 ->select($columns)->toBase();
             $checkpoint?->__invoke();
 
@@ -468,7 +468,7 @@ final class AssistantDataAccessPolicy
         }
     }
 
-    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false): Builder
+    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false): Builder
     {
         if ($this->aclCompiler === null) {
             if ($preparedCandidates) { throw new \LogicException('assistant_prepared_candidates_require_query_compilation'); }
@@ -493,13 +493,38 @@ final class AssistantDataAccessPolicy
                 $sourceIdentities[(string) $identity->entity_type][(string) $identity->source_type] = true;
             }
         }
+        if ($splitIdentities) {
+            $identities = [];
+            foreach ($this->entities() as $entityType => $definition) {
+                if (isset($sourceIdentities[$entityType][$definition[0]])) {
+                    $identities[] = [$definition[0], $entityType];
+                }
+            }
+            if (isset($sourceIdentities['assistant_document']['file_document'])) {
+                $identities[] = ['file_document', 'assistant_document'];
+            }
+            $union = null;
+            foreach ($identities as [$sourceType, $entityType]) {
+                $branch = $this->applySourceIdentityScope(clone $query, $user, $organizationId, $expectedProjection,
+                    $sourceType, $entityType, preparedCandidates: true)->toBase();
+                if ($union === null) {
+                    $union = $branch;
+                } else {
+                    $union->unionAll($branch);
+                }
+            }
+
+            return $union === null ? $query->whereRaw('1 = 0')
+                : $query->getModel()->newQueryWithoutScopes()->fromSub($union, $table)->select($table.'.*');
+        }
         return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities, $query): void {
-            $scope->whereRaw('1 = 0');
+            $matched = false;
             foreach ($this->entities() as $type => $definition) {
                 if (! isset($sourceIdentities[$type][$definition[0]])) { continue; }
                 if (in_array(AssistantExtendedDomainRegistry::retrievalMode($type), ['live_only', 'unavailable'], true)) { continue; }
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $type) : null;
                 if ($entities !== null) {
+                    $matched = true;
                     $entityKey = $entities->getModel()->getQualifiedKeyName();
                     $scope->orWhere(function (Builder $branch) use ($type, $definition, $entities, $entityKey, $table): void {
                         $branch->where($table.'.source_type', $definition[0])->where($table.'.entity_type', $type)
@@ -508,6 +533,7 @@ final class AssistantDataAccessPolicy
                 }
             }
             if (isset($sourceIdentities['assistant_document']['file_document'])) {
+                $matched = true;
                 $documentCandidates = AIAssistantDocument::query()->where('organization_id', $organizationId)
                     ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
                         (clone $query)->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')->select($table.'.entity_id'));
@@ -517,6 +543,7 @@ final class AssistantDataAccessPolicy
                         ->whereIn($table.'.entity_id', $documents->select([])->selectRaw('CAST(ai_assistant_documents.id AS TEXT)'));
                 });
             }
+            if (! $matched) { $scope->whereRaw('1 = 0'); }
         });
     }
 
@@ -1061,21 +1088,35 @@ final class AssistantDataAccessPolicy
                 : $this->entityQuery($user, $organizationId, $definition['type']);
             if ($parent !== null) {
                 $parentTable = $parent->getModel()->getTable();
-                foreach ($definition['matches'] ?? [] as $parentColumn => $childColumn) {
-                    $parent->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn);
+                if (($definition['match_project'] ?? false) || $type === 'video_camera_event') {
+                    foreach ($definition['matches'] ?? [] as $parentColumn => $childColumn) {
+                        $parent->whereColumn($parentTable.'.'.$parentColumn, $table.'.'.$childColumn);
+                    }
                 }
             }
             if ($parent !== null && (($definition['match_project'] ?? false) || $type === 'video_camera_event')) {
                 $parentTable = $parent->getModel()->getTable();
                 $parent->whereRaw($parentTable.'.project_id IS NOT DISTINCT FROM '.$table.'.project_id');
             }
-            $query->where(function (Builder $linked) use ($parent, $column, $table, $definition): void {
+            $query->where(function (Builder $linked) use ($parent, $column, $table, $definition, $type): void {
                 $linked->whereRaw('1 = 0');
                 if ($definition['nullable']) { $linked->orWhereNull($table.'.'.$column); }
                 if ($parent !== null) {
                     $parentTable = $parent->getModel()->getTable();
                     $parentKey = $definition['key'] ?? 'id';
-                    $linked->orWhereIn($table.'.'.$column, $parent->select($parentTable.'.'.$parentKey));
+                    if (($definition['matches'] ?? []) !== [] && ! ($definition['match_project'] ?? false) && $type !== 'video_camera_event') {
+                        $grammar = $linked->getQuery()->getGrammar();
+                        $childColumns = [$table.'.'.$column];
+                        $parentColumns = [$parentTable.'.'.$parentKey];
+                        foreach ($definition['matches'] as $parentColumn => $childColumn) {
+                            $childColumns[] = $table.'.'.$childColumn;
+                            $parentColumns[] = $parentTable.'.'.$parentColumn;
+                        }
+                        $tuple = '('.implode(', ', array_map($grammar->wrap(...), $childColumns)).')';
+                        $linked->orWhereIn(DB::raw($tuple), $parent->select($parentColumns));
+                    } else {
+                        $linked->orWhereIn($table.'.'.$column, $parent->select($parentTable.'.'.$parentKey));
+                    }
                 }
             });
         }

@@ -43,7 +43,7 @@ final class AssistantAclQueryCompiler
         return clone $this->references[$type];
     }
 
-    public function register(string $type, Builder $query, array $internalColumns, array $ancestors = []): Builder
+    public function register(string $type, Builder $query, array $internalColumns, array $ancestors = [], bool $materialize = true): Builder
     {
         $model = $query->getModel();
         $table = $model->getTable();
@@ -57,7 +57,7 @@ final class AssistantAclQueryCompiler
             }
         }
         $base = $materialized->toBase();
-        $this->queries[] = ['name' => $name, 'sql' => $base->toSql(), 'bindings' => $base->getBindings()];
+        $this->queries[] = ['name' => $name, 'sql' => $base->toSql(), 'bindings' => $base->getBindings(), 'materialize' => $materialize];
         $reference = $model->newQueryWithoutScopes()->from($name.' as '.$table)->select($selected ?? [$table.'.*']);
         $reference->getQuery()->setBindings($selectBindings, 'select');
         $this->references[$type] = $reference;
@@ -98,7 +98,7 @@ final class AssistantAclQueryCompiler
             if (! isset($required[$definition['name']])) {
                 continue;
             }
-            $parts[] = '"'.$definition['name'].'" AS MATERIALIZED ('.$definition['sql'].')';
+            $parts[] = '"'.$definition['name'].'" AS '.($definition['materialize'] ? 'MATERIALIZED' : 'NOT MATERIALIZED').' ('.$definition['sql'].')';
             array_push($bindings, ...$definition['bindings']);
         }
         array_push($bindings, ...$base->getBindings());

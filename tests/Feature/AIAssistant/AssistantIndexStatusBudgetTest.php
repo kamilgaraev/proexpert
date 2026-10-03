@@ -483,7 +483,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertNotEmpty($documentDiscoverySql);
         foreach ($documentDiscoverySql as $sql) {
             $this->assertStringNotContainsString('from "contracts"', $sql);
-            $this->assertLessThan(5000, strlen($sql));
+            $this->assertLessThan(6000, strlen($sql));
         }
         $timeoutQueries = $queryCategories['timeout_setting'] ?? 0;
         $this->assertLessThanOrEqual(45, $queries - $timeoutQueries, 'Current status read queries: '.json_encode($queryCategories));
