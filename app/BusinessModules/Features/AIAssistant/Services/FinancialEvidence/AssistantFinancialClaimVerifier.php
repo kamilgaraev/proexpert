@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantFactIntentClassifier;
 
 final class AssistantFinancialClaimVerifier
 {
@@ -49,21 +51,48 @@ final class AssistantFinancialClaimVerifier
             'text' => $serverFormattedAnswer, 'replaced' => ! $verified];
     }
 
-    public function guard(string $text, array $toolResults = []): array
+    public function guard(string $text, array $toolResults = [], ?string $presentationPlan = null, ?string $query = null): array
     {
+        if ($presentationPlan !== null && AssistantPresentationPlanner::hasFinancialSelection($presentationPlan)) {
+            $planner = new AssistantPresentationPlanner;
+            $rendered = $planner->render($presentationPlan, $toolResults, $query);
+            $rows = $rendered === null ? null : $planner->selectedRows($presentationPlan, $toolResults, $query);
+            $references = [];
+            foreach ($toolResults as $result) {
+                $evidence = is_array($result) ? ($result['financial_evidence'] ?? null) : null;
+                if (is_array($evidence) && is_string($evidence['fetched_at'] ?? null) && $evidence['fetched_at'] !== ''
+                    && is_string($evidence['version'] ?? null) && $evidence['version'] !== ''
+                    && in_array($evidence['validation_status'] ?? null, ['verified', 'partial'], true)
+                    && is_array($evidence['source_refs'] ?? null)) {
+                    $references = array_merge($references, $evidence['source_refs']);
+                }
+            }
+            if ($rows !== null && $planner->financialSelectionCovered($presentationPlan, $toolResults, $references)) {
+                return ['text' => $rendered, 'validation_status' => 'partial', 'source_refs' => array_column($rows, 'source_ref'),
+                    'replaced' => $text !== $rendered];
+            }
+
+            return ['text' => trans_message('ai_assistant_financial.unverified_claim'), 'validation_status' => 'partial',
+                'source_refs' => [], 'replaced' => true];
+        }
         $financial = (bool) preg_match('/(?:\d[\d\s\x{00A0}.,]*\s*(?:₽|руб|р\.|тыс|млн|млрд)|(?:сумм|стоимост|цен[а-яё]*|бюджет|позиц|объ[её]м|количеств)[^\n.!?]{0,100}\d)/iu', $text);
         if (! $financial) {
             return ['text' => $text, 'validation_status' => 'unverified', 'source_refs' => [], 'replaced' => false];
         }
-        foreach ($toolResults as $result) {
+        $candidates = [];
+        foreach (AssistantFactIntentClassifier::requiresUnitPrice($query ?? '') ? [] : $toolResults as $result) {
             if (is_array($result) && is_string($result['server_formatted_answer'] ?? null)
                 && is_array($result['financial_evidence'] ?? null)
                 && ($result['financial_evidence']['fetched_at'] ?? null) !== null
                 && ($result['financial_evidence']['source_refs'] ?? []) !== []) {
-                return ['text' => $result['server_formatted_answer'],
+                $candidate = ['text' => $result['server_formatted_answer'],
                     'validation_status' => $result['financial_evidence']['validation_status'] ?? 'partial',
                     'source_refs' => $result['financial_evidence']['source_refs'], 'replaced' => $text !== $result['server_formatted_answer']];
+                $candidates[hash('sha256', json_encode($candidate, JSON_THROW_ON_ERROR))] = $candidate;
             }
+        }
+        if (count($candidates) === 1) {
+            return reset($candidates);
         }
 
         return ['text' => trans_message('ai_assistant_financial.unverified_claim'), 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => true];

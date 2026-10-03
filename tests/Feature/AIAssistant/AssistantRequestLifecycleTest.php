@@ -1579,9 +1579,7 @@ final class AssistantRequestLifecycleTest extends TestCase
             new \App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier,
             requestLifecycle: $this->lifecycle,
             dataAccess: app(AssistantDataAccessPolicy::class),
-            tokenBudget: new TokenBudgetService(new TokenCounter(new class {
-                public function encode(string $text): array { return array_fill(0, mb_strlen($text), 1); }
-            })),
+            tokenBudget: new TokenBudgetService(new TokenCounter),
         );
     }
 }

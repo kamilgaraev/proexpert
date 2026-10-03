@@ -171,6 +171,10 @@ final class AssistantDomainReadService
                 }
                 $factRow = AssistantStructuredFactFormatter::row($model, $entityType, $returnedFields, $reference);
                 if ($factRow !== null) {
+                    $factRow = AssistantStructuredFactFormatter::withUnknownCurrency($factRow);
+                    if (array_key_exists('currency', $factRow['fields']) && ! array_key_exists('currency', $results[array_key_last($results)]['fields'])) {
+                        $results[array_key_last($results)]['fields']['currency'] = null;
+                    }
                     $factRows[] = $factRow;
                 }
             }

@@ -130,6 +130,7 @@ final class AssistantDataAccessRegressionTest extends TestCase
             if (str_starts_with($statement, 'WITH compatible_chunks')) { $this->assertStringNotContainsString('assistant_acl_', $statement); }
         }
         $provider->modelName = 'another-model';
+        DB::table('ai_rag_chunks')->where('organization_id', $organization->id)->update(['embedding_model' => $provider->modelName]);
         $this->assertCount(1, $retriever->search('стройка cache', $organization->id, $actor));
         $this->assertSame(2, $provider->calls);
         $this->permissions = false;
@@ -520,6 +521,7 @@ final class AssistantDataAccessRegressionTest extends TestCase
             'entity_type' => $type, 'entity_id' => $entityId, 'title' => $title, 'checksum' => hash('sha256', $entityId), 'indexed_at' => now()]);
         DB::table('ai_rag_chunks')->insert(['source_id' => $source->id, 'organization_id' => $organizationId, 'project_id' => $projectId,
             'chunk_index' => 0, 'content' => $title, 'content_hash' => hash('sha256', $title), 'created_at' => now(), 'updated_at' => now(),
+            'embedding_provider' => 'test', 'embedding_model' => 'test',
             'embedding' => '['.implode(',', RagTestEmbedding::fromLeadingValues($embedding)).']']);
     }
 

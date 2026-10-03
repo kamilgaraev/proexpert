@@ -23,6 +23,12 @@ final class AssistantIndexingMigrationBoundaryTest extends TestCase
 
     public function test_schema_changes_do_not_enqueue_or_query_indexing_and_normal_saves_resume(): void
     {
+        app()->instance('db', new class {
+            public function transactionLevel(): int { return 0; }
+        });
+        $indexer = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class);
+        $indexer->expects(self::never())->method('deleteIndexedEntity');
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class, $indexer);
         $state = new AssistantIndexingState;
         app()->instance(AssistantIndexingState::class, $state);
         $coordinator = $this->getMockBuilder(RagIndexingCoordinator::class)->disableOriginalConstructor()->onlyMethods(['queueEntity'])->getMock();

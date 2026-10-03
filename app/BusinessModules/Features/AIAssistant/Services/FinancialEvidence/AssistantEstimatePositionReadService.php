@@ -279,10 +279,15 @@ final class AssistantEstimatePositionReadService
         return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($actor, $organizationId, $reference): bool {
             $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'] ?? null;
             $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'] ?? null;
+            $identityOnly = $type === 'estimate' && ($reference['content_scope'] ?? null) === 'structured'
+                && is_array($reference['checked_fields'] ?? null) && $reference['checked_fields'] !== []
+                && array_diff($reference['checked_fields'], ['id', 'number', 'name', 'status', 'version', 'estimate_date', 'project_id', 'contract_id']) === []
+                && is_array($reference['required_permissions'] ?? null)
+                && ! in_array('budget-estimates.finance.view', $reference['required_permissions'], true);
             if (! in_array($type, ['estimate', 'estimate_item', 'estimate_item_resource'], true)
                 || (! is_int($id) && ! is_string($id))
                 || filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-                || ! $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view')) {
+                || (! $identityOnly && ! $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view'))) {
                 return false;
             }
             $query = $this->access->entityQuery($actor, $organizationId, 'estimate');
@@ -344,7 +349,7 @@ final class AssistantEstimatePositionReadService
                 return false;
             }
 
-            return $projectId === null || $this->canReadProjectFinance($authorization, $actor, $organizationId, $projectId);
+            return $identityOnly || $projectId === null || $this->canReadProjectFinance($authorization, $actor, $organizationId, $projectId);
         });
     }
 
@@ -653,11 +658,12 @@ final class AssistantEstimatePositionReadService
                 'quantity' => $quantity,
                 'material_unit' => $unit,
                 'unit_price' => $unitPrice,
+                'currency' => null,
                 'total_amount' => $totalAmount,
             ];
             $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));
             $factFields = array_intersect_key($fields, array_fill_keys([
-                'position_number', 'resource_type', 'name', 'quantity', 'material_unit', 'unit_price', 'total_amount',
+                'position_number', 'resource_type', 'name', 'quantity', 'material_unit', 'unit_price', 'currency', 'total_amount',
             ], true));
             $reference = [
                 'source_type' => 'estimate',
@@ -718,6 +724,7 @@ final class AssistantEstimatePositionReadService
             'total_quantity' => FinanceDecimal::value((string) $resource->total_quantity, 4),
             'material_unit' => $resource->measurementUnit?->short_name ?? $resource->measurementUnit?->name,
             'unit_price' => $resource->unit_price === null ? null : FinanceDecimal::value((string) $resource->unit_price, 2),
+            'currency' => null,
             'total_amount' => $resource->total_amount === null ? null : FinanceDecimal::value((string) $resource->total_amount, 2),
         ];
         $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));

@@ -57,7 +57,7 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
         $tool = app(GetEstimateFinancialSnapshotTool::class)->execute(['estimate_id' => $this->estimate->id], $this->actor, $this->organization);
         self::assertIsArray($tool);
         $row = $tool['structured_fact_evidence']['rows'][0];
-        self::assertSame(['number', 'name', 'status', 'estimate_date'], array_keys($row['fields']));
+        self::assertSame(['number', 'name', 'status', 'estimate_date', 'total_amount', 'currency'], array_keys($row['fields']));
         self::assertSame($this->estimate->id, $row['source_ref']['entity_id']);
         self::assertSame('structured', $row['source_ref']['content_scope']);
         self::assertSame($tool['financial_evidence']['fetched_at'], $row['source_ref']['fetched_at']);
@@ -76,11 +76,12 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
 
         $money = $verifier->guard('Какая точная сумма сметы?', 'Непроверенный текст', [$tool]);
         self::assertFalse($money['needs_clarification']);
-        self::assertSame($tool['financial_evidence']['source_refs'], $money['source_refs']);
+        self::assertSame([$row['source_ref']], $money['source_refs']);
         self::assertStringContainsString('123.45', $money['text']);
         $mixed = $verifier->guard('Каков статус и сумма сметы?', 'Непроверенный текст', [$tool]);
-        self::assertTrue($mixed['needs_clarification']);
-        self::assertSame([], $mixed['source_refs']);
+        self::assertFalse($mixed['needs_clarification']);
+        self::assertSame([$row['source_ref']], $mixed['source_refs']);
+        self::assertStringContainsString('123.45', $mixed['text']);
     }
 
     public function test_position_read_has_exact_page_evidence_and_snapshot_alone_cannot_claim_positions_or_owner(): void
@@ -103,7 +104,10 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
         $positionRow = $positions['structured_fact_evidence']['rows'][1];
         self::assertSame('2.12345678', $positionRow['fields']['quantity']);
         self::assertSame('123.45', $positionRow['fields']['total_amount']);
-        self::assertSame(['position_number', 'name', 'quantity', 'total_amount'], $positionRow['source_ref']['checked_fields']);
+        self::assertSame(['position_number', 'name', 'unit', 'quantity', 'unit_price', 'total_amount', 'currency'], $positionRow['source_ref']['checked_fields']);
+        self::assertSame('58.1400', $positionRow['fields']['unit_price']);
+        self::assertNull($positionRow['fields']['currency']);
+        self::assertContains($positionRow['source_ref'], $positions['financial_evidence']['source_refs']);
         self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadReference($this->actor, $this->organization->id, $positionRow['source_ref']));
         $guarded = $verifier->guard($query, 'Непроверенный текст', [$positions]);
         self::assertFalse($guarded['needs_clarification']);
@@ -162,9 +166,10 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
         self::assertIsArray($positions);
         $guarded = (new AssistantStructuredFactVerifier)->guard('Покажи позиции сметы', 'Непроверенный текст', [$first, $second, $positions]);
         $visiblePositions = array_values(array_filter($guarded['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'estimate_item'));
-        self::assertCount(23, $visiblePositions);
+        self::assertCount(3, array_filter($guarded['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'estimate'));
+        self::assertCount(22, $visiblePositions);
         self::assertTrue($guarded['structured_evidence_truncated']);
-        self::assertStringContainsString('Показаны 23 из 30 найденных позиций', $guarded['text']);
+        self::assertStringContainsString('Показаны 22 из 30 найденных позиций', $guarded['text']);
     }
 
     public function test_two_complete_position_pages_report_global_row_cap(): void
@@ -191,9 +196,10 @@ final class AssistantEstimateStructuredBridgeTest extends TestCase
 
         $guarded = (new AssistantStructuredFactVerifier)->guard('Покажи позиции сметы', 'Непроверенный текст', [$first, $second]);
         $visiblePositions = array_values(array_filter($guarded['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'estimate_item'));
-        self::assertCount(24, $visiblePositions);
+        self::assertCount(2, array_filter($guarded['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'estimate'));
+        self::assertCount(23, $visiblePositions);
         self::assertTrue($guarded['structured_evidence_truncated']);
-        self::assertStringContainsString('Показаны 24 из 40 найденных позиций', $guarded['text']);
+        self::assertStringContainsString('Показаны 23 из 40 найденных позиций', $guarded['text']);
         self::assertStringNotContainsString('Позиция 40', $guarded['text']);
     }
 }

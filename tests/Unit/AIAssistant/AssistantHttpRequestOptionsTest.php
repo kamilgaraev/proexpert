@@ -43,7 +43,10 @@ class AssistantHttpRequestOptionsTest extends TestCase
 
         $this->assertSame(0, $callback(null, 0, 0, 0, 0));
         $this->assertSame(0, $callback(null, 0, 0, 0, 0));
-        usleep(1_000_000);
+        $waitUntil = hrtime(true) + 1_000_000_000;
+        while (hrtime(true) < $waitUntil) {
+            usleep(10_000);
+        }
         $this->assertSame(1, $callback(null, 0, 0, 0, 0));
         $this->assertSame(1, $callback(null, 0, 0, 0, 0));
         $this->assertSame(2, $checkpointCalls);

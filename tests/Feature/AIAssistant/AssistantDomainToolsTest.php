@@ -133,6 +133,28 @@ final class AssistantDomainToolsTest extends TestCase
         $this->reader->execute('navigation', ['domain' => 'projects', 'entity_type' => 'project', 'id' => 1], $actor, $organization->id);
     }
 
+    public function test_native_project_budget_can_be_selected_with_explicit_unknown_currency_and_current_financial_proof(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $this->financialPermissions = true;
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false, 'budget_amount' => '12345.67']);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $result = $this->reader->execute('read', ['domain' => 'projects', 'entity_type' => 'project', 'id' => $project->id,
+            'fields' => ['id', 'name', 'budget_amount']], $actor, $organization->id);
+        $planner = new \App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner;
+        $plan = json_encode(['kind' => 'verified_rows', 'version' => 1, 'result_sets' => [[
+            'result_set' => $planner::providerView($result)['result_set'], 'layout' => 'list', 'columns' => ['name', 'budget_amount', 'currency'],
+            'order' => ['r01'], 'group_by' => null,
+        ]]], JSON_THROW_ON_ERROR);
+        $checked = (new \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier)->guard('Бюджет 1', [$result], $plan, 'Какой бюджет?');
+
+        self::assertStringContainsString('12345.67', $checked['text']);
+        self::assertStringContainsString('Валюта: не указано', $checked['text']);
+        self::assertSame([$project->id], array_column($checked['source_refs'], 'entity_id'));
+        self::assertNull($result['results'][0]['fields']['currency']);
+        self::assertArrayNotHasKey('rows', \App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection::forProvider('assistant_domain_read', $result)['structured_fact_evidence']);
+    }
+
     private function actor(): array
     {
         $organization = Organization::factory()->create();

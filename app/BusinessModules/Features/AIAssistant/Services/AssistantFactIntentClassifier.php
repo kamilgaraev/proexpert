@@ -71,10 +71,18 @@ final class AssistantFactIntentClassifier
         if (preg_match('/(?:сумм|стоимост|(?<![\pL\pN])цен[а-яё]*|ден[еь]г|итог|бюджет)/iu', $query)) {
             $requirements[] = array_merge(['unit_price', 'total_amount', 'total_amount_with_vat', 'amount', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount'], $groups['money'] ?? []);
         }
+        if (self::requiresUnitPrice($query)) {
+            $requirements[] = ['unit_price', 'current_unit_price'];
+        }
         if (preg_match('/(?:остат|колич|объ[её]м)/iu', $query)) {
             $requirements[] = array_merge(['quantity', 'quantity_total', 'total_quantity', 'completed_quantity', 'volume_completed', 'material_quantity', 'personnel_count', 'equipment_count'], $groups['quantity'] ?? []);
         }
 
         return $requirements;
+    }
+
+    public static function requiresUnitPrice(string $query): bool
+    {
+        return (bool) preg_match('/(?:цен[а-яё]*|стоимост[а-яё]*)\s+(?:(?:за|на)\s*)?(?:единиц[а-яё]*|(?:одного|одной|1(?!\d))\s*(?:куб[а-яё]*|(?:квадратн[а-яё]*\s+)?метр[а-яё]*|килограмм[а-яё]*|тонн[а-яё]*|литр[а-яё]*|штук[а-яё]*|м[²³23]?|кг|т|л|шт)(?![\pL\pN]))/iu', $query);
     }
 }

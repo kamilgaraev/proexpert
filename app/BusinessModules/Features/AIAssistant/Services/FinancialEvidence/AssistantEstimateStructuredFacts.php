@@ -41,12 +41,13 @@ final class AssistantEstimateStructuredFacts
                 || array_diff(self::POSITION_FIELDS, array_keys($position)) !== []) {
                 throw new LogicException('estimate_position_evidence_incomplete');
             }
+            $fields = array_intersect_key($position, array_fill_keys([...self::POSITION_FIELDS, 'unit', 'unit_price'], true)) + ['currency' => null];
             $reference['content_scope'] = 'structured';
-            $reference['checked_fields'] = self::POSITION_FIELDS;
+            $reference['checked_fields'] = array_keys($fields);
             $reference['required_permissions'] = self::PERMISSIONS;
             $reference['required_domains'] = ['estimates'];
             $reference['source_version'] = $position['version'];
-            $rows[] = self::row('estimate_item', $position['id'], array_intersect_key($position, array_fill_keys(self::POSITION_FIELDS, true)), $reference);
+            $rows[] = self::row('estimate_item', $position['id'], $fields, $reference);
         }
         $payload = AssistantStructuredFactFormatter::payload($rows, $evidence['fetched_at']);
         $payload['structured_fact_evidence']['truncated'] = count($positions) > AssistantStructuredFactFormatter::MAX_ROWS - 1;
@@ -123,7 +124,18 @@ final class AssistantEstimateStructuredFacts
             throw new LogicException('estimate_identity_evidence_incomplete');
         }
 
-        return self::row('estimate', $header['id'], array_intersect_key($header, array_fill_keys(self::IDENTITY_FIELDS, true)), $source);
+        $fields = array_intersect_key($header, array_fill_keys(self::IDENTITY_FIELDS, true));
+        if (($evidence['aggregation']['method'] ?? null) === 'sum_top_level_accounted_positions'
+            && array_key_exists('total_amount', $evidence['totals'] ?? []) && in_array('total_amount', $source['checked_fields'], true)) {
+            $total = $evidence['totals']['total_amount'];
+            if ($total !== null && (! is_string($total) || preg_match('/^-?\d+(?:\.\d+)?$/D', $total) !== 1)) {
+                throw new LogicException('estimate_total_evidence_incomplete');
+            }
+            $fields += ['total_amount' => $total, 'currency' => null];
+            $source['checked_fields'] = array_values(array_unique([...$source['checked_fields'], 'currency']));
+        }
+
+        return self::row('estimate', $header['id'], $fields, $source);
     }
 
     private static function row(string $type, int $id, array $fields, array $source): array

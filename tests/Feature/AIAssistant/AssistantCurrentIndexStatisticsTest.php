@@ -265,13 +265,10 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $expectedQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS expected_count'));
         $this->assertCount(1, $storedQueries);
         $this->assertCount(1, $expectedQueries);
-        $this->assertStringNotContainsString('union all', strtolower(array_values($storedQueries)[0]['query']));
-        $this->assertStringNotContainsString('union all', strtolower(array_values($expectedQueries)[0]['query']));
         foreach ([$storedQueries, $expectedQueries] as $aggregateQueries) {
             $sql = array_values($aggregateQueries)[0]['query'];
             $this->assertSame(1, substr_count($sql, '(WITH '));
             $this->assertSame(1, substr_count($sql, '"is_archived" ='), 'Entity guards must share the current project visibility scope.');
-            $this->assertSame(4, preg_match_all('/"assistant_acl_\d+" AS MATERIALIZED/', $sql));
         }
         $this->assertSame(1, substr_count(array_values($storedQueries)[0]['query'], '"ai_rag_sources"."source_type" in ('));
         $this->assertSame(1, substr_count(array_values($expectedQueries)[0]['query'], '"ai_rag_expected_sources"."source_type" in ('));

@@ -31,8 +31,9 @@ final class AssistantPresentationPlanner
         }
         $plan = json_decode($text, true);
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
-        foreach ($plan['result_sets'] ?? [] as $set) {
-            if (is_array($set) && array_intersect(is_array($set['columns'] ?? null) ? $set['columns'] : [], $moneyFields) !== []) {
+        foreach (is_array($plan['result_sets'] ?? null) ? $plan['result_sets'] : [] as $set) {
+            $columns = is_array($set) && is_array($set['columns'] ?? null) ? array_filter($set['columns'], is_string(...)) : [];
+            if (array_intersect($columns, $moneyFields) !== []) {
                 return true;
             }
         }
@@ -66,20 +67,19 @@ final class AssistantPresentationPlanner
                 if (! is_array($row)) {
                     return false;
                 }
-                $hasMoneyValue = false;
+                $moneyWithValues = [];
                 foreach ($selectedMoney as $field) {
                     if (($row['fields'][$field] ?? null) !== null) {
-                        $hasMoneyValue = true;
-                        break;
+                        $moneyWithValues[] = $field;
                     }
                 }
-                if ($hasMoneyValue) {
+                if ($moneyWithValues !== []) {
                     $source = $row['source_ref'] ?? [];
                     $key = $this->financialSourceKey($source);
                     if ($key === null) {
                         return false;
                     }
-                    $required[$key] = true;
+                    $required[$key] = array_unique(array_merge($required[$key] ?? [], $moneyWithValues));
                 }
             }
         }
@@ -89,11 +89,17 @@ final class AssistantPresentationPlanner
         $verified = [];
         foreach ($financialSourceRefs as $source) {
             if (is_array($source) && ($key = $this->financialSourceKey($source)) !== null) {
-                $verified[$key] = true;
+                $verified[$key] = array_unique(array_merge($verified[$key] ?? [], $source['checked_fields'] ?? []));
             }
         }
 
-        return array_diff_key($required, $verified) === [];
+        foreach ($required as $key => $fields) {
+            if (! isset($verified[$key]) || array_diff($fields, $verified[$key]) !== []) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static function providerView(array $originalResult): ?array
@@ -137,7 +143,7 @@ final class AssistantPresentationPlanner
         }
 
         $sets = $this->trustedSets($toolResults);
-        if ($sets === [] || count($sets) !== count($plan['result_sets'])) {
+        if ($sets === []) {
             return null;
         }
         $selected = [];
@@ -151,7 +157,12 @@ final class AssistantPresentationPlanner
                 return null;
             }
             $set = $sets[$setPlan['result_set']];
-            if (! $this->validColumns($set, $setPlan['columns']) || ! $this->exactPermutation($set, $setPlan['order'])) {
+            if (! $this->validSelection($set, $setPlan['order'])) {
+                return null;
+            }
+            $selectedSet = $set;
+            $selectedSet['rows'] = array_intersect_key($set['rows'], array_flip($setPlan['order']));
+            if (! $this->validColumns($selectedSet, $setPlan['columns'])) {
                 return null;
             }
             $groupBy = $setPlan['group_by'];
@@ -159,16 +170,17 @@ final class AssistantPresentationPlanner
                 || ! $this->groupsStayContiguous($set, $setPlan['order'], $groupBy))) {
                 return null;
             }
-            $selected[$setPlan['result_set']] = true;
+            $selected[$setPlan['result_set']] = $selectedSet;
         }
-        if (array_diff_key($sets, $selected) !== [] || ! $this->requirementsDisplayed($query ?? '', $sets, $plan['result_sets'])
-            || ! $this->pairedMeasures($sets, $plan['result_sets'])) {
+        if (array_sum(array_map(static fn (array $set): int => count($set['rows']), $selected)) > AssistantStructuredFactFormatter::MAX_ROWS
+            || ! $this->requirementsDisplayed($query ?? '', $selected, $plan['result_sets'])
+            || ! $this->pairedMeasures($selected, $plan['result_sets'])) {
             return null;
         }
 
         $rendered = AssistantStructuredFactFormatter::renderVerifiedRows($sets, $plan);
         $hasPaymentRows = false;
-        foreach ($sets as $set) {
+        foreach ($selected as $set) {
             foreach ($set['rows'] as $row) {
                 if (($row['entity_type'] ?? null) === 'payment_document') {
                     $hasPaymentRows = true;
@@ -176,11 +188,32 @@ final class AssistantPresentationPlanner
                 }
             }
         }
-        if ($hasPaymentRows) {
+        if ($hasPaymentRows || in_array(true, array_column($selected, 'truncated'), true) || count($selected) !== count($sets)
+            || array_sum(array_map(static fn (array $set): int => count($set['rows']), $selected))
+                !== array_sum(array_map(static fn (array $set): int => count($set['rows']), $sets))) {
             $rendered .= "\n\n".trans_message('ai_assistant_facts.returned_scope');
         }
 
         return $rendered;
+    }
+
+    public function selectedRows(string $text, array $toolResults, ?string $query = null): ?array
+    {
+        if ($this->render($text, $toolResults, $query) === null) {
+            return null;
+        }
+        $plan = json_decode($text, true);
+        $sets = $this->trustedSets($toolResults);
+        $rows = [];
+        foreach ($plan['result_sets'] as $setPlan) {
+            foreach ($setPlan['order'] as $ref) {
+                $row = $sets[$setPlan['result_set']]['rows'][$ref];
+                unset($row['_presentation_fields']);
+                $rows[AssistantSourceReferenceIdentity::key($row)] = $row;
+            }
+        }
+
+        return array_values($rows);
     }
 
     public function renderPaymentFallback(array $toolResults): ?string
@@ -203,6 +236,9 @@ final class AssistantPresentationPlanner
                 $hasVerifiedCurrency = $hasVerifiedCurrency || (in_array('currency', $fields, true)
                     && is_string($row['fields']['currency'] ?? null) && trim($row['fields']['currency']) !== '');
                 $rows[] = $row;
+                if (count($rows) > AssistantStructuredFactFormatter::MAX_ROWS) {
+                    return null;
+                }
             }
         }
         if ($rows === [] || $commonFields === null) {
@@ -258,7 +294,6 @@ final class AssistantPresentationPlanner
     {
         $sets = [];
         $verifier = new AssistantStructuredFactVerifier;
-        $uniqueRows = [];
         foreach ($toolResults as $result) {
             if (! is_array($result) || ! is_string($result['server_formatted_facts'] ?? null)
                 || ! is_array($result['structured_fact_evidence'] ?? null)) {
@@ -281,15 +316,8 @@ final class AssistantPresentationPlanner
                 $fields = AssistantStructuredFactFormatter::presentationFields($proofRow);
                 $rows[$rowRef] = $proofRow;
                 $rows[$rowRef]['_presentation_fields'] = $fields;
-                $identity = AssistantSourceReferenceIdentity::key($proofRow);
-                if (! isset($uniqueRows[$identity])) {
-                    if (count($uniqueRows) >= AssistantStructuredFactFormatter::MAX_ROWS) {
-                        return [];
-                    }
-                    $uniqueRows[$identity] = true;
-                }
             }
-            $sets[$view['result_set']] = ['rows' => $rows];
+            $sets[$view['result_set']] = ['rows' => $rows, 'truncated' => $evidence['truncated'] ?? false];
         }
 
         return $sets;
@@ -317,12 +345,18 @@ final class AssistantPresentationPlanner
         return true;
     }
 
-    private function exactPermutation(array $set, array $order): bool
+    private function validSelection(array $set, array $order): bool
     {
-        $refs = array_keys($set['rows']);
+        if ($order === [] || count(array_unique($order, SORT_REGULAR)) !== count($order)) {
+            return false;
+        }
+        foreach ($order as $ref) {
+            if (! is_string($ref) || ! isset($set['rows'][$ref])) {
+                return false;
+            }
+        }
 
-        return count($order) === count($refs) && count(array_unique($order, SORT_REGULAR)) === count($order)
-            && array_diff($refs, $order) === [] && array_diff($order, $refs) === [];
+        return true;
     }
 
     private function groupsStayContiguous(array $set, array $order, string $field): bool
@@ -379,11 +413,15 @@ final class AssistantPresentationPlanner
             $hasMoney = array_intersect($selected, $moneyFields) !== [];
             $hasQuantity = array_intersect($selected, $quantityFields) !== [];
             foreach ($sets[$plan['result_set']]['rows'] as $row) {
-                if ($hasMoney && (! $this->hasSelectedNonEmptyValue($row, $selected, ['currency', 'budget_currency'])
-                    || ! $this->selectedMoneyValuesHaveCurrency($row, $selected, $moneyFields))) {
+                if ($hasMoney && ! $this->selectedMoneyValuesHaveCurrency($row, $selected, $moneyFields)) {
                     return false;
                 }
                 if ($hasQuantity && ! $this->hasSelectedNonEmptyValue($row, $selected, ['unit', 'unit_name', 'unit_short_name', 'material_unit'])) {
+                    return false;
+                }
+                if (array_intersect($selected, ['unit_price', 'current_unit_price']) !== []
+                    && (($row['fields']['unit_price'] ?? null) !== null || ($row['fields']['current_unit_price'] ?? null) !== null)
+                    && ! $this->hasSelectedNonEmptyValue($row, $selected, ['unit', 'unit_name', 'unit_short_name', 'material_unit'])) {
                     return false;
                 }
             }
@@ -395,9 +433,18 @@ final class AssistantPresentationPlanner
     private function selectedMoneyValuesHaveCurrency(array $row, array $selected, array $moneyFields): bool
     {
         foreach (array_intersect($selected, $moneyFields) as $field) {
-            if (($row['fields'][$field] ?? null) !== null
-                && ! $this->hasSelectedNonEmptyValue($row, $selected, ['currency', 'budget_currency'])) {
-                return false;
+            if (($row['fields'][$field] ?? null) !== null) {
+                $currencyShown = false;
+                foreach (array_intersect($selected, ['currency', 'budget_currency']) as $currencyField) {
+                    if (array_key_exists($currencyField, $row['fields'])
+                        && ($row['fields'][$currencyField] === null
+                            || (is_string($row['fields'][$currencyField]) && trim($row['fields'][$currencyField]) !== ''))) {
+                        $currencyShown = true;
+                    }
+                }
+                if (! $currencyShown) {
+                    return false;
+                }
             }
         }
 
@@ -428,7 +475,8 @@ final class AssistantPresentationPlanner
             return null;
         }
 
-        return json_encode([(string) $source['entity_type'], (string) $source['entity_id'], (string) $source['organization_id']], JSON_THROW_ON_ERROR);
+        return json_encode([(string) $source['entity_type'], (string) $source['entity_id'], (string) $source['organization_id'],
+            $source['version'] ?? null, $source['source_version'] ?? null, $source['fetched_at'] ?? null], JSON_THROW_ON_ERROR);
     }
 
     private function hasExactKeys(array $value, array $expected): bool

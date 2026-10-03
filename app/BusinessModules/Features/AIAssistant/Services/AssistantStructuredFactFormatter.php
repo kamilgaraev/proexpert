@@ -285,6 +285,20 @@ final class AssistantStructuredFactFormatter
         return $title;
     }
 
+    public static function withUnknownCurrency(array $row): array
+    {
+        $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
+        if (array_intersect(array_keys($row['fields']), $moneyFields) === []
+            || array_key_exists('currency', $row['fields']) || array_key_exists('budget_currency', $row['fields'])) {
+            return $row;
+        }
+        $row['fields']['currency'] = null;
+        $row['source_ref']['checked_fields'][] = 'currency';
+        $row['version'] = hash('sha256', json_encode(array_diff_key($row, ['version' => true]), JSON_THROW_ON_ERROR));
+
+        return $row;
+    }
+
     public static function presentationFields(array $row): array
     {
         $allowed = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));

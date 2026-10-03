@@ -75,7 +75,7 @@ final class AssistantConcurrentSubmitTest extends TestCase
         }
         $results = $this->runConcurrently($operations);
         self::assertSame(array_fill(0, $count, 'queued'), array_column($results, 'status'));
-        self::assertSame(array_fill(0, $count, 1), array_column($results, 'jobs'));
+        self::assertSame(array_fill(0, $count, 2), array_column($results, 'jobs'));
         self::assertSame($count, AssistantRequest::query()->where('stage', 'queued')->whereNull('started_at')->count());
         self::assertSame($count, AICreditReservation::query()->count());
         self::assertSame($count, AICreditLedgerEntry::query()->where('type', 'reserve')->count());
