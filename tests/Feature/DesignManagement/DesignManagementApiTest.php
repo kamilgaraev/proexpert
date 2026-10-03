@@ -2188,6 +2188,53 @@ final class DesignManagementApiTest extends TestCase
         $response->assertCreated();
     }
 
+    public function test_ifc_upload_accepts_storage_that_closes_the_input_stream(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $disk = Mockery::mock(Filesystem::class);
+        $storedPaths = [];
+        $contents = str_repeat("ISO-10303-21;\n", 64);
+
+        $disk->shouldReceive('put')
+            ->twice()
+            ->andReturnUsing(function (string $path, mixed $stream, string $visibility) use (&$storedPaths, $contents): bool {
+                $this->assertIsResource($stream);
+                $this->assertSame($contents, stream_get_contents($stream));
+                $this->assertSame('private', $visibility);
+                $storedPaths[] = $path;
+                fclose($stream);
+
+                return true;
+            });
+
+        $this->app->forgetInstance(DesignManagementService::class);
+        $this->mock(FileService::class, function (MockInterface $mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk)->byDefault();
+        });
+        $this->app->forgetInstance(DesignManagementService::class);
+
+        $versionIds = [];
+        foreach (['QA-A-20261003', 'QA-B-20261003'] as $number) {
+            $response = $this->withHeaders($context->authHeaders())
+                ->post("/api/v1/admin/design-management/packages/{$packageId}/models", [
+                    'title' => 'Архитектурная модель',
+                    'version_number' => $number,
+                    'file' => UploadedFile::fake()->createWithContent('building.ifc', $contents),
+                ]);
+
+            $response->assertCreated();
+            $response->assertJsonPath('data.version_number', $number);
+            $versionIds[] = $response->json('data.id');
+        }
+
+        $this->assertCount(2, array_unique($versionIds));
+        $this->assertCount(2, array_unique($storedPaths));
+    }
+
     public function test_viewer_endpoint_returns_source_and_derivative_blocks(): void
     {
         $this->fakeFileStorage();

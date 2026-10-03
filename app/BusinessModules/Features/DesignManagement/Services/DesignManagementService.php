@@ -502,7 +502,9 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         try {
             $stored = $this->fileService->disk($organization)->put($path, $stream, 'private');
         } finally {
-            fclose($stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
         }
 
         if (! $stored) {
