@@ -17,7 +17,7 @@ final class RagExpectedSourceProjection
 {
     public function __construct(private readonly RagIndexer $indexer) {}
 
-    public function stage(int $organizationId, string $sourceType, string $generation, array $batch): void
+    public function stage(int $organizationId, string $sourceType, string $generation, array $batch, ?array $identities = null): void
     {
         $timestamp = now();
         $rows = [];
@@ -27,7 +27,7 @@ final class RagExpectedSourceProjection
             }
         }
 
-        $identities = $this->indexer->coverageIdentities($batch);
+        $identities ??= $this->indexer->coverageIdentities($batch);
         foreach ($batch as $batchKey => $chunk) {
             $identity = $identities[$batchKey] ?? throw new RuntimeException('rag_coverage_identity_missing');
             $changedAt = $chunk->updatedAt === null ? $timestamp : Carbon::instance($chunk->updatedAt);

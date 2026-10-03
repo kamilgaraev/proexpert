@@ -264,18 +264,21 @@ class RagIndexerTest extends TestCase
         $queries = [];
 
         DB::listen(static function (QueryExecuted $query) use (&$queries): void {
-            if (str_contains($query->sql, 'ai_rag_chunks SET embedding')) {
+            if (str_contains($query->sql, 'ai_rag_chunks') && preg_match('/^(insert|update)/i', $query->sql)) {
                 $queries[] = [$query->sql, $query->bindings];
             }
         });
 
         $indexer->indexChunk($this->chunk($organizationId, $projectId, 'Контекст для вектора'));
 
-        $this->assertNotEmpty($queries);
+        $this->assertCount(1, $queries);
         [$sql, $bindings] = $queries[0];
-        $this->assertStringContainsString('embedding = ?', $sql);
+        $this->assertStringStartsWith('insert into', strtolower($sql));
+        $this->assertStringContainsString('"embedding"', $sql);
         $this->assertStringNotContainsString('[0.1,0.2,0.3]', $sql);
-        $boundEmbedding = json_decode((string) $bindings[0], true, flags: JSON_THROW_ON_ERROR);
+        $vectorBindings = array_values(array_filter($bindings, static fn ($value): bool => is_string($value) && str_starts_with($value, '[')));
+        $this->assertCount(1, $vectorBindings);
+        $boundEmbedding = json_decode($vectorBindings[0], true, flags: JSON_THROW_ON_ERROR);
         $this->assertIsArray($boundEmbedding);
         $this->assertCount(RagTestEmbedding::DIMENSIONS, $boundEmbedding);
         $this->assertSame([0.1, 0.2, 0.3], array_slice($boundEmbedding, 0, 3));

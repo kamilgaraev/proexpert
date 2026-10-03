@@ -14,6 +14,7 @@ use DateTimeImmutable;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\TestCase;
@@ -64,16 +65,19 @@ final class RagCoverageIdentityTest extends TestCase
         $wrongDimensions = clone $stored;
         $wrongDimensions->setAttribute('embedding', '[0.1]');
         $chunks = $this->createMock(HasMany::class);
-        $chunks->expects(self::exactly(10))->method('get')->willReturnOnConsecutiveCalls(
+        $baseQuery = $this->createMock(\Illuminate\Database\Query\Builder::class);
+        $baseQuery->method('select')->willReturnSelf();
+        $baseQuery->method('addSelect')->willReturnSelf();
+        $query = $this->getMockBuilder(Builder::class)->setConstructorArgs([$baseQuery])->onlyMethods(['get'])->getMock();
+        $query->expects(self::exactly(6))->method('get')->willReturnOnConsecutiveCalls(
             new Collection([$stored]), new Collection([$stored]),
-            new Collection([$stored]), new Collection([$wrongProvider]),
-            new Collection([$stored]), new Collection([$wrongModel]),
-            new Collection([$stored]), new Collection([$wrongDimensions]),
-            new Collection([$stored]), new Collection,
+            new Collection([$wrongProvider]), new Collection([$wrongModel]),
+            new Collection([$wrongDimensions]), new Collection,
         );
+        $chunks->expects(self::exactly(6))->method('getQuery')->willReturn($query);
         $source = $this->getMockBuilder(RagSource::class)->onlyMethods(['chunks'])->getMock();
         $source->setRawAttributes(['checksum' => $identity['checksum']]);
-        $source->expects(self::exactly(10))->method('chunks')->willReturn($chunks);
+        $source->expects(self::exactly(6))->method('chunks')->willReturn($chunks);
         $equivalent = new RagChunkData(7, null, 'project', 'project', '42', 'Title', 'Body text',
             ['a' => 'value', 'unit_id' => 0, 'z' => 2], $timestamp);
         $this->assertTrue($indexer->matchesSource($source, $equivalent));

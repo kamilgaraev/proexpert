@@ -161,6 +161,7 @@ services:
     image: ${MOST_IMAGE_REF:-ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}}
     container_name: prohelper-scheduler
     restart: unless-stopped
+    init: true
     command: "php artisan schedule:work"
     env_file: .env
     environment: *reverb-client-environment
