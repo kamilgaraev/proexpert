@@ -72,6 +72,26 @@ final class MobileDesignManagementHttpContractTest extends TestCase
             ->assertOk()->assertJsonPath('data.0.id', $old->id)->assertJsonPath('data.0.derivative.processing_stage', 'stale');
     }
 
+    public function test_catalog_keeps_current_converter_status_with_large_private_metadata(): void
+    {
+        [$context, $project, $version] = $this->fixture();
+        $derivative = DesignModelDerivative::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'version_id' => $version->id, 'viewer_provider' => 'thatopen', 'derivative_format' => 'thatopen_frag',
+            'status' => 'ready', 'progress_percent' => 100, 'processing_stage' => 'ready',
+            'metadata' => ['converter_version' => config('design_management.viewer_converter_version'),
+                'coordinate_transformations' => array_fill(0, 2000, ['private' => str_repeat('x', 128)])],
+        ]);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson($this->base().'/project-model-versions?project_id='.$project->id.'&status=ready')
+            ->assertOk()->assertJsonPath('data.0.id', $version->id)
+            ->assertJsonPath('data.0.artifact_id', $version->artifact_id)
+            ->assertJsonPath('data.0.derivative.id', $derivative->id)
+            ->assertJsonPath('data.0.derivative_status', 'ready')
+            ->assertJsonPath('data.0.derivative.is_current', true)
+            ->assertJsonMissing(['coordinate_transformations']);
+    }
+
     public function test_issue_creation_replay_checks_project_and_exact_version_element(): void
     {
         [$context, $project, $version] = $this->fixture();
