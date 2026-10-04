@@ -690,6 +690,20 @@ class AuthorizationService
     public function getUserRoleSlugs(User $user, ?array $context = null): array
     {
         try {
+            if ($this->currentChecks && isset($context['organization_id']) && ! isset($context['project_id'])) {
+                $authContext = $this->rememberRead(
+                    'auth_context_'.md5(serialize($context)),
+                    fn () => $this->resolveAuthContext($context),
+                );
+                if ($authContext === null) {
+                    return [];
+                }
+
+                return $this->rememberRead(
+                    'current_role_slugs_'.$user->id.':'.$authContext->id,
+                    fn (): array => $this->getUserRoles($user, $authContext)->pluck('role_slug')->toArray(),
+                );
+            }
             $authContext = null;
             if ($context && isset($context['organization_id'])) {
                 $authContext = AuthorizationContext::getOrganizationContext($context['organization_id']);

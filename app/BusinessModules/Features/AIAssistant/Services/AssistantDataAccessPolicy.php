@@ -1090,6 +1090,11 @@ final class AssistantDataAccessPolicy
                     ->unique()
                     ->values()
                     ->all();
+                $requiredPermissionKeys = DB::table('knowledge_articles as articles')
+                    ->crossJoin(DB::raw("LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(articles.permission_keys) = 'array' THEN articles.permission_keys ELSE '[]'::jsonb END) AS permission(value)"))
+                    ->where('articles.status', 'published')->whereRaw("jsonb_typeof(permission.value) = 'string'")
+                    ->selectRaw("DISTINCT permission.value #>> '{}' AS permission_key")->pluck('permission_key')->all();
+                $permissionKeys = array_values(array_intersect($permissionKeys, $requiredPermissionKeys));
                 $permissionKeys = array_values(array_filter($permissionKeys,
                     fn (string $permission): bool => $authorization->canCurrent($user, $permission, ['organization_id' => $organizationId])));
                 $moduleSlugs = ($this->modules ?? app(\App\Services\Entitlements\OrganizationEntitlementService::class))

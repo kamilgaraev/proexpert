@@ -42,10 +42,12 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
             AuthorizationContext::getOrganizationContext($organization->id);
         }
 
-        $permissions = [$actorA->id => ['knowledge.read'], $actorB->id => ['knowledge.finance']];
+        $quotedPermission = 'права."\\пример';
+        $permissions = [$actorA->id => ['knowledge.read', '  '.$quotedPermission.'  ', 'unused'], $actorB->id => ['knowledge.finance', 'draft.only']];
         $roleSlugs = [$actorA->id => ['company-owner'], $actorB->id => ['company-accountant']];
         $modulesByOrganization = [$organizationA->id => ['alpha'], $organizationB->id => ['finance']];
         $permissionCalls = [];
+        $checkedPermissions = [];
         $roleCalls = [];
         $moduleCalls = [];
         $authorization = Mockery::mock(AuthorizationService::class);
@@ -57,8 +59,9 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
             }
         );
         $authorization->shouldReceive('canCurrent')->zeroOrMoreTimes()->andReturnUsing(
-            static function (User $user, string $permission) use (&$permissions): bool {
-                return in_array($permission, $permissions[$user->id] ?? [], true);
+            static function (User $user, string $permission) use (&$permissions, &$checkedPermissions): bool {
+                $checkedPermissions[$user->id][] = $permission;
+                return in_array($permission, array_map(trim(...), $permissions[$user->id] ?? []), true);
             }
         );
         $authorization->shouldReceive('getUserRoles')->zeroOrMoreTimes()->andReturnUsing(
@@ -77,10 +80,13 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $entitlements);
         $policy->setTrustedSurface(KnowledgeSurface::ADMIN);
 
-        $this->article('actor-a-owner', ['owner'], ['knowledge.read'], ['alpha'], ['admin']);
+        $this->article('actor-a-owner', ['owner'], ['knowledge.read', 42, false, $quotedPermission], ['alpha'], ['admin']);
+        $this->article('quoted-only', ['owner'], [$quotedPermission], ['alpha'], ['admin']);
         $this->article('actor-a-worker', ['worker'], ['knowledge.edit'], ['beta'], ['admin']);
         $this->article('actor-a-lk', ['worker'], ['knowledge.edit'], ['beta'], ['lk']);
         $this->article('actor-b-accountant', ['accountant'], ['knowledge.finance'], ['finance'], ['admin']);
+        $this->article('unpublished', ['accountant'], ['draft.only'], ['finance'], ['admin']);
+        DB::table('knowledge_articles')->where('slug', 'unpublished')->update(['status' => 'draft']);
 
         $queryCounts = [
             'actor_a_first' => ['authorization_contexts' => 0, 'user_role_assignments' => 0],
@@ -104,6 +110,7 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
             $first = $policy->entityQuery($actorA, $organizationA->id, 'knowledge_article')->pluck('slug')->all();
             $second = $policy->entityQuery($actorA, $organizationA->id, 'knowledge_article')->pluck('slug')->all();
             $this->assertContains('actor-a-owner', $first);
+            $this->assertContains('quoted-only', $first);
             $this->assertNotContains('actor-a-worker', $first);
             $this->assertNotContains('actor-b-accountant', $first);
             $this->assertSame($first, $second);
@@ -141,6 +148,7 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
         $this->assertNotContains('actor-a-owner', $visibleB);
         $this->assertContains('actor-a-worker', $visibleAUpdated);
         $this->assertNotContains('actor-a-owner', $visibleAUpdated);
+        $this->assertNotContains('quoted-only', $visibleAUpdated);
         $this->assertNotContains('actor-a-lk', $visibleAUpdated);
         $this->assertContains('actor-a-lk', $visibleALk);
         $this->assertNotContains('actor-a-worker', $visibleALk);
@@ -150,6 +158,8 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
         $this->assertSame(1, $roleCalls[$actorB->id] ?? 0);
         $this->assertSame(3, $moduleCalls[$organizationA->id] ?? 0);
         $this->assertSame(1, $moduleCalls[$organizationB->id] ?? 0);
+        $this->assertSame(['knowledge.read', $quotedPermission, 'knowledge.edit', 'knowledge.edit'], $checkedPermissions[$actorA->id] ?? []);
+        $this->assertSame(['knowledge.finance'], $checkedPermissions[$actorB->id] ?? []);
         foreach (['actor_a_first', 'actor_b', 'actor_a_updated', 'actor_a_lk'] as $frameName) {
             $this->assertSame(1, $queryCounts[$frameName]['authorization_contexts'], $frameName);
             $this->assertSame(0, $queryCounts[$frameName]['user_role_assignments'], $frameName);
