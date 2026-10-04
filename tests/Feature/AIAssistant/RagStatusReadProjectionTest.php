@@ -103,6 +103,81 @@ final class RagStatusReadProjectionTest extends TestCase
         (new ReflectionMethod($migration, 'backfill'))->invoke($migration);
         self::assertTrue(DB::table('ai_rag_status_sources')->where('id', $source->id)->exists());
         self::assertTrue(DB::table('ai_rag_status_chunks')->where('id', $chunk)->where('source_id', $source->id)->where('embedding_present', true)->exists());
+        $this->assertCounters($source->id, 1, 1);
+        (new ReflectionMethod($migration, 'backfill'))->invoke($migration);
+        $this->assertCounters($source->id, 1, 1);
+    }
+
+    public function test_counters_follow_chunk_scope_embedding_reparenting_and_source_scope(): void
+    {
+        $source = $this->source();
+        $first = $this->chunk($source);
+        $second = $this->chunk($source, $this->vector(1.0));
+        $this->assertCounters($source->id, 2, 1);
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $source->organization_id]));
+        DB::table('ai_rag_chunks')->where('id', $first)->update(['project_id' => $project->id, 'embedding' => $this->vector(1.0)]);
+        $this->assertCounters($source->id, 1, 1);
+        DB::table('ai_rag_sources')->where('id', $source->id)->update(['project_id' => $project->id]);
+        $this->assertCounters($source->id, 1, 1);
+        DB::table('ai_rag_chunks')->where('id', $first)->update(['embedding' => null]);
+        $this->assertCounters($source->id, 1, 0);
+        $other = $this->source();
+        $other->forceFill(['entity_id' => 'counter-other'])->save();
+        DB::table('ai_rag_chunks')->where('id', $first)->update([
+            'source_id' => $other->id, 'organization_id' => $other->organization_id, 'project_id' => null,
+        ]);
+        $this->assertCounters($source->id, 0, 0);
+        $this->assertCounters($other->id, 1, 0);
+        DB::table('ai_rag_chunks')->where('id', $second)->update(['source_id' => $other->id]);
+        $this->assertCounters($other->id, 1, 0);
+        DB::table('ai_rag_sources')->where('id', $other->id)->update(['organization_id' => $source->organization_id]);
+        $this->assertCounters($other->id, 1, 1);
+        DB::table('ai_rag_chunks')->where('id', $second)->delete();
+        $this->assertCounters($other->id, 0, 0);
+        DB::table('ai_rag_sources')->where('id', $source->id)->delete();
+        self::assertFalse(DB::table('ai_rag_status_sources')->where('id', $source->id)->exists());
+    }
+
+    public function test_counters_roll_back_with_canonical_mutations(): void
+    {
+        $source = $this->source();
+        $chunk = $this->chunk($source, $this->vector(1.0));
+        try {
+            DB::transaction(function () use ($source, $chunk): void {
+                DB::table('ai_rag_chunks')->where('id', $chunk)->update(['embedding' => null]);
+                $this->assertCounters($source->id, 1, 0);
+                DB::table('ai_rag_chunks')->where('id', $chunk)->delete();
+                $this->assertCounters($source->id, 0, 0);
+                throw new RuntimeException('rollback-counters');
+            });
+            self::fail('The counters must roll back');
+        } catch (RuntimeException $exception) {
+            self::assertSame('rollback-counters', $exception->getMessage());
+        }
+        $this->assertCounters($source->id, 1, 1);
+    }
+
+    public function test_counter_migration_backfills_existing_scoped_chunks(): void
+    {
+        $source = $this->source();
+        $first = $this->chunk($source, $this->vector(1.0));
+        $this->chunk($source);
+        $migration = require database_path('migrations/2026_10_04_090000_add_rag_status_source_chunk_counters.php');
+        DB::transaction(function () use ($migration): void {
+            $migration->down();
+            $migration->up();
+        });
+        $this->assertCounters($source->id, 2, 1);
+        DB::table('ai_rag_chunks')->where('id', $first)->delete();
+        $this->assertCounters($source->id, 1, 0);
+    }
+
+    private function assertCounters(int $sourceId, int $chunks, int $indexed): void
+    {
+        $actual = DB::table('ai_rag_status_sources')->where('id', $sourceId)->first();
+        self::assertNotNull($actual);
+        self::assertSame($chunks, $actual->chunk_count);
+        self::assertSame($indexed, $actual->indexed_chunk_count);
     }
 
     private function source(): RagSource
@@ -120,7 +195,7 @@ final class RagStatusReadProjectionTest extends TestCase
     {
         return DB::table('ai_rag_chunks')->insertGetId([
             'source_id' => $source->id, 'organization_id' => $source->organization_id, 'project_id' => null,
-            'chunk_index' => 0, 'content' => 'Chunk', 'content_hash' => hash('sha256', 'chunk'),
+            'chunk_index' => (int) DB::table('ai_rag_chunks')->where('source_id', $source->id)->count(), 'content' => 'Chunk', 'content_hash' => hash('sha256', 'chunk'),
             'embedding' => $embedding, 'created_at' => now(), 'updated_at' => now(),
         ]);
     }

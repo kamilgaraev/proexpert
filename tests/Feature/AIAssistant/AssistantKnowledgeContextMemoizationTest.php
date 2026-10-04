@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\KnowledgeHub\DTOs\KnowledgeAccessContext;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
+use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeArticle;
+use App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeAccessFilter;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
@@ -151,6 +154,37 @@ final class AssistantKnowledgeContextMemoizationTest extends TestCase
             $this->assertSame(1, $queryCounts[$frameName]['authorization_contexts'], $frameName);
             $this->assertSame(0, $queryCounts[$frameName]['user_role_assignments'], $frameName);
         }
+    }
+
+    public function test_json_access_filters_keep_empty_multiple_and_nonmatching_restrictions(): void
+    {
+        $expected = [];
+        foreach (['surfaces' => 'admin', 'audiences' => 'owner', 'permission_keys' => 'knowledge.read', 'module_slugs' => 'alpha'] as $column => $allowed) {
+            foreach ([null, [], ['other', $allowed], ['other', 42, false]] as $index => $restriction) {
+                $slug = 'filter-'.$column.'-'.$index;
+                $this->article($slug, ['owner'], ['knowledge.read'], ['alpha'], ['admin']);
+                DB::table('knowledge_articles')->where('slug', $slug)->update([
+                    $column => $restriction === null ? null : json_encode($restriction, JSON_THROW_ON_ERROR),
+                ]);
+                if ($index < 3) { $expected[] = $slug; }
+            }
+        }
+        $quotedPermission = 'права."\\пример';
+        $this->article('quoted-permission', ['owner'], [$quotedPermission], ['alpha'], ['admin']);
+        $expected[] = 'quoted-permission';
+        $context = new KnowledgeAccessContext(KnowledgeSurface::ADMIN, ['all', 'owner'], ['unused', 'knowledge.read', $quotedPermission],
+            ['other-module', 'alpha'], null, null, null, null, null);
+        $visible = (new KnowledgeAccessFilter)->apply(KnowledgeArticle::query()->where(function ($query): void {
+            $query->where('slug', 'like', 'filter-%')->orWhere('slug', 'quoted-permission');
+        }), $context)->pluck('slug')->all();
+        $this->assertEqualsCanonicalizing($expected, $visible);
+
+        $this->article('empty-restrictions', [], [], [], []);
+        $context = new KnowledgeAccessContext(KnowledgeSurface::ADMIN, [], [], [], null, null, null, null, null);
+        $visible = (new KnowledgeAccessFilter)->apply(KnowledgeArticle::query()->where(function ($query): void {
+            $query->where('slug', 'like', 'filter-%')->orWhere('slug', 'quoted-permission')->orWhere('slug', 'empty-restrictions');
+        }), $context)->pluck('slug')->all();
+        $this->assertSame(['empty-restrictions'], $visible);
     }
 
     private function article(string $slug, array $audiences, array $permissions, array $modules, array $surfaces): void

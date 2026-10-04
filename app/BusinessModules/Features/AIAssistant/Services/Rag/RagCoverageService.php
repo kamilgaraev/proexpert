@@ -55,26 +55,15 @@ final class RagCoverageService
         if ($countsOnly) {
             $progress?->__invoke('source_acl');
             $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
-                ->leftJoinSub(DB::table('ai_rag_status_chunks')->where('organization_id', $organizationId)
-                    ->groupBy('source_id', 'project_id')->selectRaw('source_id, project_id, COUNT(*) AS chunk_count'),
-                    'accessible_chunks', static function (JoinClause $join): void {
-                        $join->on('accessible_chunks.source_id', '=', 'accessible_sources.id')
-                            ->whereRaw('accessible_chunks.project_id IS NOT DISTINCT FROM accessible_sources.project_id');
-                    })
-                ->leftJoinSub(DB::table('ai_rag_status_chunks')->where('organization_id', $organizationId)->where('embedding_present', true)
-                    ->groupBy('source_id', 'project_id')->select(['source_id', 'project_id']),
-                    'accessible_indexed_sources', static function (JoinClause $join): void {
-                        $join->on('accessible_indexed_sources.source_id', '=', 'accessible_sources.id')
-                            ->whereRaw('accessible_indexed_sources.project_id IS NOT DISTINCT FROM accessible_sources.project_id');
-                    })
                 ->groupBy('accessible_sources.source_type')
-                ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(SUM(accessible_chunks.chunk_count), 0) AS chunk_count, COUNT(accessible_indexed_sources.source_id) AS indexed_count');
-            $scoped = $policy->aggregateSourceIdentities($sources, $actor, $organizationId,
-                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'], $aggregate, $checkpoint, joinSourceIds: true);
-            if ($scoped !== null) {
+                ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+            $batches = $policy->aggregateSourceIdentityBatches($sources, $actor, $organizationId,
+                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
+                $aggregate, $checkpoint);
+            foreach ($batches as $scoped) {
                 if ($checkpoint !== null) { $checkpoint(); }
                 $progress?->__invoke('source_counts');
-                $counts = $scoped->get()->keyBy('source_type');
+                $counts = $counts->merge($scoped->get()->keyBy('source_type'));
             }
         } else {
             foreach ($policy->sourceIdentityQueries($sources, $actor, $organizationId, $checkpoint) as $accessible) {

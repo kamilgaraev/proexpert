@@ -53,6 +53,14 @@ class KnowledgeAccessFilter
             $builder->whereNull($column)
                 ->orWhereJsonLength($column, 0);
 
+            if ($values !== [] && $builder->getConnection()->getDriverName() === 'pgsql') {
+                $grammar = $builder->getQuery()->getGrammar();
+                $builder->orWhereRaw('('.$grammar->wrap($column).')::jsonb @> ANY (ARRAY['
+                    .implode(', ', array_fill(0, count($values), 'CAST(? AS jsonb)')).'])',
+                    array_map($grammar->prepareBindingForJsonContains(...), $values));
+
+                return;
+            }
             foreach ($values as $value) {
                 $builder->orWhereJsonContains($column, $value);
             }
