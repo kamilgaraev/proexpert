@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -192,6 +193,103 @@ final class AssistantReferenceBatchTest extends TestCase
         $other = User::withoutEvents(fn () => User::factory()->create(['current_organization_id' => $this->organization->id, 'is_active' => true]));
         $other->organizations()->attach($this->organization->id, ['is_active' => true, 'project_access_mode' => 'assigned_projects']);
         self::assertFalse($this->guard->canRead($other, $this->organization->id, [$this->reference($project)]));
+    }
+
+    public function test_reference_set_source_reads_are_batched_and_refresh_on_the_next_operation(): void
+    {
+        $sets = [];
+        $sources = [];
+        foreach (range(0, 29) as $key) {
+            $project = $this->project(true);
+            $source = RagSource::query()->create([
+                'organization_id' => $this->organization->id, 'project_id' => $project->id,
+                'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+                'title' => 'Project', 'checksum' => hash('sha256', (string) $project->id),
+            ]);
+            $sets[$key] = [$this->reference($project) + ['source_id' => $source->id]];
+            $sources[$key] = $source;
+        }
+        $this->policy->withCurrentChecks($this->actor, $this->organization->id, function () use ($sets, $sources): void {
+            DB::flushQueryLog();
+            DB::enableQueryLog();
+            try {
+                $decisions = $this->policy->canReadReferenceSets($this->actor, $this->organization->id, $sets);
+                $sourceReads = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "ai_rag_sources"'));
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+            self::assertSame(array_fill(0, 30, true), $decisions);
+            self::assertCount(2, $sourceReads);
+            $sources[0]->delete();
+            $sources[1]->update(['entity_id' => '999999999']);
+            $decisions = $this->policy->canReadReferenceSets($this->actor, $this->organization->id, $sets);
+            self::assertFalse($decisions[0]);
+            self::assertFalse($decisions[1]);
+            self::assertSame(array_fill(2, 28, true), array_slice($decisions, 2, null, true));
+        }, fresh: true);
+    }
+
+    public function test_source_prefetch_does_not_leak_into_nested_reads_or_foreign_organizations(): void
+    {
+        $project = $this->project(true);
+        $source = RagSource::query()->create([
+            'organization_id' => $this->organization->id, 'project_id' => $project->id,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+            'title' => 'Project', 'checksum' => hash('sha256', 'nested-source'),
+        ]);
+        $reference = $this->reference($project) + ['source_id' => $source->id];
+        $observed = null;
+        $this->duringPermission = function (string $permission) use ($source, $reference, &$observed): void {
+            if ($permission !== 'probe.current-source') { return; }
+            $source->delete();
+            $observed = $this->policy->canReadReference($this->actor, $this->organization->id, $reference);
+        };
+        $protected = $reference + ['content_scope' => 'structured', 'checked_fields' => ['name'],
+            'required_permissions' => ['probe.current-source'], 'required_domains' => ['projects']];
+        $this->policy->withCurrentChecks($this->actor, $this->organization->id, function () use ($protected): void {
+            $this->policy->canReadReferenceSets($this->actor, $this->organization->id, [[$protected]]);
+        }, fresh: true);
+        self::assertFalse($observed);
+        $this->duringPermission = null;
+        self::assertFalse($this->policy->canReadReferenceSets($this->actor, $this->organization->id, [[$reference]])[0]);
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $source = RagSource::query()->create([
+            'organization_id' => $foreign->id, 'project_id' => null,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+            'title' => 'Foreign', 'checksum' => hash('sha256', 'foreign-source'),
+        ]);
+        $decisions = $this->policy->canReadReferenceSets($this->actor, $this->organization->id,
+            [[$this->reference($project) + ['source_id' => $source->id]], [$this->reference($project)]]);
+        self::assertSame([false, true], $decisions);
+    }
+
+    public function test_a_later_source_deleted_or_reassigned_by_an_earlier_callback_is_denied(): void
+    {
+        foreach (['delete', 'reassign'] as $operation) {
+            $sets = [];
+            $sources = [];
+            foreach ([0, 1] as $key) {
+                $project = $this->project(true);
+                $sources[$key] = RagSource::query()->create([
+                    'organization_id' => $this->organization->id, 'project_id' => $project->id,
+                    'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+                    'title' => 'Project', 'checksum' => hash('sha256', (string) $project->id),
+                ]);
+                $sets[$key] = [$this->reference($project) + ['source_id' => $sources[$key]->id]];
+            }
+            $sets[0][0] += ['content_scope' => 'structured', 'checked_fields' => ['name'],
+                'required_permissions' => ['probe.mutate-next'], 'required_domains' => ['projects']];
+            $this->duringPermission = static function (string $permission) use ($sources, $operation): void {
+                if ($permission !== 'probe.mutate-next') { return; }
+                if ($operation === 'delete') { $sources[1]->delete(); }
+                else { $sources[1]->update(['entity_id' => '999999999']); }
+            };
+            $decisions = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
+                fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, $sets), fresh: true);
+            self::assertSame([true, false], $decisions);
+            $this->duringPermission = null;
+        }
     }
 
     private function project(bool $assigned): Project
