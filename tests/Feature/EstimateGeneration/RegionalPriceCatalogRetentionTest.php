@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Retention\RegionalPriceCatalogRetentionService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePricePeriod;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePriceZone;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegion;
@@ -16,8 +15,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\Fgi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceImportLifecycleService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
-use Illuminate\Database\QueryException;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Retention\RegionalPriceCatalogRetentionService;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Mockery;
@@ -27,9 +28,7 @@ use Tests\TestCase;
 
 final class RegionalPriceCatalogRetentionTest extends TestCase
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     protected function tearDown(): void
     {
@@ -186,6 +185,93 @@ SQL);
         }
     }
 
+    public function test_retention_query_settings_are_local_to_successful_transactions(): void
+    {
+        $settings = static fn (): array => DB::table('pg_settings')
+            ->whereIn('name', ['statement_timeout', 'lock_timeout', 'work_mem'])->orderBy('name')->pluck('setting', 'name')->all();
+        $original = $settings();
+        $observed = [];
+        DB::listen(static function (QueryExecuted $event) use (&$observed, $settings): void {
+            if (str_starts_with($event->sql, 'SELECT public.eg_regional_price_retention_eligible')) {
+                $observed[] = $settings();
+            }
+        });
+        $service = app(RegionalPriceCatalogRetentionService::class);
+        $service->prune();
+        self::assertSame($original, $settings());
+        $service->prune(true);
+        self::assertSame($original, $settings());
+        self::assertCount(4, $observed);
+        foreach ($observed as $local) {
+            self::assertSame('60000', $local['statement_timeout']);
+            self::assertSame('1000', $local['lock_timeout']);
+            self::assertSame('65536', $local['work_mem']);
+        }
+    }
+
+    public function test_failed_transaction_restores_query_settings_and_releases_mutex(): void
+    {
+        $settings = static fn (): array => DB::table('pg_settings')
+            ->whereIn('name', ['statement_timeout', 'lock_timeout', 'work_mem'])->orderBy('name')->pluck('setting', 'name')->all();
+        $original = $settings();
+        $injected = false;
+        DB::listen(static function (QueryExecuted $event) use (&$injected): void {
+            if (! $injected && str_starts_with($event->sql, 'SELECT public.eg_regional_price_retention_eligible')) {
+                $injected = true;
+                throw new RuntimeException('retention_test_forced_rollback');
+            }
+        });
+        try {
+            app(RegionalPriceCatalogRetentionService::class)->prune(true);
+            self::fail('Injected failure was not raised.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('retention_test_forced_rollback', $exception->getMessage());
+        }
+        self::assertTrue($injected);
+        self::assertSame($original, $settings());
+        self::assertSame(7, DB::table('estimate_resource_prices')->count());
+        $lock = Cache::lock(RegionalPriceCatalogRetentionService::MUTEX, 60);
+        self::assertTrue($lock->get());
+        $lock->release();
+    }
+
+    public function test_mutex_protects_the_final_transaction_after_the_time_budget(): void
+    {
+        $checked = false;
+        DB::listen(function (QueryExecuted $event) use (&$checked): void {
+            if ($checked || ! str_contains($event->sql, 'eg_regional_price_retention_lock_evidence')) {
+                return;
+            }
+            $checked = true;
+            $this->travel(600)->seconds();
+            $competing = Cache::lock(RegionalPriceCatalogRetentionService::MUTEX, 60);
+            try {
+                self::assertFalse($competing->get());
+            } finally {
+                $competing->release();
+                $this->travelBack();
+            }
+        });
+        app(RegionalPriceCatalogRetentionService::class)->prune(true, maxSeconds: 240);
+        self::assertTrue($checked);
+    }
+
+    public function test_statement_timeout_respects_a_shorter_cleanup_budget(): void
+    {
+        $observed = [];
+        DB::listen(static function (QueryExecuted $event) use (&$observed): void {
+            if (str_starts_with($event->sql, 'SELECT public.eg_regional_price_retention_eligible')) {
+                $observed[] = (int) DB::table('pg_settings')->where('name', 'statement_timeout')->value('setting');
+            }
+        });
+        app(RegionalPriceCatalogRetentionService::class)->prune(maxSeconds: 5);
+        self::assertCount(2, $observed);
+        foreach ($observed as $timeout) {
+            self::assertGreaterThan(0, $timeout);
+            self::assertLessThanOrEqual(5000, $timeout);
+        }
+    }
+
     public function test_database_policy_cannot_be_reduced_by_command_arguments(): void
     {
         self::assertFalse(DB::scalar('SELECT public.eg_regional_price_retention_eligible(3, 1, 1)'));
@@ -240,11 +326,11 @@ SQL);
         $service = new FgiscsBuildingResourcePriceUpdateService(
             $client,
             Mockery::mock(FgiscsRegionalCatalogService::class),
-            new FgiscsBuildingResourcePriceSpreadsheetParser(),
+            new FgiscsBuildingResourcePriceSpreadsheetParser,
             Mockery::mock(RegionalPriceImportLifecycleService::class),
             $resolver,
-            new FgiscsBuildingResourcePricePriority(),
-            new ResidentialConjuncturePriceImporter()
+            new FgiscsBuildingResourcePricePriority,
+            new ResidentialConjuncturePriceImporter
         );
         try {
             (new ReflectionMethod($service, 'syncPeriod'))->invoke($service, $zone, $period, false, false, null);

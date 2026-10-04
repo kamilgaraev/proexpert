@@ -24,7 +24,8 @@ final class RegionalPriceCatalogRetentionService
             throw new RuntimeException('Regional price catalog retention requires PostgreSQL.');
         }
 
-        $lock = Cache::lock(self::MUTEX, $maxSeconds + 120);
+        // The final transaction can execute several guarded statements after the budget expires.
+        $lock = Cache::lock(self::MUTEX, $maxSeconds + 600);
         if (! $lock->get()) {
             return ['mode' => $execute ? 'execute' : 'dry-run', 'busy' => true, 'deleted_rows' => 0, 'deleted_versions' => 0];
         }
@@ -38,7 +39,7 @@ final class RegionalPriceCatalogRetentionService
                 ->where('v.source', 'fgis_labor_prices')
                 ->select('v.id', 'v.source', 'v.region_id', 'v.price_zone_id', 'v.status', 'v.activated_at', 'v.updated_at', 'p.year', 'p.quarter')->get()
                 ->map(static fn (object $version): array => (array) $version)->all();
-            $ids = (new RegionalPriceRetentionPolicy())->candidates($versions, $quarters, now()->subDays($failedDays)->toDateTimeString());
+            $ids = (new RegionalPriceRetentionPolicy)->candidates($versions, $quarters, now()->subDays($failedDays)->toDateTimeString());
 
             foreach ($ids as $versionId) {
                 if (microtime(true) >= $deadline || $result['deleted_rows'] >= $limit) {
@@ -48,8 +49,8 @@ final class RegionalPriceCatalogRetentionService
                 try {
                     if (! $execute) {
                         $allowed = DB::transaction(function () use ($versionId, $quarters, $failedDays, $deadline): bool {
-                            $timeout = max(1, min(15000, (int) (($deadline - microtime(true)) * 1000)));
-                            DB::statement("SET LOCAL statement_timeout = '{$timeout}ms'");
+                            $this->configureTransaction($deadline);
+
                             return $this->allowed($versionId, $quarters, $failedDays);
                         });
                         if ($allowed) {
@@ -57,6 +58,7 @@ final class RegionalPriceCatalogRetentionService
                         } else {
                             $result['protected_versions'][] = $versionId;
                         }
+
                         continue;
                     }
 
@@ -67,9 +69,7 @@ final class RegionalPriceCatalogRetentionService
                             break;
                         }
                         $change = DB::transaction(function () use ($versionId, $quarters, $failedDays, $batch, $remaining, $deadline): array {
-                            $timeout = max(1, min(15000, (int) (($deadline - microtime(true)) * 1000)));
-                            DB::statement("SET LOCAL statement_timeout = '{$timeout}ms'");
-                            DB::statement("SET LOCAL lock_timeout = '1000ms'");
+                            $this->configureTransaction($deadline);
                             DB::select('SELECT public.eg_regional_price_retention_lock_evidence()');
                             $version = DB::table('estimate_regional_price_versions')->where('id', $versionId)->lockForUpdate()->first();
                             if ($version === null || ! $this->allowed($versionId, $quarters, $failedDays)) {
@@ -82,6 +82,7 @@ final class RegionalPriceCatalogRetentionService
                             if (! DB::table('estimate_resource_prices')->where('regional_price_version_id', $versionId)->exists()) {
                                 $versionDeleted = DB::table('estimate_regional_price_versions')->where('id', $versionId)->delete();
                             }
+
                             return ['protected' => false, 'rows' => $deleted, 'version' => $versionDeleted];
                         });
                         if ($change['protected']) {
@@ -107,6 +108,14 @@ final class RegionalPriceCatalogRetentionService
         }
 
         return $result;
+    }
+
+    private function configureTransaction(float $deadline): void
+    {
+        $timeout = max(1, min(60000, (int) (($deadline - microtime(true)) * 1000)));
+        DB::statement("SET LOCAL statement_timeout = '{$timeout}ms'");
+        DB::statement("SET LOCAL lock_timeout = '1000ms'");
+        DB::statement("SET LOCAL work_mem = '64MB'");
     }
 
     private function allowed(int $versionId, int $quarters, int $failedDays): bool
