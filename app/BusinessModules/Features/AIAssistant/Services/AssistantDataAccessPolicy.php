@@ -24,6 +24,8 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 final class AssistantDataAccessPolicy
 {
+    private const MAX_SOURCE_BATCH_ROWS = 10000;
+
     private const DOMAINS = [
         'assistant' => ['ai-assistant', ['ai_assistant.chat']],
         'projects' => ['project-management', ['projects.view']],
@@ -541,10 +543,11 @@ final class AssistantDataAccessPolicy
             }
             $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query, [], materialize: false);
             $checkpoint?->__invoke();
-            $identities = $this->discoverSourceIdentities($candidates);
+            $sourceCounts = $batchSize === null ? null : [];
+            $identities = $this->discoverSourceIdentities($candidates, $sourceCounts);
             $presentTypes = [];
             foreach ($identities as $types) { $presentTypes += $types; }
-            $batches = $batchSize === null ? [null] : (array_chunk(array_keys($presentTypes), $batchSize) ?: [[]]);
+            $batches = $batchSize === null ? [null] : $this->sourceCountBatches(array_keys($presentTypes), $sourceCounts ?? [], $batchSize);
             foreach ($batches as $types) {
                 $batch = clone $candidates;
                 $batchIdentities = $identities;
@@ -581,14 +584,45 @@ final class AssistantDataAccessPolicy
         }
     }
 
-    private function discoverSourceIdentities(Builder $query): array
+    private function sourceCountBatches(array $sourceTypes, array $sourceCounts, int $batchSize): array
+    {
+        $largeTypes = array_values(array_intersect($sourceTypes,
+            array_keys(array_filter($sourceCounts, static fn (int $count): bool => $count > self::MAX_SOURCE_BATCH_ROWS))));
+        $batches = array_map(static fn (string $type): array => [$type], $largeTypes);
+        $batch = [];
+        $rows = 0;
+        foreach (array_values(array_diff($sourceTypes, $largeTypes)) as $type) {
+            $count = $sourceCounts[$type] ?? 0;
+            if ($batch !== [] && (count($batch) >= $batchSize || $rows + $count > self::MAX_SOURCE_BATCH_ROWS)) {
+                $batches[] = $batch;
+                $batch = [];
+                $rows = 0;
+            }
+            $batch[] = $type;
+            $rows += $count;
+        }
+        if ($batch !== [] || $batches === []) { $batches[] = $batch; }
+
+        return $batches;
+    }
+
+    private function discoverSourceIdentities(Builder $query, ?array &$sourceCounts = null): array
     {
         $table = $query->getModel()->getTable();
         $identityQuery = $query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
-            ->select([$table.'.source_type', $table.'.entity_type'])->distinct();
+            ->select([$table.'.source_type', $table.'.entity_type']);
+        if ($sourceCounts === null) {
+            $identityQuery->distinct();
+        } else {
+            $identityQuery->groupBy([$table.'.source_type', $table.'.entity_type'])->selectRaw('COUNT(*) AS identity_count');
+        }
         $identities = [];
         foreach ($this->finishAclDiscovery($query, $identityQuery)->get() as $identity) {
             $identities[(string) $identity->entity_type][(string) $identity->source_type] = true;
+            if ($sourceCounts !== null) {
+                $type = (string) $identity->source_type;
+                $sourceCounts[$type] = ($sourceCounts[$type] ?? 0) + (int) $identity->identity_count;
+            }
         }
 
         return $identities;
@@ -867,7 +901,8 @@ final class AssistantDataAccessPolicy
             if (in_array('project_id', $columns, true)) { $internal[] = 'project_id'; }
             if (in_array('organization_id', $columns, true)) { $internal[] = 'organization_id'; }
 
-            return $this->aclCompiler->register($type, $query, array_values(array_intersect(array_unique($internal), $columns)), $this->entityQueryPath);
+            return $this->aclCompiler->register($type, $query, array_values(array_intersect(array_unique($internal), $columns)), $this->entityQueryPath,
+                materialize: ! in_array($type, ['approved_estimate_norm', 'approved_construction_resource', 'design_ifc_model_element'], true));
         } finally {
             array_pop($this->entityQueryPath);
         }
