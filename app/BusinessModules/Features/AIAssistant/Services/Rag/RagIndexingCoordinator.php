@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
-use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Models\Estimate;
@@ -579,17 +578,18 @@ class RagIndexingCoordinator
      */
     public function countsForScope(int $organizationId, ?int $projectId = null, ?string $sourceType = null): array
     {
-        $sources = RagSource::query()
+        $sources = DB::table('ai_rag_status_sources')
             ->where('organization_id', $organizationId)
-            ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $projectId))
-            ->when($sourceType !== null, static fn (Builder $query): Builder => $query->where('source_type', $sourceType));
+            ->when($projectId !== null, static fn (QueryBuilder $query): QueryBuilder => $query->where('project_id', $projectId))
+            ->when($sourceType !== null, static fn (QueryBuilder $query): QueryBuilder => $query->where('source_type', $sourceType));
 
-        $chunks = RagChunk::query()
-            ->where('organization_id', $organizationId)
-            ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $projectId))
-            ->when($sourceType !== null, static fn (Builder $query): Builder => $query->whereHas(
-                'source',
-                static fn (Builder $sourceQuery): Builder => $sourceQuery->where('source_type', $sourceType)
+        $chunks = DB::table('ai_rag_status_chunks as chunks')
+            ->where('chunks.organization_id', $organizationId)
+            ->when($projectId !== null, static fn (QueryBuilder $query): QueryBuilder => $query->where('chunks.project_id', $projectId))
+            ->when($sourceType !== null, static fn (QueryBuilder $query): QueryBuilder => $query->whereExists(
+                static fn (QueryBuilder $sourceQuery): QueryBuilder => $sourceQuery->selectRaw('1')
+                    ->from('ai_rag_status_sources as sources')->whereColumn('sources.id', 'chunks.source_id')
+                    ->where('sources.source_type', $sourceType)
             ));
 
         return [
