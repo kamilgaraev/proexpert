@@ -50,7 +50,7 @@ final class RagExpectedSourceProjection
         $proof = $collectProof ? [] : null;
         if ($checkpoint !== null) { $checkpoint(); }
         $expected = RagExpectedSource::query()->where('ai_rag_expected_sources.organization_id', $organizationId)
-            ->where('ai_rag_expected_sources.generation', $generation)->whereIn('ai_rag_expected_sources.source_type', $types);
+            ->whereRaw('ai_rag_expected_sources.generation = (SELECT CAST(? AS uuid))', [$generation])->whereIn('ai_rag_expected_sources.source_type', $types);
         if ($collectProof) {
             $projects = $policy->entityQuery($actor, $organizationId, 'project');
             $expected->where(static function (Builder $scope) use ($projects): void {
@@ -60,17 +60,33 @@ final class RagExpectedSourceProjection
                 }
             });
         }
-        $matched = 'matched_sources.id IS NOT NULL AND EXISTS (SELECT 1 FROM ai_rag_chunks matched_chunks WHERE matched_chunks.source_id = matched_sources.id AND matched_chunks.organization_id = expected.organization_id AND matched_chunks.project_id IS NOT DISTINCT FROM expected.project_id AND matched_chunks.embedding IS NOT NULL)';
+        $matched = $collectProof
+            ? 'matched_sources.id IS NOT NULL AND EXISTS (SELECT 1 FROM ai_rag_chunks matched_chunks WHERE matched_chunks.source_id = matched_sources.id AND matched_chunks.organization_id = expected.organization_id AND matched_chunks.project_id IS NOT DISTINCT FROM expected.project_id AND matched_chunks.embedding IS NOT NULL)'
+            : 'matched_sources.id IS NOT NULL AND COALESCE(matched_sources.indexed_chunk_count, 0) > 0';
         $proofColumns = array_map(static fn (string $column): string => "COALESCE(CAST(expected.".$column." AS TEXT), '')",
             ['source_type', 'entity_type', 'entity_id', 'project_id', 'identity_project_id', 'identity_part_key', 'checksum']);
         $counts = [];
-        $aggregate = static function (\Illuminate\Database\Query\Builder $visible) use ($matched, $collectProof, $proofColumns): \Illuminate\Database\Query\Builder {
-            $query = DB::query()->fromSub($visible, 'expected')->leftJoin('ai_rag_sources as matched_sources', static function (JoinClause $join): void {
+        $aggregate = static function (\Illuminate\Database\Query\Builder $visible, ?array $batchTypes = null, ?array $entityTypes = null) use ($matched, $collectProof, $proofColumns, $organizationId, $types): \Illuminate\Database\Query\Builder {
+            $query = DB::query()->fromSub($visible, 'expected');
+            $joinIdentity = static function (JoinClause $join): void {
                 foreach (['organization_id', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum'] as $column) {
                     $join->on('matched_sources.'.$column, '=', 'expected.'.$column);
                 }
                 $join->whereRaw('matched_sources.project_id IS NOT DISTINCT FROM expected.project_id');
-            })->groupBy('expected.source_type')
+            };
+            if ($collectProof) {
+                $query->leftJoin('ai_rag_sources as matched_sources', $joinIdentity);
+            } else {
+                $matchedSources = DB::table('ai_rag_sources')->leftJoin('ai_rag_status_sources as matched_status_cache', 'matched_status_cache.id', '=', 'ai_rag_sources.id')
+                    ->where('ai_rag_sources.organization_id', $organizationId)->whereIn('ai_rag_sources.source_type', $batchTypes ?? $types)
+                    ->select(['ai_rag_sources.id', 'ai_rag_sources.organization_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_project_id', 'ai_rag_sources.identity_part_key',
+                        'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id', 'ai_rag_sources.checksum', 'matched_status_cache.indexed_chunk_count']);
+                if ($entityTypes !== null) { $matchedSources->whereIn('ai_rag_sources.entity_type', $entityTypes); }
+                $materialized = DB::query()->fromRaw('(WITH matched_source_cache AS MATERIALIZED ('.$matchedSources->toSql().') SELECT * FROM matched_source_cache) AS matched_source_cache', $matchedSources->getBindings())
+                    ->select('matched_source_cache.*');
+                $query->leftJoinSub($materialized, 'matched_sources', $joinIdentity);
+            }
+            $query->groupBy('expected.source_type')
                 ->selectRaw('expected.source_type, COUNT(*) AS expected_count, SUM(CASE WHEN '.$matched.' THEN 1 ELSE 0 END) AS indexed_count, MIN(CASE WHEN NOT ('.$matched.') THEN expected.pending_since END) AS pending_since');
             if ($collectProof) {
                 $query->selectRaw('jsonb_object_agg(CAST(expected.id AS TEXT), jsonb_build_array('.implode(', ', $proofColumns).')) AS identity_proof');
@@ -79,17 +95,17 @@ final class RagExpectedSourceProjection
             return $query;
         };
         if (! $collectProof) {
-            $scoped = $policy->aggregateSourceIdentities($expected, $actor, $organizationId,
-                ['ai_rag_expected_sources.*'], $aggregate, $checkpoint, expectedProjection: true);
-            if ($scoped === null) { return []; }
-            if ($checkpoint !== null) { $checkpoint(); }
-
-            return $scoped->get()->keyBy('source_type')->all();
+            $batches = $policy->aggregateExpectedSourceIdentityBatches($expected, $actor, $organizationId,
+                ['ai_rag_expected_sources.*'], $aggregate, $checkpoint);
+        } else {
+            $batches = [];
+            foreach ($policy->sourceIdentityQueries($expected, $actor, $organizationId, $checkpoint, true) as $branch) {
+                $batches[] = $aggregate($branch->select('ai_rag_expected_sources.*')->toBase());
+            }
         }
-        foreach ($policy->sourceIdentityQueries($expected, $actor, $organizationId, $checkpoint, true) as $branch) {
-            $visible = $branch->select('ai_rag_expected_sources.*')->toBase();
+        foreach ($batches as $batch) {
             if ($checkpoint !== null) { $checkpoint(); }
-            $rows = $aggregate($visible)->get();
+            $rows = $batch->get();
             foreach ($rows as $row) {
                 if ($collectProof) {
                     $proof += json_decode((string) $row->identity_proof, true, 512, JSON_THROW_ON_ERROR);

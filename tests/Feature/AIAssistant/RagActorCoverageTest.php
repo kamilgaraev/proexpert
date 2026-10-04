@@ -134,6 +134,32 @@ final class RagActorCoverageTest extends TestCase
         $this->assertSame(0, $this->collector->collections);
     }
 
+    public function test_counts_only_matches_projection_parts_and_current_embedding_and_assignment_revocation(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $this->coverage->refreshCoverage($organization->id);
+        $row = RagExpectedSource::query()->where('organization_id', $organization->id)->firstOrFail();
+        $row->replicate()->forceFill(['identity_part_key' => 'pending-part', 'pending_since' => now()->subMinutes(10)])->save();
+        $fields = ['stored_source_count', 'indexed_source_count', 'expected_source_count', 'pending_source_count', 'stale_source_count', 'coverage_complete', 'eligible_count_known'];
+        $compare = function () use ($organization, $actor, $fields): array {
+            $full = $this->coverage->coverageForActor($organization->id, $actor);
+            $counts = $this->coverage->coverageForActor($organization->id, $actor, countsOnly: true);
+            foreach ($fields as $field) { $this->assertSame($full[$field], $counts[$field], $field); }
+            $this->assertSame($full['source_catalog'], $counts['source_catalog']);
+
+            return $counts;
+        };
+        $status = $compare();
+        $this->assertSame(2, $status['expected_source_count']);
+        $this->assertSame(1, $status['indexed_source_count']);
+        $this->assertTrue($status['lag_exceeded']);
+        DB::table('ai_rag_chunks')->where('organization_id', $organization->id)->update(['embedding' => null]);
+        $this->assertSame(0, $compare()['indexed_source_count']);
+        $actor->assignedProjects()->updateExistingPivot($visible->id, ['is_active' => false]);
+        $this->assertSame(0, $compare()['expected_source_count']);
+    }
+
     public function test_exact_complete_snapshot_requires_current_access_to_every_indexed_source(): void
     {
         [$organization, $actor, $visible] = $this->scope();

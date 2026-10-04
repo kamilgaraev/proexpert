@@ -49,8 +49,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
 
     public function test_schema_metadata_reference_applies_table_prefix_after_schema_resolution(): void
     {
-        $policy = (new \ReflectionClass(AssistantDataAccessPolicy::class))->newInstanceWithoutConstructor();
-        $method = (new \ReflectionClass(AssistantDataAccessPolicy::class))->getMethod('schemaMetadataTableReference');
+        $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+        $method = (new \ReflectionClass($metadata))->getMethod('schemaMetadataTableReference');
 
         foreach ([
             ['reports.monthly', ['reports', 'monthly'], ['reports', 'tenant_monthly']],
@@ -61,7 +61,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             $connection = Mockery::mock(Connection::class);
             $connection->shouldReceive('getTablePrefix')->once()->andReturn('tenant_');
 
-            $this->assertSame($expected, $method->invoke($policy, $schemaBuilder, $connection, $table));
+            $this->assertSame($expected, $method->invoke($metadata, $schemaBuilder, $connection, $table));
         }
     }
 
@@ -465,11 +465,13 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         DB::listen(static function ($query) use (&$queries, &$identityScopeQueries, &$proofSelectQueries, &$schemaMetadataQueries, &$queryCategories, &$documentDiscoverySql): void {
             $queries++;
             $sql = strtolower($query->sql);
+            $sourceDiscovery = str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"')
+                || str_contains($sql, 'select "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type", count(*) as identity_count');
             $category = match (true) {
                 str_starts_with($sql, 'set local statement_timeout'), str_contains($sql, "set_config('statement_timeout'") => 'timeout_setting',
                 str_contains($sql, 'pg_catalog'), str_contains($sql, 'information_schema') => 'schema',
                 str_contains($sql, 'accessible_sources.source_type, count(*) as stored_count') => 'stored_counts',
-                str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"') => 'source_discovery',
+                $sourceDiscovery => 'source_discovery',
                 str_contains($sql, 'organization_package_subscriptions') => 'entitlements',
                 str_contains($sql, '"roles"'), str_contains($sql, '"permissions"') => 'authorization',
                 str_contains($sql, 'count('), str_contains($sql, 'sum(') => 'coverage_counts',
@@ -481,7 +483,7 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             if (str_contains($sql, 'from pg_attribute a') && str_contains($sql, 'join pg_type t')) {
                 $schemaMetadataQueries++;
             }
-            if (str_contains($sql, 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"')) {
+            if ($sourceDiscovery) {
                 $identityScopeQueries++;
             }
             if (str_contains($sql, 'from "ai_rag_sources"') && str_contains($sql, '"ai_rag_sources"."id" in')) {
@@ -506,7 +508,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $timeoutQueries = $queryCategories['timeout_setting'] ?? 0;
         $this->assertLessThanOrEqual(45, $queries - $timeoutQueries, 'Current status read queries: '.json_encode($queryCategories));
         $this->assertLessThanOrEqual(20, $timeoutQueries, 'Deadline checkpoints must stay bounded for repeated identity parts.');
-        $policyColumns = (new \ReflectionClass(AssistantDataAccessPolicy::class))->getProperty('columns')->getValue(app(AssistantDataAccessPolicy::class));
+        $metadata = (new \ReflectionClass(AssistantDataAccessPolicy::class))->getProperty('schemaMetadata')->getValue(app(AssistantDataAccessPolicy::class));
+        $policyColumns = (new \ReflectionClass($metadata))->getProperty('columns')->getValue($metadata);
         foreach (['projects', 'contracts', 'estimates'] as $table) {
             $this->assertSame(Schema::getColumnListing($table), $policyColumns[$table] ?? null);
         }

@@ -22,7 +22,7 @@ final class AssistantAclQueryCompiler
         return $this->decisions[$key];
     }
 
-    public function __construct(private readonly int $actorId, private readonly int $organizationId, private readonly bool $compact = false) {}
+    public function __construct(private readonly int $actorId, private readonly int $organizationId, private readonly bool $compact = false, private readonly array $inlineTypes = []) {}
 
     public function accepts(int $actorId, int $organizationId): bool
     {
@@ -45,6 +45,7 @@ final class AssistantAclQueryCompiler
 
     public function register(string $type, Builder $query, array $internalColumns, array $ancestors = [], bool $materialize = true): Builder
     {
+        $materialize = $materialize && ! in_array($type, $this->inlineTypes, true);
         $model = $query->getModel();
         $table = $model->getTable();
         $name = 'assistant_acl_'.count($this->queries);

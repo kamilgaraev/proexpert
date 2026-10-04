@@ -153,6 +153,44 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->assertSame([], $this->policy->applyToSources(RagSource::query(), $this->actor, $this->organization->id)->pluck('id')->all());
     }
 
+    public function test_expected_batches_keep_canonical_bigint_parts_generation_and_current_parent_access(): void
+    {
+        $estimate = Estimate::create(['organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'number' => 'typed-identity-'.$this->organization->id, 'name' => 'Estimate', 'estimate_date' => today()]);
+        $allowed = [];
+        foreach ([PHP_INT_MIN, -1, 0, PHP_INT_MAX] as $id) {
+            DB::table('estimate_items')->insert(['id' => $id, 'estimate_id' => $estimate->id, 'position_number' => (string) $id, 'name' => 'Item']);
+            $row = $this->expected($this->organization->id, $this->visible->id, 'estimate', 'estimate_item', $id);
+            $allowed[] = $row->id;
+        }
+        $part = $row->replicate()->forceFill(['identity_part_key' => 'second-part']);
+        $part->save();
+        $allowed[] = $part->id;
+        foreach (['00', '+0', '-0', ' 0', '0 ', '0.0', '0e0', 'invalid', '9223372036854775808', '-9223372036854775809', '٠'] as $id) {
+            $row->replicate()->forceFill(['entity_id' => $id])->save();
+        }
+        $row->replicate()->forceFill(['generation' => '00000000-0000-4000-8000-000000000002'])->save();
+        $row->replicate()->forceFill(['project_id' => $this->hidden->id, 'identity_part_key' => 'hidden-project'])->save();
+        $row->replicate()->forceFill(['source_type' => 'project'])->save();
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $row->replicate()->forceFill(['organization_id' => $foreign->id])->save();
+        $read = function (): array {
+            $query = RagExpectedSource::query()->where('generation', '00000000-0000-4000-8000-000000000001')->where('source_type', 'estimate');
+            $batches = $this->policy->aggregateExpectedSourceIdentityBatches($query, $this->actor, $this->organization->id,
+                ['ai_rag_expected_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'));
+
+            return array_merge(...array_map(static fn ($batch): array => $batch->get()->pluck('id')->all(), $batches));
+        };
+        $this->assertEqualsCanonicalizing($allowed, $read());
+        DB::table('estimate_items')->where('id', 0)->update(['deleted_at' => now()]);
+        $this->assertEqualsCanonicalizing(array_values(array_diff($allowed, [$allowed[2]])), $read());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        $this->assertSame([], $read());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+        $this->deniedModules = ['budget-estimates'];
+        $this->assertSame([], $read());
+    }
+
     private function source(int $organizationId, int $projectId, string $sourceType, string $entityType, int $entityId): RagSource
     {
         return RagSource::withoutEvents(fn (): RagSource => RagSource::create([

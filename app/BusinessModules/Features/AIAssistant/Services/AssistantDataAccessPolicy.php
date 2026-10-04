@@ -17,14 +17,12 @@ use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
-use Illuminate\Database\Schema\PostgresBuilder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 final class AssistantDataAccessPolicy
 {
-    private const MAX_SOURCE_BATCH_ROWS = 10000;
 
     private const DOMAINS = [
         'assistant' => ['ai-assistant', ['ai_assistant.chat']],
@@ -76,8 +74,6 @@ final class AssistantDataAccessPolicy
         'warehouse_storage_cell' => ['warehouse_id' => ['type' => 'warehouse', 'nullable' => false],
             'zone_id' => ['type' => 'warehouse_zone', 'nullable' => true, 'matches' => ['warehouse_id' => 'warehouse_id']]],
     ];
-    private array $columns = [];
-    private bool $schemaMetadataPrefetched = false;
     private array $entityQueryPath = [];
     private ?KnowledgeSurface $trustedSurface = null;
 
@@ -150,6 +146,8 @@ final class AssistantDataAccessPolicy
         private readonly AuthorizationService $authorization,
         private readonly UserProjectAccessService $projectAccess,
         private readonly ?\App\Services\Entitlements\OrganizationEntitlementService $modules = null,
+        private readonly AssistantSourceIdentityQueryBuilder $sourceQueries = new AssistantSourceIdentityQueryBuilder,
+        private readonly AssistantEntitySchemaMetadata $schemaMetadata = new AssistantEntitySchemaMetadata,
     ) {}
 
     public function canReadSource(User $user, int $organizationId, array $source): bool
@@ -475,7 +473,7 @@ final class AssistantDataAccessPolicy
 
     public function sourceIdentityQueries(Builder $query, User $user, int $organizationId, ?callable $checkpoint = null, bool $expectedProjection = false): \Generator
     {
-        if ($expectedProjection) { $this->assertExpectedSourceQuery($query); }
+        if ($expectedProjection) { $this->sourceQueries->assertExpectedSourceQuery($query); }
         $table = $query->getModel()->getTable();
         $candidates = (clone $query)->where($table.'.organization_id', $organizationId);
         if (! $expectedProjection) {
@@ -516,9 +514,14 @@ final class AssistantDataAccessPolicy
         return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, joinSourceIds: true, batchSize: 8);
     }
 
+    public function aggregateExpectedSourceIdentityBatches(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null): array
+    {
+        return $this->aggregateSourceIdentityQueries($query, $user, $organizationId, $columns, $aggregate, $checkpoint, expectedProjection: true, joinSourceIds: true, batchSize: 8);
+    }
+
     private function aggregateSourceIdentityQueries(Builder $query, User $user, int $organizationId, array $columns, callable $aggregate, ?callable $checkpoint = null, bool $expectedProjection = false, bool $joinSourceIds = false, ?int $batchSize = null): array
     {
-        if ($expectedProjection) { $this->assertExpectedSourceQuery($query); }
+        if ($expectedProjection) { $this->sourceQueries->assertExpectedSourceQuery($query); }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_source_aggregate_during_query_compilation'); }
 
         $compiled = [];
@@ -534,6 +537,7 @@ final class AssistantDataAccessPolicy
             });
             $candidateColumns = in_array($table.'.*', $columns, true) ? $columns : array_values(array_unique(array_merge($columns,
                 array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
+            if ($expectedProjection && $joinSourceIds) { $candidateColumns = [$table.'.*']; }
             $query->select($candidateColumns);
             if (! $expectedProjection) {
                 $revised = array_keys(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revisions());
@@ -545,87 +549,44 @@ final class AssistantDataAccessPolicy
             $checkpoint?->__invoke();
             $sourceCounts = $batchSize === null ? null : [];
             $identities = $this->discoverSourceIdentities($candidates, $sourceCounts);
-            $presentTypes = [];
-            foreach ($identities as $types) { $presentTypes += $types; }
-            $batches = $batchSize === null ? [null] : $this->sourceCountBatches(array_keys($presentTypes), $sourceCounts ?? [], $batchSize);
-            foreach ($batches as $types) {
+            $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection);
+            foreach ($planned as $entry) {
+                $types = $entry['types'];
                 $batch = clone $candidates;
                 $batchIdentities = $identities;
                 if ($types !== null) {
                     $batch->whereIn($table.'.source_type', $types);
                     $batchIdentities = array_map(static fn (array $identity): array => array_intersect_key($identity, array_fill_keys($types, true)), $identities);
                 }
+                if ($entry['entity'] !== null) {
+                    $batch->where($table.'.entity_type', $entry['entity']);
+                    $batchIdentities = array_intersect_key($batchIdentities, [$entry['entity'] => true]);
+                }
+                $batchIdentitySources = $expectedProjection && $joinSourceIds ? (clone $batch)->select([])->toBase() : $identitySources;
                 $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
-                    splitIdentities: true, identitySources: $identitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
+                    splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
                 $checkpoint?->__invoke();
-                $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible), $table)->select($table.'.*');
+                $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
                 $compiled[] = $this->aclCompiler->finish($result)->toBase();
             }
 
             return null;
-        }, compact: true);
+        }, compact: true, inlineTypes: $expectedProjection && $joinSourceIds
+            ? ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'estimate_item', 'estimate_item_resource'] : []);
 
         return $compiled;
     }
 
     public function applyToExpectedSources(Builder $query, User $user, int $organizationId): Builder
     {
-        $this->assertExpectedSourceQuery($query);
+        $this->sourceQueries->assertExpectedSourceQuery($query);
 
         return $this->applySourceIdentityScope($query, $user, $organizationId, true);
     }
 
-    private function assertExpectedSourceQuery(Builder $query): void
-    {
-        if (! $query->getModel() instanceof RagExpectedSource
-            || $query->getModel()->getTable() !== 'ai_rag_expected_sources'
-            || $query->getQuery()->from !== 'ai_rag_expected_sources') {
-            throw new \InvalidArgumentException('assistant_expected_projection_model_required');
-        }
-    }
-
-    private function sourceCountBatches(array $sourceTypes, array $sourceCounts, int $batchSize): array
-    {
-        $largeTypes = array_values(array_intersect($sourceTypes,
-            array_keys(array_filter($sourceCounts, static fn (int $count): bool => $count > self::MAX_SOURCE_BATCH_ROWS))));
-        $batches = array_map(static fn (string $type): array => [$type], $largeTypes);
-        $batch = [];
-        $rows = 0;
-        foreach (array_values(array_diff($sourceTypes, $largeTypes)) as $type) {
-            $count = $sourceCounts[$type] ?? 0;
-            if ($batch !== [] && (count($batch) >= $batchSize || $rows + $count > self::MAX_SOURCE_BATCH_ROWS)) {
-                $batches[] = $batch;
-                $batch = [];
-                $rows = 0;
-            }
-            $batch[] = $type;
-            $rows += $count;
-        }
-        if ($batch !== [] || $batches === []) { $batches[] = $batch; }
-
-        return $batches;
-    }
-
     private function discoverSourceIdentities(Builder $query, ?array &$sourceCounts = null): array
     {
-        $table = $query->getModel()->getTable();
-        $identityQuery = $query->toBase()->cloneWithout(['columns', 'orders', 'limit', 'offset'])
-            ->select([$table.'.source_type', $table.'.entity_type']);
-        if ($sourceCounts === null) {
-            $identityQuery->distinct();
-        } else {
-            $identityQuery->groupBy([$table.'.source_type', $table.'.entity_type'])->selectRaw('COUNT(*) AS identity_count');
-        }
-        $identities = [];
-        foreach ($this->finishAclDiscovery($query, $identityQuery)->get() as $identity) {
-            $identities[(string) $identity->entity_type][(string) $identity->source_type] = true;
-            if ($sourceCounts !== null) {
-                $type = (string) $identity->source_type;
-                $sourceCounts[$type] = ($sourceCounts[$type] ?? 0) + (int) $identity->identity_count;
-            }
-        }
-
-        return $identities;
+        return $this->sourceQueries->discoverIdentities($query, $this->finishAclDiscovery(...), $sourceCounts);
     }
 
     private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null): Builder
@@ -653,7 +614,7 @@ final class AssistantDataAccessPolicy
                     || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { continue; }
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $entityType) : null;
                 if ($entities === null) { continue; }
-                $branch = $this->sourceIdentityBranch($entities, $definition[0], $entityType, $identitySources, $table);
+                $branch = $this->sourceQueries->identityBranch($entities, $definition[0], $entityType, $identitySources, $table, $expectedProjection);
                 if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
             }
             if (isset($sourceIdentities['assistant_document']['file_document'])) {
@@ -661,8 +622,12 @@ final class AssistantDataAccessPolicy
                 $documentCandidates = AIAssistantDocument::query()->where('organization_id', $organizationId)
                     ->whereIn(\Illuminate\Support\Facades\DB::raw('CAST(ai_assistant_documents.id AS TEXT)'),
                         $documentIdentities->where($table.'.source_type', 'file_document')->where($table.'.entity_type', 'assistant_document')->select($table.'.entity_id'));
-                $branch = $this->sourceIdentityBranch($this->accessibleDocuments($user, $organizationId, $documentCandidates), 'file_document', 'assistant_document', $identitySources, $table);
+                $branch = $this->sourceQueries->identityBranch($this->accessibleDocuments($user, $organizationId, $documentCandidates), 'file_document', 'assistant_document', $identitySources, $table, $expectedProjection);
                 if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
+            }
+
+            if ($union !== null && $expectedProjection && $identitySources !== null) {
+                return $query->getModel()->newQueryWithoutScopes()->fromSub($union, $table);
             }
 
             return $union === null ? $query->whereRaw('1 = 0')
@@ -696,21 +661,6 @@ final class AssistantDataAccessPolicy
             }
             if (! $matched) { $scope->whereRaw('1 = 0'); }
         });
-    }
-
-    private function sourceIdentityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table): QueryBuilder
-    {
-        $key = $entities->getModel()->getQualifiedKeyName();
-        if ($identitySources === null) {
-            return $entities->select([])->selectRaw('? AS source_type, ? AS entity_type, CAST('.$key.' AS TEXT) AS entity_id', [$sourceType, $entityType])->toBase();
-        }
-        $sources = (clone $identitySources)->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType)
-            ->selectRaw($table.'.id AS admitted_source_id, '.$table.'.entity_id AS admitted_entity_id');
-        $grammar = $entities->getQuery()->getGrammar();
-
-        return $entities->select('eligible_identity_source.admitted_source_id AS source_id')
-            ->joinSub($sources, 'eligible_identity_source', static fn (\Illuminate\Database\Query\JoinClause $join) => $join
-                ->whereRaw($grammar->wrap('eligible_identity_source.admitted_entity_id').' COLLATE "C" = CAST('.$grammar->wrap($key).' AS TEXT)'))->toBase();
     }
 
     public function organizationWideSourceTypes(): array
@@ -917,10 +867,10 @@ final class AssistantDataAccessPolicy
         return $this->aclCompiler->finish($wrapped)->toBase();
     }
 
-    private function compileAcl(User $user, int $organizationId, callable $callback, bool $compact = false): ?Builder
+    private function compileAcl(User $user, int $organizationId, callable $callback, bool $compact = false, array $inlineTypes = []): ?Builder
     {
         $this->currentCheckpoint?->__invoke();
-        $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId, $compact);
+        $compiler = new AssistantAclQueryCompiler((int) $user->id, $organizationId, $compact, $inlineTypes);
         $this->aclCompiler = $compiler;
         $this->compiledAuthorization = $this->batchAuthorization ?? $this->authorization->forCurrentChecks(true);
         try {
@@ -957,76 +907,13 @@ final class AssistantDataAccessPolicy
     private function schemaColumns(string $table): array
     {
         $this->currentCheckpoint?->__invoke();
-        if (isset($this->columns[$table])) { return $this->columns[$table]; }
-        $load = static fn (): array => Schema::getColumnListing($table);
-        $columns = $this->aclCompiler === null ? $load() : $this->aclCompiler->remember('schema:'.$table, $load);
-        if ($columns !== []) { $this->columns[$table] = $columns; }
 
-        return $columns;
+        return $this->schemaMetadata->columns($table, $this->aclCompiler);
     }
 
     public function prefetchEntitySchemaMetadata(?callable $checkpoint = null, ?callable $checkDeadline = null): void
     {
-        if ($this->schemaMetadataPrefetched || DB::connection()->getDriverName() !== 'pgsql') { return; }
-        if ($checkDeadline !== null) { $checkDeadline(); }
-
-        $connection = DB::connection();
-        $schemaBuilder = $connection->getSchemaBuilder();
-        if (! $schemaBuilder instanceof PostgresBuilder) { return; }
-
-        $grammar = $connection->getSchemaGrammar();
-        $pairTables = [];
-        foreach (self::entityDefinitions() as $definition) {
-            $modelClass = $definition[1] ?? null;
-            if (! is_string($modelClass) || ! class_exists($modelClass)) { continue; }
-
-            $model = (new \ReflectionClass($modelClass))->newInstanceWithoutConstructor();
-            if (! $model instanceof Model) { continue; }
-            $table = $model->getTable();
-            [$schema, $relation] = $this->schemaMetadataTableReference($schemaBuilder, $connection, $table);
-            $grammar->compileColumns($schema, $relation);
-            $pairTables[$schema."\0".$relation][$table] = true;
-        }
-
-        $values = [];
-        $bindings = [];
-        foreach ($pairTables as $key => $_tables) {
-            [$schema, $relation] = explode("\0", $key, 2);
-            $values[] = '(?, ?)';
-            $bindings[] = $schema;
-            $bindings[] = $relation;
-        }
-
-        $columnsByPair = [];
-        if ($values !== []) {
-            if ($checkpoint !== null) { $checkpoint(); }
-            $sql = 'select n.nspname as schema_name, c.relname as table_name, a.attname as column_name, a.attnum as ordinal_position '
-                .'from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_type t on t.oid = a.atttypid '
-                .'join pg_namespace n on n.oid = c.relnamespace where a.attnum > 0 '
-                .'and exists (select 1 from (values '.implode(',', $values).') as target(schema_name, relation_name) '
-                .'where target.schema_name::text = n.nspname::text and target.relation_name::text = c.relname::text) '
-                .'order by n.nspname, c.relname, a.attnum';
-
-            foreach ($connection->selectFromWriteConnection($sql, $bindings) as $row) {
-                $key = $row->schema_name."\0".$row->table_name;
-                $columnsByPair[$key][] = (string) $row->column_name;
-            }
-        }
-        if ($checkDeadline !== null) { $checkDeadline(); }
-
-        $columns = [];
-        foreach ($pairTables as $key => $tables) {
-            foreach (array_keys($tables) as $table) { $columns[$table] = $columnsByPair[$key] ?? []; }
-        }
-        $this->columns = array_replace($this->columns, $columns);
-        $this->schemaMetadataPrefetched = true;
-    }
-
-    private function schemaMetadataTableReference(PostgresBuilder $schemaBuilder, \Illuminate\Database\Connection $connection, string $table): array
-    {
-        [$schema, $relation] = $schemaBuilder->parseSchemaAndTable($table);
-
-        return [$schema, $connection->getTablePrefix().$relation];
+        $this->schemaMetadata->prefetch(self::entityDefinitions(), $checkpoint, $checkDeadline);
     }
 
     private function buildEntityQuery(User $user, int $organizationId, string $type, bool $skipBusinessReferences = false): ?Builder

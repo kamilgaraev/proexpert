@@ -187,12 +187,9 @@ final class AssistantOrganizationReportingMetadata
                     foreach ($datasets as $dataset) { $scope->orWhereIn($table.'.'.$column,$dataset); }
                 });
             } else {
-                $active = self::activeRegionalPriceVersions()->select('id');
-                foreach (['region_id','price_zone_id','period_id'] as $dimension) {
-                    $active->whereColumn('estimate_regional_price_versions.'.$dimension,$table.'.'.$dimension);
-                }
+                $active = self::activeRegionalPriceVersions()->select(['id', 'region_id', 'price_zone_id', 'period_id']);
                 $query->where(static function (\Illuminate\Database\Eloquent\Builder $scope) use ($datasets,$table,$active): void {
-                    $scope->whereIn($table.'.regional_price_version_id',$active)->orWhere(static function (\Illuminate\Database\Eloquent\Builder $base) use ($datasets,$table): void {
+                    $scope->whereIn(\Illuminate\Support\Facades\DB::raw('('.$table.'.regional_price_version_id, '.$table.'.region_id, '.$table.'.price_zone_id, '.$table.'.period_id)'),$active)->orWhere(static function (\Illuminate\Database\Eloquent\Builder $base) use ($datasets,$table): void {
                         $base->whereNull($table.'.regional_price_version_id')->where(static function (\Illuminate\Database\Eloquent\Builder $approved) use ($datasets,$table): void {
                             $approved->whereRaw('1 = 0');
                             foreach ($datasets as $dataset) { $approved->orWhereIn($table.'.dataset_version_id',$dataset); }
