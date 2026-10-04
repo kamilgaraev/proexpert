@@ -122,6 +122,39 @@ final class AssistantConversationPrivacyTest extends TestCase
         $this->assertSame(array_fill(0, 30, null), array_column($nextRows, 'last_message_preview'));
     }
 
+    public function test_list_preview_batches_native_reads_and_keeps_each_message_visibility(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $this->app->instance(AIPermissionChecker::class, new AIPermissionChecker());
+        $project = Project::factory()->create(['organization_id' => $this->organization->id]);
+        for ($index = 0; $index < 30; $index++) {
+            $conversation = $this->conversation();
+            $metadata = ['validation_status' => 'verified', 'source_refs' => [$this->ref($project)]];
+            if ($index === 0) { $metadata['source_refs'] = ['malformed']; }
+            if ($index === 1) { $metadata['request_state'] = 'pending'; }
+            $this->manager->addMessage($conversation, 'assistant', 'Visible response', metadata: $metadata);
+        }
+        $page = $this->manager->queryVisibleConversations($this->owner, $this->organization->id)->paginate(30);
+        $request = \Illuminate\Http\Request::create('/');
+        $request->setUserResolver(fn (): User => $this->owner);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $started = hrtime(true);
+            $rows = \App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource::collection($page)->resolve($request);
+            $projectReads = count(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "projects"')));
+            fwrite(STDERR, 'conversation_preview_synthetic='.json_encode(['wall_ms' => (hrtime(true) - $started) / 1_000_000, 'project_queries' => $projectReads]).PHP_EOL);
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $this->assertCount(28, array_filter(array_column($rows, 'last_message_preview'), static fn ($preview): bool => $preview !== null));
+        $this->assertSame(1, $projectReads);
+        $this->denied[] = $this->owner->id.':'.$project->id;
+        $nextRows = \App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource::collection($page)->resolve($request);
+        $this->assertSame(array_fill(0, 30, null), array_column($nextRows, 'last_message_preview'));
+    }
+
     public function test_history_shares_current_checks_and_rechecks_sources_between_reads(): void
     {
         $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
