@@ -32,7 +32,7 @@ final class TracingServiceProvider extends ServiceProvider
         $tracing = $this->app->make(TracingService::class);
         DB::listen(static function (QueryExecuted $event): void {
             if (app()->bound('request')) {
-                ApiQueryMetrics::record(app('request'), (float) $event->time);
+                ApiQueryMetrics::recordQuery(app('request'), $event);
             }
         });
         if (config('monitoring.tracing_enabled') && $tracing->supportsSpans()) {
