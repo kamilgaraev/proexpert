@@ -249,6 +249,53 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
         self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'purchase_receipt_return', $expected[0])]);
     }
 
+    public function test_inventory_lot_shared_scopes_preserve_pages_project_projection_and_parent_isolation(): void
+    {
+        $fixture = $this->fixture();
+        $project = Project::factory()->create(['organization_id' => $fixture->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]);
+        $foreignEvent = $this->receiptEvent($fixture->foreignOrganization, $foreignProject, true);
+        $expected = [];
+        $lotClass = \App\BusinessModules\Features\Procurement\Models\PurchaseReceiptInventoryLot::class;
+        for ($n = 0; $n < 65; $n++) {
+            $event = $this->receiptEvent($fixture->organization, $project, $n % 2 === 0);
+            $line = \App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine::query()->where('purchase_order_item_id', $event->purchase_order_item_id)->firstOrFail();
+            $expected[] = $lotClass::query()->where('purchase_receipt_line_id', $line->id)->firstOrFail()->id;
+        }
+        $source = new ProcurementBusinessRagSource;
+        $collection = new \ReflectionMethod($source, 'collectionQuery');
+        foreach ([null, $project->id, $foreignProject->id] as $projectId) {
+            $legacy = $source::scopedQuery('purchase_receipt_inventory_lot', $fixture->organization->id, $projectId, false, ['reference'])->orderBy('id')->pluck('id')->all();
+            $query = $collection->invoke($source, 'purchase_receipt_inventory_lot', $fixture->organization->id, $projectId);
+            self::assertLessThan(30000, strlen($query->toSql()));
+            $rows = $query->lazyById(50)->all();
+            self::assertSame($projectId === $foreignProject->id ? [] : $expected, $legacy);
+            self::assertSame($legacy, array_map(static fn ($row): int => (int) $row->id, $rows));
+            foreach ($rows as $row) { self::assertSame($project->id, (int) $row->assistant_project_id); }
+        }
+        $lot = $lotClass::query()->findOrFail($expected[1]);
+        $orderId = DB::table('purchase_receipt_lines')->join('purchase_order_items', 'purchase_order_items.id', '=', 'purchase_receipt_lines.purchase_order_item_id')
+            ->where('purchase_receipt_lines.id', $lot->purchase_receipt_line_id)->value('purchase_order_items.purchase_order_id');
+        $materialId = DB::table('warehouse_balances')->where('id', $lot->warehouse_balance_id)->value('material_id');
+        $foreignContractId = DB::table('purchase_orders')->where('id', $foreignEvent->purchase_order_id)->value('contract_id');
+        foreach ([['purchase_orders', $orderId, 'contract_id', $foreignContractId],
+            ['materials', $materialId, 'organization_id', $fixture->foreignOrganization->id],
+            ['warehouse_movements', $lot->receipt_warehouse_movement_id, 'organization_id', $fixture->foreignOrganization->id]] as [$table, $id, $column, $foreignValue]) {
+            $original = DB::table($table)->where('id', $id)->value($column);
+            DB::table($table)->where('id', $id)->update([$column => $foreignValue]);
+            try {
+                self::assertSame([], [...$source->collectEntity($fixture->organization->id, 'purchase_receipt_inventory_lot', $lot->id)]);
+                if ($table === 'materials') {
+                    self::assertFalse($source::scopedQuery('warehouse_balance', $fixture->organization->id)->whereKey($lot->warehouse_balance_id)->exists());
+                }
+            } finally {
+                DB::table($table)->where('id', $id)->update([$column => $original]);
+            }
+            self::assertCount(1, [...$source->collectEntity($fixture->organization->id, 'purchase_receipt_inventory_lot', $lot->id)]);
+        }
+        self::assertSame([], [...$source->collectEntity($fixture->foreignOrganization->id, 'purchase_receipt_inventory_lot', $expected[0])]);
+    }
+
     private function receiptEvent(Organization $organization, Project $project, bool $withPromise): \App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent
     {
         return Model::withoutEvents(function () use ($organization, $project, $withPromise) {

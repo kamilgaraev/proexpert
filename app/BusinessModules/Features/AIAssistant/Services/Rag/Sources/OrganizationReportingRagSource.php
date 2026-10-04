@@ -25,8 +25,11 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         foreach ($this->entities() as $type => $record) {
-            $models = $type === 'approved_estimate_resource_price' ? $this->priceModels($organizationId, $projectId)
-                : $this->scopedQuery($type, $organizationId, $projectId)->lazyById(50);
+            $models = match ($type) {
+                'approved_estimate_resource_price' => $this->priceModels($organizationId, $projectId),
+                'approved_construction_resource' => $this->constructionResourceModels($organizationId, $projectId),
+                default => $this->scopedQuery($type, $organizationId, $projectId)->lazyById(50),
+            };
             foreach ($models as $model) {
                 yield $this->chunk($model, $type, $organizationId);
             }
@@ -40,6 +43,15 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
             $query = $this->scopedQuery('approved_estimate_resource_price', $organizationId);
             foreach ($scope as $column => $value) { $query->where('estimate_resource_prices.'.$column, $value); }
             yield from $query->lazyById(50);
+        }
+    }
+
+    private function constructionResourceModels(int $organizationId, ?int $projectId): \Generator
+    {
+        if ($organizationId < 1 || $projectId !== null) { return; }
+        foreach (Metadata::publishedDatasetIds() as $datasetId) {
+            yield from $this->scopedQuery('approved_construction_resource', $organizationId)
+                ->where('construction_resources.dataset_version_id', $datasetId)->lazyById(50);
         }
     }
     public function collectEntity(int $organizationId, string $entityType, string|int $entityId): iterable

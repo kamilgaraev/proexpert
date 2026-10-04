@@ -211,6 +211,44 @@ final class AssistantLegalNativeFileAdapterTest extends TestCase
         self::assertSame(0, $this->reads);
     }
 
+    public function test_coverage_reuses_legal_authorization_reads_only_inside_current_operation(): void
+    {
+        [$fixture, $version] = $this->fixture(true);
+        Queue::fake();
+        $file = $this->adapter()->map($fixture->member, $fixture->organization->id, 'legal_document_version', $version->id);
+        $document = app(AssistantDocumentService::class)->registerFile($file);
+        $document->update(['status' => AIAssistantDocument::STATUS_READY, 'coverage_status' => 'ready', 'extracted_text' => 'Legal content.']);
+        $reads = $this->reads;
+        $policy = app(AssistantDataAccessPolicy::class);
+        $coverageService = new AssistantDocumentCoverageService($policy, app(AssistantDocumentService::class));
+        $connection = DB::connection();
+        $connection->enableQueryLog();
+
+        try {
+            $policy->withCurrentChecks($fixture->member, $fixture->organization->id, function () use ($fixture, $coverageService, $connection): void {
+                $first = $coverageService->coverage($fixture->organization->id, $fixture->member);
+                self::assertSame(1, $first['document_coverage']['ready']);
+                self::assertNotEmpty(array_filter($connection->getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "user_role_assignments"')));
+                $connection->flushQueryLog();
+                $second = $coverageService->coverage($fixture->organization->id, $fixture->member);
+                self::assertSame($first, $second);
+                self::assertSame([], array_values(array_filter($connection->getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "user_role_assignments"'))));
+            }, fresh: true);
+
+            $fixture->memberRole->update(['system_permissions' => ['legal_archive.view']]);
+            $connection->flushQueryLog();
+            $revoked = $policy->withCurrentChecks($fixture->member, $fixture->organization->id,
+                fn (): array => $coverageService->coverage($fixture->organization->id, $fixture->member), fresh: true);
+            self::assertArrayNotHasKey('legal_document_version', $revoked['native_attachment_coverage']);
+            self::assertSame(0, $revoked['document_coverage']['total']);
+            self::assertNotEmpty(array_filter($connection->getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "user_role_assignments"')));
+            self::assertSame($reads, $this->reads);
+        } finally {
+            $connection->disableQueryLog();
+            $connection->flushQueryLog();
+        }
+    }
+
     public function test_missing_legal_s3_object_is_skipped_without_blocking_next_source_or_marking_coverage_ready(): void
     {
         [$fixture, $missingVersion] = $this->fixture();

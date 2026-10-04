@@ -160,6 +160,55 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertSame([], $source->scopedQuery('approved_estimate_norm_resource', 1, 1)->get()->all());
     }
 
+    public function test_construction_resource_collection_reads_published_dataset_pages_and_rechecks_publication(): void
+    {
+        $expected = [];
+        $currentDatasets = [];
+        foreach (['fsnb_2022', 'fsbc', 'fgis_labor_prices'] as $type) {
+            foreach (['old', 'current', 'unfinished', 'errors', 'empty'] as $version) {
+                $dataset = DB::table('estimate_dataset_versions')->insertGetId([
+                    'source_type' => $type, 'version_key' => 'resource-'.$version, 'bucket' => 'testing', 'prefix' => 'resources', 'status' => 'parsed',
+                    'finished_at' => $version === 'unfinished' ? null : now()->addDays($version === 'old' ? -1 : ($version === 'current' ? 0 : 1)),
+                    'rows_imported' => $version === 'empty' ? 0 : 100, 'errors_count' => $version === 'errors' ? 1 : 0,
+                ]);
+                if ($version === 'current') { $currentDatasets[] = $dataset; }
+                for ($n = 0; $n < ($version === 'current' ? 65 : 1); $n++) {
+                    $id = DB::table('construction_resources')->insertGetId([
+                        'dataset_version_id' => $dataset, 'ksr_code' => $version.'-'.$n, 'name' => 'Ресурс', 'resource_type' => 'material',
+                    ]);
+                    if ($version === 'current') { $expected[] = $id; }
+                }
+            }
+        }
+        $source = new OrganizationReportingRagSource;
+        DB::enableQueryLog();
+        try {
+            $chunks = [...$source->collectForOrganization(1)];
+            $resourceQueries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_starts_with($query['query'], 'select "construction_resources".')));
+            self::assertCount(6, $resourceQueries);
+            foreach ($resourceQueries as $query) {
+                self::assertStringContainsString('"construction_resources"."dataset_version_id" = ?', $query['query']);
+                self::assertStringContainsString('limit 50', $query['query']);
+            }
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $resources = array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'approved_construction_resource'));
+        self::assertSame($expected, array_map(static fn ($chunk): int => (int) $chunk->entityId, $resources));
+        self::assertSame([], [...$source->collectForOrganization(0)]);
+        self::assertSame([], array_values(array_filter([...$source->collectForOrganization(1, 1)], static fn ($chunk): bool => $chunk->entityType === 'approved_construction_resource')));
+
+        $firstDatasetIds = array_slice($expected, 0, 50);
+        $seen = [];
+        foreach ($source->collectForOrganization(1) as $chunk) {
+            if ($chunk->entityType !== 'approved_construction_resource') { continue; }
+            $seen[] = (int) $chunk->entityId;
+            if (count($seen) === 50) { DB::table('estimate_dataset_versions')->where('id', $currentDatasets[0])->update(['errors_count' => 1]); }
+        }
+        self::assertSame([...$firstDatasetIds, ...array_slice($expected, 65)], $seen);
+    }
+
     public function test_resource_price_pagination_preserves_nullable_resources_and_dataset_and_regional_publication(): void
     {
         $source = new OrganizationReportingRagSource;

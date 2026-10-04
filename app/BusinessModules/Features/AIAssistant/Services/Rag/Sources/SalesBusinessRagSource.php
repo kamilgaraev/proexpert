@@ -53,7 +53,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
 
     public static function scopedQuery(string $type, int $organizationId, ?int $projectId = null, bool $skipSelf = false, array $seen = []): Builder
     {
-        $scopes = in_array($type, ['purchase_receipt_return', 'supply_lifecycle_event', 'procurement_process_event'], true) && $seen === [] ? [] : null;
+        $scopes = in_array($type, ['purchase_receipt_return', 'supply_lifecycle_event', 'procurement_process_event', 'purchase_receipt_inventory_lot'], true) && $seen === [] ? [] : null;
         $query = self::buildScopedQuery($type, $organizationId, $projectId, $skipSelf, $seen, $scopes);
         if ($scopes === null || $scopes === []) {
             return $query;
@@ -254,7 +254,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
                 if (! isset(AssistantSalesBusinessMetadata::scopeDefinitions()[$parent['type']]) || ! self::hasProjectLineage($parent['type'])) {
                     continue;
                 }
-                $projection = self::projectProjection($parent['type'], $organizationId, in_array($type, ['purchase_receipt_return', 'commercial_proposal_line_item', 'commercial_proposal_approval'], true));
+                $projection = self::projectProjection($parent['type'], $organizationId, in_array($type, ['purchase_receipt_return', 'commercial_proposal_line_item', 'commercial_proposal_approval', 'purchase_receipt_inventory_lot'], true));
                 $parentTable = $projection->getModel()->getTable();
                 $projection->whereColumn($parentTable.'.'.($parent['key'] ?? 'id'), $table.'.'.$column)->limit(1);
                 $query->addSelect(['assistant_project_id' => $projection]);
