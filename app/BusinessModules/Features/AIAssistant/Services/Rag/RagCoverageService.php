@@ -34,6 +34,7 @@ final class RagCoverageService
         if ($checkpoint !== null) { $checkpoint(); }
         $sources = RagSource::query()->where('ai_rag_sources.organization_id', $organizationId)
             ->whereIn('ai_rag_sources.source_type', $allowedTypes);
+        if ($countsOnly) { $sources->from('ai_rag_status_sources as ai_rag_sources'); }
         if (! $countsOnly) {
             $projects = $policy->entityQuery($actor, $organizationId, 'project');
             $sources->where(static function (Builder $scope) use ($projects): void {
@@ -54,13 +55,13 @@ final class RagCoverageService
         if ($countsOnly) {
             $progress?->__invoke('source_acl');
             $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
-                ->leftJoinSub(DB::table('ai_rag_chunks')->where('organization_id', $organizationId)
+                ->leftJoinSub(DB::table('ai_rag_status_chunks')->where('organization_id', $organizationId)
                     ->groupBy('source_id', 'project_id')->selectRaw('source_id, project_id, COUNT(*) AS chunk_count'),
                     'accessible_chunks', static function (JoinClause $join): void {
                         $join->on('accessible_chunks.source_id', '=', 'accessible_sources.id')
                             ->whereRaw('accessible_chunks.project_id IS NOT DISTINCT FROM accessible_sources.project_id');
                     })
-                ->leftJoinSub(DB::table('ai_rag_chunks')->where('organization_id', $organizationId)->whereNotNull('embedding')
+                ->leftJoinSub(DB::table('ai_rag_status_chunks')->where('organization_id', $organizationId)->where('embedding_present', true)
                     ->groupBy('source_id', 'project_id')->select(['source_id', 'project_id']),
                     'accessible_indexed_sources', static function (JoinClause $join): void {
                         $join->on('accessible_indexed_sources.source_id', '=', 'accessible_sources.id')
