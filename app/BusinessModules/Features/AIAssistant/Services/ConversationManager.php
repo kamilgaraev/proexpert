@@ -128,9 +128,34 @@ class ConversationManager
 
     private function visibleHistory(Collection $messages, Conversation $conversation, User $actor): Collection
     {
-        return $this->dataAccessPolicy->withCurrentChecks($actor, (int) $conversation->organization_id,
-            fn (): Collection => $messages->filter(fn (Message $message): bool => $this->canReadMessage($message, $conversation, $actor, fresh: false))->reverse()->values(),
-            fresh: true);
+        $entries = $messages->map(static fn (Message $message): array => ['conversation' => $conversation, 'message' => $message])->all();
+        $decisions = $this->canReadMessages($actor, (int) $conversation->organization_id, $entries);
+
+        return $messages->filter(static fn (Message $message, $key): bool => $decisions[$key])->reverse()->values();
+    }
+
+    public function canReadMessages(User $actor, int $organizationId, array $entries, bool $fresh = true): array
+    {
+        return $this->dataAccessPolicy->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $entries): array {
+            $usable = app(AIPermissionChecker::class)->canUseAssistant($actor, $organizationId, fresh: false);
+            $decisions = [];
+            $sets = [];
+            foreach ($entries as $key => $entry) {
+                $message = $entry['message'];
+                $conversation = $entry['conversation'];
+                $decisions[$key] = false;
+                if (! $usable || (int) $conversation->organization_id !== $organizationId || (int) $message->conversation_id !== (int) $conversation->id) { continue; }
+                if ($message->role !== 'assistant') { $decisions[$key] = true; continue; }
+                $metadata = is_array($message->metadata) ? $message->metadata : [];
+                if (($metadata['request_state'] ?? null) === 'pending'
+                    || ((int) $conversation->user_id !== (int) $actor->id && ($metadata['validation_status'] ?? null) !== 'verified')) { continue; }
+                $refs = $this->messageReferences($metadata);
+                if ($refs !== null) { $sets[$key] = $refs; }
+            }
+            foreach ($this->dataAccessPolicy->canReadReferenceSets($actor, $organizationId, $sets) as $key => $allowed) { $decisions[$key] = $allowed; }
+
+            return $decisions;
+        }, fresh: $fresh);
     }
 
     public function canReadMessage(Message $message, Conversation $conversation, User $actor, bool $fresh = true): bool

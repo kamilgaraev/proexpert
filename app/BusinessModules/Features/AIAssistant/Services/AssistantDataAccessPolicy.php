@@ -283,6 +283,51 @@ final class AssistantDataAccessPolicy
         }
     }
 
+    public function canReadReferenceSets(User $user, int $organizationId, array $referenceSets): array
+    {
+        $previous = $this->pendingEntityReads;
+        $decisions = [];
+        $requirements = [];
+        $entities = [];
+        try {
+            foreach ($referenceSets as $key => $references) {
+                $this->pendingEntityReads = ['actor_id' => (int) $user->id, 'organization_id' => $organizationId, 'entities' => []];
+                $decisions[$key] = is_array($references);
+                if (! $decisions[$key]) { continue; }
+                foreach ($references as $reference) {
+                    if (! is_array($reference) || ! $this->canReadReference($user, $organizationId, $reference)) {
+                        $decisions[$key] = false;
+                        break;
+                    }
+                }
+                if (! $decisions[$key]) { continue; }
+                $requirements[$key] = $this->pendingEntityReads['entities'];
+                foreach ($requirements[$key] as $type => $ids) { $entities[$type] = ($entities[$type] ?? []) + $ids; }
+            }
+            $this->pendingEntityReads = null;
+            $allowed = [];
+            foreach ($entities as $type => $ids) {
+                $query = $this->entityQuery($user, $organizationId, $type);
+                $allowed[$type] = [];
+                if ($query === null) { continue; }
+                foreach (array_chunk(array_keys($ids), 250) as $batch) {
+                    $this->currentCheckpoint?->__invoke();
+                    foreach ((clone $query)->whereKey($batch)->pluck($query->getModel()->getQualifiedKeyName()) as $id) {
+                        $allowed[$type][(string) $id] = true;
+                    }
+                }
+            }
+            foreach ($requirements as $key => $types) {
+                foreach ($types as $type => $ids) {
+                    if (array_diff_key($ids, $allowed[$type]) !== []) { $decisions[$key] = false; break; }
+                }
+            }
+            return $decisions;
+        } finally {
+            $this->pendingEntityReads = $previous;
+        }
+    }
+
     private function deferEntityRead(User $user, int $organizationId, string $type, string|int $id): bool
     {
         if ($this->pendingEntityReads === null || $this->aclCompiler !== null

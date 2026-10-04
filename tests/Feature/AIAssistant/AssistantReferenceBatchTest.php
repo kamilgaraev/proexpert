@@ -118,6 +118,25 @@ final class AssistantReferenceBatchTest extends TestCase
         self::assertFalse($freshResult);
     }
 
+    public function test_reference_sets_keep_independent_decisions_and_recheck_within_one_frame(): void
+    {
+        $visible = $this->project(true);
+        $hidden = $this->project(false);
+        $reference = $this->reference($visible);
+        $sets = ['first' => [$reference], 'duplicate' => [$reference, $reference], 'hidden' => [$this->reference($hidden)],
+            'mixed' => [$reference, $this->reference($hidden)], 'malformed' => ['invalid'], 'empty' => []];
+        $this->policy->withCurrentChecks($this->actor, $this->organization->id, function () use ($visible, $sets): void {
+            $read = fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, $sets);
+            self::assertSame(['first' => true, 'duplicate' => true, 'hidden' => false, 'mixed' => false, 'malformed' => false, 'empty' => true], $read());
+            $this->actor->assignedProjects()->updateExistingPivot($visible->id, ['is_active' => false]);
+            self::assertFalse($read()['first']);
+            $this->actor->assignedProjects()->updateExistingPivot($visible->id, ['is_active' => true]);
+            self::assertTrue($read()['first']);
+            $visible->delete();
+            self::assertFalse($read()['first']);
+        }, fresh: true);
+    }
+
     public function test_reference_provenance_is_checked_before_a_bulk_native_grant(): void
     {
         $project = $this->project(true);
