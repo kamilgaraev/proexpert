@@ -2,6 +2,8 @@
 
 Результат [MOSTAI-12 / LEAD-03](https://prohelper.youtrack.cloud/issue/MOSTAI-12), пакет 01. Проверка публичных источников: 05.10.2026 МСК. Input LEAD-02: commit `a9e2db649e866c7d9fec0412375003b0ea762d12`, [caller inventory](caller-inventory.md); LEAD-01: `5bd17112d6316b81ada1cacb7f77ec77e8bcc7bc`, [source snapshot](foundation-current-state.md). Product source — `215bd3faa86678c23a2eb477ee2309e431757919`.
 
+Узкая [delta-проверка main](foundation-current-state.md#обновление-main-перед-review) до `1b1650c65a5593ac46afbf9355987ce50c129f07` не меняет proposed policy. Пакетная local ACL проверка источников не устанавливает разрешение внешней передачи, privacy sanitization или vendor/residency evidence.
+
 Policy version `most-ai-v1-purpose-policy/0.1-proposed`. Это проект для человеческого согласования. **Policy enforcement и runtime block не реализованы этим документом.** Текущие source paths могут передавать raw; actual runtime конфигурация и передачи не проверялись. G0/interface freeze, private pilot и production readiness не заявляются.
 
 ## Правила решения

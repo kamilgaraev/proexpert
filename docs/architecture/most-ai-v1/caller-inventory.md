@@ -2,6 +2,8 @@
 
 Результат [MOSTAI-11 / LEAD-02](https://prohelper.youtrack.cloud/issue/MOSTAI-11), пакет 01. Input LEAD-01: commit `5bd17112d6316b81ada1cacb7f77ec77e8bcc7bc`, [исходное состояние](foundation-current-state.md). Product source pinned на `215bd3faa86678c23a2eb477ee2309e431757919`; последующий document commit не меняет его. Inventory version: `most-ai-v1-callers/0.1-draft`, не frozen G0 interface.
 
+Узкая delta-проверка `origin/main` до `1b1650c65a5593ac46afbf9355987ce50c129f07` описана в [addendum исходного состояния](foundation-current-state.md#обновление-main-перед-review). Новые пакетные source-reference ACL проверки и SQL metrics не меняют T1–T7/callers/purposes; источник и история input outputs сохранены.
+
 ## Семантика статуса и границы
 
 `source-reachable` означает обнаруженную caller-chain, не telemetry production. `configurable` означает альтернативный DI/config route; фактический selected provider неизвестен. `DI-bound/dormant` не означает отсутствующий sink или доказанный обычный raw-PDF поток. `unknown` не означает безопасное отсутствие пути.

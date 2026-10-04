@@ -23,6 +23,14 @@
 
 Source-to-sink означает наличие пути в коде. Он не устанавливает активную конфигурацию, частоту исполнения, фактическую передачу пользовательских данных, applied schema или deployed SHA. Исторический backend/production snapshot privacy-аудита `171f6dfa2437054bcc07352d87075dbd83fd458f` и последующее уточнение `1989abe7296b85e1ddb4926b596b980c097b2c9d` не подменяются текущим локальным source SHA.
 
+## Обновление main перед review
+
+Перед передачей QA `origin/main` обновился до `1b1650c65a5593ac46afbf9355987ce50c129f07`. Проверен только delta от исходного среза: `58530c26351557e940addbcb02cdcd2d5765e5ad` и `1b1650c65a5593ac46afbf9355987ce50c129f07`. Исходный срез, ссылки и последовательные document outputs сохранены; этот addendum фиксирует новые изменения, а не переписывает происхождение результатов.
+
+[AssistantDataAccessPolicy::canReadReferenceSets](https://github.com/kamilgaraev/proexpert/blob/1b1650c65a5593ac46afbf9355987ce50c129f07/app/BusinessModules/Features/AIAssistant/Services/AssistantDataAccessPolicy.php#L292) использует [AssistantReferenceSourceBatch](https://github.com/kamilgaraev/proexpert/blob/1b1650c65a5593ac46afbf9355987ce50c129f07/app/BusinessModules/Features/AIAssistant/Services/AssistantReferenceSourceBatch.php#L22): исходники загружаются organization-scoped порциями до 250, затем [повторно проверяются](https://github.com/kamilgaraev/proexpert/blob/1b1650c65a5593ac46afbf9355987ce50c129f07/app/BusinessModules/Features/AIAssistant/Services/AssistantReferenceSourceBatch.php#L52) scope-поля и `allowsSource`. Одиночный `canReadReference` сохраняет scalar lookup. В проверенном delta ослабление ACL не выявлено; это не privacy sanitization и не runtime verdict.
+
+[ApiQueryMetrics](https://github.com/kamilgaraev/proexpert/blob/1b1650c65a5593ac46afbf9355987ce50c129f07/app/Services/Monitoring/ApiQueryMetrics.php#L19) добавляет группировку SQL count/time в `sql_groups`. Vector SQL в RagRetriever не менялся; группировка метрик и пакетная проверка ссылок не доказывают план или latency и не закрывают AS-09. Статусы AS-01..10, T1–T7 caller/purpose inventory и proposed policy после узкой delta-проверки не изменились. Тесты и DB/provider/runtime calls в этой проверке не выполнялись.
+
 ## Границы V1 и отложенные возможности
 
 V1 Required включает trusted Processor, typed SafeRepresentation и финальную проверку exact bytes, случайные tenant-scoped tokens и минимальный encrypted/recoverable Vault, safe tools/history/loops/RAG, local RU/EN OCR/redaction, единый Gateway для всех включённых T1–T7, hard egress и gateway-only provider credentials, fresh local ACL/purpose/consent/source check и serialized dispatch guard, безопасные operational sinks, safe cutover и независимые gates.
