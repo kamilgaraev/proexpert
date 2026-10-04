@@ -229,6 +229,12 @@ final class AssistantSalesBusinessCoverageTest extends TestCase
             $expected[] = $create($ownLine, $fixture->owner->id);
         }
         $source = new ProcurementBusinessRagSource;
+        foreach (['supply_lifecycle_event', 'procurement_process_event'] as $type) {
+            foreach ([null, $project->id, $foreignProject->id] as $projectId) {
+                $legacy = $source::scopedQuery($type, $fixture->organization->id, $projectId, false, ['reference'])->orderBy('id')->pluck('id')->all();
+                self::assertSame($legacy, $source::scopedQuery($type, $fixture->organization->id, $projectId)->lazyById(50)->pluck('id')->all());
+            }
+        }
         foreach ([null, $project->id, $foreignProject->id] as $projectId) {
             $legacy = $source::scopedQuery('purchase_receipt_return', $fixture->organization->id, $projectId, false, ['reference'])->orderBy('id')->pluck('id')->all();
             $query = $source::scopedQuery('purchase_receipt_return', $fixture->organization->id, $projectId);

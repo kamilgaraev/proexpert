@@ -179,13 +179,7 @@ final class AssistantOrganizationReportingMetadata
     {
         $table = $query->getModel()->getTable();
         if ($type === 'approved_estimate_dataset' || $type === 'approved_estimate_resource_price') {
-            $datasets = [];
-            foreach (['fsnb_2022','fsbc','fgis_labor_prices'] as $source) {
-                $candidate = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion::query()
-                    ->where('source_type',$source)->where('status','parsed')->whereNotNull('finished_at')->where('rows_imported','>',0)->where('errors_count',0)
-                    ->orderByDesc('finished_at')->orderByDesc('id')->limit(1)->select('id');
-                $datasets[] = $candidate;
-            }
+            $datasets = self::publishedDatasetQueries();
             $column = $type === 'approved_estimate_dataset' ? 'id' : 'dataset_version_id';
             if ($type === 'approved_estimate_dataset') {
                 $query->where(static function (\Illuminate\Database\Eloquent\Builder $scope) use ($datasets,$table,$column): void {
@@ -193,9 +187,7 @@ final class AssistantOrganizationReportingMetadata
                     foreach ($datasets as $dataset) { $scope->orWhereIn($table.'.'.$column,$dataset); }
                 });
             } else {
-                $active = self::records()['active_estimate_price_version'][0]::query()->where('status','active');
-                self::applyPublicationScope('active_estimate_price_version',$active);
-                $active->whereIn('region_id',self::records()['estimate_price_region'][0]::query()->where('is_supported',true)->select('id'))->select('id');
+                $active = self::activeRegionalPriceVersions()->select('id');
                 foreach (['region_id','price_zone_id','period_id'] as $dimension) {
                     $active->whereColumn('estimate_regional_price_versions.'.$dimension,$table.'.'.$dimension);
                 }
@@ -216,6 +208,39 @@ final class AssistantOrganizationReportingMetadata
         if ($type === 'active_estimate_price_version') {
             $query->whereIn($table.'.id',\App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceActivation::query()
                 ->whereColumn('region_id',$table.'.region_id')->whereColumn('price_zone_id',$table.'.price_zone_id')->select('active_version_id'));
+        }
+    }
+
+    private static function publishedDatasetQueries(): array
+    {
+        $datasets = [];
+        foreach (['fsnb_2022', 'fsbc', 'fgis_labor_prices'] as $source) {
+            $datasets[] = \App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion::query()
+                ->where('source_type', $source)->where('status', 'parsed')->whereNotNull('finished_at')
+                ->where('rows_imported', '>', 0)->where('errors_count', 0)
+                ->orderByDesc('finished_at')->orderByDesc('id')->limit(1)->select('id');
+        }
+
+        return $datasets;
+    }
+
+    private static function activeRegionalPriceVersions(): \Illuminate\Database\Eloquent\Builder
+    {
+        $active = self::records()['active_estimate_price_version'][0]::query()->where('status', 'active');
+        self::applyPublicationScope('active_estimate_price_version', $active);
+
+        return $active->whereIn('region_id', self::records()['estimate_price_region'][0]::query()->where('is_supported', true)->select('id'));
+    }
+
+    public static function publishedPriceScopes(): \Generator
+    {
+        foreach (self::activeRegionalPriceVersions()->get(['id', 'region_id', 'price_zone_id', 'period_id']) as $version) {
+            yield ['regional_price_version_id' => $version->id, 'region_id' => $version->region_id,
+                'price_zone_id' => $version->price_zone_id, 'period_id' => $version->period_id];
+        }
+        foreach (self::publishedDatasetQueries() as $dataset) {
+            $id = $dataset->value('id');
+            if ($id !== null) { yield ['regional_price_version_id' => null, 'dataset_version_id' => $id]; }
         }
     }
     public static function applyActorScope(string $type, \Illuminate\Database\Eloquent\Builder $query, \App\Models\User $actor, int $organizationId,

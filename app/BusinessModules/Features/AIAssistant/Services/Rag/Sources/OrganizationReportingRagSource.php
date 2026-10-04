@@ -25,9 +25,21 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         foreach ($this->entities() as $type => $record) {
-            foreach ($this->scopedQuery($type, $organizationId, $projectId)->lazyById(50) as $model) {
+            $models = $type === 'approved_estimate_resource_price' ? $this->priceModels($organizationId, $projectId)
+                : $this->scopedQuery($type, $organizationId, $projectId)->lazyById(50);
+            foreach ($models as $model) {
                 yield $this->chunk($model, $type, $organizationId);
             }
+        }
+    }
+
+    private function priceModels(int $organizationId, ?int $projectId): \Generator
+    {
+        if ($organizationId < 1 || $projectId !== null) { return; }
+        foreach (Metadata::publishedPriceScopes() as $scope) {
+            $query = $this->scopedQuery('approved_estimate_resource_price', $organizationId);
+            foreach ($scope as $column => $value) { $query->where('estimate_resource_prices.'.$column, $value); }
+            yield from $query->lazyById(50);
         }
     }
     public function collectEntity(int $organizationId, string $entityType, string|int $entityId): iterable
