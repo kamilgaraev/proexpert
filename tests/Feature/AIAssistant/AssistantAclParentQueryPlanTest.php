@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\Models\Project;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AssistantRealAuthorizationFixture;
@@ -47,6 +48,20 @@ final class AssistantAclParentQueryPlanTest extends TestCase
             $rows = $query->get();
             self::assertCount(1, $rows);
             self::assertSame(20001, (int) $rows[0]->total);
+            $project = Project::withoutEvents(fn () => Project::factory()->create([
+                'organization_id' => $fixture->organization->id, 'is_archived' => false,
+            ]));
+            DB::statement("INSERT INTO ai_rag_sources (organization_id, source_type, entity_type, entity_id, title, checksum, identity_part_key, metadata) SELECT ?, 'project', 'project', ?::text, 'Project part ' || n, md5('project-part-' || n), n::text, jsonb_build_object('unit_id', n) FROM generate_series(1, 2) n", [$fixture->organization->id, $project->id]);
+            $batches = $policy->aggregateSourceIdentityBatches(RagSource::query(), $fixture->owner, $fixture->organization->id,
+                ['ai_rag_sources.id'], fn ($visible) => DB::query()->fromSub($visible, 'visible_sources')->selectRaw('COUNT(*) AS total'));
+            self::assertCount(2, $batches);
+            $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
+            sort($counts);
+            self::assertSame([2, 20001], $counts);
+            Project::withoutEvents(fn () => $project->delete());
+            $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
+            sort($counts);
+            self::assertSame([0, 20001], $counts);
         }, fresh: true);
     }
 
