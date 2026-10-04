@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Monitoring;
 
 use App\Http\Middleware\RecordApiResponseTime;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Container\Container;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,6 +19,36 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 final class RecordApiResponseTimeTest extends TestCase
 {
+    public function test_query_metrics_are_numeric_request_local_and_restored_after_an_exception(): void
+    {
+        $request = Request::create('/api/private', 'GET');
+        $previous = new ApiQueryMetrics;
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $previous);
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+
+        try {
+            (new RecordApiResponseTime)->handle($request, static function () use ($request): never {
+                ApiQueryMetrics::record($request, 12.345);
+                ApiQueryMetrics::record($request, 3.5);
+                ApiQueryMetrics::record($request, NAN);
+                ApiQueryMetrics::record($request, -1);
+                throw new NotFoundHttpException('private');
+            });
+            self::fail('Expected an HTTP exception.');
+        } catch (NotFoundHttpException) {
+            self::assertSame(2, $captured['sql_count']);
+            self::assertSame(15.85, $captured['sql_total_ms']);
+            self::assertSame(12.35, $captured['sql_max_ms']);
+            self::assertSame($previous, $request->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE));
+            self::assertSame(0, $previous->summary()['sql_count']);
+        }
+    }
+
     protected function tearDown(): void
     {
         Mockery::close();

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Middleware;
 
+use App\Services\Monitoring\ApiQueryMetrics;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +23,9 @@ final class RecordApiResponseTime
         }
 
         $startedAt = hrtime(true);
+        $previousMetrics = $request->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE);
+        $metrics = new ApiQueryMetrics;
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;
         $statusCode = null;
 
@@ -44,7 +48,13 @@ final class RecordApiResponseTime
                 'route' => $route instanceof Route ? $route->uri() : 'unmatched',
                 'status_code' => $statusCode,
                 'duration_ms' => round((hrtime(true) - $startedAt) / 1_000_000, 2),
-            ];
+            ] + $metrics->summary();
+
+            if ($previousMetrics === null) {
+                $request->attributes->remove(ApiQueryMetrics::REQUEST_ATTRIBUTE);
+            } else {
+                $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $previousMetrics);
+            }
 
             if (is_string($traceId) && preg_match('/^[0-9a-f]{32}$/', $traceId) === 1) {
                 $context['trace_id'] = $traceId;
