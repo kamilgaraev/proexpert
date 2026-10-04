@@ -227,6 +227,57 @@ final class RagActorCoverageTest extends TestCase
         $this->assertTrue($this->coverage->coverageForActor($organization->id, $actor)['coverage_complete']);
     }
 
+    #[DataProvider('unpublishedProjectionFailures')]
+    public function test_failed_staged_generation_is_discarded_without_publishing_partial_counts(bool $revisionChanged): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        for ($part = 0; $part < 101; $part++) {
+            $this->collector->chunks[] = new RagChunkData($organization->id, $visible->id, 'project', 'project', $visible->id,
+                'Проект', 'Content '.$part, ['unit_id' => $part]);
+        }
+        $stagedCount = 0;
+        $this->collector->afterCollection = static function () use ($organization, $revisionChanged, &$stagedCount): void {
+            $stagedCount = RagExpectedSource::query()->where('organization_id', $organization->id)->count();
+            if ($revisionChanged) {
+                RagCoverageService::invalidate($organization->id);
+            }
+        };
+        $this->collector->failure = ! $revisionChanged;
+
+        $this->coverage->refreshCoverage($organization->id);
+
+        $this->assertSame(100, $stagedCount);
+        $this->assertSame(0, RagExpectedSource::query()->where('organization_id', $organization->id)->count());
+        $status = $this->coverage->coverageForActor($organization->id, $actor);
+        $this->assertFalse($status['eligible_count_known']);
+        $this->assertNull($status['expected_source_count']);
+    }
+
+    public static function unpublishedProjectionFailures(): array
+    {
+        return ['collector failure' => [false], 'revision changed after staging' => [true]];
+    }
+
+    public function test_revision_change_stops_the_obsolete_collector_after_the_current_batch(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        for ($part = 0; $part < 300; $part++) {
+            $this->collector->chunks[] = new RagChunkData($organization->id, $visible->id, 'project', 'project', $visible->id,
+                'Проект', 'Content '.$part, ['unit_id' => $part]);
+        }
+        $this->collector->afterChunk = static function (int $yielded) use ($organization): void {
+            if ($yielded === 100) {
+                RagCoverageService::invalidate($organization->id);
+            }
+        };
+
+        $this->coverage->refreshCoverage($organization->id);
+
+        $this->assertSame(101, $this->collector->yielded);
+        $this->assertSame(0, RagExpectedSource::query()->where('organization_id', $organization->id)->count());
+        $this->assertFalse($this->coverage->coverageForActor($organization->id, $actor)['eligible_count_known']);
+    }
+
     public function test_stale_projection_does_not_claim_expected_coverage(): void
     {
         [$organization, $actor, $visible] = $this->scope();
@@ -440,13 +491,21 @@ final class ActorCoverageCollector implements RagSourceCollectorInterface
     public int $collections = 0;
     public bool $failure = false;
     public mixed $afterCollection = null;
+    public mixed $afterChunk = null;
+    public int $yielded = 0;
     public function sourceType(): string { return 'project'; }
     public function enabled(): bool { return true; }
     public function collectEntity(int $organizationId, string $entityType, string|int $entityId): iterable { return []; }
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         $this->collections++;
-        yield from $this->chunks;
+        foreach ($this->chunks as $chunk) {
+            $this->yielded++;
+            yield $chunk;
+            if (is_callable($this->afterChunk)) {
+                ($this->afterChunk)($this->yielded);
+            }
+        }
         if (is_callable($this->afterCollection)) {
             ($this->afterCollection)();
         }

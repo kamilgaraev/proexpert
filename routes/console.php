@@ -161,6 +161,11 @@ Schedule::command('temp-files:cleanup --hours=48')
     })
     ->appendOutputTo(storage_path('logs/schedule-temp-files-cleanup.log'));
 
+Schedule::command('queue:prune-failed --hours=1080')
+    ->daily()
+    ->withoutOverlapping(30)
+    ->onOneServer();
+
 // Автоматическое геокодирование проектов без координат (раз в день)
 Schedule::command('projects:geocode --limit=50 --delay=2')
     ->dailyAt('04:30')
@@ -283,6 +288,13 @@ if ((bool) config('ai-assistant.retention.enabled', false)) {
         ->runInBackground();
 }
 
+Schedule::command('ai-assistant:prune-rag-projections')
+    ->everyTenMinutes()
+    ->onOneServer()
+    ->withoutOverlapping(30)
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/schedule-ai-assistant-rag-prune.log'));
+
 Schedule::command('estimates:regional-prices:sync-fgiscs --all-regions --latest-only')
     ->dailyAt('01:00')
     ->withoutOverlapping(720)
@@ -302,6 +314,17 @@ Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources --al
         Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs-building-resources command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-building-resource-prices-sync.log'));
+
+Schedule::command('estimates:prune-price-catalogs --execute --quarters=4 --failed-days=45 --limit=100000 --batch=1000 --max-seconds=240')
+    ->dailyAt('22:00')
+    ->withoutOverlapping(720)
+    ->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')
+    ->runInBackground()
+    ->onOneServer()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled estimates:prune-price-catalogs command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-price-catalog-prune.log'));
 
 $oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.scheduled_limit', 50));
 

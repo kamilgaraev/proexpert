@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceUpdateService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Retention\RegionalPriceCatalogRetentionService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 class SyncFgiscsRegionalPricesCommand extends Command
@@ -25,6 +27,11 @@ class SyncFgiscsRegionalPricesCommand extends Command
 
     public function handle(FgiscsRegionalPriceUpdateService $service): int
     {
+        $lock = Cache::lock(RegionalPriceCatalogRetentionService::MUTEX, 43200);
+        if (! $lock->get()) {
+            $this->error(trans_message('estimate_generation.operation_error'));
+            return self::FAILURE;
+        }
         try {
             $startedAt = microtime(true);
             $progress = function (string $event, array $payload) use ($startedAt): void {
@@ -43,6 +50,8 @@ class SyncFgiscsRegionalPricesCommand extends Command
             $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;
+        } finally {
+            $lock->release();
         }
     }
 

@@ -10,11 +10,16 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 final class RagExpectedSourceProjection
 {
+    private const DELETE_BATCH_SIZE = 1000;
+
+    private const ORPHAN_GRACE_HOURS = 24;
+
     public function __construct(private readonly RagIndexer $indexer) {}
 
     public function stage(int $organizationId, string $sourceType, string $generation, array $batch, ?array $identities = null): void
@@ -104,7 +109,117 @@ final class RagExpectedSourceProjection
 
     public function prune(int $organizationId, string $generation): void
     {
-        RagExpectedSource::query()->where('organization_id', $organizationId)->where('generation', '<>', $generation)
-            ->where('created_at', '<', now()->subMinutes(10))->delete();
+        $this->deleteOldGenerations($organizationId, $generation, 100000, microtime(true) + 5);
+    }
+
+    public function discard(int $organizationId, string $generation, int $maxRows = PHP_INT_MAX, ?float $deadline = null): int
+    {
+        if ($generation === $this->activeGeneration($organizationId)) {
+            return 0;
+        }
+        $key = $this->discardKey($organizationId);
+        $pending = (array) Cache::get($key, []);
+        $pending[$generation] = true;
+        Cache::put($key, $pending, now()->addDays(2));
+        $query = RagExpectedSource::query()->where('organization_id', $organizationId)->where('generation', $generation);
+        $cursorColumns = ['identity_project_id', 'source_type', 'entity_type', 'entity_id', 'identity_part_key'];
+        foreach ($cursorColumns as $column) {
+            $query->orderBy($column);
+        }
+        $deleted = $this->deleteBatches($organizationId, $query, $maxRows, $deadline ?? microtime(true) + 40, $cursorColumns);
+        if (! $query->exists()) {
+            $pending = (array) Cache::get($key, []);
+            unset($pending[$generation]);
+            if ($pending === []) {
+                Cache::forget($key);
+            } else {
+                Cache::put($key, $pending, now()->addDays(2));
+            }
+        }
+
+        return $deleted;
+    }
+
+    /** @return array{deleted: int, locked: bool} */
+    public function pruneOrganization(int $organizationId, int $maxRows = 100000, ?float $deadline = null): array
+    {
+        $lease = Cache::lock('ai-rag-coverage-projection:'.$organizationId, 7500);
+        if (! $lease->get()) {
+            return ['deleted' => 0, 'locked' => true];
+        }
+        try {
+            return ['deleted' => $this->pruneWhileLocked($organizationId, $maxRows, $deadline), 'locked' => false];
+        } finally {
+            $lease->release();
+        }
+    }
+
+    public function pruneWhileLocked(int $organizationId, int $maxRows = 100000, ?float $deadline = null): int
+    {
+        $deadline ??= microtime(true) + 50;
+        $maxRows = max(0, min(100000, $maxRows));
+        $deleted = 0;
+        $active = $this->activeGeneration($organizationId);
+        foreach (array_keys((array) Cache::get($this->discardKey($organizationId), [])) as $generation) {
+            if ($deleted >= $maxRows || microtime(true) >= $deadline) {
+                break;
+            }
+            if ($generation !== $active) {
+                $deleted += $this->discard($organizationId, (string) $generation, $maxRows - $deleted, $deadline);
+            }
+        }
+        if ($deleted < $maxRows && microtime(true) < $deadline) {
+            $deleted += $this->deleteOldGenerations($organizationId, $active, $maxRows - $deleted, $deadline);
+        }
+
+        return $deleted;
+    }
+
+    private function deleteOldGenerations(int $organizationId, ?string $active, int $maxRows, float $deadline): int
+    {
+        $query = RagExpectedSource::query()->where('organization_id', $organizationId)
+            ->where('created_at', '<', now()->subHours(self::ORPHAN_GRACE_HOURS))
+            ->when($active !== null, static fn (Builder $query): Builder => $query->where('generation', '<>', $active))
+            ->orderBy('created_at')->orderBy('id');
+
+        return $this->deleteBatches($organizationId, $query, $maxRows, $deadline, ['created_at', 'id']);
+    }
+
+    private function deleteBatches(int $organizationId, Builder $query, int $maxRows, float $deadline, array $cursorColumns): int
+    {
+        $deleted = 0;
+        $cursor = null;
+        while ($deleted < $maxRows && microtime(true) < $deadline) {
+            $batch = clone $query;
+            if ($cursor !== null) {
+                $batch->whereRowValues($cursorColumns, '>', $cursor);
+            }
+            $rows = $batch->limit(min(self::DELETE_BATCH_SIZE, $maxRows - $deleted))->get(array_values(array_unique(['id', ...$cursorColumns])));
+            if ($rows->isEmpty()) {
+                break;
+            }
+            $last = $rows->last();
+            $cursor = array_map(static fn (string $column): mixed => $last->getRawOriginal($column), $cursorColumns);
+            $affected = RagExpectedSource::query()->where('organization_id', $organizationId)->whereIn('id', $rows->pluck('id'))->delete();
+            $deleted += $affected;
+            if ($affected === 0) {
+                break;
+            }
+        }
+
+        return $deleted;
+    }
+
+    private function activeGeneration(int $organizationId): ?string
+    {
+        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
+        $snapshot = Cache::get('ai-rag-coverage:'.$organizationId.':0:*:'.$revision);
+
+        return is_array($snapshot) && is_string($snapshot['projection_generation'] ?? null) ? $snapshot['projection_generation'] : null;
+    }
+
+    private function discardKey(int $organizationId): string
+    {
+        return 'ai-rag-coverage-discard-generations:'.$organizationId;
     }
 }
