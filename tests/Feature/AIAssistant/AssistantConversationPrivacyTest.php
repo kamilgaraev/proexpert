@@ -316,6 +316,43 @@ final class AssistantConversationPrivacyTest extends TestCase
         $this->assertSame([['role' => 'user', 'content' => 'Продолжи']], $context);
     }
 
+    public function test_image_discussion_context_is_opt_in_owner_only_and_stops_at_system_requests(): void
+    {
+        $conversation = $this->conversation();
+        $this->share($conversation);
+        $this->manager->addMessage($conversation, 'user', 'Объясни что написано на фото', metadata: ['attachments' => [['id' => 'image']]]);
+        $this->manager->addMessage($conversation, 'assistant', 'На фото: нет линии связи.');
+        $this->manager->addMessage($conversation, 'user', 'Что это может значить?');
+        $this->manager->addMessage($conversation, 'assistant', 'Вероятно, кабель ещё не проложен.');
+        $this->manager->addMessage($conversation, 'user', 'Покажи последнюю смету');
+        $this->manager->addMessage($conversation, 'assistant', 'Непроверенное число из сметы.');
+        $userContents = ['Объясни что написано на фото', 'Что это может значить?', 'Покажи последнюю смету'];
+
+        $this->assertSame($userContents, array_column($this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner), 'content'));
+        $context = $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner, includeImageDiscussion: true);
+        $this->assertCount(5, $context);
+        $this->assertSame(trans_message('ai_assistant.image_discussion_history', ['text' => 'На фото: нет линии связи.']), $context[1]['content']);
+        $this->assertSame(trans_message('ai_assistant.image_discussion_history', ['text' => 'Вероятно, кабель ещё не проложен.']), $context[3]['content']);
+        $this->assertSame($userContents, array_column($this->manager->getMessagesForContextWithBudget($conversation, actor: $this->viewer, includeImageDiscussion: true), 'content'));
+        $this->assertSame([], $this->manager->getMessagesForContextWithBudget($conversation, includeImageDiscussion: true));
+        $this->assistantEnabled = false;
+        $this->assertSame([], $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner, includeImageDiscussion: true));
+    }
+
+    public function test_image_discussion_context_keeps_pending_and_source_access_guards(): void
+    {
+        $conversation = $this->conversation();
+        $project = Project::factory()->create(['organization_id' => $this->organization->id]);
+        $this->manager->addMessage($conversation, 'user', 'Объясни фото', metadata: ['attachments' => [['id' => 'image']]]);
+        $this->manager->addMessage($conversation, 'assistant', 'Данные проекта из старого ответа.', metadata: ['validation_status' => 'verified', 'source_refs' => [$this->ref($project)]]);
+        $this->manager->addMessage($conversation, 'assistant', 'Ещё не опубликованная расшифровка.', metadata: ['request_state' => 'pending']);
+        $this->denied[] = $this->owner->id.':'.$project->id;
+
+        $this->assertSame([['role' => 'user', 'content' => 'Объясни фото']], $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner, includeImageDiscussion: true));
+        DB::table('organization_user')->where('organization_id', $this->organization->id)->where('user_id', $this->owner->id)->update(['is_active' => false]);
+        $this->assertSame([], $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner, includeImageDiscussion: true));
+    }
+
     public function test_history_pagination_uses_id_when_timestamps_are_identical(): void
     {
         $conversation = $this->conversation();

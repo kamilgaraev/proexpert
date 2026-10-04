@@ -438,13 +438,39 @@ class AIAssistantService
         }
         $navigationRequestContext = $requestPayload['context'] ?? [];
         $continuationContext = $conversation->context ?? [];
-        if ($this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
+        $previousImageDiscussion = (bool) ($continuationContext['last_image_discussion'] ?? false);
+        if (! array_key_exists('last_image_discussion', $continuationContext) && $this->currentAttachmentIds === []
+            && AssistantImageDiscussionPolicy::isDiscussion($query, false, true)) {
+            foreach ($this->conversationManager->getHistory($conversation, 10, $user)->reverse() as $previousMessage) {
+                if ($previousMessage->role !== 'user') {
+                    continue;
+                }
+                if (! empty($previousMessage->metadata['attachments'])) {
+                    $previousImageDiscussion = AssistantImageDiscussionPolicy::isDiscussion($previousMessage->content, true, false);
+                    break;
+                }
+                if (! AssistantImageDiscussionPolicy::isDiscussion($previousMessage->content, false, true)) {
+                    break;
+                }
+            }
+        }
+        $imageDiscussion = AssistantImageDiscussionPolicy::isDiscussion($query, $this->currentAttachmentIds !== [], $previousImageDiscussion);
+        $requestPayload['image_discussion'] = $imageDiscussion;
+        if ($imageDiscussion) {
+            $requestPayload['context'] = [];
+            $requestPayload['goal'] = 'analyze';
+            $requestPayload['desired_mode'] = 'analyze';
+            $requestPayload['allow_actions'] = false;
+        }
+        if (! $imageDiscussion && $this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
             $this->documentContextBlocked = ! $this->documentCorpusIsComplete($organizationId, $user);
             if ($this->documentContextBlocked) {
                 $continuationContext = $this->suppressDocumentContinuationContext($continuationContext);
             }
         }
-        $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $continuationContext);
+        if (! $imageDiscussion) {
+            $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $continuationContext);
+        }
         if ($this->documentContextBlocked && is_array($requestPayload['context'] ?? null)) {
             $requestContext = $requestPayload['context'];
             $uiState = is_array($requestContext['ui_state'] ?? null) ? $requestContext['ui_state'] : [];
@@ -455,13 +481,14 @@ class AIAssistantService
         $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
         $this->activeEstimateSelection = null;
         $selection = $conversation->context['selected_estimate'] ?? null;
-        if (is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
+        if (! $imageDiscussion && is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
             && $this->dataAccess->withCurrentChecks($user, $organizationId,
                 fn (): bool => $this->dataAccess->canReadEntityContent($user, $organizationId, 'estimate', $selection['estimate_id']), true)) {
             $this->activeEstimateSelection = array_intersect_key($selection, array_flip(['estimate_id', 'position_filter', 'position_numbers']));
         }
         $accessContext = $this->measurePhase('access_context', fn (): array => $this->accessContextResolver->resolve($user, $organizationId));
         $taskPlan = $this->measurePhase('task_plan', fn (): array => $this->taskOrchestrator->plan($query, $requestPayload, $accessContext));
+        $taskPlan['image_discussion'] = $imageDiscussion;
         $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
         $businessDomain = $this->businessDataDomain($taskPlan);
         if ($businessDomain !== null && $this->dataAccess !== null && !$this->dataAccess->canReadDomain($user, $organizationId, $businessDomain)) {
@@ -519,7 +546,7 @@ class AIAssistantService
             return $this->answerSectionNavigation($query, $organizationId, $user, $conversation, $requestPayload);
         }
 
-        $agentResult = $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
+        $agentResult = ! $imageDiscussion && $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($agentResult !== null) {
             return $agentResult;
         }
@@ -537,7 +564,9 @@ class AIAssistantService
             $options = [];
             $options['profile'] = 'assistant';
             $options['budget_profile'] = $this->activeProfile;
-            $this->recordUnavailableBusinessTools($taskPlan, $tools);
+            if (! $imageDiscussion) {
+                $this->recordUnavailableBusinessTools($taskPlan, $tools);
+            }
             if (! empty($tools)) {
                 $options['tools'] = $tools;
             }
@@ -852,7 +881,7 @@ class AIAssistantService
             ]);
             $assistantContent = $this->softenUnsupportedCriticalClaims($assistantContent, $ragMetadata);
 
-            $financialCheck = $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults, $rawPresentationPlan, $query);
+            $financialCheck = $imageDiscussion ? null : $this->financialClaims?->guard($plannedPresentation ?? $assistantContent, $verificationToolResults, $rawPresentationPlan, $query);
             if (is_array($financialCheck) && is_string($financialCheck['text'] ?? null)) {
                 $assistantContent = $financialCheck['text'];
             }
@@ -863,7 +892,7 @@ class AIAssistantService
             if ($rejectedFinancialPlan) {
                 $rawPresentationPlan = null;
             }
-            $structuredCheck = $proposedActions === []
+            $structuredCheck = ! $imageDiscussion && $proposedActions === []
                 ? ($rejectedFinancialPlan ? ($financialCheck ?? ['text' => trans_message('ai_assistant_financial.unverified_claim'),
                     'validation_status' => 'partial', 'source_refs' => []])
                     : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $verificationToolResults))
@@ -891,7 +920,7 @@ class AIAssistantService
                     }
                 }
             }
-            $financialIntentSupported = $this->financialAnswers?->supports($query, $clarificationPinnedId) ?? false;
+            $financialIntentSupported = ! $imageDiscussion && ($this->financialAnswers?->supports($query, $clarificationPinnedId) ?? false);
             $stockDomainResolved = false;
             foreach ($rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
                 if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
@@ -1913,6 +1942,9 @@ class AIAssistantService
     ): array|string {
         $this->executionCheckpoint();
         $toolName = (string) ($toolCall['function']['name'] ?? '');
+        if ($taskPlan['image_discussion'] ?? false) {
+            return ['status' => 'blocked_by_request_policy', 'error' => trans_message('ai_assistant.image_discussion_tools_unneeded'), 'tool_name' => $toolName];
+        }
         $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
         if ($toolName === 'get_bim_model_elements' && ! array_key_exists('project_id', $args)) {
@@ -2463,6 +2495,7 @@ class AIAssistantService
         return [
             'last_task_type' => $taskPlan['task_type'],
             'last_capability' => $capabilityId,
+            'last_image_discussion' => (bool) ($taskPlan['image_discussion'] ?? false),
             'last_request' => $taskPlan['request'],
             'last_request_context' => $taskPlan['request']['context'],
             'last_access_context' => $taskPlan['access_context_public'],
@@ -3141,10 +3174,14 @@ class AIAssistantService
             'role' => 'system',
             'content' => $this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.trusted_instruction_boundary'),
         ]];
-        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
-        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.model_tool_selection');
-        $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
-        if ($this->currentAttachmentIds !== []) {
+        if ($taskPlan['image_discussion'] ?? false) {
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_discussion_instructions');
+        } else {
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.model_tool_selection');
+            $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
+        }
+        if ($this->currentAttachmentIds !== [] || ($taskPlan['image_discussion'] ?? false)) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_instruction_boundary');
         }
 
@@ -3155,6 +3192,7 @@ class AIAssistantService
             self::HISTORY_USER_MESSAGE_CHARS,
             self::HISTORY_ASSISTANT_MESSAGE_CHARS,
             $this->activeActor,
+            (bool) ($taskPlan['image_discussion'] ?? false),
         );
         if ($this->documentContextBlocked) {
             $history = array_values(array_filter($history,
@@ -3433,6 +3471,9 @@ class AIAssistantService
     private function buildPreparationMetadata(array $taskPlan, User $actor, int $organizationId): array
     {
         $this->executionCheckpoint();
+        if ($taskPlan['image_discussion'] ?? false) {
+            return ['capability_hints' => [], 'tools' => []];
+        }
         $metadataFrameActive = $this->dataAccess !== null;
         $read = function () use ($taskPlan, $metadataFrameActive): array {
             $previous = $this->preparationMetadataFrameActive;

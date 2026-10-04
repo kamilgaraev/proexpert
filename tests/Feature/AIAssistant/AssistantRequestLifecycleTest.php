@@ -1468,6 +1468,79 @@ final class AssistantRequestLifecycleTest extends TestCase
         $this->assertSame(2, AICreditProviderUsage::query()->count());
     }
 
+    #[DataProvider('imageConversationVersions')]
+    public function test_image_explanation_followup_keeps_history_without_reading_unrelated_estimates(bool $legacyConversation): void
+    {
+        $image = $this->imageFixture();
+        $transcription = 'На фото список замечаний: 1. Нет линии связи до шкафа СКС. 2. Нет счётчиков электроэнергии.';
+        $explanation = 'Вероятно, это замечания к монтажу: не проложена линия связи и не установлены счётчики. СКС обычно означает структурированную кабельную систему.';
+        $provider = $this->createMock(LLMProviderInterface::class);
+        $call = 0;
+        $provider->expects($this->exactly(3))->method('chat')->willReturnCallback(function (array $messages, array $options) use (&$call, $transcription, $explanation): array {
+            $call++;
+            $this->assertEmpty($options['tools'] ?? []);
+            $this->assertStringContainsString(trans_message('ai_assistant.image_discussion_instructions'), $messages[0]['content']);
+            $this->assertStringContainsString(trans_message('ai_assistant.image_instruction_boundary'), $messages[0]['content']);
+            $this->assertStringNotContainsString(trans_message('ai_assistant.tool_first_instructions'), $messages[0]['content']);
+            if ($call === 1) {
+                $this->assertIsArray($messages[array_key_last($messages)]['content']);
+            } else {
+                foreach ($messages as $message) {
+                    $this->assertIsString($message['content']);
+                }
+                $this->assertContains(trans_message('ai_assistant.image_discussion_history', ['text' => $transcription]), array_column($messages, 'content'));
+                $this->assertContains('что это может значить', array_column($messages, 'content'));
+            }
+            return ['content' => $call === 1 ? $transcription : ($call === 2 ? '' : $explanation),
+                'tool_calls' => $call === 2 ? [['id' => 'unrelated_estimate', 'type' => 'function',
+                    'function' => ['name' => 'assistant_domain_read', 'arguments' => '{"domain":"estimates","entity_type":"estimate_item","id":280417}']]] : [],
+                'input_tokens' => $call === 1 ? 3020 : 150, 'output_tokens' => 40, 'tokens_used' => $call === 1 ? 3060 : 190,
+                'provider' => 'test-fixture', 'model' => 'openai/gpt-6-luna', 'provider_usage_available' => true];
+        });
+        $registry = $this->createMock(AIToolRegistry::class);
+        $registry->expects($this->never())->method('getTool');
+        $registry->expects($this->never())->method('getToolsDefinitions');
+        $orchestrator = new \App\BusinessModules\Features\AIAssistant\Services\AssistantTaskOrchestrator(
+            new \App\BusinessModules\Features\AIAssistant\Services\AssistantCapabilityRegistry,
+            $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantAccessContextResolver::class)
+        );
+        $service = $this->providerService($provider, $registry, $orchestrator);
+        $background = ['source_module' => 'estimates', 'entity_refs' => [['type' => 'estimate', 'id' => 19]]];
+        $payload = $this->quote(['message' => 'объясни что здесь написано', 'profile' => 'normal', 'attachment_ids' => [$image->public_id], 'context' => $background]);
+        $first = $service->ask($payload['message'], $this->organization->id, $this->actor, null, $payload);
+        $this->assertSame($transcription, $first['message']['content']);
+        $this->assertSame([], $first['message']['metadata']['missing_data']);
+        $this->assertFalse($first['message']['metadata']['needs_clarification']);
+        $conversation = Conversation::query()->findOrFail($first['conversation_id']);
+        $context = $conversation->context;
+        $this->assertTrue($context['last_image_discussion']);
+        $context['selected_estimate'] = ['estimate_id' => 19];
+        if ($legacyConversation) {
+            unset($context['last_image_discussion']);
+            $this->conversations->addMessage($conversation, 'user', 'поясни', metadata: ['actor_user_id' => $this->actor->id]);
+            $this->conversations->addMessage($conversation, 'assistant', 'Позиция посторонней сметы.');
+        }
+        $conversation->forceFill(['context' => $context])->save();
+        $followup = $this->quote(['message' => 'что это может значить', 'profile' => 'normal', 'context' => $background], conversationId: $first['conversation_id']);
+        $result = $service->ask($followup['message'], $this->organization->id, $this->actor, $first['conversation_id'], $followup);
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame($explanation, $result['message']['content']);
+        $this->assertSame([], $result['message']['metadata']['missing_data']);
+        $this->assertSame([], $result['message']['metadata']['source_refs']);
+        $this->assertFalse($result['message']['metadata']['needs_clarification']);
+        $this->assertSame('unverified', $result['message']['metadata']['validation_status']);
+        $this->assertSame([], $conversation->fresh()->context['last_request_context']['entity_refs']);
+        $this->assertTrue($conversation->fresh()->context['last_image_discussion']);
+        $this->assertSame(3, AICreditProviderUsage::query()->count());
+        $this->assertSame(0, $this->credits->balance($this->organization)['reserved_minor']);
+    }
+
+    public static function imageConversationVersions(): array
+    {
+        return ['new conversation' => [false], 'existing image conversation' => [true]];
+    }
+
     public function test_quoted_images_cannot_be_swapped_and_failed_begin_does_not_bind_or_charge(): void
     {
         $first = $this->imageFixture();
