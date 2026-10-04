@@ -102,6 +102,9 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $invalid = $allowed->replicate()->forceFill(['entity_id' => '0'.$this->visible->id]);
         $invalid->save();
         $this->source($this->organization->id, $this->visible->id, 'project', 'unknown_type', $this->visible->id);
+        for ($index = 0; $index < 9; $index++) {
+            $this->source($this->organization->id, $this->visible->id, 'unmapped-index-'.$index, 'project', $this->visible->id);
+        }
         $read = fn (bool $join) => $this->policy->aggregateSourceIdentities(
             RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $this->actor, $this->organization->id,
             ['ai_rag_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'),
@@ -109,13 +112,22 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         );
         $original = $read(false);
         $optimized = $read(true);
+        $batches = $this->policy->aggregateSourceIdentityBatches(
+            RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $this->actor, $this->organization->id,
+            ['ai_rag_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'),
+        );
+        $this->assertCount(2, $batches);
+        $batchIds = static fn (): array => array_merge(...array_map(static fn ($batch): array => $batch->get()->pluck('id')->all(), $batches));
         $this->assertEqualsCanonicalizing([$allowed->id, $part->id], $original->get()->pluck('id')->all());
         $this->assertEqualsCanonicalizing($original->get()->pluck('id')->all(), $optimized->get()->pluck('id')->all());
+        $this->assertEqualsCanonicalizing([$allowed->id, $part->id], $batchIds());
         $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
         $this->assertSame([], $optimized->get()->pluck('id')->all());
+        $this->assertSame([], $batchIds());
         $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
         $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
         $this->assertSame([], $optimized->get()->pluck('id')->all());
+        $this->assertSame([], $batchIds());
     }
 
     public function test_present_report_identity_keeps_structured_content_scope_checks(): void
