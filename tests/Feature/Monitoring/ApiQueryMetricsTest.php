@@ -44,6 +44,7 @@ final class ApiQueryMetricsTest extends TestCase
         $this->assertSame(2, $captured[0]['sql_count']);
         $this->assertSame(25.0, $captured[0]['sql_total_ms']);
         $this->assertSame(12.5, $captured[0]['sql_max_ms']);
+        $this->assertSame(['other' => ['count' => 2, 'total_ms' => 25.0]], $captured[0]['sql_groups']);
         $this->assertSame(0, $captured[1]['sql_count']);
         $this->assertFalse($request->attributes->has(ApiQueryMetrics::REQUEST_ATTRIBUTE));
         $this->assertStringNotContainsString('secret_value', json_encode($captured));

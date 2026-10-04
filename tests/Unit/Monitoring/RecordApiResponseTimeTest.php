@@ -49,6 +49,35 @@ final class RecordApiResponseTimeTest extends TestCase
         }
     }
 
+    public function test_query_groups_use_fixed_names_and_never_include_sql_or_bindings(): void
+    {
+        $request = Request::create('/api/private', 'GET');
+        $metrics = new ApiQueryMetrics;
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $connection = new \Illuminate\Database\Connection(null);
+        $queries = [
+            'role_conditions' => 'select * from "role_conditions" where private = ?',
+            'contexts' => 'select * from "authorization_contexts" where private = ?',
+            'schema' => 'select private from pg_attribute a',
+            'rag_counts' => 'select count(*) as stored_count from private_table',
+            'rag_sources' => 'select * from "ai_rag_sources" where private = ?',
+            'documents' => 'select * from "files" where private = ?',
+            'settings' => 'SET LOCAL statement_timeout = 123',
+            'other' => 'select private from secret_table',
+        ];
+        foreach ($queries as $sql) {
+            ApiQueryMetrics::recordQuery($request, new \Illuminate\Database\Events\QueryExecuted($sql, ['private token'], 2.5, $connection));
+        }
+        ApiQueryMetrics::recordQuery($request, new \Illuminate\Database\Events\QueryExecuted('private', [], NAN, $connection));
+        $summary = $metrics->summary();
+        self::assertSame(8, $summary['sql_count']);
+        self::assertSame(20.0, $summary['sql_total_ms']);
+        self::assertSame(array_keys($queries), array_keys($summary['sql_groups']));
+        foreach ($summary['sql_groups'] as $group) { self::assertSame(['count' => 1, 'total_ms' => 2.5], $group); }
+        self::assertStringNotContainsString('private', json_encode($summary, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('secret_table', json_encode($summary, JSON_THROW_ON_ERROR));
+    }
+
     protected function tearDown(): void
     {
         Mockery::close();
