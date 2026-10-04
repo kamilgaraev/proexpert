@@ -525,7 +525,9 @@ final class AssistantDataAccessPolicy
                     $batch->where($table.'.entity_type', $entry['entity']);
                     $batchIdentities = array_intersect_key($batchIdentities, [$entry['entity'] => true]);
                 }
-                $batchIdentitySources = $expectedProjection && $joinSourceIds ? (clone $batch)->select([])->toBase() : $identitySources;
+                $batchIdentitySources = $expectedProjection && $joinSourceIds
+                    ? $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($table.'.*'), [], materialize: true)->select([])->toBase()
+                    : $identitySources;
                 $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
                     splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
                 $checkpoint?->__invoke();

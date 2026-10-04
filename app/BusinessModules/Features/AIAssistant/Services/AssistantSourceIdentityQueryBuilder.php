@@ -20,9 +20,10 @@ final class AssistantSourceIdentityQueryBuilder
         $batches = $batchSize === null ? [null] : $this->sourceCountBatches(array_keys($presentTypes), $sourceCounts, $batchSize);
         $planned = [];
         foreach ($batches as $types) {
-            if ($expectedProjection && $types === ['organization_reporting']) {
+            if ($expectedProjection && count($types ?? []) === 1
+                && ($types === ['organization_reporting'] || ($sourceCounts[$types[0]] ?? 0) > self::MAX_SOURCE_BATCH_ROWS)) {
                 foreach ($identities as $entityType => $identity) {
-                    if (isset($identity['organization_reporting'])) { $planned[] = ['types' => $types, 'entity' => $entityType]; }
+                    if (isset($identity[$types[0]])) { $planned[] = ['types' => $types, 'entity' => $entityType]; }
                 }
             } else { $planned[] = ['types' => $types, 'entity' => null]; }
         }

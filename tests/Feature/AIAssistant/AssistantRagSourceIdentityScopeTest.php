@@ -191,6 +191,37 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->assertSame([], $read());
     }
 
+    public function test_large_expected_source_types_keep_parts_and_each_current_native_entity_scope(): void
+    {
+        $this->actor->assignedProjects()->attach($this->hidden->id, ['is_active' => true, 'role' => 'member']);
+        $resource = DB::table('normative_resources')->insertGetId(['code' => 'batch-resource', 'name' => 'Resource', 'type' => 'material']);
+        $balance = DB::table('organization_balances')->insertGetId(['organization_id' => $this->organization->id]);
+        DB::statement("INSERT INTO ai_rag_expected_sources (organization_id, project_id, identity_project_id, generation, source_type, entity_type, entity_id, identity_part_key, checksum, pending_since) "
+            ."SELECT ?, ?, ?, '00000000-0000-4000-8000-000000000001'::uuid, 'core_business_money', 'core_normative_resource', ?::text, n::text, md5('resource'), NOW() FROM generate_series(1, 10001) n",
+            [$this->organization->id, $this->visible->id, $this->visible->id, $resource]);
+        $row = $this->expected($this->organization->id, $this->visible->id, 'core_business_money', 'core_organization_balance', $balance);
+        $row->replicate()->forceFill(['entity_id' => '0'.$balance])->save();
+        $read = function (): array {
+            $batches = $this->policy->aggregateExpectedSourceIdentityBatches(
+                RagExpectedSource::query()->where('generation', '00000000-0000-4000-8000-000000000001'),
+                $this->actor, $this->organization->id, ['ai_rag_expected_sources.id'],
+                static fn ($visible) => DB::query()->fromSub($visible, 'visible')->selectRaw('COUNT(*) AS total'),
+            );
+            $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
+            sort($counts);
+
+            return $counts;
+        };
+        $this->assertSame([1, 10001], $read());
+        $this->deniedModules = ['budget-estimates'];
+        $this->assertSame([0, 1], $read());
+        $this->deniedModules = [];
+        $this->actor->assignedProjects()->updateExistingPivot($this->hidden->id, ['is_active' => false]);
+        $this->assertSame([0, 10001], $read());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        $this->assertSame(0, array_sum($read()));
+    }
+
     private function source(int $organizationId, int $projectId, string $sourceType, string $entityType, int $entityId): RagSource
     {
         return RagSource::withoutEvents(fn (): RagSource => RagSource::create([
