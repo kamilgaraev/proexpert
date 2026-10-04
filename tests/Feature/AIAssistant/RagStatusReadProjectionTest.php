@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Support\Facades\DB;
@@ -170,6 +171,30 @@ final class RagStatusReadProjectionTest extends TestCase
         $this->assertCounters($source->id, 2, 1);
         DB::table('ai_rag_chunks')->where('id', $first)->delete();
         $this->assertCounters($source->id, 1, 0);
+    }
+
+    public function test_index_run_counts_keep_chunk_scope_when_source_and_chunk_scopes_differ(): void
+    {
+        $source = $this->source();
+        $other = $this->source();
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $source->organization_id]));
+        $chunk = $this->chunk($other);
+        DB::table('ai_rag_chunks')->where('id', $chunk)->update([
+            'organization_id' => $source->organization_id, 'project_id' => $project->id,
+        ]);
+        $coordinator = app(RagIndexingCoordinator::class);
+        self::assertSame(['source_count' => 1, 'chunk_count' => 1], $coordinator->countsForScope($source->organization_id));
+        self::assertSame(['source_count' => 1, 'chunk_count' => 1], $coordinator->countsForScope($source->organization_id, null, 'project'));
+        self::assertSame(['source_count' => 0, 'chunk_count' => 1], $coordinator->countsForScope($source->organization_id, $project->id, 'project'));
+        self::assertSame(['source_count' => 1, 'chunk_count' => 0], $coordinator->countsForScope($other->organization_id, null, 'project'));
+        DB::table('ai_rag_sources')->where('id', $other->id)->update(['source_type' => 'estimate']);
+        self::assertSame(['source_count' => 1, 'chunk_count' => 0], $coordinator->countsForScope($source->organization_id, null, 'project'));
+        self::assertSame(['source_count' => 0, 'chunk_count' => 1], $coordinator->countsForScope($source->organization_id, $project->id, 'estimate'));
+        DB::table('ai_rag_chunks')->where('id', $chunk)->update(['source_id' => $source->id, 'project_id' => null]);
+        self::assertSame(['source_count' => 1, 'chunk_count' => 1], $coordinator->countsForScope($source->organization_id, null, 'project'));
+        self::assertSame(['source_count' => 0, 'chunk_count' => 0], $coordinator->countsForScope($source->organization_id, $project->id, 'project'));
+        DB::table('ai_rag_sources')->where('id', $source->id)->delete();
+        self::assertSame(['source_count' => 0, 'chunk_count' => 0], $coordinator->countsForScope($source->organization_id));
     }
 
     private function assertCounters(int $sourceId, int $chunks, int $indexed): void
