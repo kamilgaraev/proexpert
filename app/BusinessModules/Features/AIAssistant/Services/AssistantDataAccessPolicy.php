@@ -207,6 +207,11 @@ final class AssistantDataAccessPolicy
 
     public function canReadReference(User $user, int $organizationId, array $reference): bool
     {
+        return $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, null);
+    }
+
+    private function canReadReferenceWithSourceLookup(User $user, int $organizationId, array $reference, ?callable $sourceLookup): bool
+    {
         if (isset($reference['organization_id']) && (int) $reference['organization_id'] !== $organizationId) { return false; }
         $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'] ?? null;
         $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'] ?? null;
@@ -214,7 +219,7 @@ final class AssistantDataAccessPolicy
         if (! \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::allowsReference($type, $reference)) { return false; }
         if ($this->pendingEntityReads !== null && (isset($reference['projection_name'])
             || in_array($type, ['file', 'assistant_document', 'estimate', 'estimate_item', 'estimate_item_resource', 'live_project_financial_projection', 'published_report_financial_projection'], true))) {
-            return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReference($user, $organizationId, $reference));
+            return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup));
         }
         if ($type === 'live_project_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class)
@@ -225,7 +230,8 @@ final class AssistantDataAccessPolicy
                 ->matchesReference($user, $organizationId, $reference);
         }
         if (isset($reference['source_id'])) {
-            $source = RagSource::query()->where('organization_id', $organizationId)->find($reference['source_id']);
+            $source = $sourceLookup === null ? RagSource::query()->where('organization_id', $organizationId)->find($reference['source_id'])
+                : $sourceLookup($reference['source_id']);
             if ($source === null || $source->entity_type !== $type || (string) $source->entity_id !== (string) $id
                 || ! $this->canReadSource($user, $organizationId, $source->toArray())) { return false; }
         }
@@ -286,6 +292,8 @@ final class AssistantDataAccessPolicy
     public function canReadReferenceSets(User $user, int $organizationId, array $referenceSets): array
     {
         $previous = $this->pendingEntityReads;
+        $sourceBatch = AssistantReferenceSourceBatch::load($organizationId, $referenceSets, $this->currentCheckpoint);
+        $sourceLookup = $sourceBatch->lookup(...);
         $decisions = [];
         $requirements = [];
         $entities = [];
@@ -295,7 +303,7 @@ final class AssistantDataAccessPolicy
                 $decisions[$key] = is_array($references);
                 if (! $decisions[$key]) { continue; }
                 foreach ($references as $reference) {
-                    if (! is_array($reference) || ! $this->canReadReference($user, $organizationId, $reference)) {
+                    if (! is_array($reference) || ! $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup)) {
                         $decisions[$key] = false;
                         break;
                     }
@@ -322,6 +330,18 @@ final class AssistantDataAccessPolicy
                     if (array_diff_key($ids, $allowed[$type]) !== []) { $decisions[$key] = false; break; }
                 }
             }
+            $invalidSources = $sourceBatch->invalidIds();
+            foreach ($referenceSets as $key => $references) {
+                if (! ($decisions[$key] ?? false)) { continue; }
+                foreach ($references as $reference) {
+                    $id = AssistantReferenceSourceBatch::sourceId($reference);
+                    if ($id !== null && array_key_exists((string) $id, $invalidSources)) {
+                        $decisions[$key] = false;
+                        break;
+                    }
+                }
+            }
+
             return $decisions;
         } finally {
             $this->pendingEntityReads = $previous;
