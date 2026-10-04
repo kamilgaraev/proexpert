@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\DomainMetadata;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -21,7 +22,7 @@ final class AssistantMergedDomainGraphTest extends TestCase
             DomainMetadata\AssistantCoreBusinessMetadata::class];
         $policy = (new ReflectionClass(AssistantDataAccessPolicy::class))->newInstanceWithoutConstructor();
         $entities = (new ReflectionMethod(AssistantDataAccessPolicy::class, 'entities'))->invoke($policy);
-        $parents = (new ReflectionClass(AssistantDataAccessPolicy::class))->getConstant('SECURITY_PARENT_COLUMNS');
+        $parents = AssistantEntityAccessCatalog::parentColumns();
         $owners = [];
         foreach ($helpers as $helper) {
             foreach ($helper::entityDefinitions() as $type => $definition) {
@@ -31,7 +32,7 @@ final class AssistantMergedDomainGraphTest extends TestCase
             }
             $parents = array_replace($parents, $helper::parentColumns());
         }
-        foreach ((new ReflectionClass(AssistantDataAccessPolicy::class))->getConstant('PARENTS') as $type => $definition) {
+        foreach (AssistantEntityAccessCatalog::intrinsicParents() as $type => $definition) {
             $parents[$type]['intrinsic_parent'] = ['type' => $definition[1]];
         }
         $unknown = [];
