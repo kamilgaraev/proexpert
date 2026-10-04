@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\Authorization;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Module;
+use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
@@ -50,6 +52,45 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $this->assertTrue($authorization->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
         $this->assertFalse(app(AuthorizationService::class)->forCurrentChecks(true)->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
         $this->assertTrue(app(AuthorizationService::class)->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+    }
+
+    public function test_current_role_slugs_reuse_permission_reads_and_refresh_after_revocation(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $context = ['organization_id' => (int) $fixture->organization->id];
+        $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+        $this->assertTrue($authorization->canCurrent($fixture->member, 'ai_assistant.chat', $context));
+        $connection = DB::connection();
+        $connection->enableQueryLog();
+        $connection->flushQueryLog();
+
+        try {
+            $this->assertSame([$fixture->memberRole->slug], $authorization->getUserRoleSlugs($fixture->member, $context));
+            $this->assertSame([$fixture->memberRole->slug], $authorization->getUserRoleSlugs($fixture->member, $context));
+            $this->assertSame([], $connection->getQueryLog());
+        } finally {
+            $connection->disableQueryLog();
+            $connection->flushQueryLog();
+        }
+
+        $fixture->memberAssignment->update(['is_active' => false]);
+
+        $this->assertSame([$fixture->memberRole->slug], $authorization->getUserRoleSlugs($fixture->member, $context));
+        $this->assertSame([], app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoleSlugs($fixture->member, $context));
+    }
+
+    public function test_current_role_slugs_fail_closed_without_creating_an_organization_context(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $organization = Organization::withoutEvents(fn () => Organization::factory()->verified()->create());
+        $context = ['organization_id' => (int) $organization->id];
+        $contextCount = AuthorizationContext::query()->count();
+        $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+
+        $this->assertFalse(AuthorizationContext::query()->where('type', 'organization')->where('resource_id', $organization->id)->exists());
+        $this->assertSame([], $authorization->getUserRoleSlugs($fixture->member, $context));
+        $this->assertSame([], $authorization->getUserRoleSlugs($fixture->member, $context));
+        $this->assertSame($contextCount, AuthorizationContext::query()->count());
     }
 
     public function test_current_scopes_ignore_stale_shared_decisions_and_do_not_publish_them(): void
