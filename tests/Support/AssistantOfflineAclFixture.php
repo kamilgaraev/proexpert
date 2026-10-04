@@ -24,6 +24,7 @@ final class AssistantOfflineAclFixture
             {
                 $this->fake++;
                 if (str_contains($q,'authorization_contexts')) { return []; }
+                if (str_contains($q, ' AS permission_key') && str_contains($q, '"knowledge_articles"')) { return []; }
                 if (str_contains($q,'candidate_reports.candidate_refs')) {
                     return array_map(static fn (string $type): object => (object) ['entity_type' => $type], array_keys(P::entityDefinitions()));
                 }

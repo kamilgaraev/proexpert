@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
-use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantNativeDocumentRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantOperationsNativeFileAdapter;
@@ -48,7 +48,7 @@ final class AssistantNativeDocumentRegistryTest extends TestCase
     {
         $schedule = array_values(array_filter(AssistantDomainCatalog::defaults(), static fn ($definition): bool => $definition->domain === 'schedule'))[0];
         self::assertSame(['schedule.view'], $schedule->permissions);
-        $gates = (new ReflectionClass(AssistantDataAccessPolicy::class))->getConstant('DOMAINS');
+        $gates = AssistantEntityAccessCatalog::domainGates();
         self::assertSame(['schedule-management', ['schedule.view']], $gates['schedule']);
     }
 }
