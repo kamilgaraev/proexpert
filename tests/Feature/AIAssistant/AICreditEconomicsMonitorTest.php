@@ -13,12 +13,56 @@ use App\Models\Credits\AICreditProviderUsage;
 use App\Models\OrganizationCommercialAccount;
 use App\Services\Credits\AICreditEconomicsMonitor;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class AICreditEconomicsMonitorTest extends TestCase
 {
+    public function test_bounded_legacy_reads_preserve_costs_deduplication_and_period_across_pages(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $now = CarbonImmutable::now();
+        $rows = [];
+        for ($index = 0; $index < 1005; $index++) {
+            $rows[] = ['organization_id' => $fixture->organization->id, 'provider' => 'openai',
+                'model' => 'embedding', 'operation' => 'rag_index', 'currency' => 'RUB',
+                'total_cost_rub' => '0.000001', 'occurred_at' => $now,
+                'metadata' => json_encode(['usage_key' => 'paged-call-'.$index, 'cost_available' => true])];
+        }
+        $excluded = $rows[0];
+        $excluded['operation'] = 'estimate_generation_dialogue';
+        $excluded['total_cost_rub'] = '50.000000';
+        $outside = $rows[0];
+        $outside['occurred_at'] = $now->subDay();
+        $outside['metadata'] = '{}';
+        DB::table('ai_usage_records')->insert([...$rows, $excluded, $outside]);
+        AICreditProviderUsage::query()->create([
+            'organization_id' => $fixture->organization->id, 'usage_key' => 'paged-call-1002',
+            'provider' => 'openai', 'model' => 'embedding', 'operation' => 'rag_index',
+            'cost_micro_rub' => 4, 'is_successful' => true, 'occurred_at' => $now,
+            'metadata' => ['cost_available' => true],
+        ]);
+        $monitor = app(AICreditEconomicsMonitor::class);
+        $expected = $monitor->evaluate(DB::table('ai_credit_provider_usages')->orderBy('id')->get(),
+            DB::table('ai_usage_records')->where('occurred_at', '>=', $now->subMinute())
+                ->where('occurred_at', '<', $now->addMinute())->orderBy('id')->get(), [], []);
+        $queries = [];
+        DB::listen(static function ($event) use (&$queries): void {
+            if (str_contains($event->sql, 'from "ai_usage_records"')) { $queries[] = $event->sql; }
+        });
+
+        $report = $monitor->report($now->subMinute(), $now->addMinute());
+
+        foreach ($expected as $key => $value) { self::assertSame($value, $report[$key], $key); }
+        self::assertSame(1008, $report['external_cost_micro_rub']);
+        self::assertSame(1, $report['deduplicated_usage_count']);
+        self::assertSame(1, $report['excluded_estimate_generation_count']);
+        self::assertCount(2, $queries);
+        foreach ($queries as $sql) { self::assertStringContainsString('limit 1000', $sql); }
+    }
+
     public function test_database_report_uses_immutable_paid_grant_time_and_deduplicates_provider_usage(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();
