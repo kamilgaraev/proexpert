@@ -23,7 +23,7 @@ final class AICreditEconomicsMonitor
                 ->orderBy('id')->cursor();
             $legacy = DB::table('ai_usage_records')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)
                 ->select(['id', 'organization_id', 'provider', 'model', 'operation', 'total_cost_rub', 'currency', 'metadata'])
-                ->orderBy('id')->cursor();
+                ->lazyById(1000);
             $settlements = DB::table('ai_credit_lots')->whereIn('source', ['purchase', 'subscription'])->whereNotNull('commercial_order_id')
                 ->select('commercial_order_id')->selectRaw('MIN(created_at) AS settled_at')->groupBy('commercial_order_id');
             $hasAllocation = Schema::hasColumn('commercial_orders', 'assistant_revenue_allocation');
