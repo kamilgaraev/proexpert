@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Services\Monitoring\TracingService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Database\Events\QueryExecuted;
@@ -29,6 +30,11 @@ final class TracingServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $tracing = $this->app->make(TracingService::class);
+        DB::listen(static function (QueryExecuted $event): void {
+            if (app()->bound('request')) {
+                ApiQueryMetrics::record(app('request'), (float) $event->time);
+            }
+        });
         if (config('monitoring.tracing_enabled') && $tracing->supportsSpans()) {
             DB::listen(static fn (QueryExecuted $event) => $tracing->recordSql($event));
             Event::listen(CommandExecuted::class, static fn (CommandExecuted $event) => $tracing->recordRedis($event));
