@@ -53,7 +53,7 @@ abstract class SalesBusinessRagSource implements RagSourceCollectorInterface
 
     public static function scopedQuery(string $type, int $organizationId, ?int $projectId = null, bool $skipSelf = false, array $seen = []): Builder
     {
-        $scopes = $type === 'purchase_receipt_return' && $seen === [] ? [] : null;
+        $scopes = in_array($type, ['purchase_receipt_return', 'supply_lifecycle_event', 'procurement_process_event'], true) && $seen === [] ? [] : null;
         $query = self::buildScopedQuery($type, $organizationId, $projectId, $skipSelf, $seen, $scopes);
         if ($scopes === null || $scopes === []) {
             return $query;

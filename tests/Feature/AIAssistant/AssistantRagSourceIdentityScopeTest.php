@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Mockery;
 use Tests\TestCase;
 
@@ -88,6 +89,33 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->expected($this->organization->id, $this->visible->id, 'project', 'unknown_type', $this->visible->id);
         $this->assertSame([$allowed->id], $this->policy->applyToExpectedSources(RagExpectedSource::query(), $this->actor, $this->organization->id)
             ->pluck('id')->all());
+    }
+
+    public function test_source_id_aggregate_preserves_parts_exact_ids_and_current_scope(): void
+    {
+        $allowed = $this->source($this->organization->id, $this->visible->id, 'project', 'project', $this->visible->id);
+        $part = $allowed->replicate()->forceFill(['identity_part_key' => 'second-part']);
+        $part->save();
+        $shadow = $allowed->replicate()->forceFill(['project_id' => $this->hidden->id, 'identity_part_key' => 'hidden-project']);
+        $shadow->save();
+        $this->source($this->organization->id, $this->visible->id, 'project', 'project', 999999);
+        $invalid = $allowed->replicate()->forceFill(['entity_id' => '0'.$this->visible->id]);
+        $invalid->save();
+        $this->source($this->organization->id, $this->visible->id, 'project', 'unknown_type', $this->visible->id);
+        $read = fn (bool $join) => $this->policy->aggregateSourceIdentities(
+            RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $this->actor, $this->organization->id,
+            ['ai_rag_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'),
+            joinSourceIds: $join,
+        );
+        $original = $read(false);
+        $optimized = $read(true);
+        $this->assertEqualsCanonicalizing([$allowed->id, $part->id], $original->get()->pluck('id')->all());
+        $this->assertEqualsCanonicalizing($original->get()->pluck('id')->all(), $optimized->get()->pluck('id')->all());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        $this->assertSame([], $optimized->get()->pluck('id')->all());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+        $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+        $this->assertSame([], $optimized->get()->pluck('id')->all());
     }
 
     public function test_present_report_identity_keeps_structured_content_scope_checks(): void

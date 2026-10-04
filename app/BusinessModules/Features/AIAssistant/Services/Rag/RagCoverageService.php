@@ -70,7 +70,7 @@ final class RagCoverageService
                 ->groupBy('accessible_sources.source_type')
                 ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(SUM(accessible_chunks.chunk_count), 0) AS chunk_count, COUNT(accessible_indexed_sources.source_id) AS indexed_count');
             $scoped = $policy->aggregateSourceIdentities($sources, $actor, $organizationId,
-                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'], $aggregate, $checkpoint);
+                ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id'], $aggregate, $checkpoint, joinSourceIds: true);
             if ($scoped !== null) {
                 if ($checkpoint !== null) { $checkpoint(); }
                 $progress?->__invoke('source_counts');

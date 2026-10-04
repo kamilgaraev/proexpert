@@ -236,6 +236,15 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertSame($expected, $source->scopedQuery('approved_estimate_resource_price', 2)->lazyById(50)->pluck('id')->all());
         self::assertSame([], $source->scopedQuery('approved_estimate_resource_price', 0)->get()->all());
         self::assertSame([], $source->scopedQuery('approved_estimate_resource_price', 1, 1)->get()->all());
+        $models = (new \ReflectionMethod($source, 'priceModels'))->invoke($source, 1, null);
+        $actual = collect(iterator_to_array($models, false))->pluck('id')->all();
+        self::assertEqualsCanonicalizing($expected, $actual);
+        self::assertCount(count($expected), array_unique($actual));
+        self::assertSame([], iterator_to_array((new \ReflectionMethod($source, 'priceModels'))->invoke($source, 0, null)));
+        self::assertSame([], iterator_to_array((new \ReflectionMethod($source, 'priceModels'))->invoke($source, 1, 1)));
+        DB::table('estimate_regional_price_activations')->where('active_version_id', $versions['active'])->delete();
+        $afterRevocation = collect(iterator_to_array((new \ReflectionMethod($source, 'priceModels'))->invoke($source, 1, null), false))->pluck('id')->all();
+        self::assertEqualsCanonicalizing(array_slice($expected, 0, 65), $afterRevocation);
     }
 
     public function test_saved_report_is_private_to_current_owner_before_limit_and_after_role_revoke(): void

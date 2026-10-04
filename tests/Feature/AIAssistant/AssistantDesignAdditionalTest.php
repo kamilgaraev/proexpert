@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\DesignAddition
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
+use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSet;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSetRevision;
 use App\BusinessModules\Features\DesignManagement\Models\DesignNormativeSource;
@@ -111,6 +112,43 @@ final class AssistantDesignAdditionalTest extends TestCase
         $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'], 'design-management' => ['design-management.normative_catalog.view']]]);
         $fixture->subscription->update(['status' => 'expired', 'current_period_end_at' => now()->subSecond()]);
         self::assertFalse($policy->canReadEntity($fixture->member, $fixture->organization->id, 'design_normative_source', $normative->id));
+    }
+
+    public function test_ifc_parent_project_and_derivative_version_must_match_current_rows(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $otherProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $package = $this->package($fixture->organization->id, $project->id);
+        $artifact = DesignArtifact::withoutEvents(fn () => DesignArtifact::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'package_id' => $package->id, 'title' => 'Модель', 'artifact_type' => 'model',
+        ]));
+        $version = DesignArtifactVersion::withoutEvents(fn () => DesignArtifactVersion::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id, 'artifact_id' => $artifact->id,
+            'title' => 'Версия', 'version_number' => '1', 'source_file_path' => 'private.ifc',
+            'source_original_name' => 'model.ifc', 'source_mime_type' => 'application/octet-stream', 'source_size_bytes' => 1,
+        ]));
+        $otherVersion = $version->replicate()->forceFill(['version_number' => '2']);
+        $otherVersion->save();
+        $derivative = DesignModelDerivative::withoutEvents(fn () => DesignModelDerivative::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id, 'version_id' => $version->id,
+        ]));
+        $element = DesignIfcModelElement::withoutEvents(fn () => DesignIfcModelElement::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'version_id' => $version->id, 'derivative_id' => $derivative->id, 'express_id' => 123,
+        ]));
+        $policy = app(AssistantDataAccessPolicy::class);
+        $visible = fn () => $policy->canReadEntity($fixture->owner, $fixture->organization->id, 'design_ifc_model_element', $element->id);
+        self::assertTrue($visible());
+        $derivative->updateQuietly(['version_id' => $otherVersion->id]);
+        self::assertFalse($visible());
+        $derivative->updateQuietly(['version_id' => $version->id, 'project_id' => $otherProject->id]);
+        self::assertFalse($visible());
+        $element->updateQuietly(['derivative_id' => null]);
+        self::assertTrue($visible());
+        $version->updateQuietly(['project_id' => $otherProject->id]);
+        self::assertFalse($visible());
     }
 
     public function test_template_without_normative_source_is_readable_but_archived_parent_and_current_permission_remain_closed(): void
