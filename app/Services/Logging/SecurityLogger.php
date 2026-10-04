@@ -32,6 +32,9 @@ class SecurityLogger
      */
     public function log(string $event, array $context = [], string $level = 'warning'): void
     {
+        if (! in_array(strtolower($level), ['critical', 'error', 'warning'], true)) {
+            return;
+        }
         $securityEntry = $this->createSecurityEntry($event, $context, $level);
         
         // Логировать с соответствующим уровнем

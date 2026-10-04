@@ -152,6 +152,38 @@ final class RagLifecycleTest extends TestCase
         $this->assertNotNull(RagSource::query()->firstOrFail()->last_reconciled_at);
     }
 
+    public function test_pruning_loads_ids_and_preserves_a_source_refreshed_after_candidate_selection(): void
+    {
+        $organization = Organization::factory()->create();
+        $otherOrganization = Organization::factory()->create();
+        $collector = new LifecycleCollector();
+        $registry = new RagSourceRegistry([$collector]);
+        $indexer = new RagIndexer(new LifecycleEmbedding(), $registry);
+        $indexer->indexChunk($this->chunk($organization->id, 1));
+        $indexer->indexChunk($this->chunk($organization->id, 2));
+        $indexer->indexChunk($this->chunk($otherOrganization->id, 1));
+        $refreshed = RagSource::query()->where('organization_id', $organization->id)->where('entity_id', '1')->firstOrFail();
+        $selected = false;
+        $candidateQueries = [];
+        DB::listen(static function ($event) use (&$selected, &$candidateQueries): void {
+            if (str_contains($event->sql, 'from "ai_rag_sources"') && str_contains($event->sql, 'limit 100')) {
+                $candidateQueries[] = $event->sql;
+                $selected = true;
+            }
+        });
+        $indexer->indexOrganization($organization->id, null, 'estimate', static function () use (&$selected, $refreshed): void {
+            if ($selected) {
+                $selected = false;
+                RagSource::query()->whereKey($refreshed->id)->update(['last_reconciled_at' => now()->addSecond()]);
+            }
+        });
+        self::assertCount(1, $candidateQueries);
+        self::assertStringStartsWith('select "id" from "ai_rag_sources"', $candidateQueries[0]);
+        self::assertSame(1, RagSource::query()->where('organization_id', $organization->id)->count());
+        self::assertSame(1, $refreshed->fresh()->chunks()->count());
+        self::assertSame(1, RagSource::query()->where('organization_id', $otherOrganization->id)->count());
+    }
+
     public function test_expired_lease_requeues_entity_and_old_worker_cannot_heartbeat_or_complete(): void
     {
         Queue::fake();

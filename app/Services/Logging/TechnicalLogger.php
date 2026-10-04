@@ -31,6 +31,9 @@ class TechnicalLogger
      */
     public function log(string $event, array $context = [], string $level = 'info'): void
     {
+        if (! in_array(strtolower($level), ['critical', 'error', 'warning', 'debug'], true)) {
+            return;
+        }
         $technicalEntry = $this->createTechnicalEntry($event, $context, $level);
         
         match(strtolower($level)) {
