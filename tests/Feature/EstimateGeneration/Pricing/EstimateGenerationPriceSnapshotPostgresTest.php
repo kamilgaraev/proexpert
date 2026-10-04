@@ -165,6 +165,7 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends EstimateGenerati
 
     public function test_database_builds_deterministic_price_snapshot_and_protects_every_trust_input(): void
     {
+        self::assertNotNull(DB::scalar("SELECT to_regprocedure('public.eg_regional_price_retention_eligible(bigint,integer,integer)')"));
 
         DB::beginTransaction();
         try {

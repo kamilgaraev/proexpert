@@ -268,10 +268,15 @@ class FgiscsBuildingResourcePriceUpdateService
             $files['building-resources-split-form.xlsx'] = fn () => $this->client->downloadBuildingResourcesSplitForm((int) $priceZone->fgiscs_price_zone_id, (int) $period->fgiscs_period_id);
         }
 
-        foreach ($files as $fileName => $download) {
-            $fileKey = $prefix.$fileName;
-            $this->report($progress, 'download_started', ['file' => $fileKey]);
-            $downloads[$fileKey] = $download();
+        try {
+            foreach ($files as $fileName => $download) {
+                $fileKey = $prefix.$fileName;
+                $this->report($progress, 'download_started', ['file' => $fileKey]);
+                $downloads[$fileKey] = $download();
+            }
+        } catch (Throwable $exception) {
+            $this->recordImportFailure($regionalVersion, $datasetVersion, (int) $datasetVersion->rows_read, 1);
+            throw $exception;
         }
 
         $regionalVersion->update([

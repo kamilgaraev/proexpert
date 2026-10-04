@@ -297,6 +297,7 @@ class AIAssistantServiceProvider extends ServiceProvider
             $this->commands([
                 BackfillRagIndexCommand::class,
                 \App\BusinessModules\Features\AIAssistant\Console\Commands\RecoverRagIndexRunsCommand::class,
+                \App\BusinessModules\Features\AIAssistant\Console\Commands\PruneRagProjectionsCommand::class,
                 \App\BusinessModules\Features\AIAssistant\Console\Commands\PurgeAssistantRetentionCommand::class,
                 \App\BusinessModules\Features\AIAssistant\Console\Commands\ExpireAssistantRequestsCommand::class,
                 \App\BusinessModules\Features\AIAssistant\Console\Commands\ScanAssistantDocumentsCommand::class,

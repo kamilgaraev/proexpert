@@ -130,6 +130,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Cl
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\QualityEstimateNormativesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\PruneRegionalPriceCatalogsCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsBuildingResourcePricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
@@ -966,6 +967,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,
                 QualityEstimateNormativesCommand::class,
+                PruneRegionalPriceCatalogsCommand::class,
                 SyncFgiscsRegionalPricesCommand::class,
                 SyncFgiscsBuildingResourcePricesCommand::class,
                 RollbackRegionalPricePeriodCommand::class,

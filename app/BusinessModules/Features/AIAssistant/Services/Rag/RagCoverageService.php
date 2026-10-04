@@ -284,17 +284,41 @@ final class RagCoverageService
                 throw new RuntimeException('rag_coverage_projection_expired');
             }
         };
+        $generation = null;
         try {
             $snapshot = $expectedCacheKey === null ? null : Cache::get($cacheKey);
             if ($expectedCacheKey !== null && ($cacheKey !== $this->key($organizationId, $projectId, $sourceType)
                 || (is_array($snapshot) && ($snapshot['eligible_count_known'] ?? false) === true))) {
                 return $this->coverage($organizationId, $projectId, $sourceType);
             }
+            if ($projectId === null && $sourceType === null) {
+                ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->pruneWhileLocked($organizationId, 100000, min($deadline, microtime(true) + 5));
+                $guard();
+            }
             $generation = $projectId === null && $sourceType === null ? (string) Str::uuid() : null;
 
             return $this->buildCoverageSnapshot($organizationId, $projectId, $sourceType, $generation, $guard);
+        } catch (RuntimeException $exception) {
+            if ($exception->getMessage() !== 'rag_coverage_projection_expired') {
+                throw $exception;
+            }
+            Log::info('ai_assistant.rag.coverage_aborted', ['organization_id' => $organizationId, 'reason' => 'rag_coverage_projection_expired']);
+
+            return $this->coverage($organizationId, $projectId, $sourceType);
         } finally {
-            $lease->release();
+            try {
+                if ($generation !== null) {
+                    $published = Cache::get($cacheKey);
+                    if ($cacheKey !== $this->key($organizationId, $projectId, $sourceType)
+                        || ! is_array($published) || ($published['projection_generation'] ?? null) !== $generation) {
+                        ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->discard($organizationId, $generation);
+                    }
+                }
+            } catch (Throwable $exception) {
+                Log::warning('ai_assistant.rag.projection_discard_failed', ['organization_id' => $organizationId, 'exception_class' => $exception::class]);
+            } finally {
+                $lease->release();
+            }
         }
     }
 
@@ -318,7 +342,13 @@ final class RagCoverageService
             $storedForType = RagSource::query()->where('organization_id', $organizationId)->where('source_type', $type)
                 ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $projectId))->count();
             try {
+                if ($guard !== null) {
+                    $guard();
+                }
                 foreach ($collector->collectForOrganization($organizationId, $projectId) as $chunk) {
+                    if ($guard !== null && $batch === []) {
+                        $guard();
+                    }
                     $eligible++;
                     $batch[] = $chunk;
                     if (count($batch) === 100) {
@@ -338,6 +368,9 @@ final class RagCoverageService
                     }
                 }
             } catch (Throwable $exception) {
+                if ($exception instanceof RuntimeException && $exception->getMessage() === 'rag_coverage_projection_expired') {
+                    throw $exception;
+                }
                 $known = false;
                 $error = 'collector_failed';
                 Log::warning('ai_assistant.rag.coverage_failed', ['organization_id' => $organizationId, 'source_type' => $type, 'exception_class' => $exception::class]);
@@ -377,15 +410,8 @@ final class RagCoverageService
         }
         if ($generation !== null && $snapshot['eligible_count_known']) {
             if ($guard !== null) {
-                try {
-                    $guard();
-                    $snapshot['projection_generation'] = $generation;
-                } catch (Throwable) {
-                    $snapshot['eligible_count_known'] = false;
-                    $snapshot['coverage_complete'] = false;
-                    $snapshot['expected_source_count'] = null;
-                    $snapshot['pending_source_count'] = null;
-                }
+                $guard();
+                $snapshot['projection_generation'] = $generation;
             }
         }
         unset($snapshot['processing'], $snapshot['lag_seconds'], $snapshot['lag_exceeded']);

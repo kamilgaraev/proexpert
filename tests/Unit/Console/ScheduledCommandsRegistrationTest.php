@@ -21,6 +21,24 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
         }
     }
 
+    public function test_failed_jobs_are_pruned_daily_after_45_days_on_one_scheduler(): void
+    {
+        $schedule = $this->scheduleSource();
+        $command = "Schedule::command('queue:prune-failed --hours=1080')";
+
+        $this->assertTrue(
+            str_contains($schedule, $command),
+            'Failed jobs retention schedule is missing.',
+        );
+        $position = strpos($schedule, $command);
+
+        $this->assertIsInt($position);
+        $block = substr($schedule, $position, 300);
+        $this->assertStringContainsString('->daily()', $block);
+        $this->assertStringContainsString('->withoutOverlapping(', $block);
+        $this->assertStringContainsString('->onOneServer()', $block);
+    }
+
     public function test_all_regions_resource_prices_are_scheduled_after_all_regions_worker_prices(): void
     {
         $schedule = $this->scheduleSource();
