@@ -329,6 +329,7 @@ class RagIndexer
         ?callable $guard = null
     ): void {
         RagSource::query()
+            ->select('id')
             ->where('organization_id', $organizationId)
             ->where('source_type', $sourceType)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
