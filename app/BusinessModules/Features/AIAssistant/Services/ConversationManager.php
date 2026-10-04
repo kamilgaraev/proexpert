@@ -280,12 +280,24 @@ class ConversationManager
         return $this->getMessagesForContextWithBudget($conversation, $limit, actor: $actor);
     }
 
-    public function getMessagesForContextWithBudget(Conversation $conversation, int $limit = 6, int $maxTotalChars = 4000, int $maxUserMessageChars = 4000, int $maxAssistantMessageChars = 900, ?User $actor = null): array
+    public function getMessagesForContextWithBudget(Conversation $conversation, int $limit = 6, int $maxTotalChars = 4000, int $maxUserMessageChars = 4000, int $maxAssistantMessageChars = 900, ?User $actor = null, bool $includeImageDiscussion = false): array
     {
         $prepared = [];
         $used = 0;
-        foreach ($this->getHistory($conversation, $limit, $actor)->reverse() as $message) {
-            $content = $this->contextContent($message, $actor, (int) $conversation->organization_id);
+        $history = $this->getHistory($conversation, $limit, $actor);
+        $imageDiscussionMessages = [];
+        if ($includeImageDiscussion && $actor && (int) $conversation->user_id === (int) $actor->id) {
+            $imageDiscussion = false;
+            foreach ($history as $message) {
+                if ($message->role === 'user') {
+                    $imageDiscussion = AssistantImageDiscussionPolicy::isDiscussion($message->content, ! empty($message->metadata['attachments']), $imageDiscussion);
+                } elseif ($message->role === 'assistant' && $imageDiscussion) {
+                    $imageDiscussionMessages[$message->id] = true;
+                }
+            }
+        }
+        foreach ($history->reverse() as $message) {
+            $content = $this->contextContent($message, $actor, (int) $conversation->organization_id, isset($imageDiscussionMessages[$message->id]));
             $remaining = $maxTotalChars - $used;
             if ($remaining <= 0) {
                 break;
@@ -385,7 +397,7 @@ class ConversationManager
         return $refs;
     }
 
-    private function contextContent(Message $message, ?User $actor, int $organizationId): string
+    private function contextContent(Message $message, ?User $actor, int $organizationId, bool $imageDiscussion = false): string
     {
         if ($message->role === 'user') {
             return $this->normalize((string) $message->content);
@@ -395,6 +407,9 @@ class ConversationManager
             return '';
         }
         $refs = $this->messageReferences($meta);
+        if ($imageDiscussion && $message->role === 'assistant' && $actor && $refs === []) {
+            return trans_message('ai_assistant.image_discussion_history', ['text' => $this->normalize((string) $message->content)]);
+        }
         if ($message->role !== 'assistant' || ! $actor || ($meta['validation_status'] ?? null) !== 'verified' || $refs === null || $refs === [] || ! $this->references->fresh($actor, $organizationId, $refs)) {
             return '';
         }

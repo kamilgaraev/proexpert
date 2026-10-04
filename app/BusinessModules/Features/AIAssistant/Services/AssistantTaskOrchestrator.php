@@ -27,14 +27,15 @@ class AssistantTaskOrchestrator
     public function plan(string $query, array $requestPayload, array $accessContext): array
     {
         $request = $this->normalizeRequest($query, $requestPayload);
+        $imageDiscussion = ($requestPayload['image_discussion'] ?? false) === true;
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query,
             is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : $request['context']);
-        $taskType = $this->resolveTaskType($request, $requestUnderstanding);
-        $capability = $this->capabilityRegistry->match($query, $request['context'], $request['goal']);
+        $taskType = $imageDiscussion ? 'analyze' : $this->resolveTaskType($request, $requestUnderstanding);
+        $capability = $imageDiscussion ? null : $this->capabilityRegistry->match($query, $request['context'], $request['goal']);
         $navigationTarget = $this->resolveNavigationTarget($capability, $request['context']);
         $nextActions = $this->buildNextActions($capability, $accessContext, $request, $navigationTarget, $requestUnderstanding);
-        $accessLimits = $this->buildAccessLimits($capability, $accessContext, $request, $nextActions);
-        $sectionNavigation = in_array('section_navigation', array_column($requestUnderstanding->evidence, 'type'), true)
+        $accessLimits = $imageDiscussion ? [] : $this->buildAccessLimits($capability, $accessContext, $request, $nextActions);
+        $sectionNavigation = ! $imageDiscussion && in_array('section_navigation', array_column($requestUnderstanding->evidence, 'type'), true)
             && empty($requestPayload['attachment_ids'])
             && in_array($request['goal'], [null, '', 'navigate'], true)
             && in_array($request['desired_mode'], [null, '', 'navigate'], true);
@@ -48,6 +49,7 @@ class AssistantTaskOrchestrator
             'request' => $request,
             'request_understanding' => $requestUnderstanding->toArray(),
             'task_type' => $taskType,
+            'image_discussion' => $imageDiscussion,
             'section_navigation' => $sectionNavigation,
             'capability' => $capability,
             'navigation_target' => $navigationTarget,
@@ -409,7 +411,7 @@ class AssistantTaskOrchestrator
     {
         $missingData = [];
 
-        if (empty($plan['capability'])) {
+        if (empty($plan['capability']) && ! ($plan['image_discussion'] ?? false)) {
             $missingData[] = 'Ассистент не смог однозначно определить домен запроса по текущему контексту.';
         }
 
