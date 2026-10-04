@@ -243,6 +243,14 @@ final class AssistantOrganizationReportingMetadata
             if ($id !== null) { yield ['regional_price_version_id' => null, 'dataset_version_id' => $id]; }
         }
     }
+
+    public static function publishedDatasetIds(): \Generator
+    {
+        foreach (self::publishedDatasetQueries() as $dataset) {
+            $id = $dataset->value('id');
+            if ($id !== null) { yield (int) $id; }
+        }
+    }
     public static function applyActorScope(string $type, \Illuminate\Database\Eloquent\Builder $query, \App\Models\User $actor, int $organizationId,
         \App\Domain\Authorization\Services\AuthorizationService $authorization, \App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy $policy): void
     {

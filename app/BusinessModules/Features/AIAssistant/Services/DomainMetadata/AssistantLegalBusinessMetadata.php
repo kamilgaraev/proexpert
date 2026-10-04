@@ -151,7 +151,7 @@ final class AssistantLegalBusinessMetadata
     {
         $table = $query->getModel()->getTable();
         if ($type === 'legal_document') {
-            (new LegalDocumentAccessService($authorization->forCurrentChecks()))->scopeAccessibleQuery($query, $actor, $organizationId, 'view');
+            (new LegalDocumentAccessService($authorization))->scopeAccessibleQuery($query, $actor, $organizationId, 'view');
             $projects = $policy->entityQuery($actor,$organizationId,'project');
             $query->where(static function (Builder $project) use ($projects,$table): void {
                 $project->whereNull($table.'.primary_project_id');
@@ -171,7 +171,7 @@ final class AssistantLegalBusinessMetadata
                             ->where('legal_archive_documents.responsible_user_id', $actor->id)->where($table.'.visibility', 'author_and_responsible');
                     });
                 if ($authorization->canCurrent($actor, 'legal_archive.workflow.approve', ['organization_id' => $organizationId])) {
-                    $documents = (new LegalDocumentAccessService($authorization->forCurrentChecks()))->scopeAccessibleQuery(
+                    $documents = (new LegalDocumentAccessService($authorization))->scopeAccessibleQuery(
                         \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument::query(), $actor, $organizationId, 'approve');
                     $audience->orWhere(static fn (Builder $blocking): Builder => $blocking->where($table.'.is_blocking', true)
                         ->whereIn($table.'.document_id', $documents->select('legal_archive_documents.id')));
