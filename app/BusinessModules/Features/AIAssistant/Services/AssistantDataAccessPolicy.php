@@ -92,6 +92,7 @@ final class AssistantDataAccessPolicy
     private ?array $batchIdentity = null;
     private array $batchDecisions = [];
     private array $batchEntityQueries = [];
+    private ?array $pendingEntityReads = null;
     private ?\Closure $currentCheckpoint = null;
 
     public function withCurrentChecks(User $actor, int $organizationId, callable $operation, bool $fresh = false, ?callable $checkpoint = null): mixed
@@ -108,16 +109,17 @@ final class AssistantDataAccessPolicy
         }
         if ($this->aclCompiler !== null) { throw new \LogicException('assistant_authorization_batch_during_query_compilation'); }
         $authorization = $this->authorization->forCurrentChecks(true);
-        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint];
+        $previous = [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint, $this->pendingEntityReads];
         $this->batchIdentity = $identity;
         $this->batchAuthorization = $authorization;
         $this->batchDecisions = [];
         $this->batchEntityQueries = [];
+        $this->pendingEntityReads = null;
         if ($checkpoint !== null) { $this->currentCheckpoint = \Closure::fromCallable($checkpoint); }
         try {
             return $operation($this->batchAuthorization);
         } finally {
-            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint] = $previous;
+            [$this->batchIdentity, $this->batchAuthorization, $this->batchDecisions, $this->batchEntityQueries, $this->currentCheckpoint, $this->pendingEntityReads] = $previous;
             if ($this->batchIdentity !== null) {
                 $this->batchAuthorization = $this->authorization->forCurrentChecks(true);
                 $this->batchDecisions = [];
@@ -182,6 +184,9 @@ final class AssistantDataAccessPolicy
 
     public function canReadEntity(User $user, int $organizationId, string $type, string|int $id): bool
     {
+        if ($this->pendingEntityReads !== null && in_array($type, ['file', 'assistant_document'], true)) {
+            return $this->withoutPendingEntityReads(fn (): bool => $this->canReadEntity($user, $organizationId, $type, $id));
+        }
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return false;
         }
@@ -221,6 +226,7 @@ final class AssistantDataAccessPolicy
             $type = $this->entityTypeForModel((string) $file->fileable_type);
             return $type !== null && $this->canReadEntityContent($user, $organizationId, $type, (string) $file->fileable_id);
         }
+        if ($this->deferEntityRead($user, $organizationId, $type, $id)) { return true; }
         $query = $this->entityQuery($user, $organizationId, $type);
         return $query !== null && $query->whereKey($id)->exists();
     }
@@ -228,8 +234,8 @@ final class AssistantDataAccessPolicy
     public function canReadEntityContent(User $user, int $organizationId, string $type, string|int $id): bool
     {
         if (in_array($type, \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileMetadata::types(), true)) {
-            return app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileAdapter::class)
-                ->canReadNativeContent($user, $organizationId, $type, $id);
+            return $this->withoutPendingEntityReads(fn (): bool => app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantLegalNativeFileAdapter::class)
+                ->canReadNativeContent($user, $organizationId, $type, $id));
         }
         $definition = $this->entities()[$type] ?? null;
         return $definition !== null && $this->canReadIndexedType($user, $organizationId, $definition[0])
@@ -243,6 +249,10 @@ final class AssistantDataAccessPolicy
         $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'] ?? null;
         if (! is_string($type) || (! is_string($id) && ! is_int($id))) { return false; }
         if (! \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::allowsReference($type, $reference)) { return false; }
+        if ($this->pendingEntityReads !== null && (isset($reference['projection_name'])
+            || in_array($type, ['file', 'assistant_document', 'estimate', 'estimate_item', 'estimate_item_resource', 'live_project_financial_projection', 'published_report_financial_projection'], true))) {
+            return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReference($user, $organizationId, $reference));
+        }
         if ($type === 'live_project_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class)
                 ->matchesReference($user, $organizationId, $reference);
@@ -283,6 +293,55 @@ final class AssistantDataAccessPolicy
         }
         return in_array($type, ['assistant_document', 'file'], true) ? $this->canReadEntity($user, $organizationId, $type, $id)
             : $this->canReadEntityContent($user, $organizationId, $type, $id);
+    }
+
+    public function canReadReferences(User $user, int $organizationId, array $references): bool
+    {
+        $previous = $this->pendingEntityReads;
+        $this->pendingEntityReads = ['actor_id' => (int) $user->id, 'organization_id' => $organizationId, 'entities' => []];
+        try {
+            foreach ($references as $reference) {
+                if (! is_array($reference) || ! $this->canReadReference($user, $organizationId, $reference)) { return false; }
+            }
+            $entities = $this->pendingEntityReads['entities'];
+            $this->pendingEntityReads = null;
+            foreach ($entities as $type => $ids) {
+                $query = $this->entityQuery($user, $organizationId, $type);
+                if ($query === null) { return false; }
+                foreach (array_chunk(array_keys($ids), 250) as $batch) {
+                    $this->currentCheckpoint?->__invoke();
+                    $allowed = (clone $query)->whereKey($batch)->pluck($query->getModel()->getQualifiedKeyName())->all();
+                    if (count(array_unique($allowed)) !== count($batch)) { return false; }
+                }
+            }
+            return true;
+        } finally {
+            $this->pendingEntityReads = $previous;
+        }
+    }
+
+    private function deferEntityRead(User $user, int $organizationId, string $type, string|int $id): bool
+    {
+        if ($this->pendingEntityReads === null || $this->aclCompiler !== null
+            || $this->pendingEntityReads['actor_id'] !== (int) $user->id || $this->pendingEntityReads['organization_id'] !== $organizationId) { return false; }
+        $key = (string) $id;
+        if (preg_match('/^[1-9][0-9]{0,18}$/D', $key) !== 1
+            || strlen($key) === 19 && strcmp($key, '9223372036854775807') > 0) { return false; }
+        $model = $this->entities()[$type][1] ?? null;
+        if ($model === null || (new $model)->getKeyType() !== 'int') { return false; }
+        $this->pendingEntityReads['entities'][$type][$key] = true;
+        return true;
+    }
+
+    private function withoutPendingEntityReads(callable $read): bool
+    {
+        $previous = $this->pendingEntityReads;
+        $this->pendingEntityReads = null;
+        try {
+            return $read();
+        } finally {
+            $this->pendingEntityReads = $previous;
+        }
     }
 
     public function assertCanReadEntity(User $user, int $organizationId, string $type, string|int $id): void

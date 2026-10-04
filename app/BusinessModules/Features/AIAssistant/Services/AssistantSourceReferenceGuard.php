@@ -19,7 +19,7 @@ class AssistantSourceReferenceGuard
     public function canRead(User $actor, int $organizationId, array $references, bool $fresh = true): bool
     {
         return $this->policy->withCurrentChecks($actor, $organizationId,
-            fn (): bool => $this->canReadCurrent($actor, $organizationId, $references), $fresh);
+            fn (): bool => $this->policy->canReadReferences($actor, $organizationId, $references), $fresh);
     }
 
     private function canReadCurrent(User $actor, int $organizationId, array $references): bool
