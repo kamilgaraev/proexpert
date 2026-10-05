@@ -162,7 +162,7 @@ final class AssistantApiContractTest extends TestCase
 
     public function test_chat_always_queues_all_prefixes_and_replays_duplicate_submit_without_resolving_provider_or_tools(): void
     {
-        Queue::fake([ExecuteAssistantChatJob::class]);
+        $queue = Queue::fake([ExecuteAssistantChatJob::class]);
         $conversation = app(ConversationManager::class)->createConversation($this->organization->id, $this->actor, 'История для API');
         $resolutions = ['provider' => 0, 'tools' => 0];
         $this->app->bind(AIAssistantService::class, function () use (&$resolutions): never {
@@ -192,7 +192,7 @@ final class AssistantApiContractTest extends TestCase
             }
         }
         Queue::assertPushed(ExecuteAssistantChatJob::class, 18);
-        $this->assertCount(9, Queue::pushed(ExecuteAssistantChatJob::class)->pluck('assistantRequestId')->unique());
+        $this->assertCount(9, $queue->pushed(ExecuteAssistantChatJob::class)->pluck('assistantRequestId')->unique());
         $this->assertSame(9, \App\BusinessModules\Features\AIAssistant\Models\AssistantRequest::query()
             ->where('organization_id', $this->organization->id)->count());
         $this->assertSame(['provider' => 0, 'tools' => 0], $resolutions);
@@ -268,6 +268,35 @@ final class AssistantApiContractTest extends TestCase
                 ->assertJsonPath('data.request_id', $payload['request_id'])->assertJsonPath('data.stage', 'queued');
         }
         Queue::assertPushed(ExecuteAssistantChatJob::class, 3);
+    }
+
+    public function test_conversation_and_usage_gates_are_bounded_and_recheck_current_access(): void
+    {
+        $checker = new CountingAssistantPermissionChecker;
+        $this->app->instance(AIPermissionChecker::class, $checker);
+        $context = $this->app->make(AssistantApiFixtureContext::class);
+        foreach (self::PREFIXES as $prefix) {
+            $checker->resetCalls();
+            $this->postJson($prefix.'/conversations', ['title' => 'Быстрый доступ'])->assertCreated()->assertJsonPath('success', true);
+            $this->assertSame(2, $checker->calls);
+            $checker->resetCalls();
+            $this->getJson($prefix.'/conversations?per_page=1&page=1')->assertOk()->assertJsonPath('meta.per_page', 1);
+            $this->assertSame(3, $checker->calls);
+            $checker->resetCalls();
+            $this->getJson($prefix.'/usage')->assertOk()->assertJsonPath('success', true);
+            $this->assertSame(1, $checker->calls);
+        }
+        foreach (['organization', 'module', 'permission', 'membership'] as $denial) {
+            $context->organizationId = $denial === 'organization' ? $this->organization->id + 100 : $this->organization->id;
+            $this->moduleEnabled = $denial !== 'module';
+            $this->permissionGranted = $denial !== 'permission';
+            DB::table('organization_user')->where('user_id', $this->actor->id)->update(['is_active' => $denial !== 'membership']);
+            foreach (self::PREFIXES as $prefix) {
+                $this->getJson($prefix.'/conversations')->assertForbidden()->assertJsonPath('data', null);
+                $this->postJson($prefix.'/conversations', ['title' => 'Запрещено'])->assertForbidden()->assertJsonPath('data', null);
+                $this->getJson($prefix.'/usage')->assertForbidden()->assertJsonPath('data', null);
+            }
+        }
     }
 
     public function test_numeric_conversation_ids_private_visibility_and_pagination_envelopes(): void
