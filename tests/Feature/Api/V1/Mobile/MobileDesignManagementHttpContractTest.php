@@ -213,7 +213,8 @@ final class MobileDesignManagementHttpContractTest extends TestCase
         DB::table('project_user')->where('user_id', $foreign->user->id)->update(['is_active' => false]);
         $this->withHeaders($foreign->mobileAuthHeaders())->getJson($this->base().'/model-versions/'.$foreignVersion->id.'/elements')->assertNotFound();
         $this->withHeaders($context->mobileAuthHeaders())->getJson($this->base().'/model-versions/'.$version->id.'/elements/71')
-            ->assertOk()->assertJsonPath('data.express_id', 71);
+            ->assertOk()->assertJsonPath('data.express_id', 71)->assertJsonPath('data.display.locale', 'ru')
+            ->assertJsonPath('data.display.schema_version', 1);
     }
 
     public function test_offline_manifest_refreshes_signed_urls_without_changing_exact_generation(): void
@@ -238,7 +239,11 @@ final class MobileDesignManagementHttpContractTest extends TestCase
         $headers = $context->mobileAuthHeaders();
         $path = $this->base().'/model-versions/'.$version->id.'/offline-package';
         $first = $this->withHeaders($headers)->getJson($path)->assertOk()->assertJsonPath('data.generation', $generation)
-            ->assertJsonPath('data.available_actions.1.key', 'create_issue');
+            ->assertJsonPath('data.available_actions.1.key', 'create_issue')
+            ->assertJsonPath('data.localization.locale', 'ru')
+            ->assertJsonPath('data.localization.labels.topelevation', 'Верхняя отметка')
+            ->assertJsonPath('data.localization.categories.ifcbeam', 'Балка')
+            ->assertJsonPath('data.properties.sha256', hash('sha256', '{"express_id":71}'));
         $second = $this->withHeaders($headers)->getJson($path)->assertOk()->assertJsonPath('data.generation', $generation);
         self::assertNotSame($first->json('data.geometry.url'), $second->json('data.geometry.url'));
         self::assertSame($first->json('data.geometry.sha256'), $second->json('data.geometry.sha256'));

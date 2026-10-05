@@ -18,6 +18,7 @@ final readonly class DesignModelOfflinePackageService
     public function __construct(
         private DesignModelSessionAccessService $access,
         private FileService $files,
+        private DesignBimLocalizationService $localization,
     ) {
     }
 
@@ -91,6 +92,7 @@ final readonly class DesignModelOfflinePackageService
             'runtime' => $metadata['runtime'],
             'geometry' => $geometry,
             'properties' => $properties,
+            'localization' => $this->localization->dictionary(),
             'expires_at' => now()->addMinutes(60)->toIso8601String(),
         ];
     }

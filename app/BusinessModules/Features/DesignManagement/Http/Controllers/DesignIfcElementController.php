@@ -41,7 +41,7 @@ final class DesignIfcElementController extends Controller
             );
 
             return AdminResponse::success([
-                'data' => $paginator->getCollection()->map(fn ($item) => $this->elements->payload($item))->values(),
+                'data' => $paginator->getCollection()->map(fn ($item) => $this->elements->payload($item, false))->values(),
                 'pagination' => ['current_page' => $paginator->currentPage(), 'per_page' => $paginator->perPage(), 'total' => $paginator->total(), 'last_page' => $paginator->lastPage()],
             ]);
         } catch (ValidationException $exception) {
