@@ -190,7 +190,7 @@ class AuthorizationService
         return $this->rememberArray($cacheKey, 300, function () use ($user, $context) {
             $query = $user->roleAssignments()
                 ->active()
-                ->with(['context.parentContext', 'customRole']);
+                ->with('customRole');
             
             if ($context) {
                 $contextIds = $this->getContextHierarchy($context)->pluck('id');
@@ -214,8 +214,35 @@ class AuthorizationService
                 $query->whereIn('context_id', $contextIds);
             }
             
-            return $query->get();
+            return $this->loadRoleContexts($query->get(), $query->getModel()->getConnectionName());
         });
+    }
+
+    private function loadRoleContexts(Collection $roles, ?string $connection): Collection
+    {
+        $ids = $roles->pluck('context_id')->filter(static fn ($id): bool => $id !== null)->unique()->values()->all();
+        $contexts = $ids === [] ? collect() : AuthorizationContext::on($connection)
+            ->whereIn('id', $ids)
+            ->orWhereIn('id', AuthorizationContext::on($connection)->select('parent_context_id')->whereIn('id', $ids))
+            ->get()->keyBy('id');
+
+        foreach ($ids as $id) {
+            $context = $contexts->get($id);
+            if ($context instanceof AuthorizationContext) {
+                $parent = $contexts->get($context->parent_context_id);
+                $parent = $parent instanceof AuthorizationContext ? clone $parent : null;
+                $parent?->unsetRelation('parentContext');
+                $context->setRelation('parentContext', $parent);
+            }
+        }
+        foreach ($roles as $role) {
+            $customRole = $role->getRelation('customRole');
+            $role->unsetRelation('customRole');
+            $role->setRelation('context', $contexts->get($role->context_id));
+            $role->setRelation('customRole', $customRole);
+        }
+
+        return $roles;
     }
 
     /**
