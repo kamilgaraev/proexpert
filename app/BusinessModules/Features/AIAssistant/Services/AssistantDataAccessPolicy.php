@@ -218,7 +218,7 @@ final class AssistantDataAccessPolicy
         if (! is_string($type) || (! is_string($id) && ! is_int($id))) { return false; }
         if (! \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::allowsReference($type, $reference)) { return false; }
         if ($this->pendingEntityReads !== null && (isset($reference['projection_name'])
-            || in_array($type, ['file', 'assistant_document', 'estimate', 'estimate_item', 'estimate_item_resource', 'live_project_financial_projection', 'published_report_financial_projection'], true))) {
+            || in_array($type, ['file', 'assistant_document', 'live_project_financial_projection', 'published_report_financial_projection'], true))) {
             return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup));
         }
         if ($type === 'live_project_financial_projection') {
@@ -240,8 +240,8 @@ final class AssistantDataAccessPolicy
                 ->canReadReference($user, $organizationId, $reference);
         }
         if (in_array($type, ['estimate', 'estimate_item', 'estimate_item_resource'], true)
-            && ! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class)
-                ->canReadReference($user, $organizationId, $reference)) {
+            && ! $this->withoutPendingEntityReads(fn (): bool => app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class)
+                ->canReadReference($user, $organizationId, $reference))) {
             return false;
         }
         if (($reference['content_scope'] ?? null) === 'structured') {

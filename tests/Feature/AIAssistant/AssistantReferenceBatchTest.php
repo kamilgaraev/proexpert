@@ -10,6 +10,9 @@ use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\EstimateItemResource;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
@@ -290,6 +293,112 @@ final class AssistantReferenceBatchTest extends TestCase
             self::assertSame([true, false], $decisions);
             $this->duringPermission = null;
         }
+    }
+
+    public function test_estimate_native_checks_are_batched_without_skipping_financial_constraints(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        [$estimate, $item, $resource, $refs] = $this->estimateReferences();
+        $sets = [];
+        for ($index = 0; $index < 10; $index++) {
+            foreach ($refs as $type => $reference) { $sets[$type.$index] = [$reference]; }
+        }
+        $sets['wrong_project'] = [array_replace($refs['estimate'], ['project_id' => $this->project(false)->id])];
+        $sets['wrong_parent'] = [array_replace($refs['item'], ['parent_work_id' => $item->id])];
+        $sets['wrong_representation'] = [array_replace($refs['resource'], ['finance_representation' => 'represented_by_item'])];
+        DB::enableQueryLog();
+        try {
+            $decisions = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
+                fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, $sets), fresh: true);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame(array_fill_keys(array_keys($sets), true), array_replace($decisions,
+            ['wrong_project' => true, 'wrong_parent' => true, 'wrong_representation' => true]));
+        self::assertFalse($decisions['wrong_project']);
+        self::assertFalse($decisions['wrong_parent']);
+        self::assertFalse($decisions['wrong_representation']);
+        $nativeExists = array_filter($queries, static fn (array $query): bool => str_starts_with($query['query'], 'select exists(')
+            && preg_match('/from "(?:estimates|estimate_items|estimate_item_resources)"/', $query['query']) === 1);
+        self::assertCount(0, $nativeExists);
+        $nativeBatches = array_filter($queries, static fn (array $query): bool => preg_match('/^select "(?:estimates|estimate_items|estimate_item_resources)"\.(?:"id"|\*) from /', $query['query']) === 1);
+        self::assertCount(3, $nativeBatches);
+        $this->policy->withCurrentChecks($this->actor, $this->organization->id, function () use ($estimate, $item, $resource, $refs): void {
+            $read = fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, array_map(static fn (array $ref): array => [$ref], $refs));
+            self::assertSame(['estimate' => true, 'item' => true, 'resource' => true], $read());
+            $this->actor->assignedProjects()->updateExistingPivot($estimate->project_id, ['is_active' => false]);
+            self::assertSame(['estimate' => false, 'item' => false, 'resource' => false], $read());
+            $this->actor->assignedProjects()->updateExistingPivot($estimate->project_id, ['is_active' => true]);
+            self::assertSame(['estimate' => true, 'item' => true, 'resource' => true], $read());
+            $item->delete();
+            $resource->update(['finance_representation' => 'represented_by_item']);
+            self::assertSame(['estimate' => true, 'item' => false, 'resource' => false], $read());
+        }, fresh: true);
+    }
+
+    public function test_later_reference_callback_cannot_leave_an_earlier_deleted_estimate_visible(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        [$estimate, , , $refs] = $this->estimateReferences();
+        $project = Project::query()->findOrFail($estimate->project_id);
+        $this->duringPermission = static function (string $permission) use ($estimate): void {
+            if ($permission === 'probe.delete-earlier-estimate') { $estimate->delete(); }
+        };
+        $later = $this->reference($project) + ['content_scope' => 'structured', 'checked_fields' => ['name'],
+            'required_permissions' => ['probe.delete-earlier-estimate'], 'required_domains' => ['projects']];
+        $decisions = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
+            fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id,
+                ['estimate' => [$refs['estimate']], 'later' => [$later]]), fresh: true);
+        self::assertSame(['estimate' => false, 'later' => true], $decisions);
+    }
+
+    public function test_estimate_financial_helper_still_receives_live_native_checks(): void
+    {
+        $hidden = $this->project(false);
+        $observed = null;
+        $reader = new class(function () use ($hidden, &$observed): bool {
+            return $observed = $this->policy->canReadEntity($this->actor, $this->organization->id, 'project', $hidden->id);
+        }) {
+            public function __construct(private \Closure $read) {}
+
+            public function canReadReference(User $actor, int $organizationId, array $reference): bool
+            {
+                return ($this->read)();
+            }
+        };
+        $this->app->instance(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class, $reader);
+        self::assertFalse($this->guard->canRead($this->actor, $this->organization->id,
+            [['entity_type' => 'estimate', 'entity_id' => 1]]));
+        self::assertFalse($observed);
+    }
+
+    private function estimateReferences(): array
+    {
+        $project = $this->project(true);
+        $estimate = Estimate::withoutEvents(fn () => Estimate::query()->create(['organization_id' => $this->organization->id,
+            'project_id' => $project->id, 'number' => 'BATCH-01', 'name' => 'Reference batch', 'estimate_date' => '2026-10-05']));
+        $parent = EstimateItem::withoutEvents(fn () => EstimateItem::query()->create(['estimate_id' => $estimate->id,
+            'position_number' => '1', 'name' => 'Parent work', 'item_type' => 'work', 'quantity' => 1,
+            'quantity_total' => 1, 'unit_price' => 1, 'total_amount' => 1]));
+        $item = EstimateItem::withoutEvents(fn () => EstimateItem::query()->create(['estimate_id' => $estimate->id,
+            'parent_work_id' => $parent->id, 'position_number' => '1.1', 'name' => 'Child', 'item_type' => 'material',
+            'quantity' => 1, 'quantity_total' => 1, 'unit_price' => 1, 'total_amount' => 1]));
+        $resource = EstimateItemResource::withoutEvents(fn () => EstimateItemResource::query()->create(['estimate_item_id' => $parent->id,
+            'resource_type' => 'labor', 'name' => 'Resource', 'quantity_per_unit' => 1, 'total_quantity' => 1,
+            'unit_price' => 1, 'total_amount' => 1, 'finance_representation' => 'independent', 'represented_by_item_id' => null]));
+        $common = ['organization_id' => $this->organization->id, 'project_id' => $project->id, 'estimate_id' => $estimate->id,
+            'content_scope' => 'structured', 'checked_fields' => ['name'], 'required_permissions' => ['budget-estimates.finance.view'],
+            'required_domains' => ['estimates']];
+
+        return [$estimate, $item, $resource, [
+            'estimate' => $common + ['entity_type' => 'estimate', 'entity_id' => $estimate->id],
+            'item' => $common + ['entity_type' => 'estimate_item', 'entity_id' => $item->id, 'estimate_item_id' => $item->id,
+                'parent_work_id' => $parent->id, 'composition_scope' => 'resources'],
+            'resource' => $common + ['entity_type' => 'estimate_item_resource', 'entity_id' => $resource->id,
+                'estimate_item_id' => $parent->id, 'composition_scope' => 'resources', 'finance_representation' => 'independent'],
+        ]];
     }
 
     private function project(bool $assigned): Project
