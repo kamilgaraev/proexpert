@@ -117,6 +117,45 @@ final class RagProjectionRetentionTest extends TestCase
         $this->assertFalse(Cache::has('ai-rag-coverage-discard-generations:'.$organization->id));
     }
 
+    public function test_discard_pages_through_a_generation_and_resumes_after_its_row_budget(): void
+    {
+        $organization = Organization::factory()->create();
+        $generation = (string) Str::uuid();
+        $this->rows($organization->id, $generation, 1010, now());
+        $deleteBatchSizes = [];
+        DB::listen(static function ($event) use (&$deleteBatchSizes): void {
+            if (str_starts_with(strtolower($event->sql), 'delete') && str_contains($event->sql, 'ai_rag_expected_sources')) {
+                $deleteBatchSizes[] = count($event->bindings) - 1;
+            }
+        });
+
+        $this->assertSame(1005, $this->projection()->discard($organization->id, $generation, 1005));
+        $this->assertSame([1000, 5], $deleteBatchSizes);
+        $this->assertSame(5, RagExpectedSource::query()->where('generation', $generation)->count());
+        $this->assertSame(5, $this->projection()->discard($organization->id, $generation));
+        $this->assertSame(0, RagExpectedSource::query()->where('generation', $generation)->count());
+    }
+
+    public function test_discard_keeps_neighbor_uuid_generations_and_identical_foreign_identities(): void
+    {
+        $organization = Organization::factory()->create();
+        $foreign = Organization::factory()->create();
+        $previous = 'a0000000-0000-0000-0000-000000000001';
+        $target = 'a0000000-0000-0000-0000-000000000002';
+        $next = 'a0000000-0000-0000-0000-000000000003';
+        foreach ([$previous, $target, $next] as $generation) {
+            $this->rows($organization->id, $generation, 3, now());
+        }
+        $this->rows($foreign->id, $target, 3, now());
+
+        $this->assertSame(1, $this->projection()->discard($organization->id, $target, 1));
+        $this->assertSame(2, $this->projection()->discard($organization->id, $target));
+        $this->assertSame(0, RagExpectedSource::query()->where('organization_id', $organization->id)->where('generation', $target)->count());
+        $this->assertSame(3, RagExpectedSource::query()->where('generation', $previous)->count());
+        $this->assertSame(3, RagExpectedSource::query()->where('generation', $next)->count());
+        $this->assertSame(3, RagExpectedSource::query()->where('organization_id', $foreign->id)->where('generation', $target)->count());
+    }
+
     public function test_discard_does_not_mark_or_delete_the_cached_active_generation(): void
     {
         $organization = Organization::factory()->create();

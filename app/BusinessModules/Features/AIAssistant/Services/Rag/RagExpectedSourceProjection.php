@@ -137,8 +137,9 @@ final class RagExpectedSourceProjection
         $pending = (array) Cache::get($key, []);
         $pending[$generation] = true;
         Cache::put($key, $pending, now()->addDays(2));
-        $query = RagExpectedSource::query()->where('organization_id', $organizationId)->where('generation', $generation);
-        $cursorColumns = ['identity_project_id', 'source_type', 'entity_type', 'entity_id', 'identity_part_key'];
+        $query = RagExpectedSource::query()->where('organization_id', $organizationId)
+            ->where('generation', '>=', $generation)->where('generation', '<=', $generation);
+        $cursorColumns = ['generation', 'identity_project_id', 'source_type', 'entity_type', 'entity_id', 'identity_part_key'];
         foreach ($cursorColumns as $column) {
             $query->orderBy($column);
         }
