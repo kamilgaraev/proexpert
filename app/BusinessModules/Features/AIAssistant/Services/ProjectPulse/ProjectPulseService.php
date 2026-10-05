@@ -26,7 +26,9 @@ class ProjectPulseService
     public function current(ProjectPulseContext $context): ?array
     {
         $actor = $this->actor($context->organizationId, $context->userId, $context->projectId);
-        $existing = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $context->organizationId, 'project_pulse_report')
+        $query = app(AssistantDataAccessPolicy::class)->entityQuery($actor, $context->organizationId, 'project_pulse_report');
+        if ($query === null) { throw new AccessDeniedHttpException(); }
+        $existing = $query
             ->forOrganization($context->organizationId)
             ->forProject($context->projectId)
             ->whereDate('report_date', $context->date->toDateString())
@@ -166,11 +168,16 @@ class ProjectPulseService
     {
         $actor = $userId === null ? null : User::find($userId);
         $policy = app(AssistantDataAccessPolicy::class);
-        if ($actor === null || ! $policy->canReadDomain($actor, $organizationId, 'reports') || ! $policy->canReadDomain($actor, $organizationId, 'finance')
-            || ($projectId !== null && ! $policy->canReadEntity($actor, $organizationId, 'project', $projectId))) {
-            throw new AccessDeniedHttpException();
-        }
-        return $actor;
+        if ($actor === null) { throw new AccessDeniedHttpException(); }
+
+        return $policy->withCurrentChecks($actor, $organizationId, function () use ($actor, $policy, $organizationId, $projectId): User {
+            if (! $policy->canReadDomain($actor, $organizationId, 'reports') || ! $policy->canReadDomain($actor, $organizationId, 'finance')
+                || ($projectId !== null && ! $policy->canReadEntity($actor, $organizationId, 'project', $projectId))) {
+                throw new AccessDeniedHttpException();
+            }
+
+            return $actor;
+        }, fresh: true);
     }
 
 }

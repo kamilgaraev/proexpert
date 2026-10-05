@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Auth\Access\AuthorizationException;
 use RuntimeException;
 
 class ConversationManager
@@ -101,9 +102,9 @@ class ConversationManager
         return $conversation && (! $write || $this->canEdit($conversation, $actor)) ? $conversation : null;
     }
 
-    public function queryVisibleConversations(User $actor, int $organizationId): Builder
+    public function queryVisibleConversations(User $actor, int $organizationId, bool $failWhenDenied = false): Builder
     {
-        return $this->visibleQuery($actor, $organizationId)->with(['user', 'participants', 'lastMessage'])->withCount('messages')->orderByDesc('last_activity_at')->orderByDesc('id');
+        return $this->visibleQuery($actor, $organizationId, $failWhenDenied)->with(['user', 'participants', 'lastMessage'])->withCount('messages')->orderByDesc('last_activity_at')->orderByDesc('id');
     }
 
     public function getHistory(Conversation $conversation, int $limit = 10, ?User $actor = null): Collection
@@ -352,10 +353,11 @@ class ConversationManager
         return $actor ? $this->findAccessibleConversation($conversationId, $actor, $organizationId) : null;
     }
 
-    private function visibleQuery(User $actor, int $organizationId): Builder
+    private function visibleQuery(User $actor, int $organizationId, bool $failWhenDenied = false): Builder
     {
         $query = Conversation::query()->forOrganization($organizationId);
         if (! $actor->is_active || (int) $actor->current_organization_id !== $organizationId || ! $actor->belongsToOrganization($organizationId) || ! app(AIPermissionChecker::class)->canUseAssistant($actor, $organizationId)) {
+            if ($failWhenDenied) { throw new AuthorizationException; }
             return $query->whereRaw('1 = 0');
         }
 

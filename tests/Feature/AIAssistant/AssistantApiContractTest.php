@@ -281,7 +281,7 @@ final class AssistantApiContractTest extends TestCase
             $this->assertSame(2, $checker->calls);
             $checker->resetCalls();
             $this->getJson($prefix.'/conversations?per_page=1&page=1')->assertOk()->assertJsonPath('meta.per_page', 1);
-            $this->assertSame(3, $checker->calls);
+            $this->assertSame(2, $checker->calls);
             $checker->resetCalls();
             $this->getJson($prefix.'/usage')->assertOk()->assertJsonPath('success', true);
             $this->assertSame(1, $checker->calls);
