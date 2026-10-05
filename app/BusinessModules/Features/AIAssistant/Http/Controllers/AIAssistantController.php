@@ -16,7 +16,6 @@ use App\BusinessModules\Features\AIAssistant\Http\Requests\StoreAssistantConvers
 use App\BusinessModules\Features\AIAssistant\Http\Resources\ConversationResource;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\MessageResource;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
-use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionProposalService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantActionService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
@@ -46,7 +45,6 @@ final class AIAssistantController extends AbstractAssistantApiController
         private readonly QueuedAssistantChatService $queuedChats,
         private readonly ConversationManager $conversations,
         private readonly UsageTracker $usage,
-        private readonly AIPermissionChecker $permissions,
     ) {}
 
     public function chat(AssistantChatRequest $request): JsonResponse
@@ -78,7 +76,6 @@ final class AIAssistantController extends AbstractAssistantApiController
     public function conversations(AssistantPaginationRequest $request): JsonResponse
     {
         return $this->respond($request, function () use ($request): JsonResponse {
-            $this->assertAssistant($request);
             $page = $this->conversations->queryVisibleConversations($this->actor($request), $this->organizationId($request))
                 ->paginate($request->integer('per_page', 30), ['*'], 'page', $request->integer('page', 1));
             return $this->success($request, ConversationResource::collection($page->getCollection()), 200, $this->pagination($page));
@@ -88,7 +85,6 @@ final class AIAssistantController extends AbstractAssistantApiController
     public function createConversation(StoreAssistantConversationRequest $request): JsonResponse
     {
         return $this->respond($request, function () use ($request): JsonResponse {
-            $this->assertAssistant($request);
             $conversation = $this->conversations->createConversation($this->organizationId($request), $this->actor($request), $request->validated('title'));
             $conversation->load('participants');
             return $this->success($request, new ConversationResource($conversation), 201);
@@ -157,14 +153,12 @@ final class AIAssistantController extends AbstractAssistantApiController
     public function usage(Request $request): JsonResponse
     {
         return $this->respond($request, function () use ($request): JsonResponse {
-            $this->assertAssistant($request);
             return $this->success($request, $this->usage->getUsageStats($this->organizationId($request)));
         });
     }
 
     private function accessibleConversation(Request $request, int $id, bool $write = false): Conversation
     {
-        $this->assertAssistant($request);
         $conversation = $this->conversations->findAccessibleConversation($id, $this->actor($request), $this->organizationId($request), $write);
         if ($conversation === null) {
             throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found'));
@@ -176,13 +170,6 @@ final class AIAssistantController extends AbstractAssistantApiController
     private function surface(Request $request): string
     {
         return $request->is('api/v1/admin/*') ? 'admin' : ($request->is('api/v1/mobile/*') ? 'mobile' : 'lk');
-    }
-
-    private function assertAssistant(Request $request): void
-    {
-        if (!$this->permissions->canUseAssistant($this->actor($request), $this->organizationId($request))) {
-            throw new AuthorizationException(trans_message('ai_assistant.access_denied'));
-        }
     }
 
     private function pagination(LengthAwarePaginator $page): array
