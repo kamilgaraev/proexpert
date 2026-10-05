@@ -78,7 +78,9 @@ class JwtAuthService
                 throw new \RuntimeException('Authenticated principal is not a user.');
             }
 
-            return DB::transaction(function () use ($authenticatedUser, $loginDTO, $guard): array {
+            $validatedPasswordHash = (string) $authenticatedUser->getAuthPassword();
+
+            return DB::transaction(function () use ($authenticatedUser, $validatedPasswordHash, $loginDTO, $guard): array {
                 $user = User::query()
                     ->whereKey($authenticatedUser->id)
                     ->lockForUpdate()
@@ -86,7 +88,8 @@ class JwtAuthService
 
                 if (! $user instanceof User
                     || ! hash_equals(Str::lower($user->email), $loginDTO->getEmail())
-                    || ! Hash::check($loginDTO->getPassword(), $user->password)
+                    || (($validatedPasswordHash === '' || ! hash_equals($validatedPasswordHash, (string) $user->getAuthPassword()))
+                        && ! Hash::check($loginDTO->getPassword(), $user->password))
                 ) {
                     return [
                         'success' => false,
