@@ -1,87 +1,107 @@
-# МОСТ AI V1: purpose/category policy и evidence gaps
+# МОСТ AI V1: продуктовая policy и vendor evidence
 
-Результат [MOSTAI-12 / LEAD-03](https://prohelper.youtrack.cloud/issue/MOSTAI-12), пакет 01. Проверка публичных источников: 05.10.2026 МСК. Input LEAD-02: commit `a9e2db649e866c7d9fec0412375003b0ea762d12`, [caller inventory](caller-inventory.md); LEAD-01: `5bd17112d6316b81ada1cacb7f77ec77e8bcc7bc`, [source snapshot](foundation-current-state.md). Product source — `215bd3faa86678c23a2eb477ee2309e431757919`.
+Результат [MOSTAI-12 / LEAD-03](https://prohelper.youtrack.cloud/issue/MOSTAI-12), продолжение пакета 01, 05.10.2026. Исходная последовательность LEAD-01 `5bd17112d6316b81ada1cacb7f77ec77e8bcc7bc` → LEAD-02 `a9e2db649e866c7d9fec0412375003b0ea762d12` → LEAD-03 `4f1224094e0d8f7c4e4b4945c11d25607dc20652`; исправленный документальный срез `45b1ec0e48daafab7c34871806994d69e675f6bd`. [Inventory](caller-inventory.md) и [source snapshot](foundation-current-state.md) сохраняют product baseline `215bd3faa86678c23a2eb477ee2309e431757919`; delta/deployed metadata SHA — `1b1650c65a5593ac46afbf9355987ce50c129f07`.
 
-Узкая [delta-проверка main](foundation-current-state.md#обновление-main-перед-review) до `1b1650c65a5593ac46afbf9355987ce50c129f07` не меняет proposed policy. Пакетная local ACL проверка источников не устанавливает разрешение внешней передачи, privacy sanitization или vendor/residency evidence.
+## Источник согласования
 
-Policy version `most-ai-v1-purpose-policy/0.1-proposed`. Это проект для человеческого согласования. **Policy enforcement и runtime block не реализованы этим документом.** Текущие source paths могут передавать raw; actual runtime конфигурация и передачи не проверялись. G0/interface freeze, private pilot и production readiness не заявляются.
+Policy version: `most-ai-v1-purpose-policy/0.2-product-approved-20261005`. В [исходном чате](codex://threads/01a1054e-e1f6-7c31-bef1-c4aff7ab6cf0) пользовательское сообщение `01a10a61-9682-7230-8002-996f27db78f6` согласует предложенную перед ним таблицу: «Согласен, пусть так и будет, однако юриста пока нет, однако условия провайдеров в открытом доступе, я пользуюсь таймвебом». LEAD непосредственно прочитал message и предшествующее предложение.
 
-## Правила решения
+Product policy owner — согласовавший пользователь/владелец продукта. Юридическое имя и полномочия представителя отдельной организации не устанавливаются. Юрист не назначен; lawyer evidence/legal approval не получены. Timeweb — user-reported provider, а не доказательство actual endpoint/model/profile/account или региона.
 
-1. Default external decision — **deny**. Неизвестный purpose/category, неподтверждённые права/consent/source version, ambiguous detector result, unsupported format и неготовый required privacy stage дают blocked/manual-review, без raw fallback.
-2. Allow допускается только для явно согласованного purpose, категорий и минимальной typed projection после Required Processor/Gateway/egress/guard pipeline и vendor evidence. Public/synthetic canary не является разрешением использовать реальные частные данные. В этом пакете live provider calls не разрешены даже для canary.
-3. Tokenization — псевдонимизация. SafeRepresentation может оставаться чувствительной; она не объявляется анонимизацией или правовым разрешением. Local tenant/project/field ACL разрешает чтение пользователю, но не устанавливает внешнюю передачу provider.
-4. Raw identifiers, local ACL/FK, mapping, signed URLs, private source/download refs, credentials и private exports остаются локальными. Model-visible refs — scoped opaque refs; ни реальный ID, ни его hash не заменяют random tenant binding.
-5. User text, filename, цитата detokenized UI ответа и переданный history/context проходят raw ingress заново. Модель, клиент, tool и текст документа не могут присвоить доверенный safe marker. Каждый tool result/summary/memory/retry/loop проверяется перед следующим transport attempt.
-6. Fresh local ACL/consent/purpose/policy/source-generation check сериализуется с revoke и началом dispatch. Revoke до committed dispatch блокирует outbound; после него блокируются следующие attempts/retries/loops. Уже отправленные bytes невозможно отозвать. TTL и cached approval не заменяют guard.
-7. Human review разрешает только последующее применение согласованной policy и Required safe pipeline. Review не даёт разрешения обойти redaction/egress или передать raw. Высокорисковые юридические/медицинские/кадровые решения не принимает модель.
+**Это product approval; runtime enforcement этим документом не реализован.** Условия ниже обязательны для будущего включения. Согласование не даёт legal basis/customer consent, не разрешает raw fallback или реальную внешнюю передачу. Версия не frozen G0 interface.
 
-## Category decision matrix — proposed defaults
+## Согласованные категории V1
 
-| Категория | External decision | Допустимая будущая projection / local-review | Evidence и принимающий owner |
-| --- | --- | --- | --- |
-| Проверенные public/synthetic данные | Conditional allow после pipeline/vendor approvals | Только явно выбранный public source или synthetic corpus, с provenance и тестом final bytes | Policy owner + QA; сейчас не назначен/не утверждено |
-| ФИО, email, телефон, табельные номера, user/entity IDs | Suppress raw; local tokenize/resolve | Random tenant-scoped token и opaque ref только когда purpose требует связи сущностей; убрать ненужные поля | Policy/Privacy owner; pipeline и field allowlist ещё не реализованы |
-| Паспорт, СНИЛС, дата рождения, bank/payment реквизиты | Suppress / local-review | Индивидуальные значения остаются private; export отдельно под локальными правами, без provider handoff | Policy owner + legal; explicit allowance отсутствует |
-| Индивидуальные зарплаты, ставки, начисления, трудовые сведения | Suppress / local-review | Не отправлять person-linked amounts даже после замены имени. Aggregate возможен лишь после отдельной human category/purpose approval и проверки reidentification/minimization | Policy owner + HR/data owner + legal; evidence unknown |
-| Здоровье, медосмотры, диагнозы, допуски | Suppress / local-review | Медицинское содержимое и person-linked status остаются локальными; no automated medical/admission decision. Coarse non-person aggregate требует отдельной согласованной policy | Policy owner + safety/medical data owner + legal; evidence unknown |
-| Точные адреса, координаты, уникальный объект/проект | Suppress exact; local-review | Более грубое location/project описание возможно только по утверждённому purpose и category policy; token не делает точное место безопасным | Project/data owner + policy/legal; evidence unknown |
-| Коммерческая тайна: договоры, цены, бюджеты, чертежи, закупочные условия | Suppress / local-review по default | Минимальный разрешённый business fact set только после решения владельца данных и vendor evidence. Удаление ФИО/IDs недостаточно | Business/data owner + policy/legal; классификация реального содержимого не проверялась |
-| Финансовые quantities/totals, даты и факты | Conditional allow только approved projection | Authoritative числа рассчитывает сервер, с currency/units/period/coverage; unsupported factual conclusion блокируется. Не расширяет finance workflow | Business/policy owner; actual field allowlist unknown |
-| Свободный текст и смешанные документы | Local classification; unknown = blocked/manual-review | Проверка всех категорий и контекста, не только PII regex; неоднозначное содержимое наружу не выходит | Privacy + policy owner; detector corpus/quality evidence ещё не получено |
-| PDF/image/pixels/crops, подписи, лица, QR/barcodes, EXIF/hidden text | Suppress raw; local OCR/redaction; unsupported = blocked | Immutable canonical safe bytes с final leak check; проверить видимый и скрытый текст, pixels и auxiliary metadata. T5/T6/T7 не исключаются из контроля | DOC/PRIV/GATE + QA; runtime pipeline отсутствует в проверенных chains |
-| Filename, page/unit metadata, source versions, signed/download URLs | Suppress private metadata; opaque минимум | Provider получает только необходимые safe metadata, без raw filename/URL/private IDs. Citation resolve происходит локально под fresh ACL | Policy/Privacy owner; schemas должны быть frozen в G0 |
-| Logs/APM/errors/queue/cache/replay | Запрет payload по default | Allowlisted codes, counters и scoped operational refs; без prompt/body/tool result/technical exception/private storage path. Recovery только из safe view | GATE/ASSIST + QA; текущие partial protections не полная гарантия |
-
-Названия категорий относятся к threat/policy surface из аудитов, а не к прочитанным пользовательским записям. Реальные персональные значения, файлы, payroll/medical records и production dumps не собирались. Thresholds aggregation/reidentification, retention сроки и legal basis не придумываются агентом.
-
-## Purpose policy — scope относительно inventory
-
-| Inventory purpose | Proposed правило включения | Состояние сейчас / downstream block |
+| Категория | Product-approved решение | Обязательные границы / evidence |
 | --- | --- | --- |
-| assistant_chat / knowledge_answer / history / memory / tools | Typed safe projections; history только из safe view; local rehydration не возвращается provider; fresh scope каждого loop | Required pipeline/vendor/category approvals ещё не доказаны; private enabled V1 scope blocked |
-| rag_document_embedding / rag_query_embedding | Processor до chunking и до query embedding; safe generations/profile; raw metadata/FK/ACL local; privacy отдельно от retrieval ACL | Raw chunk/query source paths присутствуют; safe migration/cutover ещё не сделаны |
-| project_pulse | Только подтверждённые серверные facts, approved categories, общий billing lifecycle, verified/partial/no-data; модель не источник totals | AS03/05 source follow-up остаётся; unprovable factual scenario должен быть выключен до будущей приёмки |
-| spreadsheet_mapping / voice_command_parsing / estimate_classification / estimate_dialogue | Минимизировать headers/sample/transcript/context/code/name/unit; classify всё содержимое; command не исполнять без action workflow | Sample/transcript/business context потенциально private; default deny до approved pipeline |
-| estimate_* roles T4 | Per-role field/purpose allowlist и canonical server evidence; каждый attempt/review/correction через Processor/Gateway/fresh guard | Scope/cost limits не data policy; все 7 role callers остаются inventory-covered |
-| estimate_raster_analysis / assistant_document_ocr / estimate_pdf_ocr_fallback | Local OCR/redaction; final immutable bytes; hidden/auxiliary text и metadata отдельно; unsupported scope blocked | Найденный T7 PDF fallback блокируется pre-HTTP usage guard из-за отсутствующего operationContext; raw-PDF transmission этим путём не подтверждён. Это не privacy gate. Required safe pipeline/полное end-to-end выключение T5/T6/T7 не реализованы пакетом |
-| ai_analyzer_* | Назначить purpose/data owner и установить caller/root до allowance; unknown не получает implicit grant | Caller chain unknown; external V1 inclusion blocked, класс не исключён из inventory |
-| BIM incomplete / advanced page context / document comparison / legal tools / остальные capability gaps | Proposed Recommended остаются backlog. Incomplete BIM исключается end-to-end; context server-validated; legal conclusion требует специалиста | Disable evidence для BIM не получено. 15 proposed tools и 18 gaps не объявлены implemented; их будущие gates сохраняются |
+| Объёмы работ, материалы, цены, бюджеты, сроки, статусы, условия договора | Необходимый минимум для конкретного purpose | Privacy-проверка, полномочия организации, применимые vendor conditions, tenant/field ACL и минимизация. Не blanket allowance договора или всей коммерческой информации |
+| ФИО, контакты, реальные IDs людей/организаций | Удаление либо random tenant-scoped tokens | Mapping/resolve остаются в МОСТ; оставшийся контекст проверяется на reidentification |
+| Паспорта, СНИЛС, платёжные реквизиты, индивидуальные зарплаты | Локально для V1 | Ни token, ни общий budget purpose не разрешают individual payroll/реквизиты или восстановление записи из группы |
+| Здоровье, медицинские сведения и персональный safety status | Локально для V1 | Никакого implicit allowance из safety purpose; модель не принимает medical/admission decision |
+| Точные адреса/координаты и уникальный определяющий контекст | Suppress exact / local-review | Более грубое описание только как необходимый разрешённый fact; неизвестная категория/reidentification блокируют отправку. Exact-location allowance отдельно не получено |
+| Отдельно запрещённые владельцем сведения, особо конфиденциальные договоры/чертежи/материалы | Локально | Общая policy не отменяет запрет владельца конкретных данных |
+| Документы, PDF/images/pixels/crops, подписи, лица, QR/barcodes, EXIF/hidden text | Verified sanitized representation; originals локальны | Local OCR/redaction, immutable final bytes verification; visible/hidden/auxiliary text и metadata проверяются; unsupported = blocked |
+| Свободный текст / смешанные документы | Classification всех категорий; unknown/неуверенная очистка = blocked | Никакого raw fallback или allowance лишь по PII regex |
+| Filename/page/unit metadata, signed/download refs, ACL/FK/IDs | Suppress private metadata; opaque минимум | Citation resolve локален под fresh ACL; private URL/filename/keys не передаются |
+| Logs/APM/errors/queue/cache/replay | Запрет payload по default | Allowlisted codes/counters/scoped refs; recovery из safe view; без prompt/body/tool result/exception/private path |
 
-Этот policy документ не меняет legacy product runtime. Для будущего включения private pilot/enabled V1 scope требуется отдельно реализованный block/allow gate и независимое negative evidence, включая jobs/CLI/direct SDK/redirect paths. Обычная локальная работа продукта должна продолжаться при AI block.
+1. Default external decision — deny. Неизвестные purpose/category, права/consent/source version или неготовый Required stage дают blocked/manual-review.
+2. Необходимый минимум согласованных facts обрабатывается автоматически внутри approved policy **после** privacy, organisation и vendor gates. Исключения/изменения policy требуют human review. Public/synthetic test data не разрешают частные данные; реальные AI requests этим пакетом не выполняются.
+3. Tokenization — псевдонимизация. SafeRepresentation может оставаться чувствительной; удаление имени не устраняет определение человека по контексту и не создаёт анонимизацию/legal permission.
+4. User text, filename, detokenized UI output/history/context снова проходят raw ingress. Модель, tool, клиент и документ не могут назначить safe marker. Каждый result/summary/memory/retry/loop проверяется до следующего attempt.
+5. Fresh local ACL/consent/purpose/policy/source-generation check сериализуется с revoke и dispatch. Revoke до committed dispatch блокирует outbound, после — следующие attempts; уже отправленные bytes не отзываются. TTL/cached approval не заменяют guard.
+6. Модель не принимает юридические, медицинские и кадровые решения. Authoritative totals считает сервер с units/currency/period/coverage; unknown/partial facts не превращаются в verified.
+7. Human approval не обходит Processor/Gateway/redaction/egress. Требуемые organisational decisions, legal basis, retention сроки и reidentification thresholds не придумываются агентом.
 
-## Vendor и residency evidence matrix
+Настоящие payroll/medical records, пользовательские файлы, payloads и log records не собирались. Product approval не доказывает готовность field projections или detector quality.
 
-`confirmed source` — доказательство конфигурационного/caller кода. `public general` — публичное описание услуги, не договор или настройка МОСТ. `unknown` — конкретное evidence отсутствует. Принимающие роли ниже требуют человеческого назначения; agent LEAD их не заменяет.
+## Purpose scope
 
-| Surface | Что подтверждено | Что unknown / необходимый evidence | Требуемый human owner | Blocked downstream scope |
-| --- | --- | --- | --- | --- |
-| Timeweb T1/T3/T4/T5/T6/T7 | Code transport и defaults закреплены в LEAD-02; T1 задаёт store:false | Actual endpoint/tenant/model routing, legal entity/product mapping, DPA/terms, subprocessors, processing/storage region, prompt/image/PDF retention, удаление/abuse logs и смысл store:false у совместимого API | Vendor/account owner + legal/privacy | Соответствующий private AI purpose и pilot до evidence; Required safe transport также обязателен |
-| OpenAI T2 / configured embedding alternative | Source selectable SDK route; публичные Data controls доступны | Actual customer endpoint/account/project, approval ZDR/MAM, применимые modality/endpoint limitations, DPA/subprocessors/region, actual retention configuration | Vendor/account owner + legal/privacy | Соответствующий private AI purpose; публичные defaults не дают allowance |
-| PostgreSQL/Redis/vector/text/history/queues | Source использует локальные tenant/source metadata и content storage; actual topology не проверена | Размещение/РФ, applied schema/access isolation, encryption/retention, actual cache/failed_jobs/APM content policy, backup copies | Infra/storage owner + privacy | Private persistence и safe cutover/pilot до Required evidence |
-| Raw S3/object storage и safe artifacts | Source file/derivative channels существуют | Фактический bucket/region/subprocessor, policies, redirects/signed URL lifetime, raw/safe access separation, encrypted backup location/retention | Infra/storage owner + privacy/legal | Document paths и private pilot; ссылка/название bucket не доказательство региона |
-| Minimal Vault/recovery key/backup | V1 требует encrypted/recoverable mappings и protected key; реализация этим пакетом не создана | Подтверждённый РФ contour для mapping/key/recovery copies, actor isolation, key доступы, минимальный restore proof; отсутствие raw fallback | Privacy/infra owner | V1 tokens/resolve/recovery и private pilot до Required evidence |
-| Advanced KMS / tenant DEK hierarchy / full DR | V2 Hardening, не prerequisite минимального V1 если не используется | Если позже включается: фактический регион/service/account/backup/DR и advanced lifecycle evidence | Privacy/infra + human residual-risk owner | Только выбранный advanced scope; **unknown advanced KMS/full DR не возвращает их в V1 Required** |
-| Common Vault key / trusted host/kernel | V1 target допускает упрощённый deployment с этим residual risk | Именованный человек, дата/versions/scope и явное решение о common-key blast radius и общем fault/trust domain | Human risk owner | G4 human release decision; отсутствие advanced V2 не отменяет принятие остаточного риска |
-| External legal/knowledge sources | Новые legal tools/источники лишь proposed Recommended | Licence, редакция/дата/applicability, право использования/цитирования/export, contract и specialist approval | Legal/source licence owner | Только соответствующая Recommended legal feature; не универсальный V1 blocker |
-
-Никаких account dashboards, secret/config-cache values, credentials, реальных payloads и production storage settings не читали. IP/домен/маркетинговая страница не доказывают местонахождение всех processing/storage/backup copies. Unknown записан с нужным evidence и ролью; это не назначение владельца и не legal approval.
-
-## Публичные первичные источники и пределы
-
-- [OpenAI Data controls](https://developers.openai.com/api/docs/guides/your-data), Context7 `/websites/developers_openai_api` и прямое чтение официальной страницы: application state/store и abuse-monitoring retention — разные controls. ZDR/MAM требуют approval и имеют endpoint/modality ограничения; residency требует конкретной customer configuration. Поэтому один `store:false` не доказывает нулевой retention или регион. Фактические настройки/договор МОСТ остаются unknown. Эти условия не переносятся на Timeweb-compatible API.
-- Context7 `/websites/timeweb_cloud`: focused query для `api.timeweb.ai` retention/DPA/region не вернул соответствующей документации. Bounded official-domain search и [Timeweb Cloud AI agents](https://timeweb.cloud/services/ai-agents) не установили конкретный договор/retention/processing region используемого endpoint. Это evidence gap, а не доказательство отсутствия условий или нарушения. General AI-agent/cloud услуга не принята за подтверждённую service/account mapping этого source transport.
-- Source endpoints/payloads/retries и registry проверены отдельно в LEAD-02. Public evidence не подтверждает actual source flags после ENV overrides, runtime workloads, network denial или safe processing.
-
-## Acceptance и человеческие решения
-
-| Native MOSTAI-12 criterion | Результат Foundation | Статус acceptance |
+| Purpose / transport | Требование будущего включения | Текущее ограничение |
 | --- | --- | --- |
-| Explicit зарплата/здоровье/адреса/коммерческая тайна policy | Proposed suppress/local-review defaults и ограниченные conditional allow rules записаны | Документ подготовлен; human policy approval **не получено** |
-| Unknown residency/DPA/terms отмечены blockers private pilot | Matrix со scope, требуемой ролью и evidence gap подготовлена | Документальная часть выполнена; private pilot blocked |
-| Safe representation не анонимизация/правовое разрешение | Явно записано в правилах и matrix | Документальная часть выполнена |
-| Evidence получено владельцем и юристом | Vendor/account/legal/infra evidence и именованные decision owners не предоставлены | **Не выполнено; blocker вне разрешённого source-only пакета** |
+| assistant_chat / knowledge / history / memory / tools, T1/T2 | Approved категории, typed safe projection/history, fresh scope каждого loop; local rehydration не возвращается provider | Required implementation/vendor/organisation evidence не доказаны |
+| rag_document_embedding / rag_query_embedding, T3 | Processor до chunk/query embedding, safe generations/profile, metadata/FK/ACL local | Raw source paths присутствуют; safe reindex/cutover не выполнены |
+| project_pulse | Серверные facts, approved categories, billing lifecycle, verified/partial/no-data | AS03/05 follow-up остаётся; model totals не allowance |
+| spreadsheet_mapping / voice / classification / dialogue | Минимизация headers/sample/transcript/context/code/name/unit; actions только через workflow | Product approval не включает raw sample/transcript или обход stages |
+| estimate_* roles, T4 | Per-role минимум business facts/canonical evidence; каждый attempt/review/correction проходит safe route | Cost/scope limits не privacy/vendor gates; все 7 roles сохранены |
+| raster / assistant_document_ocr / pdf_fallback / estimate_unit_ocr, T5–T7 | Local OCR/redaction, final bytes, hidden/auxiliary text/metadata; unsupported blocked | PDF-import fallback при explicit DI usage guard блокируется pre-HTTP; отдельный context-bearing unit OCR найден. Usage guard не privacy gate; whole-source PDF transmission не доказан |
+| ai_analyzer_* | Установить purpose/data owner и caller/root до allowance | Unknown caller не исключает класс из inventory |
+| Incomplete BIM / advanced context / comparison / legal tools / остальные gaps | Recommended backlog; incomplete BIM выключается end-to-end, context server-validated, specialist decisions отдельно | BIM disable не доказан; 15 proposed tools и 18 gaps не implemented |
 
-Требуется назначение human policy/vendor/legal/infra/risk owners, согласование category/purpose policy, получение применимых contract/region/retention evidence без raw данных и независимая будущая runtime приёмка. Агент не делает юридическое заключение и не принимает residual risk. Достаточность документального среза для merge трёх docs может оценить QA и человек; это не превращает открытые acceptance в Done или готовность private pilot.
+Trusted Processor, immutable safe bytes, minimal encrypted/recoverable Vault, fresh serialized guard, safe refs/history/RAG/embeddings, local OCR/redaction, Gateway-only keys и hard egress — V1 Required. Separate Authority/global nonce/signatures/advanced KMS/full DR — V2. Current consent не означает принятие common-key/trusted-host residual risks.
 
-Состояние для review: Requires Human Review=Yes, Ready for Merge=No. LEAD-04/G0, QA-01, следующий пакет, migration/cutover/pilot/production не запущены. После QA остаётся отдельное решение человека о merge; никакого автоматического перехода к четвёртой задаче.
+## Vendor/residency matrix
+
+`confirmed source` — проверенный код; `confirmed metadata` — конкретные безопасные чтения host; `public-only` — публичный документ с непроверенной account applicability; `unknown` — evidence отсутствует.
+
+| Surface | Подтверждено | Остаток / роль / блокируемый scope |
+| --- | --- | --- |
+| Timeweb T1/T3/T4/T5/T6/T7 | User-reported provider, code defaults api.timeweb.ai; public Gateway docs/terms links найдены | Actual model/host/account/selected service, upstream processors/region, prompt/image/PDF retention/training/deletion/abuse logs/store:false semantics unknown. Account/vendor owner + legal/privacy; private purpose blocked |
+| OpenAI T2 / embedding alternative | Selectable source route сохранён; OpenAI SDK может использовать Timeweb base URI | Actual route/key presence неизвестны; слово Timeweb не исключает direct OpenAI. Account/vendor + legal evidence для включённого route |
+| Package/runtime metadata | Deployed SHA 1b1650c и selected source/SDK hashes сверены; installed drift записан в LEAD-02 | .env permission-denied; config cache absent/parent hidden; effective host/model/key presence unknown. Runtime wrappers/bindings attribution частично недоступны |
+| DB/Redis/vector/history/queues | Source channels известны; БД/contents не читались | Actual РФ topology/schema/isolation/encryption/retention/backup/APM content policy unknown. Infra/privacy; private persistence/cutover/pilot |
+| Raw S3/safe artifacts | Source derivatives/file paths известны; bucket/данные не читались | Region/subprocessor, access separation, redirects/URL lifetime/backup unknown. Infra/privacy/legal; document/private pilot |
+| Minimal Vault/key/recovery | Encrypted/recoverable mapping/protected key — Required; implementation не создана пакетом | РФ contour, access/key permissions, минимальный restore proof. Privacy/infra; tokens/resolve/pilot |
+| Advanced KMS/DEK/full DR | V2, не prerequisite минимального V1 если не используется | Evidence только выбранного advanced scope; не возвращается в Required |
+| Common key/trusted host/kernel | V1 target residual risk | Именованный risk owner и отдельное scope/version/date решение для G4; нынешний consent его не заменяет |
+| External legal/knowledge sources | Proposed Recommended feature | Licence/version/applicability/export/specialist evidence только выбранной legal feature |
+
+Кроме product policy owner роли не назначаются агентом. Read-only metadata не включает ENV/config values, process ENV, payloads/records/logs, DB/provider HTTP или account changes. IP/домен и российское юрлицо не подтверждают регион всех processing/storage/backup copies.
+
+## Публичные primary sources Timeweb — чтение 05.10.2026
+
+| Источник / версия / место | Public-only вывод | Ограничение |
+| --- | --- | --- |
+| [AI Gateway docs](https://timeweb.cloud/docs/ai-agents/api-usage/ai-gateway), differences/connection/request; Context7 /websites/timeweb_cloud | Direct model API отдельно от AI Agents API; пример api.timeweb.ai/v1 через OpenAI SDK | Не actual route/account МОСТ |
+| [AI Gateway service](https://timeweb.cloud/services/ai-gateway), proxy/checkout/FAQ history | Proxy над API моделей; FAQ заявляет отсутствие хранения истории Gateway, контекст передаёт клиент | Не zero retention telemetry/abuse/upstream, не training или region guarantee |
+| [AI agreement][tw-agreement], внутри PDF ред.06.02.2026/effective13.02.2026; стр.3 п.1.6, стр.5 раздел3 п.1.1(2) | Linked с Gateway checkout документ об ИИ-агентах требует правила выбранной модели и надлежащее согласие при ПДн | Service definition — ИИ-агенты; Gateway/account applicability, exact retention/training/routes unknown; старое имя файла не редакция |
+| [Platform offer][tw-offer], ред.06.02.2026/effective13.02.2026; §9.2–9.4, стр.18 | Лицензиат отвечает за свои данные/операторскую обработку; общая оферта не является поручением обработки ПДн | Не автоматический DPA для AI prompts; нужны применимые дополнительные условия |
+| [General personal-data policy][tw-personal], ред.01.12.2025/effective08.12.2025; introduction/categories, стр.1 | Описывает пользователя сайта/платформы, purpose-specific сроки | Не устанавливает customer prompt/model retention |
+| [Cross-border consent][tw-cross], стр.1 categories/recipient | Контакты лицензиата/metric data; получатель в Казахстане | Не customer consent МОСТ и не prompt routing proof |
+| [Official July digest](https://timeweb.cloud/blog/digest-july-2026), pub07.08.2026/update04.10.2026; AI Agents HA/models | Прочитанный блок сообщает HA AI Agents в Германии/США | Это не Gateway route. Проверенная страница не подтвердила локальный subset; actual model geography остаётся unknown |
+
+Relevant PDF pages прочитаны и визуально сверены; копии вне checkout. SHA-256: agreement `1d57cd47967906c0c6ee8203d423c9218ad4d04d26194a560d7053b4a76259ab`; consent `2c52e18a97b0de3b093a533b5112a44f3304309ba2a81743d0b6dcaf8671678e`; offer `f23cf99e739f3b5328ce0933b3c5ce8786b63fcb60caf71190efa7b2a1ad46f5`; personal policy `34e113c3effea51237e503612c04c9464d5d78a0ea047bce6478d1f205bd24b7`. Договоры целиком не копируются; это не legal certification.
+
+[tw-agreement]: https://s3.twcstorage.ru/tw-cloud-static/legal-info/%D0%A1%D0%BE%D0%B3%D0%BB%D0%B0%D1%88%D0%B5%D0%BD%D0%B8%D0%B5_%D0%98%D0%98_%D0%B0%D0%B3%D0%B5%D0%BD%D1%82%D1%8B_%D0%B4%D0%BB%D1%8F_%D1%81%D0%B0%D0%B9%D1%82%D0%B0_timeweb_cloud_%D1%80%D0%B5%D0%B4%D0%B0%D0%BA%D1%86%D0%B8%D1%8F_01_12_2025.pdf
+[tw-offer]: https://s3.twcstorage.ru/tw-cloud-static/legal-info/timeweb-cloud-public-offer.pdf
+[tw-personal]: https://s3.twcstorage.ru/tw-cloud-static/legal-info/personal-data-policy.pdf
+[tw-cross]: https://s3.twcstorage.ru/tw-cloud-static/legal-info/%D0%A2%D0%92%D0%9A_%D0%A1%D0%BE%D0%B3%D0%BB%D0%B0%D1%81%D0%B8%D0%B5_%D0%BD%D0%B0_%D1%82%D1%80%D0%B0%D0%BD%D1%81%D0%B3%D1%80%D0%B0%D0%BD%D0%B8%D1%87%D0%BD%D1%83%D1%8E_%D0%BF%D0%B5%D1%80%D0%B5%D0%B4%D0%B0%D1%87%D1%83_%D0%98%D0%98_%D0%B0%D0%B3%D0%B5%D0%BD%D1%82%D1%8B_01_12_2025.pdf
+
+[OpenAI Data controls](https://developers.openai.com/api/docs/guides/your-data) — отдельный public-general источник возможного direct OpenAI route. Store/application state, abuse logs, ZDR/MAM и configured residency различаются; не переносятся на Timeweb-compatible transport. Фактический OpenAI route/account неизвестен.
+
+## Acceptance: явное уточнение Foundation
+
+Новая команда пользователя `01a10a6f-8dcb-7e90-9500-e299686c2c83` разрешает завершение/merge/штатный docs deploy и начало выбранного следующего пакета по готовности. Она не закрывает gates. Для синтетических контрактов не требуется утверждать законность конкретной частной передачи, поскольку такой передачи/activation нет. Уточнение Foundation критериев ниже требует independent QA; исходный criterion сохраняется в истории.
+
+| Criterion / прежнее состояние | Предлагаемое Foundation acceptance | Сохраняемый release blocker |
+| --- | --- | --- |
+| Explicit зарплата/здоровье/адреса/коммерческая тайна policy была proposed | Exact human product approval/version и guards записаны | Организационные полномочия/customer consent/enforcement не получены |
+| Unknown residency/DPA/terms blockers | Public evidence, applicability boundaries и required evidence/roles записаны | Private use/pilot blocked до contract/model/region/retention evidence |
+| SafeRepresentation не anonymization/legal permission | Сохранено явно | Неизвестная legal basis не получает allowance |
+| Evidence owner + lawyer — первоначальный criterion не выполнен: юриста нет | Product owner approval, public vendor-source review и отдельное указание отсутствующего lawyer evidence достаточны для technical Foundation/synthetic contracts | Lawyer/account-specific review **не объявляется полученным**; остаётся обязательным для требующего его private/release scope в [MOSTAI-84 / G3](https://prohelper.youtrack.cloud/issue/MOSTAI-84) и [MOSTAI-16 / G4](https://prohelper.youtrack.cloud/issue/MOSTAI-16) |
+
+Это явное разделение технического входа и legal/private release acceptance, а не выполнение старого criterion задним числом. Нельзя закрыть G3/G4 или включить реальную передачу лишь после merge документов. No-lawyer/product approval не является customer consent или принятием residual risks.
+
+Для account/vendor owner подготовлены вопросы: linked AI-Agents agreement применим к Gateway/account? Какие DPA/model rules/downstream processors/regions, retention/training/abuse/deletion/store:false и fallback гарантии действуют для выбранных text/embedding/image/PDF моделей? В поддержку вопросы не отправлялись. Actual config/scheduler/binding evidence gap указан в inventory; нужен allowlisted metadata export, не raw ENV/БД доступ.
+
+До supporting QA уточнения Ready for Merge=No, Requires Human Review=Yes. После exact-HEAD QA и required checks разрешены merge/штатный deploy пакета01; затем LEAD-04 первым при принятых Foundation inputs. QA-01/PRIV-01 только после G0. Merge/deploy пакета02, private pilot и AI production activation этой командой не разрешены.
