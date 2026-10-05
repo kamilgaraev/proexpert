@@ -31,6 +31,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
     private Project $visible;
     private Project $hidden;
     private array $deniedModules = [];
+    private bool $duplicateProjectRows = false;
 
     protected function setUp(): void
     {
@@ -44,7 +45,17 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
             'ai-assistant', 'project-management', 'payments', 'budget-estimates', 'reports',
         ])->reject(fn (string $slug): bool => in_array($slug, $this->deniedModules, true))
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
-        $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
+        $projectAccess = Mockery::mock(UserProjectAccessService::class);
+        $projectAccess->shouldReceive('queryAccessibleProjects')->andReturnUsing(function (User $actor, int $organizationId) {
+            $query = (new UserProjectAccessService)->queryAccessibleProjects($actor, $organizationId);
+            if ($this->duplicateProjectRows) {
+                $query->crossJoinSub(DB::query()->selectRaw('1 AS duplicate_row')
+                    ->unionAll(DB::query()->selectRaw('2 AS duplicate_row')), 'duplicate_project_rows');
+            }
+
+            return $query;
+        });
+        $this->policy = new AssistantDataAccessPolicy($authorization, $projectAccess, $modules);
         $this->organization = Organization::withoutEvents(fn () => Organization::factory()->create());
         $this->actor = User::withoutEvents(fn () => User::factory()->create([
             'current_organization_id' => $this->organization->id, 'is_active' => true,
@@ -93,6 +104,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
 
     public function test_source_id_aggregate_preserves_parts_exact_ids_and_current_scope(): void
     {
+        $this->duplicateProjectRows = true;
         $allowed = $this->source($this->organization->id, $this->visible->id, 'project', 'project', $this->visible->id);
         $part = $allowed->replicate()->forceFill(['identity_part_key' => 'second-part']);
         $part->save();
@@ -118,6 +130,9 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         );
         $this->assertCount(2, $batches);
         $batchIds = static fn (): array => array_merge(...array_map(static fn ($batch): array => $batch->get()->pluck('id')->all(), $batches));
+        $this->assertStringContainsString('"assistant_visible_source_ids"', $optimized->toSql());
+        $this->assertCount(2, $optimized->get()->pluck('id')->all());
+        $this->assertCount(2, $batchIds());
         $this->assertEqualsCanonicalizing([$allowed->id, $part->id], $original->get()->pluck('id')->all());
         $this->assertEqualsCanonicalizing($original->get()->pluck('id')->all(), $optimized->get()->pluck('id')->all());
         $this->assertEqualsCanonicalizing([$allowed->id, $part->id], $batchIds());
