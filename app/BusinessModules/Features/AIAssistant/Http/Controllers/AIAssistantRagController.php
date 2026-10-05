@@ -19,7 +19,8 @@ final class AIAssistantRagController extends AbstractAssistantApiController
 
     public function status(AssistantRagStatusRequest $request): JsonResponse
     {
-        $organizationId = $this->organizationId($request);
+        $organizationId = config('ai-assistant.status_snapshots', app()->environment('production')) && $this->index->checksAssistantAccess()
+            ? $this->lifecycleOrganizationId($request) : $this->organizationId($request);
 
         try {
             return $this->success($request, new RagIndexStatusResource($this->index->status($organizationId, $this->actor($request), $request->validated('section', 'all'))));

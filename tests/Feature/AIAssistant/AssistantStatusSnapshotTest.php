@@ -148,6 +148,25 @@ final class AssistantStatusSnapshotTest extends TestCase
         } finally { DB::purge('assistant_snapshot_foreign'); }
     }
 
+    public function test_snapshot_controller_keeps_its_service_gate_on_all_surfaces(): void
+    {
+        [$organization, $actor, , $service, $policy, $permissions] = $this->scope();
+        $controller = new \App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagController($service);
+        foreach (['api/v1/admin/ai-assistant', 'api/v1/mobile/ai-assistant', 'api/v1/ai-assistant'] as $prefix) {
+            $request = \App\BusinessModules\Features\AIAssistant\Http\Requests\AssistantRagStatusRequest::create('/'.$prefix.'/rag/status', 'GET', ['section' => 'sources']);
+            $this->app->instance('request', $request);
+            $request->setUserResolver(static fn (): User => $actor);
+            $request->setValidator(\Illuminate\Support\Facades\Validator::make(['section' => 'sources'], $request->rules()));
+            $permissions->denied = [];
+            self::assertSame(200, $controller->status($request)->getStatusCode());
+            $permissions->denied = ['ai_assistant.chat'];
+            self::assertSame(403, $controller->status($request)->getStatusCode());
+        }
+        $permissions->denied = [];
+        $actor->organizations()->updateExistingPivot($organization->id, ['is_active' => false]);
+        self::assertSame(403, $controller->status($request)->getStatusCode());
+    }
+
     public function test_deadline_uses_earliest_native_expiry_and_rejects_malformed_clock(): void
     {
         $inputs = app(AssistantStatusSnapshotInputs::class);

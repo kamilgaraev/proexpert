@@ -50,7 +50,7 @@ final class AssistantIndexStatusService
             throw new AuthorizationException;
         }
 
-        if (config('ai-assistant.status_snapshots', app()->environment('production')) && DB::connection()->getDriverName() === 'pgsql') {
+        if ($this->checksAssistantAccess()) {
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
@@ -90,6 +90,11 @@ final class AssistantIndexStatusService
         }
 
         return $result;
+    }
+
+    public function checksAssistantAccess(): bool
+    {
+        return config('ai-assistant.status_snapshots', app()->environment('production')) && DB::connection()->getDriverName() === 'pgsql';
     }
 
     private function snapshotStatus(int $organizationId, User $actor, string $section): array

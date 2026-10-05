@@ -470,7 +470,7 @@ class AuthorizationService
         }
         
         $authContext = $this->rememberRead(
-            'auth_context_'.md5(serialize($context)),
+            $this->authContextReadKey($context),
             fn () => $this->resolveAuthContext($context),
         );
         if ($this->currentChecks && $context !== null && $authContext === null) { return false; }
@@ -667,6 +667,15 @@ class AuthorizationService
         return AuthorizationContext::getSystemContext();
     }
 
+    private function authContextReadKey(?array $context): string
+    {
+        $lookup = ! $context ? ['empty'] : (isset($context['project_id'])
+            ? ['project', $context['project_id'], $context['organization_id'] ?? null]
+            : (isset($context['organization_id']) ? ['organization', $context['organization_id']] : ['system']));
+
+        return 'auth_context_'.hash('sha256', serialize($lookup));
+    }
+
     /**
      * Получить иерархию контекста (от текущего к корню)
      */
@@ -714,7 +723,7 @@ class AuthorizationService
         try {
             if ($this->currentChecks && isset($context['organization_id']) && ! isset($context['project_id'])) {
                 $authContext = $this->rememberRead(
-                    'auth_context_'.md5(serialize($context)),
+                    $this->authContextReadKey($context),
                     fn () => $this->resolveAuthContext($context),
                 );
                 if ($authContext === null) {

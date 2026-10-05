@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Enums\ProjectOrganizationRole;
+use App\Models\Contract;
+use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Project\ProjectParticipantService;
@@ -127,7 +130,7 @@ final class ProjectCommandCenterControllerTest extends TestCase
         $response->assertJsonValidationErrors(['date_from', 'date_to']);
     }
 
-    public function test_it_withholds_finance_for_a_contractor_scope(): void
+    public function test_it_limits_contractor_finance_to_its_own_organization(): void
     {
         $ownerContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $contractorContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
@@ -142,13 +145,55 @@ final class ProjectCommandCenterControllerTest extends TestCase
             $ownerContext->user,
         );
 
+        $otherOrganization = Organization::factory()->verified()->create();
+        foreach ([[$contractorContext->organization, 1000, 100, 200], [$otherOrganization, 9000, 900, 1800]] as [$organization, $contractAmount, $paid, $remaining]) {
+            $contractor = Contractor::query()->create([
+                'organization_id' => $ownerContext->organization->id,
+                'source_organization_id' => $organization->id,
+                'name' => 'Contractor '.$organization->id,
+                'contractor_type' => 'invited_organization',
+                'connected_at' => now(),
+            ]);
+            $contract = Contract::query()->create([
+                'organization_id' => $ownerContext->organization->id,
+                'project_id' => $project->id,
+                'contractor_id' => $contractor->id,
+                'contract_side_type' => 'general_contractor_to_contractor',
+                'number' => 'C-'.$organization->id,
+                'date' => now()->toDateString(),
+                'base_amount' => $contractAmount,
+                'total_amount' => $contractAmount,
+                'gp_percentage' => 0,
+                'is_fixed_amount' => true,
+                'is_multi_project' => false,
+                'status' => 'active',
+            ]);
+            PaymentDocument::query()->create([
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'document_type' => 'invoice',
+                'document_number' => 'PD-'.$contract->id,
+                'document_date' => now()->toDateString(),
+                'direction' => 'incoming',
+                'invoiceable_type' => Contract::class,
+                'invoiceable_id' => $contract->id,
+                'amount' => $paid + $remaining,
+                'paid_amount' => $paid,
+                'remaining_amount' => $remaining,
+                'status' => 'submitted',
+                'due_date' => now()->addDays(7)->toDateString(),
+            ]);
+        }
+
         $response = $this->withHeaders($contractorContext->authHeaders())
             ->getJson('/api/v1/admin/project-command-center?project_id='.$project->id);
 
         $response->assertOk();
-        $response->assertJsonPath('data.finance.available', false);
-        $response->assertJsonMissingPath('data.finance.margin');
-        $response->assertJsonMissingPath('data.finance.cash_flow');
-        $response->assertJsonMissingPath('data.finance.evm');
+        $response->assertJsonPath('data.finance.available', true);
+        self::assertSame(1000.0, (float) $response->json('data.finance.evm.metrics.bac'));
+        self::assertSame(100.0, (float) $response->json('data.finance.evm.metrics.ac'));
+        self::assertSame(1000.0, (float) $response->json('data.finance.margin.contracted_revenue'));
+        self::assertSame(200.0, (float) $response->json('data.finance.cash_flow.accounts_receivable'));
+        self::assertSame(0.0, (float) $response->json('data.finance.cash_flow.accounts_payable'));
     }
 }

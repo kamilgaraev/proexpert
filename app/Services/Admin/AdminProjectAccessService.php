@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Admin;
 
 use App\Domain\Project\ValueObjects\ProjectContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -33,9 +34,10 @@ class AdminProjectAccessService
 
         try {
             $projectContext = $this->projectContextService->getContext($project, $organization);
+            $authorization = app(AuthorizationService::class)->forReadScope();
 
             return $projectContext->withPermissionResolver(
-                static fn (string $permission): bool => $user->hasPermission($permission, [
+                static fn (string $permission): bool => $authorization->can($user, $permission, [
                     'project_id' => $project->id,
                     'organization_id' => $organization->id,
                 ]),
