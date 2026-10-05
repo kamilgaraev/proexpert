@@ -31,6 +31,8 @@ class AuthorizationService
 
     private ?Repository $readCache = null;
     private bool $currentChecks = false;
+    private ?Closure $currentDecisionObserver = null;
+    private array $trustedDecisionInputs = [];
 
     public function __construct(
         RoleScanner $roleScanner,
@@ -56,9 +58,29 @@ class AuthorizationService
 
     public function canCurrent(User $user, string $permission, ?array $context = null): bool
     {
+        if ($this->trustedDecisionInputs !== []) { $context = array_replace($this->trustedDecisionInputs, $context ?? []); }
         $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks();
-        return $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
+        $result = $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
             fn (): bool => $scope->checkPermission($user, $permission, $context));
+        $this->currentDecisionObserver?->__invoke($user, $permission, $context, $result);
+
+        return $result;
+    }
+
+    public function captureCurrentDecisions(array $trustedInputs, callable $operation): array
+    {
+        $previous = [$this->currentDecisionObserver, $this->trustedDecisionInputs];
+        $decisions = [];
+        $this->trustedDecisionInputs = $trustedInputs;
+        $this->currentDecisionObserver = static function (User $user, string $permission, ?array $context, bool $allowed) use (&$decisions): void {
+            $key = hash('sha256', serialize([(int) $user->id, $permission, $context]));
+            $decisions[$key] = ['actor_id' => (int) $user->id, 'permission' => $permission, 'context' => $context, 'allowed' => $allowed];
+        };
+        try {
+            return ['value' => $operation(), 'decisions' => array_values($decisions)];
+        } finally {
+            [$this->currentDecisionObserver, $this->trustedDecisionInputs] = $previous;
+        }
     }
 
     private function rememberArray(string $key, int $ttl, Closure $read): mixed

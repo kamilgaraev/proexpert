@@ -24,6 +24,8 @@ final class RefreshAssistantIndexStatusJob implements ShouldQueue
         public int $actorId,
         public KnowledgeSurface $surface,
         public string $cacheKey,
+        public string $section = 'all',
+        public ?string $requestIp = null,
     ) {
         $this->onConnection('redis');
         $this->onQueue('default');
@@ -34,7 +36,12 @@ final class RefreshAssistantIndexStatusJob implements ShouldQueue
         $previousSurface = $policy->trustedSurface();
         try {
             $policy->setTrustedSurface($this->surface);
-            $status->refreshSnapshot($this->organizationId, $this->actorId, $this->surface, $this->cacheKey);
+            if (config('ai-assistant.status_snapshots', app()->environment('production'))) {
+                app(\App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotBuilder::class)
+                    ->refresh($this->organizationId, $this->actorId, $this->surface, $this->cacheKey, $this->section, $this->requestIp);
+            } else {
+                $status->refreshSnapshot($this->organizationId, $this->actorId, $this->surface, $this->cacheKey);
+            }
         } finally {
             $policy->setTrustedSurface($previousSurface);
             Cache::forget($this->cacheKey.':queued');

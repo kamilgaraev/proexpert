@@ -79,7 +79,7 @@ final class AssistantDocumentCoverageService
         $latest = (clone $documents)->select([])->selectRaw('MAX(ai_assistant_documents.id)')->groupBy('file_id');
         $indexed = (clone $documents)->whereIn('ai_assistant_documents.id', $latest)->select('ai_assistant_documents.*');
         $units = DB::table('ai_assistant_document_units')->whereIn('document_id', (clone $indexed)->select('ai_assistant_documents.id'))
-            ->select('document_id')->selectRaw("COUNT(*) AS processed_units, SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END) AS ocr_completed_pages")->groupBy('document_id');
+            ->select('document_id')->selectRaw("COUNT(*) AS processed_units, pg_catalog.SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END) AS ocr_completed_pages")->groupBy('document_id');
         $base = (clone $files)->leftJoinSub($indexed, 'document', function (JoinClause $join) use ($types): void {
             $join->on('document.file_id', '=', 'files.id')->on('document.storage_path', '=', 'files.path')
                 ->whereRaw('document.parent_entity_id = CAST(files.fileable_id AS TEXT)');
@@ -110,9 +110,9 @@ final class AssistantDocumentCoverageService
                 CASE WHEN (document.metadata->>'page_count') ~ '^[0-9]{1,6}$' THEN (document.metadata->>'page_count')::bigint ELSE 0 END AS total_pages");
         $aggregate = DB::query()->fromSub($base->toBase(), 'coverage')->selectRaw('COUNT(*) AS total');
         foreach (['ready', 'pending', 'ocr_required', 'ocr_processing', 'failed', 'unsupported', 'empty'] as $status) {
-            $aggregate->selectRaw('COALESCE(SUM(CASE WHEN coverage_state = ? THEN 1 ELSE 0 END), 0) AS '.$status, [$status]);
+            $aggregate->selectRaw('COALESCE(pg_catalog.SUM(CASE WHEN coverage_state = ? THEN 1 ELSE 0 END), 0) AS '.$status, [$status]);
         }
-        foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(SUM('.$metric.'), 0) AS '.$metric);
+        foreach (['processed_units', 'total_pages', 'ocr_completed_pages'] as $metric) $aggregate->selectRaw('COALESCE(pg_catalog.SUM('.$metric.'), 0) AS '.$metric);
         if ($checkpoint !== null) { $checkpoint(); }
         $result = $this->withVisibleDocuments($aggregate, $visibleDocuments)->first();
         $coverage = array_map(static fn ($value): int => (int) $value, (array) $result);
@@ -159,7 +159,7 @@ final class AssistantDocumentCoverageService
             $nativeUnits = DB::table('ai_assistant_document_units')
                 ->whereIn('document_id', (clone $nativeDocuments)->select('ai_assistant_documents.id'))
                 ->select('document_id')
-                ->selectRaw("COUNT(*) AS processed_units, SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END) AS ocr_completed_pages")
+                ->selectRaw("COUNT(*) AS processed_units, pg_catalog.SUM(CASE WHEN unit_type = 'ocr_page' THEN 1 ELSE 0 END) AS ocr_completed_pages")
                 ->groupBy('document_id');
             $counts = (clone $nativeDocuments)->select('ai_assistant_documents.id', 'ai_assistant_documents.metadata')
                 ->addSelect('ai_assistant_documents.coverage_status', 'ai_assistant_documents.last_error', 'ai_assistant_documents.status', 'ai_assistant_documents.extracted_text')
@@ -180,9 +180,9 @@ final class AssistantDocumentCoverageService
             if ($checkpoint !== null) { $checkpoint(); }
             $nativeAggregate = DB::query()->fromSub($nativeRows, 'native_documents')
                 ->select('native_coverage_state')->selectRaw('COUNT(*) AS file_count')
-                ->selectRaw('COALESCE(SUM(processed_units), 0) AS processed_units')
-                ->selectRaw('COALESCE(SUM(ocr_completed_pages), 0) AS ocr_completed_pages')
-                ->selectRaw('COALESCE(SUM(total_pages), 0) AS total_pages')
+                ->selectRaw('COALESCE(pg_catalog.SUM(processed_units), 0) AS processed_units')
+                ->selectRaw('COALESCE(pg_catalog.SUM(ocr_completed_pages), 0) AS ocr_completed_pages')
+                ->selectRaw('COALESCE(pg_catalog.SUM(total_pages), 0) AS total_pages')
                 ->groupBy('native_coverage_state');
             $nativeAggregate = $this->withVisibleDocuments($nativeAggregate, $visibleDocuments)->get();
             $mapped = 0;

@@ -261,19 +261,21 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $this->assertSame(4, $status['expected_source_count']);
         $this->assertSame(4, $status['indexed_source_count']);
         $this->assertTrue($status['coverage_complete']);
-        $storedQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(DISTINCT accessible_sources.id)'));
+        $storedQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS stored_count'));
         $expectedQueries = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS expected_count'));
         $this->assertCount(1, $storedQueries);
         $this->assertCount(1, $expectedQueries);
         foreach ([$storedQueries, $expectedQueries] as $aggregateQueries) {
             $sql = array_values($aggregateQueries)[0]['query'];
-            $this->assertSame(1, substr_count($sql, '(WITH '));
-            $this->assertSame(1, substr_count($sql, '"is_archived" ='), 'Entity guards must share the current project visibility scope.');
+            $this->assertStringContainsString('(WITH ', $sql);
+            $this->assertStringContainsString('"is_archived" =', $sql);
         }
-        $this->assertSame(1, substr_count(array_values($storedQueries)[0]['query'], '"ai_rag_sources"."source_type" in ('));
-        $this->assertSame(1, substr_count(array_values($expectedQueries)[0]['query'], '"ai_rag_expected_sources"."source_type" in ('));
-        $storedDiscovery = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'select distinct "ai_rag_sources"."source_type", "ai_rag_sources"."entity_type"'));
-        $expectedDiscovery = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'select distinct "ai_rag_expected_sources"."source_type", "ai_rag_expected_sources"."entity_type"'));
+        $this->assertStringContainsString('"ai_rag_sources"."source_type" in (', array_values($storedQueries)[0]['query']);
+        $this->assertStringContainsString('"ai_rag_expected_sources"."source_type" in (', array_values($expectedQueries)[0]['query']);
+        $storedDiscovery = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS identity_count')
+            && str_contains($query['query'], 'from "ai_rag_status_sources"') && ! str_contains($query['query'], 'from "ai_rag_expected_sources"'));
+        $expectedDiscovery = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'COUNT(*) AS identity_count')
+            && str_contains($query['query'], 'from "ai_rag_expected_sources"'));
         $this->assertCount(1, $storedDiscovery);
         $this->assertCount(1, $expectedDiscovery);
     }

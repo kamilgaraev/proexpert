@@ -23,6 +23,8 @@ final class AIAssistantRagController extends AbstractAssistantApiController
 
         try {
             return $this->success($request, new RagIndexStatusResource($this->index->status($organizationId, $this->actor($request), $request->validated('section', 'all'))));
+        } catch (AuthorizationException) {
+            return $this->error($request, 403);
         } catch (Throwable $exception) {
             Log::error('ai_assistant.rag.status_failed', ['organization_id' => $organizationId, 'user_id' => $this->actor($request)->id, 'exception_class' => $exception::class]);
 

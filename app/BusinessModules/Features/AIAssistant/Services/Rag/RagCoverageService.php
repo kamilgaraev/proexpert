@@ -56,7 +56,7 @@ final class RagCoverageService
             $progress?->__invoke('source_acl');
             $aggregate = static fn (\Illuminate\Database\Query\Builder $scoped) => DB::query()->fromSub($scoped, 'accessible_sources')
                 ->groupBy('accessible_sources.source_type')
-                ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
+                ->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count');
             $batches = $policy->aggregateSourceIdentityBatches($sources, $actor, $organizationId,
                 ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
                 $aggregate, $checkpoint);
