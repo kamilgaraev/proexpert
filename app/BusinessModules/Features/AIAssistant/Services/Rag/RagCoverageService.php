@@ -339,7 +339,7 @@ final class RagCoverageService
             $indexed = 0;
             $error = null;
             $batch = [];
-            $storedForType = RagSource::query()->where('organization_id', $organizationId)->where('source_type', $type)
+            $storedForType = RagSource::query()->from('ai_rag_status_sources as ai_rag_sources')->where('organization_id', $organizationId)->where('source_type', $type)
                 ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $projectId))->count();
             try {
                 if ($guard !== null) {
