@@ -31,19 +31,21 @@ final class AssistantReferenceBatchTest extends TestCase
     private Organization $organization;
     private User $actor;
     private ?\Closure $duringPermission = null;
+    private array $deniedModules = [];
 
     protected function setUp(): void
     {
         parent::setUp();
         $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('canCurrent')->andReturnUsing(function (User $actor, string $permission): bool {
-            $this->duringPermission?->__invoke($permission);
+        $authorization->shouldReceive('canCurrent')->andReturnUsing(function (User $actor, string $permission, array $context = []): bool {
+            $this->duringPermission?->__invoke($permission, $context);
             return true;
         });
-        $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $authorization->shouldReceive('forCurrentChecks')->andReturnUsing(fn () => clone $authorization);
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
-        $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['ai-assistant', 'project-management', 'contract-management', 'payments', 'budget-estimates'])
+        $modules->shouldReceive('getEffectiveModules')->andReturnUsing(fn () => collect(['ai-assistant', 'project-management', 'contract-management', 'payments', 'budget-estimates'])
+            ->reject(fn (string $slug): bool => in_array($slug, $this->deniedModules, true))
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $this->policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->guard = new AssistantSourceReferenceGuard($this->policy);
@@ -325,6 +327,8 @@ final class AssistantReferenceBatchTest extends TestCase
         self::assertCount(0, $nativeExists);
         $nativeBatches = array_filter($queries, static fn (array $query): bool => preg_match('/^select "(?:estimates|estimate_items|estimate_item_resources)"\.(?:"id"|\*) from /', $query['query']) === 1);
         self::assertCount(3, $nativeBatches);
+        $financialReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'financial_reference_candidates'));
+        self::assertCount(2, $financialReads);
         $this->policy->withCurrentChecks($this->actor, $this->organization->id, function () use ($estimate, $item, $resource, $refs): void {
             $read = fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, array_map(static fn (array $ref): array => [$ref], $refs));
             self::assertSame(['estimate' => true, 'item' => true, 'resource' => true], $read());
@@ -372,6 +376,79 @@ final class AssistantReferenceBatchTest extends TestCase
         self::assertFalse($this->guard->canRead($this->actor, $this->organization->id,
             [['entity_type' => 'estimate', 'entity_id' => 1]]));
         self::assertFalse($observed);
+        self::assertSame(['estimate' => false], $this->policy->withCurrentChecks($this->actor, $this->organization->id,
+            fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id,
+                ['estimate' => [['entity_type' => 'estimate', 'entity_id' => 1]]]), fresh: true));
+        self::assertFalse($observed);
+    }
+
+    public function test_later_callback_rechecks_financial_parent_and_representation_for_earlier_references(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        [$estimate, $item, $resource, $refs] = $this->estimateReferences();
+        $parent = EstimateItem::withoutEvents(fn () => EstimateItem::query()->create(['estimate_id' => $estimate->id,
+            'position_number' => '2', 'name' => 'New parent', 'item_type' => 'work', 'quantity' => 1,
+            'quantity_total' => 1, 'unit_price' => 1, 'total_amount' => 1]));
+        $this->duringPermission = static function (string $permission) use ($item, $resource, $parent): void {
+            if ($permission === 'probe.change-financial-constraints') {
+                $item->update(['parent_work_id' => $parent->id]);
+                $resource->update(['finance_representation' => 'represented_by_item']);
+            }
+        };
+        $later = $this->reference(Project::query()->findOrFail($estimate->project_id)) + [
+            'content_scope' => 'structured', 'checked_fields' => ['name'],
+            'required_permissions' => ['probe.change-financial-constraints'], 'required_domains' => ['projects'],
+        ];
+        $decisions = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
+            fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id,
+                ['item' => [$refs['item']], 'resource' => [$refs['resource']], 'later' => [$later]]), fresh: true);
+        self::assertSame(['item' => false, 'resource' => false, 'later' => true], $decisions);
+    }
+
+    public function test_project_finance_callbacks_cannot_leave_previously_read_financial_rows_visible(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        [$estimate, $item, $resource, $refs] = $this->estimateReferences();
+        $parent = EstimateItem::withoutEvents(fn () => EstimateItem::query()->create(['estimate_id' => $estimate->id,
+            'position_number' => '2', 'name' => 'New parent', 'item_type' => 'work', 'quantity' => 1,
+            'quantity_total' => 1, 'unit_price' => 1, 'total_amount' => 1]));
+        $changed = false;
+        $this->duringPermission = static function (string $permission, array $context) use ($item, $resource, $parent, &$changed): void {
+            if ($permission === 'budget-estimates.finance.view' && ($context['context_type'] ?? null) === 'project') {
+                $changed = true;
+                $item->update(['parent_work_id' => $parent->id]);
+                $resource->update(['finance_representation' => 'represented_by_item']);
+            }
+        };
+        $reader = $this->app->make(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class);
+        $decisions = $reader->canReadReferences($this->actor, $this->organization->id, $refs);
+        self::assertTrue($changed);
+        self::assertSame(['estimate' => true, 'item' => false, 'resource' => false], $decisions);
+    }
+
+    public function test_financial_batch_rejects_plans_invalidated_by_a_nested_fresh_module_check(): void
+    {
+        $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
+        [$estimate, , , $refs] = $this->estimateReferences();
+        $changed = false;
+        $nestedDecision = null;
+        $this->duringPermission = function (string $permission, array $context) use ($estimate, &$changed, &$nestedDecision): void {
+            if (! $changed && $permission === 'budget-estimates.finance.view' && ($context['context_type'] ?? null) === 'project') {
+                $changed = true;
+                $this->deniedModules = ['budget-estimates'];
+                $nestedDecision = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
+                    fn (): bool => $this->policy->canReadEntity($this->actor, $this->organization->id, 'estimate', $estimate->id), fresh: true);
+            }
+        };
+        $reader = $this->app->make(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class);
+        $decisions = $reader->canReadReferences($this->actor, $this->organization->id, $refs);
+        self::assertTrue($changed);
+        self::assertFalse($nestedDecision);
+        self::assertSame(['estimate' => false, 'item' => false, 'resource' => false], $decisions);
+        $this->duringPermission = null;
+        $this->deniedModules = [];
+        self::assertSame(['estimate' => true, 'item' => true, 'resource' => true],
+            $reader->canReadReferences($this->actor, $this->organization->id, $refs));
     }
 
     private function estimateReferences(): array

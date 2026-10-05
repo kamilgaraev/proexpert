@@ -277,80 +277,152 @@ final class AssistantEstimatePositionReadService
     public function canReadReference(User $actor, int $organizationId, array $reference): bool
     {
         return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($actor, $organizationId, $reference): bool {
-            $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'] ?? null;
-            $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'] ?? null;
-            $identityOnly = $type === 'estimate' && ($reference['content_scope'] ?? null) === 'structured'
-                && is_array($reference['checked_fields'] ?? null) && $reference['checked_fields'] !== []
-                && array_diff($reference['checked_fields'], ['id', 'number', 'name', 'status', 'version', 'estimate_date', 'project_id', 'contract_id']) === []
-                && is_array($reference['required_permissions'] ?? null)
-                && ! in_array('budget-estimates.finance.view', $reference['required_permissions'], true);
-            if (! in_array($type, ['estimate', 'estimate_item', 'estimate_item_resource'], true)
-                || (! is_int($id) && ! is_string($id))
-                || filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
-                || (! $identityOnly && ! $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view'))) {
-                return false;
-            }
-            $query = $this->access->entityQuery($actor, $organizationId, 'estimate');
-            if ($query === null) {
-                return false;
-            }
-            if ($type === 'estimate') {
-                $query->whereKey((int) $id);
-            } else {
-                $items = EstimateItem::query();
-                if ($type === 'estimate_item') {
-                    $items->whereKey((int) $id);
-                    if (array_key_exists('parent_work_id', $reference)) {
-                        $parentWorkId = filter_var($reference['parent_work_id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-                        $referenceEstimateId = filter_var($reference['estimate_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-                        $referenceOrganizationId = filter_var($reference['organization_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-                        $referenceEstimateItemId = filter_var($reference['estimate_item_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-                        $referenceEntityId = filter_var($reference['entity_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-                        $referenceProjectId = $reference['project_id'] ?? null;
-                        if ($parentWorkId === false || $referenceEstimateId === false || $referenceOrganizationId !== $organizationId
-                            || $referenceEntityId === false || $referenceEstimateItemId !== $referenceEntityId || $referenceEntityId !== (int) $id
-                            || $parentWorkId === $referenceEntityId || ($reference['composition_scope'] ?? null) !== 'resources'
-                            || ! array_key_exists('project_id', $reference)
-                            || ($referenceProjectId !== null && filter_var($referenceProjectId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false)) {
-                            return false;
-                        }
-                        $items->whereKey($referenceEntityId)->where('estimate_id', $referenceEstimateId)->where('parent_work_id', $parentWorkId)
-                            ->whereHas('parentWork', static fn (Builder $parent): Builder => $parent->where('estimate_id', $referenceEstimateId)->whereNull('parent_work_id'));
-                    }
+            $identityOnly = false;
+            $query = $this->referenceEstimateQuery($actor, $organizationId, $reference, $identityOnly);
+            $estimate = $query?->select(['estimates.id', 'estimates.project_id'])->first();
+            if ($estimate === null) { return false; }
+
+            return $identityOnly || $estimate->project_id === null
+                || $this->canReadProjectFinance($authorization, $actor, $organizationId, (int) $estimate->project_id);
+        });
+    }
+
+    public function canReadReferences(User $actor, int $organizationId, array $references): array
+    {
+        return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($actor, $organizationId, $references): array {
+            $decisions = array_fill_keys(array_keys($references), false);
+            $plans = [];
+            $signatures = [];
+            foreach ($references as $key => $reference) {
+                if (! is_array($reference)) { continue; }
+                $identityOnly = false;
+                $query = $this->referenceEstimateQuery($actor, $organizationId, $reference, $identityOnly);
+                if ($query === null) { continue; }
+                $signature = hash('sha256', $query->toSql().serialize($query->getBindings()).($identityOnly ? 'identity' : 'finance'));
+                if (isset($signatures[$signature])) {
+                    $plans[$signatures[$signature]]['keys'][] = $key;
                 } else {
-                    $resource = EstimateItemResource::query()->whereKey((int) $id);
-                    if (array_key_exists('composition_scope', $reference) || array_key_exists('finance_representation', $reference)) {
-                        $representation = $reference['finance_representation'] ?? null;
-                        if (($reference['composition_scope'] ?? null) !== 'resources' || ! is_string($representation) || $representation === '') {
-                            return false;
-                        }
-                        $resource->where('finance_representation', $representation);
-                        if ($representation === 'independent') {
-                            $resource->whereNull('represented_by_item_id');
-                        }
-                    }
-                    $items->whereIn('id', $resource->select('estimate_item_id'));
-                    if (isset($reference['estimate_item_id'])) {
-                        $items->whereKey($reference['estimate_item_id']);
-                    }
+                    $index = count($plans);
+                    $signatures[$signature] = $index;
+                    $plans[$index] = ['query' => $query, 'identity_only' => $identityOnly, 'keys' => [$key]];
                 }
-                $query->whereIn('estimates.id', $items->select('estimate_id'));
             }
-            if (isset($reference['estimate_id'])) {
-                $query->whereKey($reference['estimate_id']);
+            $authorized = [];
+            $projectChecksPerformed = false;
+            foreach ($this->readReferenceQueries($plans) as $row) {
+                $index = (int) $row->reference_index;
+                $plan = $plans[$index];
+                if (! $plan['identity_only'] && $row->project_id !== null) {
+                    $projectChecksPerformed = true;
+                    if (! $this->canReadProjectFinance($authorization, $actor, $organizationId, (int) $row->project_id)) { continue; }
+                }
+                $plan['query'] = (clone $plan['query'])->where('estimates.project_id', $row->project_id);
+                $authorized[$index] = $plan;
             }
-            $estimate = $query->select(['estimates.id', 'estimates.project_id'])->first();
-            if ($estimate === null || (isset($reference['organization_id']) && (int) $reference['organization_id'] !== $organizationId)) {
-                return false;
+            if ($projectChecksPerformed) {
+                $admitted = [];
+                foreach ($this->readReferenceQueries($authorized) as $row) { $admitted[(int) $row->reference_index] = true; }
+                $authorized = array_intersect_key($authorized, $admitted);
             }
-            $projectId = $estimate->project_id === null ? null : (int) $estimate->project_id;
-            $projectKey = array_key_exists('project_id', $reference) ? 'project_id' : (array_key_exists('projectId', $reference) ? 'projectId' : null);
-            if ($projectKey !== null && ($reference[$projectKey] === null ? null : (int) $reference[$projectKey]) !== $projectId) {
-                return false;
+            if (! $this->access->withCurrentChecks($actor, $organizationId,
+                static fn (AuthorizationService $current): bool => $current === $authorization)) { return $decisions; }
+            foreach ($authorized as $plan) {
+                foreach ($plan['keys'] as $key) { $decisions[$key] = true; }
             }
 
-            return $identityOnly || $projectId === null || $this->canReadProjectFinance($authorization, $actor, $organizationId, $projectId);
+            return $decisions;
         });
+    }
+
+    private function readReferenceQueries(array $plans): array
+    {
+        $rows = [];
+        foreach (array_chunk($plans, 250, true) as $batch) {
+            $union = null;
+            foreach ($batch as $index => $plan) {
+                $branch = (clone $plan['query'])->select(['estimates.id', 'estimates.project_id'])
+                    ->selectRaw('?::integer AS reference_index', [$index])->toBase();
+                if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
+            }
+            if ($union !== null) {
+                array_push($rows, ...DB::query()->fromSub($union, 'financial_reference_candidates')->get()->all());
+            }
+        }
+
+        return $rows;
+    }
+
+    private function referenceEstimateQuery(User $actor, int $organizationId, array $reference, bool &$identityOnly): ?Builder
+    {
+        $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'] ?? null;
+        $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'] ?? null;
+        $identityOnly = $type === 'estimate' && ($reference['content_scope'] ?? null) === 'structured'
+            && is_array($reference['checked_fields'] ?? null) && $reference['checked_fields'] !== []
+            && array_diff($reference['checked_fields'], ['id', 'number', 'name', 'status', 'version', 'estimate_date', 'project_id', 'contract_id']) === []
+            && is_array($reference['required_permissions'] ?? null)
+            && ! in_array('budget-estimates.finance.view', $reference['required_permissions'], true);
+        if (! in_array($type, ['estimate', 'estimate_item', 'estimate_item_resource'], true)
+            || (! is_int($id) && ! is_string($id))
+            || filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false
+            || (! $identityOnly && ! $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view'))) {
+            return null;
+        }
+        $query = $this->access->entityQuery($actor, $organizationId, 'estimate');
+        if ($query === null) {
+            return null;
+        }
+        if ($type === 'estimate') {
+            $query->whereKey((int) $id);
+        } else {
+            $items = EstimateItem::query();
+            if ($type === 'estimate_item') {
+                $items->whereKey((int) $id);
+                if (array_key_exists('parent_work_id', $reference)) {
+                    $parentWorkId = filter_var($reference['parent_work_id'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                    $referenceEstimateId = filter_var($reference['estimate_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                    $referenceOrganizationId = filter_var($reference['organization_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                    $referenceEstimateItemId = filter_var($reference['estimate_item_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                    $referenceEntityId = filter_var($reference['entity_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                    $referenceProjectId = $reference['project_id'] ?? null;
+                    if ($parentWorkId === false || $referenceEstimateId === false || $referenceOrganizationId !== $organizationId
+                        || $referenceEntityId === false || $referenceEstimateItemId !== $referenceEntityId || $referenceEntityId !== (int) $id
+                        || $parentWorkId === $referenceEntityId || ($reference['composition_scope'] ?? null) !== 'resources'
+                        || ! array_key_exists('project_id', $reference)
+                        || ($referenceProjectId !== null && filter_var($referenceProjectId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false)) {
+                        return null;
+                    }
+                    $items->whereKey($referenceEntityId)->where('estimate_id', $referenceEstimateId)->where('parent_work_id', $parentWorkId)
+                        ->whereHas('parentWork', static fn (Builder $parent): Builder => $parent->where('estimate_id', $referenceEstimateId)->whereNull('parent_work_id'));
+                }
+            } else {
+                $resource = EstimateItemResource::query()->whereKey((int) $id);
+                if (array_key_exists('composition_scope', $reference) || array_key_exists('finance_representation', $reference)) {
+                    $representation = $reference['finance_representation'] ?? null;
+                    if (($reference['composition_scope'] ?? null) !== 'resources' || ! is_string($representation) || $representation === '') {
+                        return null;
+                    }
+                    $resource->where('finance_representation', $representation);
+                    if ($representation === 'independent') {
+                        $resource->whereNull('represented_by_item_id');
+                    }
+                }
+                $items->whereIn('id', $resource->select('estimate_item_id'));
+                if (isset($reference['estimate_item_id'])) {
+                    $items->whereKey($reference['estimate_item_id']);
+                }
+            }
+            $query->whereIn('estimates.id', $items->select('estimate_id'));
+        }
+        if (isset($reference['estimate_id'])) {
+            $query->whereKey($reference['estimate_id']);
+        }
+        if (isset($reference['organization_id']) && (int) $reference['organization_id'] !== $organizationId) { return null; }
+        $projectKey = array_key_exists('project_id', $reference) ? 'project_id' : (array_key_exists('projectId', $reference) ? 'projectId' : null);
+        if ($projectKey !== null) {
+            $query->where('estimates.project_id', $reference[$projectKey] === null ? null : (int) $reference[$projectKey]);
+        }
+
+        return $query;
     }
 
     private function resolution(array $options, ?int $total, bool $limited = false): array
