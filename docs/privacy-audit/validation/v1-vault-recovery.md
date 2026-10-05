@@ -1,6 +1,6 @@
 # МОСТ AI V1: tokens, Vault и recovery
 
-Версия `most-ai-qa79-corpus/0.1-candidate`; **SPECIFIED / NOT RUN**. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79), вход [G0:448](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/g0-v1-contracts.md#L448). Ни encrypt/decrypt, ни restore runtime здесь не запускались.
+Версия `most-ai-qa79-corpus/0.2-candidate`; **SPECIFIED / NOT RUN**. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79), вход [G0:448](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/g0-v1-contracts.md#L448). Ни encrypt/decrypt, ни restore runtime здесь не запускались.
 
 Все mappings, keys, names/canaries генерируются изолированно для теста; production key/backup/data не читаются. Fixed vectors не operational keys. Approved library vectors/key access/backup/nonce allocation проверяют PRIV и независимый QA позже; corpus не реализует криптографию. Trusted-host/common-key risks требуют человеческого решения G4, а residency/account applicability — evidence G2; они не принимаются этим файлом.
 

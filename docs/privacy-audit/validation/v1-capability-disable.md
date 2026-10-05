@@ -1,6 +1,6 @@
 # МОСТ AI V1: обязательные поверхности и отключение возможностей
 
-Версия `most-ai-qa79-corpus/0.1-candidate`; **SPECIFIED / NOT RUN**. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79). Pinned [caller inventory](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/caller-inventory.md) сохраняет исходные paths и uncertain runtime attribution. Таблица ниже не утверждает, что SDK уже перенесены, routes перехвачены или BIM выключен.
+Версия `most-ai-qa79-corpus/0.2-candidate`; **SPECIFIED / NOT RUN**. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79). Pinned [caller inventory](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/caller-inventory.md) сохраняет исходные paths и uncertain runtime attribution. Таблица ниже не утверждает, что SDK уже перенесены, routes перехвачены или BIM выключен.
 
 Перед квалификацией каждый route получает exact caller/registration/container/SUT/profile/version manifest и state `enabled_qualified`, `disabled_proven` либо `unknown_blocked`. Это evidence states будущего release, не текущая конфигурация. `disabled_proven` требует вызываемых entrypoint negative tests, а не пустой интерфейс/отсутствие кнопки. Неизвестные wrapper/order/account/DNS/runtime scopes не N/A. Scope classification делает owner+независимый reviewer до run.
 

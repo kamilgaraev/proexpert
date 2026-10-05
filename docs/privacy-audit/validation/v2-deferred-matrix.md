@@ -1,6 +1,6 @@
 # МОСТ AI: V2 scenarios вне минимального V1 gate
 
-Версия `most-ai-qa79-corpus/0.1-candidate`; **SPECIFIED / NOT RUN**. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79), [G0 V1/V2:462](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/g0-v1-contracts.md#L462).
+Версия `most-ai-qa79-corpus/0.2-candidate`; **SPECIFIED / NOT RUN**. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79), [G0 V1/V2:462](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/g0-v1-contracts.md#L462).
 
 | ID | Deferred control / future fault case | V1 compensation, которую нельзя убрать |
 | --- | --- | --- |

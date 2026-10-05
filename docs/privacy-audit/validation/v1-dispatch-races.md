@@ -1,6 +1,6 @@
 # МОСТ AI V1: revoke и dispatch races
 
-Версия `most-ai-qa79-corpus/0.1-candidate`; [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79). **SPECIFIED / NOT RUN.** Вход G0 `e7a7bd7d19b4d3ce723e24b214187aea67cac6f4`, [контракт:394](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/g0-v1-contracts.md#L394). Это будущий harness contract, не созданный Gateway и не измеренная concurrency proof.
+Версия `most-ai-qa79-corpus/0.2-candidate`; [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79). **SPECIFIED / NOT RUN.** Вход G0 `e7a7bd7d19b4d3ce723e24b214187aea67cac6f4`, [контракт:394](https://github.com/kamilgaraev/proexpert/blob/e7a7bd7d19b4d3ce723e24b214187aea67cac6f4/docs/architecture/most-ai-v1/g0-v1-contracts.md#L394). Это будущий harness contract, не созданный Gateway и не измеренная concurrency proof.
 
 ## Детерминированный harness
 

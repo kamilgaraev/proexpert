@@ -1,6 +1,6 @@
 # МОСТ AI: вход G0 и пределы corpus acceptance
 
-Версия corpus `most-ai-qa79-corpus/0.1-candidate`, 05.10.2026. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79); автор QA, постоянный чат `01a105d0-7673-75b0-a2a7-d8bc9b28ca8c`. **Corpus candidate / independent review pending.** Авторская проверка документов не является независимой приёмкой своей задачи.
+Версия corpus `most-ai-qa79-corpus/0.2-candidate`, 05.10.2026. [MOSTAI-79](https://prohelper.youtrack.cloud/issue/MOSTAI-79); автор QA, постоянный чат `01a105d0-7673-75b0-a2a7-d8bc9b28ca8c`. **Corpus candidate / independent review pending.** Авторская проверка документов не является независимой приёмкой своей задачи.
 
 ## Принятый вход
 
@@ -55,3 +55,9 @@ Fresh QA-01 base после fetch `b579f338bb2886ea40e40c3a1059c1b3df125871` (ma
 Corpus deliverable acceptance = спецификация достаточно покрывает threats и product assertions, expected results не подменяют будущие observed. Local PG53 после49/38/50 проверяет orchestration/public-synthetic stub only, не actual-model quality/ctxsize/privacy. MOSTAI-80/81/82 иG1 повторно принимают actual-model/history/refs/OCR/embeddings/RAG/response/wire/effects; G2 legal/vendor/runtime/customer applicability, G3 authorized pilot иG4 named human residual/release не закрыты. V2 optionality не освобождает включённый V1 path от mandatory proofs.
 
 Migration/config/DB/production/CI/provider/effects здесь отсутствуют. После разрешённого merge/deploy уборка QA task branch/worktree по AGENTS с проверкой current tips/PR head/integration/active owners; до merge сохраняются одна чистая ветка и один worktree для review. Source audits и принятые G0 документы не меняются.
+
+## Round1 PQA-01 и candidate0.2
+
+Root product review `e8820ffb9a3235e0e3c075b975ed2106c346913a92ed1a7f8594494c4856c953` / native79 comment7-299 выявило P2 на старый corpus HEAD `30876284cb02a0aadbb7de0ca1e9c535c65be097`: noncritical natural_answer/followup_narrative допускали field dump при верных фактах и polish4/5/macro59/60. Candidate0.2 переносит смысловые product invariants в critical gates всех применимых PG cases/variants; любой failed/missing mandatory assertion блокирует capability независимо от polish. 4/5 иmacro90% сохранены только для noncritical presentation polish. Exact wording не требуется, релевантные таблицы и естественные scoped partial/refusal ответы допустимы.
+
+В JSON semantic_gate_counterexamples сохранены12 hand-labelled synthetic примеров для отдельного generic gate probe: field/ref dump с верными фактами, template substitute, irrelevant estimate, unwarranted corpus refusal и missing mandatory evidence требуют FAIL; concise/paraphrased natural, partial, legitimate privacy refusal и relevant table допускают PASS gate при выполненных остальных assertions. Probe сравнивает frozen старый corpus и новый, включая legacy4/5/macro59/60 counterexample. Это проверка логики corpus на заранее размеченных synthetic observations, не semantic classifier/actual-model benchmark и не независимый approval автора. Execution status примеров not_run относится к будущему model/semantic run; offline gate receipts отдельно в79. Новые exact SHA/receipts в79; Root переиспользует свою group для нового frozen bundle. Старые round1 verdict исторические, не carryover PASS. Runtime cases NOT RUN/observed metrics NOT MEASURED и frozen G0 E7 неизменны.
