@@ -59,6 +59,51 @@ final class RagActorCoverageTest extends TestCase
         $this->coverage = new RagCoverageService($registry, $this->indexer, $policy);
     }
 
+    public function test_snapshot_counts_use_the_projection_and_preserve_scope_and_stale_state(): void
+    {
+        [$organization, , $visible] = $this->scope();
+        $hidden = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $foreign = Project::factory()->create();
+        $this->index($organization->id, $visible);
+        $visibleChunk = $this->collector->chunks[0];
+        $this->index($organization->id, $hidden);
+        $hiddenChunk = $this->collector->chunks[1];
+        $this->index($foreign->organization_id, $foreign);
+        $attributes = ['organization_id' => $organization->id, 'project_id' => $visible->id,
+            'entity_id' => '999999999', 'title' => 'Stale source', 'checksum' => str_repeat('a', 64), 'metadata' => []];
+        $stale = RagSource::query()->create($attributes + ['source_type' => 'project', 'entity_type' => 'project']);
+        RagSource::query()->create($attributes + ['source_type' => 'warehouse', 'entity_type' => 'warehouse']);
+        $this->collector->chunks = [$visibleChunk];
+        DB::enableQueryLog();
+        try {
+            $snapshot = $this->coverage->refreshCoverage($organization->id, $visible->id, 'project');
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        self::assertSame(2, $snapshot['stored_source_count']);
+        self::assertSame(1, $snapshot['source_catalog'][0]['stale_count']);
+        self::assertSame(2, $snapshot['source_catalog'][0]['stored_count']);
+        self::assertTrue($snapshot['eligible_count_known']);
+        self::assertFalse($snapshot['coverage_complete']);
+        $storedCounts = array_filter($queries, static fn (array $query): bool => str_starts_with($query['query'], 'select count(*) as aggregate from ')
+            && (str_contains($query['query'], 'from "ai_rag_sources"') || str_contains($query['query'], 'from "ai_rag_status_sources"')));
+        self::assertCount(1, $storedCounts);
+        self::assertStringContainsString('from "ai_rag_status_sources"', array_values($storedCounts)[0]['query']);
+        self::assertSame([$organization->id, 'project', $visible->id], array_values($storedCounts)[0]['bindings']);
+        $stale->delete();
+        $snapshot = $this->coverage->refreshCoverage($organization->id, $visible->id, 'project');
+        self::assertSame(1, $snapshot['stored_source_count']);
+        self::assertSame(0, $snapshot['stale_source_count']);
+        self::assertTrue($snapshot['coverage_complete']);
+        $this->collector->chunks = [$visibleChunk, $hiddenChunk];
+        $snapshot = $this->coverage->refreshCoverage($organization->id, sourceType: 'project');
+        self::assertSame(2, $snapshot['stored_source_count']);
+        self::assertSame(2, $snapshot['indexed_source_count']);
+        self::assertTrue($snapshot['coverage_complete']);
+    }
+
     public function test_actor_counts_exclude_private_projects_and_do_not_reuse_organization_expected_counts_or_errors(): void
     {
         [$organization, $actor, $visible] = $this->scope();
