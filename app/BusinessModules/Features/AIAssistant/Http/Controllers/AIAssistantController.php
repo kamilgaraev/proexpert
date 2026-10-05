@@ -76,7 +76,7 @@ final class AIAssistantController extends AbstractAssistantApiController
     public function conversations(AssistantPaginationRequest $request): JsonResponse
     {
         return $this->respond($request, function () use ($request): JsonResponse {
-            $page = $this->conversations->queryVisibleConversations($this->actor($request), $this->organizationId($request))
+            $page = $this->conversations->queryVisibleConversations($this->actor($request), $this->lifecycleOrganizationId($request), failWhenDenied: true)
                 ->paginate($request->integer('per_page', 30), ['*'], 'page', $request->integer('page', 1));
             return $this->success($request, ConversationResource::collection($page->getCollection()), 200, $this->pagination($page));
         });

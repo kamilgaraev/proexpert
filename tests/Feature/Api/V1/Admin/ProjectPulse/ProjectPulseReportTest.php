@@ -18,7 +18,7 @@ class ProjectPulseReportTest extends TestCase
 {
     public function test_owner_can_load_current_project_pulse_report(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
         $user = $context->user;
         $project = Project::factory()->create([
@@ -51,6 +51,8 @@ class ProjectPulseReportTest extends TestCase
             'activity' => [],
             'recommendations' => [],
             'raw_facts' => [],
+            'source_refs' => [['entity_type' => 'project', 'entity_id' => (string) $project->id]],
+            'required_domains' => ['reports', 'finance'],
             'created_by_user_id' => $user->id,
             'generated_at' => now(),
         ]);
@@ -83,8 +85,8 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_project_participant_can_load_current_project_pulse_report(): void
     {
-        $ownerContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
-        $participantContext = AdminApiTestContext::create(
+        $ownerContext = $this->context(roleSlug: 'organization_owner');
+        $participantContext = $this->context(
             organizationAttributes: [
                 'capabilities' => ['general_contracting'],
                 'primary_business_type' => 'general_contracting',
@@ -129,6 +131,8 @@ class ProjectPulseReportTest extends TestCase
             'activity' => [],
             'recommendations' => [],
             'raw_facts' => [],
+            'source_refs' => [['entity_type' => 'project', 'entity_id' => (string) $project->id]],
+            'required_domains' => ['reports', 'finance'],
             'created_by_user_id' => $participantContext->user->id,
             'generated_at' => now(),
         ]);
@@ -144,7 +148,7 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_owner_can_open_project_pulse_report_from_history(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
         $user = $context->user;
         $project = Project::factory()->create([
@@ -177,6 +181,8 @@ class ProjectPulseReportTest extends TestCase
             'activity' => [],
             'recommendations' => [],
             'raw_facts' => [],
+            'source_refs' => [['entity_type' => 'project', 'entity_id' => (string) $project->id]],
+            'required_domains' => ['reports', 'finance'],
             'created_by_user_id' => $user->id,
             'generated_at' => now(),
         ]);
@@ -193,7 +199,7 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_generate_stores_project_pulse_report(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
 
         $response = $this
@@ -213,7 +219,7 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_project_pulse_contains_approved_purchase_request_without_order(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
 
         $purchaseRequestId = DB::table('purchase_requests')->insertGetId([
@@ -245,7 +251,7 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_project_pulse_does_not_mix_unlinked_purchase_requests_into_project_scope(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
@@ -279,7 +285,7 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_project_pulse_contains_overdue_open_work_constraint_in_project_scope(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
@@ -381,7 +387,7 @@ class ProjectPulseReportTest extends TestCase
 
     public function test_project_pulse_collects_construction_erp_risk_sources_in_project_scope(): void
     {
-        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context = $this->context(roleSlug: 'organization_owner');
         $organization = $context->organization;
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
@@ -694,5 +700,32 @@ class ProjectPulseReportTest extends TestCase
             self::assertContains($expectedCategory, $categoryKeys);
             self::assertContains($expectedCategory, $riskGroupKeys);
         }
+    }
+
+    private function context(array $userAttributes = [], array $organizationAttributes = [], string $roleSlug = 'web_admin'): AdminApiTestContext
+    {
+        $context = AdminApiTestContext::create($userAttributes, $organizationAttributes, $roleSlug);
+        $catalogs = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(config_path('ModuleList'), \FilesystemIterator::SKIP_DOTS));
+        foreach ($catalogs as $catalog) {
+            if (! $catalog->isFile() || strtolower($catalog->getExtension()) !== 'json') { continue; }
+            $definition = json_decode(file_get_contents($catalog->getPathname()), true, 512, JSON_THROW_ON_ERROR);
+            \App\Models\Module::query()->firstOrCreate(['slug' => $definition['slug']], [
+                'name' => $definition['name'], 'version' => $definition['version'] ?? '1.0.0', 'type' => $definition['type'] ?? 'feature',
+                'billing_model' => $definition['billing_model'] ?? 'free', 'category' => $definition['category'] ?? 'test',
+                'permissions' => $definition['permissions'] ?? [], 'is_active' => true,
+                'can_deactivate' => $definition['can_deactivate'] ?? false,
+            ]);
+        }
+        $account = \App\Models\OrganizationCommercialAccount::query()->updateOrCreate(['organization_id' => $context->organization->id],
+            ['status' => 'active', 'offer_type' => 'packages', 'quote_version' => 1]);
+        foreach (glob(config_path('Packages/*.json')) as $package) {
+            $definition = json_decode(file_get_contents($package), true, 512, JSON_THROW_ON_ERROR);
+            \App\Models\OrganizationPackageSubscription::query()->create(['organization_id' => $context->organization->id,
+                'commercial_account_id' => $account->id, 'package_slug' => $definition['slug'], 'tier' => 'standard',
+                'status' => 'active', 'access_source' => 'paid_package', 'price_paid' => 0,
+                'current_period_start_at' => now(), 'current_period_end_at' => now()->addMonth()]);
+        }
+
+        return $context;
     }
 }

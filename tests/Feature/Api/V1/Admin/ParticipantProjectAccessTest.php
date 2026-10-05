@@ -66,6 +66,8 @@ final class ParticipantProjectAccessTest extends TestCase
             'activity' => [],
             'recommendations' => [],
             'raw_facts' => [],
+            'source_refs' => [['entity_type' => 'project', 'entity_id' => (string) $project->id]],
+            'required_domains' => ['reports', 'finance'],
             'created_by_user_id' => $context->user->id,
             'generated_at' => now(),
         ]);
@@ -142,6 +144,9 @@ final class ParticipantProjectAccessTest extends TestCase
 
         $this->activateModules($context->organization->id, [
             'ai-assistant',
+            'project-management',
+            'reports',
+            'payments',
             'budget-estimates',
             'schedule-management',
         ]);
