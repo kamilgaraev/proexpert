@@ -660,6 +660,10 @@ final class AssistantDataAccessPolicy
                 return $query->getModel()->newQueryWithoutScopes()->fromSub($union, $table);
             }
 
+            if ($union !== null && ! $expectedProjection && $identitySources !== null) {
+                return $query->joinSub($union, 'assistant_visible_source_ids', static fn (\Illuminate\Database\Query\JoinClause $join) => $join
+                    ->on($table.'.id', '=', 'assistant_visible_source_ids.source_id'));
+            }
             return $union === null ? $query->whereRaw('1 = 0')
                 : $query->whereIn($identitySources === null ? DB::raw('('.$table.'.source_type, '.$table.'.entity_type, '.$table.'.entity_id)') : $table.'.id', $union);
         }

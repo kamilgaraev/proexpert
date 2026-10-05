@@ -44,6 +44,7 @@ final class AssistantSourceIdentityQueryBuilder
             ->selectRaw($table.'.id AS admitted_source_id, '.$table.'.entity_id AS admitted_entity_id');
         $grammar = $entities->getQuery()->getGrammar();
 
+        if (! in_array($entityType, ['design_ifc_model_element', 'approved_estimate_norm', 'approved_construction_resource'], true)) { $entities->distinct(); }
         return $entities->select('eligible_identity_source.admitted_source_id AS source_id')
             ->joinSub($sources, 'eligible_identity_source', static fn (\Illuminate\Database\Query\JoinClause $join) => $join
                 ->whereRaw($grammar->wrap('eligible_identity_source.admitted_entity_id').' COLLATE "C" = CAST('.$grammar->wrap($key).' AS TEXT)'))->toBase();
