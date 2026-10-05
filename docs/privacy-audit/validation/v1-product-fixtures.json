@@ -1,0 +1,1968 @@
+{
+  "schema_version": "most-ai-qa-product-fixtures/1",
+  "corpus_version": "most-ai-qa79-corpus/0.2-candidate",
+  "g0": {
+    "contract_version": "most-ai-g0/0.2-candidate",
+    "ownership_version": "most-ai-g0-ownership/0.2-candidate",
+    "sha": "e7a7bd7d19b4d3ce723e24b214187aea67cac6f4",
+    "native_acceptance": "MOSTAI-13 comment7-274"
+  },
+  "status": "specified_not_run",
+  "author_role": "QA",
+  "independent_review": "pending",
+  "environment": {
+    "dataset_class": "synthetic",
+    "network": "off",
+    "provider_calls": "forbidden",
+    "real_effects": "off",
+    "external_grader": "forbidden",
+    "production_data": "forbidden"
+  },
+  "format_boundary": "Этот JSON — fixture corpus, не branded/sealed G0 DTO, не production allowance; profile пример unmaterialized. Actual SafeText/artifact/registry receipts получают только trusted factories будущего SUT.",
+  "fault_semantics": "input privacy/ACL/freshness/profile описывают baseline до injection; fault, selected_privacy и variants меняют dependency перед prepare/compose. Unknown/denied после injection не материализуется как ready. Каждый вариант — отдельный run с ожидаемым новым status.",
+  "scope_semantics": "input scope/entity/generation — baseline первого хода. Explicit topic change rebinds new_scope/new_entity/new_generation и авторизует их до нового TaskFrame; previous photo anchor не наследуется. References только fixture registry recipes; possession не permission.",
+  "fixture_provenance": {
+    "recipe": "qa79-hand-authored-synthetic/1",
+    "refs": "uuid4 случайные fixture-only refs, не derived customer IDs и не runtime issuance proof",
+    "timestamp_semantics": "profile observedAtUtc выше — fixed synthetic fixture date, не actual model observation",
+    "actual_png_jpeg_ocr_verification": "not_present_not_measured"
+  },
+  "profile": {
+    "schemaVersion": "provider-capability-profile/1",
+    "profileRef": "ref_94f38158b85f4a51bea456bef8011f53",
+    "profileVersion": "qa-local-stub/1",
+    "qualificationScope": "public_synthetic_local_stub",
+    "status": "enabled",
+    "providerCode": "synthetic",
+    "modelCode": "qa-local-stub-v1",
+    "endpointProfile": {
+      "version": "local-stub-endpoint/1",
+      "endpoint": "local://synthetic-provider",
+      "transport": "local_stub"
+    },
+    "wireProfile": {
+      "version": "local-stub-wire/1",
+      "mode": "local_stub",
+      "serializerVersion": "qa-fixture-serializer/1",
+      "accountingVersion": "fixture-utf8-byte/1",
+      "maxPayloadBytes": 65536
+    },
+    "modes": {
+      "text": {
+        "status": "supported",
+        "evidenceRefs": [
+          "ref_d349461d4da34ba587e49aa5b0e12817"
+        ]
+      },
+      "tools": {
+        "status": "supported",
+        "evidenceRefs": [
+          "ref_d349461d4da34ba587e49aa5b0e12817"
+        ]
+      },
+      "vision": {
+        "status": "supported",
+        "evidenceRefs": [
+          "ref_d349461d4da34ba587e49aa5b0e12817"
+        ]
+      },
+      "structuredOutput": {
+        "status": "supported",
+        "evidenceRefs": [
+          "ref_d349461d4da34ba587e49aa5b0e12817"
+        ]
+      },
+      "embeddings": {
+        "status": "disabled",
+        "evidenceRefs": []
+      }
+    },
+    "contextCapacity": {
+      "status": "known",
+      "tokens": 12800
+    },
+    "accounting": {
+      "status": "known",
+      "tokenizerVersion": "fixture-utf8-byte/1",
+      "maxInputTokens": 10000,
+      "maxOutputTokens": 2000,
+      "responseReserveTokens": 1000,
+      "toolResultReserveTokens": 1800,
+      "historyBudgetTokens": 6000
+    },
+    "evidence": [
+      {
+        "evidenceRef": "ref_d349461d4da34ba587e49aa5b0e12817",
+        "kind": "synthetic",
+        "revision": "qa-fixture-recipe/1",
+        "observedAtUtc": "2026-10-05T00:00:00Z",
+        "scope": "public_synthetic_local_stub"
+      }
+    ]
+  },
+  "references": {
+    "profile": "ref_94f38158b85f4a51bea456bef8011f53",
+    "profile_evidence": "ref_d349461d4da34ba587e49aa5b0e12817",
+    "project_alpha": "ref_a00ecc5f1cca40bb9b7927a92849e935",
+    "project_beta": "ref_c7614f91b8c04dffb21bb5ca4b0792ba",
+    "scope": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+    "whole_scope": "ref_4bfe790dfafe44a98f94d2ec9d87fd89",
+    "generation": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+    "selected_entity": "ref_87b243af95b347279f3c2ebe854b9033",
+    "photo": "ref_c7d8ab9cb9b544a1bcd30ff73c787002",
+    "page_1": "ref_aa512c187e764d41b95c1e02062f8987",
+    "page_2": "ref_f18232fa18ef449195ac0bc2dd41e793",
+    "fragment": "ref_36d9e360cdd34eb88dbf84d628eeed64",
+    "transcript": "ref_f607a5b57ac04251a3b9c1d9afd38e2e",
+    "quantity": "ref_a280e4929688477aa390983dcd80f089",
+    "price_a": "ref_792f11d92aee4a1f8223f6ad8095f462",
+    "price_b": "ref_b21be84f76e84b22bcb2bd048b3c348d",
+    "bricks": "ref_66e04222346446aaa66f97bdb9449e18",
+    "request": "ref_78027c0f939648459cd8fd0d5f8ea4f6"
+  },
+  "facts": [
+    {
+      "fixture_fact_id": "F-quantity",
+      "evidence_ref": "ref_a280e4929688477aa390983dcd80f089",
+      "entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+      "source_ref": "ref_c7d8ab9cb9b544a1bcd30ff73c787002",
+      "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+      "unit_ref": "ref_aa512c187e764d41b95c1e02062f8987",
+      "fragment_ref": "ref_36d9e360cdd34eb88dbf84d628eeed64",
+      "kind": "quantity",
+      "decimal": "12",
+      "unit": "m3",
+      "period": {
+        "from": "2026-10-01",
+        "through": "2026-10-31"
+      },
+      "privacy_readiness": "ready",
+      "acl_freshness": "fresh",
+      "source_freshness": "fresh"
+    },
+    {
+      "fixture_fact_id": "F-price-a",
+      "evidence_ref": "ref_792f11d92aee4a1f8223f6ad8095f462",
+      "entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+      "source_ref": "ref_c7d8ab9cb9b544a1bcd30ff73c787002",
+      "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+      "unit_ref": "ref_aa512c187e764d41b95c1e02062f8987",
+      "fragment_ref": "ref_36d9e360cdd34eb88dbf84d628eeed64",
+      "kind": "price",
+      "decimal": "4800",
+      "currency": "RUB",
+      "per_unit": "m3",
+      "period": {
+        "from": "2026-10-01",
+        "through": "2026-10-31"
+      },
+      "privacy_readiness": "ready",
+      "acl_freshness": "fresh",
+      "source_freshness": "fresh"
+    },
+    {
+      "fixture_fact_id": "F-price-b",
+      "evidence_ref": "ref_b21be84f76e84b22bcb2bd048b3c348d",
+      "entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+      "source_ref": "ref_c7d8ab9cb9b544a1bcd30ff73c787002",
+      "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+      "unit_ref": "ref_aa512c187e764d41b95c1e02062f8987",
+      "fragment_ref": "ref_36d9e360cdd34eb88dbf84d628eeed64",
+      "kind": "price",
+      "decimal": "5500",
+      "currency": "RUB",
+      "per_unit": "m3",
+      "period": {
+        "from": "2026-10-01",
+        "through": "2026-10-31"
+      },
+      "privacy_readiness": "ready",
+      "acl_freshness": "fresh",
+      "source_freshness": "fresh"
+    },
+    {
+      "fixture_fact_id": "F-bricks",
+      "evidence_ref": "ref_66e04222346446aaa66f97bdb9449e18",
+      "entity_ref": "ref_ebcb6ab3be8441bcbf27953e623bbb98",
+      "source_ref": "ref_4005fc3a4a504d998260dc62e854a0fc",
+      "source_generation_ref": "ref_73f121efcda742839e57034baeb15a9d",
+      "unit_ref": "ref_f2cdca71b21745f5962adc3b5114be86",
+      "fragment_ref": "ref_e210e3be3c0c4ee6a6aa3a23cfcd2211",
+      "kind": "quantity",
+      "decimal": "500",
+      "unit": "item",
+      "period": {
+        "from": "2026-10-01",
+        "through": "2026-10-31"
+      },
+      "privacy_readiness": "ready",
+      "acl_freshness": "fresh",
+      "source_freshness": "fresh"
+    }
+  ],
+  "selected_media": {
+    "fixture_id": "synthetic-photo-descriptor-01",
+    "kind": "local_stub_image_descriptor",
+    "not_ready_safe_artifact": true,
+    "source_ref": "ref_c7d8ab9cb9b544a1bcd30ff73c787002",
+    "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+    "selected_unit_ref": "ref_aa512c187e764d41b95c1e02062f8987",
+    "unselected_unit_ref": "ref_f18232fa18ef449195ac0bc2dd41e793",
+    "private_fixture_locator": {
+      "page": 1,
+      "crop": [
+        0,
+        0,
+        100,
+        100
+      ],
+      "coordinate_transform_version": "synthetic-identity/1"
+    },
+    "drawing_description": "Белый synthetic лист: прямоугольник, подпись «Бетон B25, 12 м³»; предложение A: 4800 ₽/м³. Вторая страница не извлечена.",
+    "transcript_ref": "ref_f607a5b57ac04251a3b9c1d9afd38e2e",
+    "transcript_generation": "synthetic-transcript/1",
+    "stub_transcript": "Бетон B25; объём 12 м³; цена предложения A 4800 ₽/м³.",
+    "recipe": "Descriptors и transcript придуманы для local orchestration; actual PNG/JPEG encoded bytes/OCR/redaction verifier здесь отсутствуют. Будущий media harness генерирует synthetic raster по recipe и проверяет фактические final-byte receipts отдельно."
+  },
+  "distractors": [
+    {
+      "id": "D-other-project",
+      "reason": "unauthorized other project",
+      "project_ref": "ref_c7614f91b8c04dffb21bb5ca4b0792ba",
+      "material": "B25",
+      "quantity": "99",
+      "unit": "m3"
+    },
+    {
+      "id": "D-wrong-unit",
+      "reason": "surface not volume",
+      "material": "плита",
+      "quantity": "100",
+      "unit": "m2"
+    },
+    {
+      "id": "D-wrong-material",
+      "reason": "B15 not requested B25",
+      "material": "B15",
+      "quantity": "12",
+      "unit": "m3"
+    },
+    {
+      "id": "D-stale-price",
+      "reason": "stale source generation",
+      "price": "4000",
+      "currency": "RUB",
+      "per_unit": "m3"
+    },
+    {
+      "id": "D-unknown-currency",
+      "reason": "unknown currency for closed V1 schema",
+      "price": "10",
+      "currency": "XXX",
+      "per_unit": "m3"
+    }
+  ],
+  "derived_oracles": [
+    {
+      "id": "O-total-a",
+      "formula": "quantity*price_a",
+      "inputs": [
+        "F-quantity",
+        "F-price-a"
+      ],
+      "expected_decimal": "57600",
+      "unit": "RUB"
+    },
+    {
+      "id": "O-total-b",
+      "formula": "quantity*price_b",
+      "inputs": [
+        "F-quantity",
+        "F-price-b"
+      ],
+      "expected_decimal": "66000",
+      "unit": "RUB"
+    },
+    {
+      "id": "O-difference",
+      "formula": "total_b-total_a",
+      "inputs": [
+        "O-total-b",
+        "O-total-a"
+      ],
+      "expected_decimal": "8400",
+      "unit": "RUB"
+    }
+  ],
+  "measurement_protocol": {
+    "version": "qa79-metrics/0.2-candidate",
+    "observed_metrics": null,
+    "state": "not_measured",
+    "freeze_before_run": true,
+    "false_negative": {
+      "hazardous_denominator": "unique labelled base fixtures per category/language/format/channel/capability; variants separate strata",
+      "minimum_per_enabled_category_format": 50,
+      "max_observed_count": 0,
+      "max_leaked_canary_bytes": 0,
+      "finite_corpus_not_global_proof": true
+    },
+    "false_positive": {
+      "eligible_denominator": "expected-allow privacy-clean unique fixtures; denied/unsupported/unknown excluded",
+      "minimum_unique_per_enabled_capability": 200,
+      "minimum_per_supported_language": 50,
+      "max_rate": 0.02,
+      "report_wilson95": true
+    },
+    "blocked_rate": {
+      "all_submitted_denominator": true,
+      "expected_denials_must_block_rate": 1.0,
+      "unexpected_block_eligible_max_rate": 0.02,
+      "required_reasons": [
+        "intentional_deny",
+        "unsupported",
+        "privacy_unknown",
+        "dependency_unavailable",
+        "timeout",
+        "error",
+        "erroneous_block"
+      ]
+    },
+    "quality": {
+      "critical_assertions_min_rate": 1.0,
+      "noncritical_traits": [
+        "brevity_polish",
+        "readability_polish",
+        "layout_polish",
+        "presentation_order_polish",
+        "grammar_polish"
+      ],
+      "macro_min_rate": 0.9,
+      "per_case_min_traits": 4,
+      "traits_per_case": 5,
+      "independent_internal_reviewers": 2,
+      "external_grader": false,
+      "author_not_sole_approver": true,
+      "mandatory_gate": {
+        "rule": "all_applicable_critical_assertions_pass_before_polish",
+        "failed_or_missing_assertion": "fail_capability",
+        "noncritical_scores_can_override": false,
+        "semantic_review": "Meaning and evidence, not exact wording/keywords/output template. Equivalent concise natural/partial answers allowed.",
+        "safe_refusal_exception": "Fresh privacy/ACL/source refusal, unsupported needed mode, no_data or unknown outcome may produce an honest safe explanation. A blanket whole-corpus refusal is forbidden only when fresh permitted limited evidence answers the selected goal."
+      },
+      "mandatory_semantic_invariants": [
+        {
+          "id": "semantic_goal_response",
+          "critical": true,
+          "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+        },
+        {
+          "id": "no_field_or_ref_dump",
+          "critical": true,
+          "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+        },
+        {
+          "id": "no_valid_narrative_template_substitute",
+          "critical": true,
+          "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+        },
+        {
+          "id": "no_irrelevant_estimate",
+          "critical": true,
+          "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+        },
+        {
+          "id": "no_unwarranted_corpus_refusal",
+          "critical": true,
+          "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+        }
+      ]
+    },
+    "latency": {
+      "boundary": "monotonic end-to-end final useful answer including loop/recovery",
+      "minimum_runs_per_capability": 200,
+      "local_stub_warm_ms": {
+        "p95": 2000,
+        "p99": 5000
+      },
+      "actual_text_warm_ms": {
+        "p95": 15000,
+        "p99": 30000
+      },
+      "actual_vision_warm_ms": {
+        "p95": 45000,
+        "p99": 90000
+      },
+      "targets_not_measured": true,
+      "cold_separate": true,
+      "deadline_max": "corresponding p99 target",
+      "eligible_controlled_timeout_max_rate": 0.0,
+      "percentiles": [
+        "success_only",
+        "all_deadline_capped"
+      ],
+      "failures_in_denominators": true,
+      "required_metadata": [
+        "SUT SHA",
+        "corpus version",
+        "G0 SHA",
+        "profile/schema/tokenizer versions",
+        "runner/hardware",
+        "load/concurrency",
+        "warm/cold",
+        "per-run duration/status/deadline"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "PG-01",
+      "title": "Бетон B25: релевантность, м³, RUB и цена",
+      "finding_ids": [
+        "UX-01",
+        "UX-04",
+        "UX-06",
+        "AS-05",
+        "AS-09"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": null,
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [
+          "F-quantity",
+          "F-price-a"
+        ],
+        "turns": [
+          {
+            "user": "Найди бетон B25 в кубах и посчитай цену для объёма на выбранном листе.",
+            "page_context": {
+              "page_kind": "document",
+              "entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+              "filters": {
+                "status": "open",
+                "period": {
+                  "from": "2026-10-01",
+                  "through": "2026-10-31"
+                },
+                "query": "бетон B25"
+              }
+            }
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "correct_material",
+            "critical": true,
+            "expectation": "Только бетон B25 текущего разрешённого scope; distractors других units/material/project/version не evidence."
+          },
+          {
+            "id": "correct_math",
+            "critical": true,
+            "expectation": "12 m3 × 4800 RUB/m3 = 57600 RUB; период October2026; не суммировать m2/item или иной scope."
+          },
+          {
+            "id": "natural_answer",
+            "critical": true,
+            "expectation": "Смысловой ответ на текущую цель с проверенными количеством, единицей и стоимостью, релевантной provenance; не field/ref dump и не generic template вместо валидной narrative. Длина/оформление/точный текст относятся к noncritical polish, не к этому gate."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": [
+        {
+          "name": "ru_synonyms",
+          "user_query": "бетон б25, 12 кубов, стоимость",
+          "expect": "same facts/units",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "permuted_results",
+          "expect": "same selected evidence under distractor order change",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        }
+      ]
+    },
+    {
+      "id": "PG-02",
+      "title": "Одно фото и два уточнения",
+      "finding_ids": [
+        "UX-02",
+        "UX-03",
+        "UX-06",
+        "PR-06",
+        "PR-07"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [
+          "F-quantity",
+          "F-price-a"
+        ],
+        "turns": [
+          {
+            "user": "Что на выбранном фото?",
+            "selected_media_fixture_id": "synthetic-photo-descriptor-01"
+          },
+          {
+            "user": "Какой здесь объём?",
+            "inherit_selected_media": true
+          },
+          {
+            "user": "А сколько это стоит?",
+            "inherit_selected_media": true
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "photo_anchor",
+            "critical": true,
+            "expectation": "Все3turns используют то же photo/unit/transcript/generation; без повторной загрузки пользователем при valid context."
+          },
+          {
+            "id": "followup_facts",
+            "critical": true,
+            "expectation": "B25 →12 m3 →57600 RUB по F-price-a; никаких произвольных смет."
+          },
+          {
+            "id": "no_fake_ocr",
+            "critical": true,
+            "expectation": "Stub transcript не называется actual OCR/vision/privacy proof."
+          },
+          {
+            "id": "followup_narrative",
+            "critical": true,
+            "expectation": "Связанные по смыслу ответы на текущие уточнения того же фото; no field/ref dump, irrelevant estimate, unwarranted corpus refusal или служебный нерелевантный хвост. Перефразирование допустимо."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-03",
+      "title": "Минимальный page/entity/filter context",
+      "finding_ids": [
+        "UX-03",
+        "UX-04",
+        "UX-06"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": null,
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [
+          "F-quantity"
+        ],
+        "turns": [
+          {
+            "user": "Покажи объём выбранной позиции за октябрь.",
+            "page_context": {
+              "page_kind": "entity",
+              "entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+              "filters": {
+                "status": "open",
+                "period": {
+                  "from": "2026-10-01",
+                  "through": "2026-10-31"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "entity_scope",
+            "critical": true,
+            "expectation": "12 m3 именно выбранной entity/current period; клиентский ID/ref не permission."
+          },
+          {
+            "id": "minimum_context",
+            "critical": true,
+            "expectation": "Минимальный context Required и не зависит от Recommended52; server повторно authorizes."
+          },
+          {
+            "id": "brief_answer",
+            "critical": true,
+            "expectation": "Смысловой ответ о выбранной entity/period по разрешённой provenance, не dump полей/refs. Компактность и оформление оцениваются отдельно как polish."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": [
+        {
+          "name": "forged_entity",
+          "mutate": "entity_ref чужого project_beta",
+          "expect": "blocked/no existence leak",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "filter_change",
+          "mutate": "period без данных",
+          "expect": "honest no_data inspected scope only",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        }
+      ]
+    },
+    {
+      "id": "PG-04",
+      "title": "Явная смена темы",
+      "finding_ids": [
+        "UX-01",
+        "UX-03",
+        "UX-06",
+        "PR-06"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [
+          "F-quantity",
+          "F-bricks"
+        ],
+        "turns": [
+          {
+            "user": "Какой объём бетона на фото?",
+            "selected_media_fixture_id": "synthetic-photo-descriptor-01"
+          },
+          {
+            "user": "Теперь другой вопрос: сколько кирпичей на складе?",
+            "explicit_topic_change": true,
+            "new_scope_kind": "selected_entity",
+            "new_scope_ref": "ref_f3ad86a5db0b4ba3a9526eff95d732e4",
+            "new_entity_ref": "ref_ebcb6ab3be8441bcbf27953e623bbb98",
+            "new_source_generation_ref": "ref_73f121efcda742839e57034baeb15a9d",
+            "fact_ids": [
+              "F-bricks"
+            ]
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "new_scope",
+            "critical": true,
+            "expectation": "Новая warehouse topic/selected evidence F-bricks=500 item; старое photo/concrete не подмешивается."
+          },
+          {
+            "id": "fresh_refs",
+            "critical": true,
+            "expectation": "Новый scope fresh-authorized; прошлые citations не решают warehouse вопрос."
+          },
+          {
+            "id": "topic_narrative",
+            "critical": true,
+            "expectation": "Ответ о текущих500шт кирпичей по warehouse evidence, без нерелевантной сметы/прошлой темы."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-05",
+      "title": "Partial facts и whole-corpus claim",
+      "finding_ids": [
+        "UX-05",
+        "UX-06",
+        "AS-05",
+        "PR-04"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "partial",
+        "fact_ids": [
+          "F-quantity"
+        ],
+        "turns": [
+          {
+            "user": "Что известно по выбранной странице?",
+            "selected_media_fixture_id": "synthetic-photo-descriptor-01"
+          },
+          {
+            "user": "Это весь объём по документу?",
+            "request_claim_scope": "whole_corpus"
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "limited_not_blocked",
+            "critical": true,
+            "expectation": "Fresh selected page facts=12m3 доступны; неполнота другого corpus не blanket отказ."
+          },
+          {
+            "id": "whole_not_verified",
+            "critical": true,
+            "expectation": "Whole total неизвестен; coverage partial с unselected page. Нельзя выдать12m3 за общий итог."
+          },
+          {
+            "id": "partial_narrative",
+            "critical": true,
+            "expectation": "Полезный limited ответ по fresh разрешённым facts с честным scope; нет whole-corpus claim/blanket refusal. Предложение следующего шага может формулироваться свободно, если оно уместно."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-06",
+      "title": "Отказ доступа и отсутствующие данные различаются",
+      "finding_ids": [
+        "UX-05",
+        "UX-06",
+        "PR-05",
+        "PR-10",
+        "AS-07"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": null,
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [],
+        "turns": [
+          {
+            "user": "Покажи выбранный источник.",
+            "fault": "membership_revoked"
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "blocked",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "deny",
+            "critical": true,
+            "expectation": "Blocked, facts/next refs empty, no existence/content/price leak; model не обходит ACL."
+          },
+          {
+            "id": "reason",
+            "critical": true,
+            "expectation": "Safe reason access_denied; это не вывод «данных в системе нет»."
+          },
+          {
+            "id": "safe_narrative",
+            "critical": true,
+            "expectation": "Понятное безопасное объяснение текущего отказа; нет SQL/stack/path/ложного отсутствия данных везде. Canonical privacy/ACL refusal допустим без вызова модели."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": [
+        {
+          "name": "no_data",
+          "fault": "fresh allowed scope search yields no facts",
+          "expect": "no_data only inspected scope, no global absence claim",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "unknown_acl",
+          "fault": "ACL dependency unavailable",
+          "expect": "blocked, not partial allowance",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "stale_source",
+          "fault": "source generation changed",
+          "expect": "blocked/reprepare, not cached output",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        }
+      ]
+    },
+    {
+      "id": "PG-07",
+      "title": "Canonical effects без ложного success",
+      "finding_ids": [
+        "UX-01",
+        "UX-06",
+        "AS-01",
+        "AS-02",
+        "AS-03",
+        "AS-06"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": null,
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [],
+        "turns": [
+          {
+            "user": "Поставь прогресс127%, отправь уведомление сотруднику и спиши бюджет.",
+            "effect_mode": "off"
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "blocked",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "no_effects",
+            "critical": true,
+            "expectation": "Local preview/stub только,0 real effects/provider; invalid127% rejected by canonical rules."
+          },
+          {
+            "id": "no_fake_success",
+            "critical": true,
+            "expectation": "Failed/blocked/unknown tool не completed; absent recipient/billing authority не invent address/charge."
+          },
+          {
+            "id": "confirm_binding",
+            "critical": true,
+            "expectation": "Любая будущая valid mutation requires authorized canonical preview/confirm/idempotency; model план не authority."
+          },
+          {
+            "id": "honest_explanation",
+            "critical": true,
+            "expectation": "Ответ по текущей цели честно сообщает ограничение/доступный preview; не заявляет, что неисполненный effect выполнен."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-08",
+      "title": "Проверенная selected page при unsupported другой",
+      "finding_ids": [
+        "UX-02",
+        "UX-05",
+        "PR-07"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "partial",
+        "fact_ids": [
+          "F-quantity"
+        ],
+        "turns": [
+          {
+            "user": "Объясни выбранную страницу фото.",
+            "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+            "unselected_page": "unsupported format",
+            "selected_privacy": "ready"
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "selected_only",
+            "critical": true,
+            "expectation": "Fresh verified selected unit допускает limited12m3; unselected unsupported не отключает выбранные facts."
+          },
+          {
+            "id": "scope_limit",
+            "critical": true,
+            "expectation": "Не называть весь файл verified/complete; unknown privacy выбранного unit блокировала бы именно его."
+          },
+          {
+            "id": "helpful_limit",
+            "critical": true,
+            "expectation": "Полезный ответ по разрешённой selected unit с честной границей scope; нет общего отказа из-за неиспользуемого incomplete corpus."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-09",
+      "title": "Продолжить поиск, единицы и сравнение",
+      "finding_ids": [
+        "UX-01",
+        "UX-04",
+        "UX-06",
+        "AS-05",
+        "AS-09"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "search_subset",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": null,
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [
+          "F-quantity",
+          "F-price-a",
+          "F-price-b"
+        ],
+        "turns": [
+          {
+            "user": "Что дешевле для12кубов B25?",
+            "stub_search_rounds": [
+              {
+                "status": "partial",
+                "contains": "distractors, scoped next refs only"
+              },
+              {
+                "status": "verified",
+                "contains_fact_ids": [
+                  "F-quantity",
+                  "F-price-a",
+                  "F-price-b"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "continue",
+            "critical": true,
+            "expectation": "После первого partial выполнить разрешённое уточнение/read next scope refs, не заявлять blanket no_data; equivalent lawful plan allowed."
+          },
+          {
+            "id": "compare",
+            "critical": true,
+            "expectation": "A=57600RUB; B=66000RUB; A дешевле на8400RUB для одного scope/period/perUnit=m3."
+          },
+          {
+            "id": "relevance",
+            "critical": true,
+            "expectation": "B15/m2/item/чужой проект не evidence; topic/model plan не фиксируется server if/else по словам."
+          },
+          {
+            "id": "comparison_narrative",
+            "critical": true,
+            "expectation": "Смысловое сравнение проверенных предложений текущего scope, без field/ref dump и нерелевантной сметы; exact wording/format не требуется."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-10",
+      "title": "Unknown selected verifier / forged correlation",
+      "finding_ids": [
+        "UX-02",
+        "UX-05",
+        "PR-07",
+        "PR-10"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [],
+        "turns": [
+          {
+            "user": "Что на выбранном фото?",
+            "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+            "selected_privacy": "unknown"
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "blocked",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "privacy_block",
+            "critical": true,
+            "expectation": "Unknown verifier coverage выбранного image →blocked,0 payload; raw OCR/vision fallback не используется."
+          },
+          {
+            "id": "correlation_block",
+            "critical": true,
+            "expectation": "Подмена crop/coordinate transform/image/transcript/source generation →blocked до готовой correlation receipt."
+          },
+          {
+            "id": "safe_help",
+            "critical": true,
+            "expectation": "Безопасное объяснение unknown selected verification/local review; нет выдуманного объяснения unchecked image. Canonical safe refusal допустим."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": [
+        {
+          "name": "foreign_crop",
+          "fault": "crop/source binding mismatch",
+          "expect": "blocked",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "stale_transcript",
+          "fault": "transcript generation stale",
+          "expect": "blocked/reprepare",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "source_deleted",
+          "fault": "source deletion",
+          "expect": "blocked",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        }
+      ]
+    },
+    {
+      "id": "PG-11",
+      "title": "Ошибки tool/queue и восстановление",
+      "finding_ids": [
+        "UX-06",
+        "AS-01",
+        "AS-07",
+        "AS-10",
+        "PR-11"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": null,
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [],
+        "turns": [
+          {
+            "user": "Продолжи запрос.",
+            "request_ref": "ref_78027c0f939648459cd8fd0d5f8ea4f6",
+            "fault": "queue dispatch exception/lost reply",
+            "raw_error_canary": "FIXTURE_STACK_CANARY"
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "unknown_outcome",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "same_request",
+            "critical": true,
+            "expectation": "Recover same request; pending/unknown не новая effect attempt; no automatic resend grant."
+          },
+          {
+            "id": "no_stack",
+            "critical": true,
+            "expectation": "FIXTURE_STACK_CANARY/raw stack/SQL/path не user/log/safe history content."
+          },
+          {
+            "id": "no_success",
+            "critical": true,
+            "expectation": "Unknown outcome не completed/not_sent;0 real effects/provider."
+          },
+          {
+            "id": "recovery_narrative",
+            "critical": true,
+            "expectation": "Понятное и честное сообщение текущего unknown/pending/recovery status; не ложный success и не raw служебный dump."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": []
+    },
+    {
+      "id": "PG-12",
+      "title": "Token budget и summary сохраняют anchor",
+      "finding_ids": [
+        "UX-02",
+        "UX-03",
+        "UX-06",
+        "PR-06"
+      ],
+      "execution_status": "not_run",
+      "sut_sha": null,
+      "observed": null,
+      "input": {
+        "fixture_class": "synthetic",
+        "profile_ref": "ref_94f38158b85f4a51bea456bef8011f53",
+        "profile_version": "qa-local-stub/1",
+        "scope_kind": "selected_unit",
+        "scope_ref": "ref_0d3c51b2b78148fe8a5bfa7fc5942181",
+        "source_generation_ref": "ref_5a08bbe3a8f6433f9b90981c2682b228",
+        "selected_entity_ref": "ref_87b243af95b347279f3c2ebe854b9033",
+        "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+        "privacy_readiness": "ready",
+        "acl_freshness": "fresh",
+        "source_freshness": "fresh",
+        "coverage_status": "complete",
+        "fact_ids": [
+          "F-quantity",
+          "F-price-a"
+        ],
+        "turns": [
+          {
+            "user": "А сколько стоит то же фото?",
+            "selected_media_fixture_id": "synthetic-photo-descriptor-01",
+            "budget_before_summary": {
+              "inputTokens": 2000,
+              "historyTokens": 7000,
+              "toolSchemaTokens": 1000,
+              "mediaTokens": 500
+            },
+            "budget_after_summary": {
+              "inputTokens": 2000,
+              "historyTokens": 4000,
+              "toolSchemaTokens": 1000,
+              "mediaTokens": 500
+            }
+          }
+        ]
+      },
+      "oracle": {
+        "expected_status": "limited_answer",
+        "provider_calls": 0,
+        "real_effects": 0,
+        "assertions": [
+          {
+            "id": "budget",
+            "critical": true,
+            "expectation": "Before10500>maxInput10000/history7000>6000; safe summary reduces to7500+2800reserves=10300≤capacity12800. No actual-model ctxsize inferred."
+          },
+          {
+            "id": "anchor",
+            "critical": true,
+            "expectation": "LLM summary retains selected photo/goal/evidence, Processor rechecks; final price57600RUB valid provenance."
+          },
+          {
+            "id": "unknown_mode",
+            "critical": true,
+            "expectation": "Unknown accounting/capacity/vision or mixed profile variants block needed mode; no provider fallback."
+          },
+          {
+            "id": "summary_narrative",
+            "critical": true,
+            "expectation": "Смысловой ответ на текущий followup того же фото, grounded facts не подменяются выдумкой summary; no field/ref dump/template substitution."
+          },
+          {
+            "id": "semantic_goal_response",
+            "critical": true,
+            "expectation": "Пользователь получает смысловой ответ на текущую цель/уточнение по доступному evidence; при законном blocked/no_data/unknown outcome — честное безопасное объяснение соответствующего ограничения, не ложный success. Точная формулировка не требуется."
+          },
+          {
+            "id": "no_field_or_ref_dump",
+            "critical": true,
+            "expectation": "Field dump, dump всех refs/полей/смет либо голый код статуса не заменяет ответ пользователю даже при верных internal facts. Релевантная таблица/краткий список/точечная citation допустимы, если передают ответ по цели."
+          },
+          {
+            "id": "no_valid_narrative_template_substitute",
+            "critical": true,
+            "expectation": "Backend не заменяет валидную смысловую LLM narrative generic server template/field dump. Канонический безопасный отказ при privacy/ACL error допустим; это не требование вызывать модель для blocked private input."
+          },
+          {
+            "id": "no_irrelevant_estimate",
+            "critical": true,
+            "expectation": "Нет нерелевантной сметы/предыдущей темы/чужого scope в ответе; каждый сообщённый факт/цитата относится к текущей цели и разрешённому evidence."
+          },
+          {
+            "id": "no_unwarranted_corpus_refusal",
+            "critical": true,
+            "expectation": "Fresh разрешённый selected-unit/entity/partial answer не подменён общим отказом до полноты всего корпуса. Whole-corpus claim по incomplete coverage по-прежнему запрещён; honest scoped limit обязателен."
+          }
+        ],
+        "grading": "Mandatory semantic/factual/privacy assertions first; any failed/missing applicable critical assertion fails capability regardless of polish/macro. Equivalent lawful plans, concise natural/partial answers and relevant tables/citations allowed; no exact text matcher.",
+        "required_evidence": [
+          "scope/ref/source generations per turn",
+          "local stub calls and typed statuses",
+          "authoritative fact/result receipts",
+          "safe context anchor transitions",
+          "final narrative",
+          "provider/effect counters=0"
+        ],
+        "reviewer": null,
+        "mandatory_gate": "all_applicable_critical_assertions_pass_before_polish"
+      },
+      "variants": [
+        {
+          "name": "unknown_capacity",
+          "fault": "capacity unknown",
+          "expect": "blocked needed mode",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "mixed_profile",
+          "fault": "frame/tool result profile mismatch",
+          "expect": "blocked",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        },
+        {
+          "name": "vision_disabled",
+          "fault": "required vision disabled",
+          "expect": "honest feature refusal",
+          "semantic_gate": "same critical goal/no-dump/scope invariants; fresh access/privacy refusal honest and allowed, no_data limited to inspected scope; no blanket refusal when limited evidence remains permitted"
+        }
+      ]
+    }
+  ],
+  "semantic_gate_counterexamples": {
+    "scope": "offline generic oracle gate only, hand-labelled synthetic answers; independent review pending",
+    "no_exact_wording_classifier": true,
+    "examples": [
+      {
+        "id": "CE-01",
+        "case_id": "PG-01",
+        "synthetic_answer": "{\"material\": \"B25\", \"quantity\": \"12\", \"unit\": \"m3\", \"price\": \"4800\", \"currency\": \"RUB\", \"per_unit\": \"m3\", \"total\": \"57600\", \"period\": {\"from\": \"2026-10-01\", \"through\": \"2026-10-31\"}, \"refs\": [\"ref_a280e4929688477aa390983dcd80f089\", \"ref_792f11d92aee4a1f8223f6ad8095f462\"]}",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "correct_material": true,
+          "correct_math": true,
+          "natural_answer": false,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": false,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 4,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-02",
+        "case_id": "PG-02",
+        "synthetic_answer": "material=B25; quantity=12; unit=m3; price=4800; total=57600; period=October2026; anchor=ref_c7d8ab9cb9b544a1bcd30ff73c787002; refs=ref_a280e4929688477aa390983dcd80f089,ref_792f11d92aee4a1f8223f6ad8095f462",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "photo_anchor": true,
+          "followup_facts": true,
+          "no_fake_ocr": true,
+          "followup_narrative": false,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": false,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 4,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-03",
+        "case_id": "PG-01",
+        "synthetic_answer": "На листе12м³B25 стоимость57600₽. Все refs: ref_94f38158b85f4a51bea456bef8011f53, ref_d349461d4da34ba587e49aa5b0e12817, ref_a00ecc5f1cca40bb9b7927a92849e935, ref_c7614f91b8c04dffb21bb5ca4b0792ba, ref_0d3c51b2b78148fe8a5bfa7fc5942181, ref_4bfe790dfafe44a98f94d2ec9d87fd89, ref_5a08bbe3a8f6433f9b90981c2682b228, ref_87b243af95b347279f3c2ebe854b9033, ref_c7d8ab9cb9b544a1bcd30ff73c787002, ref_aa512c187e764d41b95c1e02062f8987, ref_f18232fa18ef449195ac0bc2dd41e793, ref_36d9e360cdd34eb88dbf84d628eeed64, ref_f607a5b57ac04251a3b9c1d9afd38e2e, ref_a280e4929688477aa390983dcd80f089, ref_792f11d92aee4a1f8223f6ad8095f462, ref_b21be84f76e84b22bcb2bd048b3c348d, ref_66e04222346446aaa66f97bdb9449e18, ref_78027c0f939648459cd8fd0d5f8ea4f6",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "correct_material": true,
+          "correct_math": true,
+          "natural_answer": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": false,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-04",
+        "case_id": "PG-09",
+        "synthetic_answer": "Данные успешно обработаны. Результат готов.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "continue": true,
+          "compare": true,
+          "relevance": true,
+          "comparison_narrative": true,
+          "semantic_goal_response": false,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": false,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-05",
+        "case_id": "PG-04",
+        "synthetic_answer": "На складе500кирпичей. Далее чужая нерелевантная смета по прошлой теме.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "new_scope": true,
+          "fresh_refs": true,
+          "topic_narrative": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": false,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-06",
+        "case_id": "PG-08",
+        "synthetic_answer": "Не могу объяснить выбранную проверенную страницу, пока не извлечены все страницы документа.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "selected_only": true,
+          "scope_limit": true,
+          "helpful_limit": true,
+          "semantic_goal_response": false,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": false
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-07",
+        "case_id": "PG-01",
+        "synthetic_answer": "На выбранном листе12м³ бетонаB25. При4800₽/м³ стоимость составит57600₽.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "correct_material": true,
+          "correct_math": true,
+          "natural_answer": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 4,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "PASS",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-08",
+        "case_id": "PG-01",
+        "synthetic_answer": "Для12кубов B25 по цене4800рублей за куб получается57600рублей за октябрь.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "correct_material": true,
+          "correct_math": true,
+          "natural_answer": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "PASS",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-09",
+        "case_id": "PG-05",
+        "synthetic_answer": "По выбранной странице подтверждено12м³B25. Это не итог всего документа: остальные страницы не проверены.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "limited_not_blocked": true,
+          "whole_not_verified": true,
+          "partial_narrative": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 4,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "PASS",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-10",
+        "case_id": "PG-06",
+        "synthetic_answer": "Не могу подтвердить доступ к источнику. Получить его данные сейчас нельзя.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "deny": true,
+          "reason": true,
+          "safe_narrative": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "PASS",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-11",
+        "case_id": "PG-03",
+        "synthetic_answer": "По выбранной позиции за октябрь:\n\n| Показатель | Значение |\n| --- | --- |\n| Объём | 12м³ |",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "entity_scope": true,
+          "minimum_context": true,
+          "brief_answer": true,
+          "semantic_goal_response": true,
+          "no_field_or_ref_dump": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "PASS",
+        "execution_status": "not_run"
+      },
+      {
+        "id": "CE-12",
+        "case_id": "PG-01",
+        "synthetic_answer": "12м³B25 по4800₽/м³ —57600₽.",
+        "annotation_scope": "hand-authored semantic annotations for gate logic; not automated classifier or model observation",
+        "critical_assertion_results": {
+          "correct_material": true,
+          "correct_math": true,
+          "natural_answer": true,
+          "semantic_goal_response": true,
+          "no_valid_narrative_template_substitute": true,
+          "no_irrelevant_estimate": true,
+          "no_unwarranted_corpus_refusal": true
+        },
+        "polish_traits_passed": 5,
+        "other_cases_polish_traits_passed": 55,
+        "expected_gate": "FAIL",
+        "execution_status": "not_run"
+      }
+    ]
+  }
+}
