@@ -13,6 +13,9 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudget;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagStatusBudgetExceeded;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
+use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotEpoch;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotInputs;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -34,6 +37,8 @@ final class AssistantIndexStatusService
         private readonly RagIndexingCoordinator $coordinator,
         private readonly AssistantDataAccessPolicy $access,
         private readonly AuthorizationService $authorization,
+        private readonly ?AssistantStatusSnapshotEpoch $snapshotEpoch = null,
+        private readonly ?AssistantStatusSnapshotInputs $snapshotInputs = null,
     ) {}
 
     public function status(int $organizationId, User $actor, string $section = 'all'): array
@@ -43,6 +48,10 @@ final class AssistantIndexStatusService
         }
         if (! $this->access->belongsToOrganization($actor, $organizationId)) {
             throw new AuthorizationException;
+        }
+
+        if (config('ai-assistant.status_snapshots', app()->environment('production')) && DB::connection()->getDriverName() === 'pgsql') {
+            return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
         $phase = (object) ['value' => 'schema'];
@@ -81,6 +90,60 @@ final class AssistantIndexStatusService
         }
 
         return $result;
+    }
+
+    private function snapshotStatus(int $organizationId, User $actor, string $section): array
+    {
+        $surface = $this->currentSurface();
+        $ip = request()->ip();
+        $epoch = $this->snapshotEpoch ?? app(AssistantStatusSnapshotEpoch::class);
+        $inputs = $this->snapshotInputs ?? app(AssistantStatusSnapshotInputs::class);
+
+        return $this->inRepeatableRead(function () use ($organizationId, $actor, $section, $surface, $ip, $epoch, $inputs): array {
+            $currentActor = User::query()->find($actor->id);
+            if ($currentActor === null || ! $currentActor->is_active || (int) $currentActor->current_organization_id !== $organizationId) {
+                throw new AuthorizationException;
+            }
+
+            return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $epoch, $inputs): array {
+                if (! $this->access->canReadDomain($currentActor, $organizationId, 'assistant')) { throw new AuthorizationException; }
+                $fingerprint = $inputs->fingerprint($currentActor, $organizationId, $surface, $section, $ip, $authorization);
+                if ($fingerprint === null) { return $this->unavailableStatus(); }
+                $key = $this->snapshotKey($organizationId, (int) $currentActor->id, $surface).':'.$section.':'.$fingerprint;
+                $snapshot = Cache::get($key);
+                $age = $inputs->age(is_array($snapshot) ? ($snapshot['generated_at'] ?? null) : null);
+                $canReindex = $authorization->canCurrent($currentActor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]);
+                if (is_array($snapshot) && is_array($snapshot['status'] ?? null) && is_array($snapshot['epoch'] ?? null)
+                    && is_array($snapshot['decisions'] ?? null) && ($snapshot['fingerprint'] ?? null) === $fingerprint
+                    && $inputs->isUnexpired($snapshot['valid_until'] ?? null)
+                    && $age !== null
+                    && ($snapshot['projection_generation'] ?? null) === $this->currentProjectionGeneration($organizationId)
+                    && $epoch->isValid($snapshot['epoch'], self::SNAPSHOT_TTL_SECONDS)
+                    && $inputs->decisionsMatch($snapshot['decisions'], $currentActor, $authorization)
+                    && $this->access->withCurrentChecks($currentActor, $organizationId,
+                        static fn (AuthorizationService $current): bool => $current === $authorization)) {
+                    $status = $snapshot['status'];
+                    $status['can_reindex'] = $canReindex;
+                    if (is_numeric($status['lag_seconds'] ?? null)
+                        && ((int) ($status['pending_source_count'] ?? 0) > 0 || $status['lag_seconds'] > 0)) {
+                        $status['lag_seconds'] += $age;
+                        $status['lag_exceeded'] = $status['lag_seconds'] > (int) ($status['lag_goal_seconds'] ?? 300);
+                    }
+
+                    return $status;
+                }
+                if (Cache::add($key.':queued', true, 90)) {
+                    try {
+                        RefreshAssistantIndexStatusJob::dispatch($organizationId, (int) $currentActor->id, $surface, $key, $section, $ip)->afterCommit();
+                    } catch (Throwable $exception) {
+                        Cache::forget($key.':queued');
+                        throw $exception;
+                    }
+                }
+
+                return $this->unavailableStatus();
+            }, fresh: true);
+        });
     }
 
     public function refreshSnapshot(int $organizationId, int $actorId, KnowledgeSurface $surface, string $cacheKey): void

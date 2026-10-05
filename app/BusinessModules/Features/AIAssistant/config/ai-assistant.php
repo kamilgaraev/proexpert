@@ -29,6 +29,7 @@ $lunaModelsEnv = static function (string $key, string $default = 'openai/gpt-6-l
 };
 return [
     'enabled' => $configEnv('AI_ASSISTANT_ENABLED', true),
+    'status_snapshots' => $configEnv('AI_ASSISTANT_STATUS_SNAPSHOTS', $configEnv('APP_ENV', 'production') === 'production'),
 
     'default_limit' => $configEnv('AI_ASSISTANT_DEFAULT_LIMIT', 5000),
 

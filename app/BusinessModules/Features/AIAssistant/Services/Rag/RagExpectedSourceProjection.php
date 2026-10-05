@@ -87,7 +87,7 @@ final class RagExpectedSourceProjection
                 $query->leftJoinSub($materialized, 'matched_sources', $joinIdentity);
             }
             $query->groupBy('expected.source_type')
-                ->selectRaw('expected.source_type, COUNT(*) AS expected_count, SUM(CASE WHEN '.$matched.' THEN 1 ELSE 0 END) AS indexed_count, MIN(CASE WHEN NOT ('.$matched.') THEN expected.pending_since END) AS pending_since');
+                ->selectRaw('expected.source_type, COUNT(*) AS expected_count, pg_catalog.SUM(CASE WHEN '.$matched.' THEN 1 ELSE 0 END) AS indexed_count, MIN(CASE WHEN NOT ('.$matched.') THEN expected.pending_since END) AS pending_since');
             if ($collectProof) {
                 $query->selectRaw('jsonb_object_agg(CAST(expected.id AS TEXT), jsonb_build_array('.implode(', ', $proofColumns).')) AS identity_proof');
             }
