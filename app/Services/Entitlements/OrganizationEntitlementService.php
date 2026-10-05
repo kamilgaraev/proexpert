@@ -7,6 +7,7 @@ namespace App\Services\Entitlements;
 use App\Models\Module;
 use App\Models\OrganizationPackageSubscription;
 use App\Services\Modules\PackageCatalogService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 class OrganizationEntitlementService
@@ -17,47 +18,31 @@ class OrganizationEntitlementService
 
     public function getEffectiveModuleSlugs(int $organizationId): array
     {
-        $systemSlugs = Module::query()
-            ->where('is_active', true)
-            ->where(function ($query): void {
-                $query->where('can_deactivate', false)
-                    ->orWhere('is_system_module', true);
-            })
-            ->pluck('slug')
-            ->all();
-
-        $slugs = array_values(array_unique(array_merge(
-            $systemSlugs,
-            $this->packageCatalog->foundationModules(),
-            $this->getAlwaysOnModuleSlugs(),
-            array_keys($this->getPackageModuleSources($organizationId))
-        )));
-
-        if ($slugs === []) {
-            return [];
-        }
-
-        return Module::query()
-            ->where('is_active', true)
-            ->whereIn('slug', $slugs)
-            ->pluck('slug')
-            ->all();
+        return $this->effectiveModuleQuery($organizationId)->pluck('slug')->all();
     }
 
     public function getEffectiveModules(int $organizationId): Collection
     {
-        $slugs = $this->getEffectiveModuleSlugs($organizationId);
-
-        if ($slugs === []) {
-            return collect();
-        }
-
-        return Module::query()
-            ->where('is_active', true)
-            ->whereIn('slug', $slugs)
+        return $this->effectiveModuleQuery($organizationId)
             ->orderBy('display_order')
             ->orderBy('id')
             ->get();
+    }
+
+    private function effectiveModuleQuery(int $organizationId): Builder
+    {
+        $slugs = array_values(array_unique(array_merge(
+            $this->packageCatalog->foundationModules(),
+            $this->getAlwaysOnModuleSlugs(),
+            array_keys($this->getPackageModuleSources($organizationId)),
+        )));
+
+        return Module::query()->where('is_active', true)->where(static function (Builder $query) use ($slugs): void {
+            $query->where('can_deactivate', false)->orWhere('is_system_module', true);
+            if ($slugs !== []) {
+                $query->orWhereIn('slug', $slugs);
+            }
+        });
     }
 
     public function hasModuleAccess(int $organizationId, string $moduleSlug): bool
