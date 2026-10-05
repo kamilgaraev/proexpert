@@ -210,7 +210,7 @@ final class AssistantDataAccessPolicy
         return $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, null);
     }
 
-    private function canReadReferenceWithSourceLookup(User $user, int $organizationId, array $reference, ?callable $sourceLookup): bool
+    private function canReadReferenceWithSourceLookup(User $user, int $organizationId, array $reference, ?callable $sourceLookup, ?callable $financialCheck = null): bool
     {
         if (isset($reference['organization_id']) && (int) $reference['organization_id'] !== $organizationId) { return false; }
         $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'] ?? null;
@@ -219,7 +219,7 @@ final class AssistantDataAccessPolicy
         if (! \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::allowsReference($type, $reference)) { return false; }
         if ($this->pendingEntityReads !== null && (isset($reference['projection_name'])
             || in_array($type, ['file', 'assistant_document', 'live_project_financial_projection', 'published_report_financial_projection'], true))) {
-            return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup));
+            return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup, $financialCheck));
         }
         if ($type === 'live_project_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class)
@@ -240,8 +240,9 @@ final class AssistantDataAccessPolicy
                 ->canReadReference($user, $organizationId, $reference);
         }
         if (in_array($type, ['estimate', 'estimate_item', 'estimate_item_resource'], true)
-            && ! $this->withoutPendingEntityReads(fn (): bool => app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class)
-                ->canReadReference($user, $organizationId, $reference))) {
+            && ! ($financialCheck !== null ? $financialCheck($reference)
+                : $this->withoutPendingEntityReads(fn (): bool => app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class)
+                    ->canReadReference($user, $organizationId, $reference)))) {
             return false;
         }
         if (($reference['content_scope'] ?? null) === 'structured') {
@@ -297,13 +298,29 @@ final class AssistantDataAccessPolicy
         $decisions = [];
         $requirements = [];
         $entities = [];
+        $financialReferences = [];
+        $financialRequirements = [];
+        $financialReader = null;
+        $financialAuthorization = null;
+        $financialCheck = function (array $reference, string|int $key) use ($user, $organizationId, &$financialReferences, &$financialRequirements, &$financialReader): bool {
+            $financialReader ??= app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class);
+            if (! $financialReader instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService) {
+                return $this->withoutPendingEntityReads(fn (): bool => $financialReader->canReadReference($user, $organizationId, $reference));
+            }
+            $index = count($financialReferences);
+            $financialReferences[$index] = $reference;
+            $financialRequirements[$key][] = $index;
+
+            return true;
+        };
         try {
             foreach ($referenceSets as $key => $references) {
                 $this->pendingEntityReads = ['actor_id' => (int) $user->id, 'organization_id' => $organizationId, 'entities' => []];
                 $decisions[$key] = is_array($references);
                 if (! $decisions[$key]) { continue; }
                 foreach ($references as $reference) {
-                    if (! is_array($reference) || ! $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup)) {
+                    if (! is_array($reference) || ! $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup,
+                        fn (array $reference): bool => $financialCheck($reference, $key))) {
                         $decisions[$key] = false;
                         break;
                     }
@@ -313,6 +330,22 @@ final class AssistantDataAccessPolicy
                 foreach ($requirements[$key] as $type => $ids) { $entities[$type] = ($entities[$type] ?? []) + $ids; }
             }
             $this->pendingEntityReads = null;
+            $neededFinancialReferences = [];
+            foreach ($financialRequirements as $key => $indices) {
+                if (! ($decisions[$key] ?? false)) { continue; }
+                foreach ($indices as $index) { $neededFinancialReferences[$index] = $financialReferences[$index]; }
+            }
+            if ($neededFinancialReferences !== []) {
+                $this->currentCheckpoint?->__invoke();
+                $financialAuthorization = $this->currentAuthorization();
+                $financialDecisions = $financialReader->canReadReferences($user, $organizationId, $neededFinancialReferences);
+                foreach ($financialRequirements as $key => $indices) {
+                    if (! ($decisions[$key] ?? false)) { continue; }
+                    foreach ($indices as $index) {
+                        if (! ($financialDecisions[$index] ?? false)) { $decisions[$key] = false; break; }
+                    }
+                }
+            }
             $allowed = [];
             foreach ($entities as $type => $ids) {
                 $query = $this->entityQuery($user, $organizationId, $type);
@@ -342,6 +375,9 @@ final class AssistantDataAccessPolicy
                 }
             }
 
+            if ($financialAuthorization !== null && $financialAuthorization !== $this->currentAuthorization()) {
+                foreach ($financialRequirements as $key => $indices) { $decisions[$key] = false; }
+            }
             return $decisions;
         } finally {
             $this->pendingEntityReads = $previous;
