@@ -12,7 +12,10 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 final class DesignIfcElementQueryService
 {
-    public function __construct(private readonly DesignModelSessionAccessService $projectAccess) {}
+    public function __construct(
+        private readonly DesignModelSessionAccessService $projectAccess,
+        private readonly DesignBimLocalizationService $localization,
+    ) {}
 
     public function element(User $actor, int $organizationId, int $versionId, int $expressId): DesignIfcModelElement
     {
@@ -52,9 +55,9 @@ final class DesignIfcElementQueryService
             ->paginate($perPage);
     }
 
-    public function payload(DesignIfcModelElement $element): array
+    public function payload(DesignIfcModelElement $element, bool $withDisplayProperties = true): array
     {
-        return [
+        $payload = [
             'model_id' => $element->version_id,
             'version_id' => $element->version_id,
             'element_id' => $element->express_id,
@@ -66,6 +69,9 @@ final class DesignIfcElementQueryService
             'classifications' => $element->classifications ?? [],
             'updated_at' => $element->updated_at?->toIso8601String(),
         ];
+
+        return $payload + ['category_label' => $this->localization->categoryLabel($element->category)]
+            + ($withDisplayProperties ? ['display' => $this->localization->present($payload)] : []);
     }
 
     private function version(User $actor, int $organizationId, int $versionId): DesignArtifactVersion

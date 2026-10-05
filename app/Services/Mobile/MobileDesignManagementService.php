@@ -128,7 +128,7 @@ final readonly class MobileDesignManagementService
         $this->access->project($actor, $organizationId, (int) $version->project_id);
         $page = $this->elements->paginate($actor, $organizationId, $versionId, (int) ($filters['per_page'] ?? 50), $filters['search'] ?? null);
 
-        return ['items' => $page->getCollection()->map(fn (DesignIfcModelElement $element): array => $this->elements->payload($element))->all(), 'meta' => $this->meta($page)];
+        return ['items' => $page->getCollection()->map(fn (DesignIfcModelElement $element): array => $this->elements->payload($element, false))->all(), 'meta' => $this->meta($page)];
     }
 
     public function element(User $actor, int $organizationId, int $versionId, int $expressId): array

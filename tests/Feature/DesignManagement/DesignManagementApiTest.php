@@ -1246,6 +1246,9 @@ final class DesignManagementApiTest extends TestCase
     public function test_ifc_elements_paginate_and_search_beyond_the_first_page(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, [
+            'project_access_mode' => \App\Enums\UserProjectAccessMode::ASSIGNED_PROJECTS->value,
+        ]);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->attachProjectUser($project, $context->user);
         $this->allowAdminAccess();
@@ -1268,7 +1271,12 @@ final class DesignManagementApiTest extends TestCase
         $url = '/api/v1/admin/design-management/model-versions/'.$version->id.'/elements';
         $this->withHeaders($context->authHeaders())->getJson($url.'?per_page=50&page=3')->assertOk()
             ->assertJsonCount(5, 'data.data')->assertJsonPath('data.data.0.express_id', 101)
-            ->assertJsonPath('data.pagination.last_page', 3)->assertJsonPath('data.pagination.total', 105);
+            ->assertJsonPath('data.pagination.last_page', 3)->assertJsonPath('data.pagination.total', 105)
+            ->assertJsonPath('data.data.0.category', 'IFCWALL')->assertJsonPath('data.data.0.category_label', 'Стена');
+        $detail = $this->getJson($url.'/105/properties')->assertOk()
+            ->assertJsonPath('data.category', 'IFCSLAB')->assertJsonPath('data.category_label', 'Плита')
+            ->assertJsonPath('data.properties', [])->assertJsonPath('data.display.locale', 'ru');
+        self::assertContains('Категория', array_column($detail->json('data.display.fields'), 'label'));
         foreach (['105', 'ifc-105', 'ifcslab', '100%_А'] as $search) {
             $this->getJson($url.'?'.http_build_query(['search' => $search]))->assertOk()
                 ->assertJsonCount(1, 'data.data')->assertJsonPath('data.data.0.express_id', 105);
