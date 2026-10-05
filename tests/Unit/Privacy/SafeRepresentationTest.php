@@ -148,6 +148,103 @@ final class SafeRepresentationTest extends TestCase
         self::assertSame('untrusted_creator', $other->create($projection)->reason());
     }
 
+    #[DataProvider('numericSnapshotChanges')]
+    public function testNumericStringSourceVersionsNeverReuseThePreviousSnapshot(string $changedPart): void
+    {
+        [$authority, $projections, , $factory] = self::fixture();
+        $makeSource = static fn (string $version): PrivateSourceVersion => new PrivateSourceVersion(
+            423456789,
+            223456789,
+            323456789,
+            $changedPart === 'revision' ? $version : 'fixture/1',
+            $changedPart === 'generation' ? $version : 'synthetic-concrete/1',
+            $changedPart === 'acl_epoch' ? $version : 'source-acl/1',
+            sourceClass: 'synthetic',
+        );
+        $original = $makeSource('1');
+        $authority->sourceList = [$original];
+        $authority->current = $original;
+        $projection = $projections->create(PrivateProjectionTest::input())->value();
+        self::assertInstanceOf(PrivateProjection::class, $projection);
+        if ($changedPart === 'acl_epoch') {
+            self::assertTrue($factory->create($projection)->isReady());
+        }
+
+        $changed = $makeSource('01');
+        $authority->sourceList = [$changed];
+        $authority->current = $changed;
+        self::assertFalse($original->sameSnapshot($changed));
+        self::assertSame('stale', $projections->revalidate($projection)->status());
+        self::assertSame('stale', $factory->create($projection)->status());
+    }
+
+    public static function numericSnapshotChanges(): array
+    {
+        return [['acl_epoch'], ['revision'], ['generation']];
+    }
+
+    public function testNumericStringFieldChangesInvalidateThePreviousSafeProjection(): void
+    {
+        [$authority, $projections, $projection, $factory] = self::fixture();
+        self::assertTrue($factory->create($projection)->isReady());
+        $authority->fieldList[1] = new PrivateField('quantity', PrivacyCategory::Business, '12.50');
+        self::assertSame('stale', $projections->revalidate($projection)->status());
+        self::assertSame('stale', $factory->create($projection)->status());
+    }
+
+    public function testEquivalentFreshInstancesStillProduceReadyContent(): void
+    {
+        [$authority, $projections, $projection, $factory] = self::fixture();
+        $authority->sourceList = [TestProjectionAuthority::source()];
+        $authority->current = $authority->sourceList[0];
+        $authority->fieldList = array_map(
+            static fn (PrivateField $field): PrivateField => new PrivateField(
+                $field->name(), PrivacyCategory::forField($field->name()), $field->value(),
+            ),
+            $authority->fieldList,
+        );
+        self::assertNotSame($projection->sources()[0], $authority->sourceList[0]);
+        self::assertNotSame($projection->fields()[0], $authority->fieldList[0]);
+        self::assertTrue($projections->revalidate($projection)->isReady());
+        self::assertTrue($factory->create($projection)->isReady());
+    }
+
+    public function testReferencedSourceReplacementDoesNotMutateTheOwnedSnapshot(): void
+    {
+        [$authority, $projections, , $factory] = self::fixture();
+        $externalSource = $authority->sourceList[0];
+        $authority->sourceList = [&$externalSource];
+        $projection = $projections->create(PrivateProjectionTest::input())->value();
+        self::assertInstanceOf(PrivateProjection::class, $projection);
+        $original = $projection->sources()[0];
+        self::assertTrue($factory->create($projection)->isReady());
+
+        $externalSource = TestProjectionAuthority::source(revision: 'fixture/2');
+        $authority->current = $externalSource;
+        self::assertSame($original, $projection->sources()[0]);
+        self::assertFalse($original->sameSnapshot($externalSource));
+        self::assertSame('stale', $projections->revalidate($projection)->status());
+        self::assertSame('stale', $factory->create($projection)->status());
+    }
+
+    #[DataProvider('changedFieldLists')]
+    public function testChangedFieldCountOrOrderInvalidatesTheSnapshot(string $change): void
+    {
+        [$authority, $projections, $projection, $factory] = self::fixture();
+        if ($change === 'order') {
+            $authority->fieldList = array_reverse($authority->fieldList);
+        } else {
+            array_pop($authority->fieldList);
+        }
+        self::assertSame('stale', $projections->revalidate($projection)->status());
+        self::assertSame('stale', $factory->create($projection)->status());
+    }
+
+    public static function changedFieldLists(): array
+    {
+        return [['order'], ['count']];
+    }
+
     public function testRevokeAtTheFinalCheckDoesNotSealContent(): void
     {
         [$authority, , $projection, $factory] = self::fixture();

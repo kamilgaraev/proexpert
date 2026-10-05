@@ -10,13 +10,20 @@ use LogicException;
 
 final readonly class PrivateProjection implements JsonSerializable
 {
+    private array $sources;
+
     private function __construct(
         private PrivateProjectionFactory $creator,
         private AuthenticatedPrivateContext $context,
         private ProjectionInput $input,
-        private array $sources,
+        array $sources,
         private array $fields,
     ) {
+        $ownedSources = [];
+        foreach ($sources as $source) {
+            $ownedSources[] = $source;
+        }
+        $this->sources = $ownedSources;
     }
 
     public static function prepare(PrivateProjectionFactory $factory, ProjectionInput $input): PrivacyDecision
@@ -63,9 +70,33 @@ final readonly class PrivateProjection implements JsonSerializable
 
     public function matchesCurrent(AuthenticatedPrivateContext $context, array $sources, array $fields): bool
     {
-        return $this->context->sameSnapshot($context)
-            && $this->sources == $sources
-            && $this->fields == $fields;
+        if (!$this->context->sameSnapshot($context)
+            || !array_is_list($sources)
+            || !array_is_list($fields)
+            || count($this->sources) !== count($sources)
+            || count($this->fields) !== count($fields)) {
+            return false;
+        }
+
+        foreach ($this->sources as $index => $source) {
+            $current = $sources[$index];
+            if (!$source instanceof PrivateSourceVersion
+                || !$current instanceof PrivateSourceVersion
+                || !$source->sameSnapshot($current)) {
+                return false;
+            }
+        }
+
+        foreach ($this->fields as $index => $field) {
+            $current = $fields[$index];
+            if (!$field instanceof PrivateField
+                || !$current instanceof PrivateField
+                || !$field->sameValue($current)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function jsonSerialize(): array
