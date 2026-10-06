@@ -83,9 +83,13 @@ final readonly class RecoverExhaustedDocumentUnits
                 return false;
             }
 
-            $document = EstimateGenerationDocument::query()->lockForUpdate()->find((int) $documentId);
-            $unit = EstimateGenerationProcessingUnit::query()->lockForUpdate()->find($unitId);
-            if ($document === null || $unit === null || (int) $unit->document_id !== (int) $document->id) {
+            $document = EstimateGenerationDocument::query()->lock('for update skip locked')->find((int) $documentId);
+            if ($document === null) {
+                return false;
+            }
+
+            $unit = EstimateGenerationProcessingUnit::query()->lock('for update skip locked')->find($unitId);
+            if ($unit === null || (int) $unit->document_id !== (int) $document->id) {
                 return false;
             }
             if ($unit->status === DocumentProcessingUnitStatus::Failed

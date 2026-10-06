@@ -26,6 +26,7 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
+use App\Services\Workflow\JournalScheduleTaskResolver;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -324,6 +325,83 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "completed_works"')));
             $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "contract_estimate_items"')));
             $this->assertCount(4, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "estimate_items"')));
+            $this->assertLessThanOrEqual(4, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "construction_journal_entries"'))->count());
+            $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "schedule_tasks"')));
+        }
+    }
+
+    public function test_page_task_resolution_preserves_project_scope_ambiguity_and_live_fallback(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        [, , , $item] = $this->createCoverageFixture($context->organization, $project);
+        $journal = $this->createJournal($context->organization, $project, $context->user);
+        $entry = $this->createEntry($journal, $context->user);
+        JournalWorkVolume::query()->create(['journal_entry_id' => $entry->id, 'estimate_item_id' => $item->id, 'quantity' => 1]);
+        $makeSchedule = fn (Project $project): ProjectSchedule => ProjectSchedule::query()->create([
+            'organization_id' => $project->organization_id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'Resolution schedule',
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-06-30',
+        ]);
+        $makeTask = fn (ProjectSchedule $schedule): ScheduleTask => ScheduleTask::query()->create([
+            'organization_id' => $schedule->organization_id,
+            'schedule_id' => $schedule->id,
+            'estimate_item_id' => $item->id,
+            'created_by_user_id' => $context->user->id,
+            'name' => 'Resolution task',
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-06-30',
+            'planned_duration_days' => 30,
+        ]);
+        $schedule = $makeSchedule($project);
+        $task = $makeTask($schedule);
+        $makeTask($schedule)->delete();
+        $deletedSchedule = $makeSchedule($project);
+        $makeTask($deletedSchedule);
+        $deletedSchedule->delete();
+        $foreignProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $makeTask($makeSchedule($foreignProject));
+        $resolver = app(JournalScheduleTaskResolver::class);
+
+        $entry->load(['journal', 'workVolumes']);
+        $resolver->loadForEntryPage(collect([$entry]));
+        $this->assertSame($task->id, $resolver->resolveForVolume($entry, $entry->workVolumes->first())->id);
+        $this->assertTrue($resolver->allVolumesHaveResolvableTask($entry));
+
+        $duplicate = $makeTask($schedule);
+        $entry = $entry->fresh(['journal', 'workVolumes']);
+        $resolver->loadForEntryPage(collect([$entry]));
+        $this->assertNull($resolver->resolveForVolume($entry, $entry->workVolumes->first()));
+        $this->assertFalse($resolver->allVolumesHaveResolvableTask($entry));
+
+        $duplicate->delete();
+        $entry = $entry->fresh(['journal', 'workVolumes']);
+        $this->assertFalse($entry->workVolumes->first()->relationLoaded('journalScheduleTasks'));
+        $this->assertSame($task->id, $resolver->resolveForVolume($entry, $entry->workVolumes->first())->id);
+
+        $entry->schedule_task_id = $task->id;
+        $entry->setRelation('scheduleTask', $task);
+        $resolver->loadForEntryPage(collect([$entry]));
+        $this->assertFalse($entry->workVolumes->first()->relationLoaded('journalScheduleTasks'));
+        $this->assertSame($task->id, $resolver->resolveForVolume($entry, $entry->workVolumes->first())->id);
+
+        $entry = $entry->fresh(['journal', 'workVolumes']);
+        $event = 'eloquent.retrieved: '.ScheduleTask::class;
+        Event::fakeExcept([$event]);
+        Event::listen($event, function (ScheduleTask $retrieved) use ($task, $schedule): void {
+            if ($retrieved->id === $task->id) {
+                ProjectSchedule::query()->whereKey($schedule->id)->delete();
+            }
+        });
+        try {
+            $resolver->loadForEntryPage(collect([$entry]));
+            $this->assertNull($resolver->resolveForVolume($entry, $entry->workVolumes->first()));
+        } finally {
+            Event::forget($event);
         }
     }
 

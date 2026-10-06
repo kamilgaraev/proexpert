@@ -200,6 +200,77 @@ final class DocumentUnitDispatchRecoveryPostgresTest extends TestCase
         }
     }
 
+    #[Test]
+    public function recovery_skips_locked_documents_and_units_and_retries_after_release(): void
+    {
+        self::assertSame('pgsql', DB::getDriverName());
+        $holderName = 'document_recovery_lock_holder';
+        config(['database.connections.'.$holderName => config('database.connections.'.config('database.default'))]);
+        DB::purge($holderName);
+        $holder = DB::connection($holderName);
+        $this->createTables();
+        try {
+            DB::statement("SET lock_timeout = '100ms'");
+            $sourceVersion = 'sha256:'.str_repeat('c', 64);
+            DB::table('estimate_generation_documents')->insert([
+                'id' => 5, 'source_version' => $sourceVersion, 'status' => 'processing',
+                'processing_control_status' => 'active', 'meta' => '{}',
+            ]);
+            DB::table('estimate_generation_processing_units')->insert([
+                'id' => 1, 'organization_id' => 10, 'project_id' => 20, 'session_id' => 30,
+                'document_id' => 5, 'source_version' => $sourceVersion, 'status' => 'running',
+                'attempt_count' => 3, 'dispatch_attempt_count' => 10,
+                'claim_token' => '11111111-1111-4111-8111-111111111111',
+                'lease_expires_at' => now()->subMinute(), 'metadata' => '{}',
+            ]);
+            DB::table('estimate_generation_document_pages')->insert([
+                'id' => 1, 'processing_unit_id' => 1, 'organization_id' => 10, 'project_id' => 20,
+                'session_id' => 30, 'document_id' => 5, 'source_version' => $sourceVersion, 'status' => 'processing',
+            ]);
+            $reconciler = new class implements DocumentUnitAggregateReconciler
+            {
+                public array $documentIds = [];
+
+                public function reconcile(int $documentId, string $sourceVersion): void
+                {
+                    $this->documentIds[] = $documentId;
+                }
+            };
+            $recovery = new RecoverExhaustedDocumentUnits(
+                new EloquentDocumentUnitExhaustionHandler($reconciler), $reconciler, DB::connection(),
+            );
+            $before = (array) DB::table('estimate_generation_processing_units')->where('id', 1)->first();
+
+            foreach (['estimate_generation_documents' => 5, 'estimate_generation_processing_units' => 1] as $table => $id) {
+                $holder->beginTransaction();
+                try {
+                    $holder->table($table)->where('id', $id)->lockForUpdate()->first();
+                    self::assertSame(1, $recovery->handle());
+                    self::assertSame($before, (array) DB::table('estimate_generation_processing_units')->where('id', 1)->first());
+                    self::assertSame('processing', DB::table('estimate_generation_document_pages')->where('id', 1)->value('status'));
+                    self::assertSame([], $reconciler->documentIds);
+                } finally {
+                    $holder->rollBack();
+                }
+            }
+
+            self::assertSame(1, $recovery->handle());
+            $unit = EstimateGenerationProcessingUnit::query()->findOrFail(1);
+            self::assertSame('failed', $unit->status->value);
+            self::assertSame('document_unit_attempts_exhausted', $unit->failure_code);
+            self::assertSame(3, $unit->attempt_count);
+            self::assertSame(10, $unit->dispatch_attempt_count);
+            self::assertNull($unit->claim_token);
+            self::assertNull($unit->lease_expires_at);
+            self::assertSame('failed', DB::table('estimate_generation_document_pages')->where('id', 1)->value('status'));
+            self::assertSame([5], $reconciler->documentIds);
+        } finally {
+            DB::statement('RESET lock_timeout');
+            DB::purge($holderName);
+            DB::unprepared('DROP TABLE estimate_generation_document_pages, estimate_generation_processing_units, estimate_generation_documents');
+        }
+    }
+
     private function createTables(): void
     {
         DB::unprepared(<<<'SQL'
