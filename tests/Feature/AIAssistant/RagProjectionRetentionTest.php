@@ -31,7 +31,7 @@ final class RagProjectionRetentionTest extends TestCase
         $fresh = (string) Str::uuid();
         $this->rows($organization->id, $active, 2, now()->subDays(2));
         $this->rows($organization->id, $obsolete, 3, now()->subDays(2));
-        $this->rows($organization->id, $fresh, 2, now()->subHours(3));
+        $this->rows($organization->id, $fresh, 2, now()->subHours(2));
         $this->rows($foreign->id, $obsolete, 2, now()->subDays(2));
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
         $key = 'ai-rag-coverage:'.$organization->id.':0:*:'.$revision;
@@ -52,11 +52,27 @@ final class RagProjectionRetentionTest extends TestCase
         $this->assertSame(0, $this->projection()->pruneOrganization($organization->id)['deleted']);
     }
 
-    public function test_cleanup_skips_an_organization_while_full_refresh_holds_its_lock(): void
+    public function test_cleanup_runs_during_full_refresh_without_deleting_its_staging_generation(): void
     {
         $organization = Organization::factory()->create();
         $this->rows($organization->id, (string) Str::uuid(), 2, now()->subDays(2));
+        $building = (string) Str::uuid();
+        $this->rows($organization->id, $building, 2, now()->subSeconds(7500));
         $lease = Cache::lock('ai-rag-coverage-projection:'.$organization->id, 7500);
+        $this->assertTrue($lease->get());
+        try {
+            $this->assertSame(['deleted' => 2, 'locked' => false], $this->projection()->pruneOrganization($organization->id));
+            $this->assertSame(2, RagExpectedSource::query()->where('generation', $building)->count());
+        } finally {
+            $lease->release();
+        }
+    }
+
+    public function test_cleanup_serializes_with_another_cleanup_for_the_same_organization(): void
+    {
+        $organization = Organization::factory()->create();
+        $this->rows($organization->id, (string) Str::uuid(), 2, now()->subDays(2));
+        $lease = Cache::lock('ai-rag-projection-retention:'.$organization->id, 120);
         $this->assertTrue($lease->get());
         try {
             $this->assertSame(['deleted' => 0, 'locked' => true], $this->projection()->pruneOrganization($organization->id));
@@ -65,6 +81,30 @@ final class RagProjectionRetentionTest extends TestCase
             $lease->release();
         }
         $this->assertSame(2, $this->projection()->pruneOrganization($organization->id)['deleted']);
+    }
+
+    public function test_cleanup_removes_inactive_generations_after_the_build_safety_window(): void
+    {
+        $organization = Organization::factory()->create();
+        $obsolete = (string) Str::uuid();
+        $this->rows($organization->id, $obsolete, 2, now()->subHours(4));
+
+        $this->assertSame(2, $this->projection()->pruneOrganization($organization->id)['deleted']);
+        $this->assertSame(0, RagExpectedSource::query()->where('generation', $obsolete)->count());
+    }
+
+    public function test_cleanup_keeps_the_exact_safety_boundary_and_deletes_only_older_rows(): void
+    {
+        $this->travelTo(now()->startOfSecond());
+        $organization = Organization::factory()->create();
+        $boundary = (string) Str::uuid();
+        $expired = (string) Str::uuid();
+        $this->rows($organization->id, $boundary, 2, now()->subHours(3));
+        $this->rows($organization->id, $expired, 2, now()->subHours(3)->subSecond());
+
+        $this->assertSame(2, $this->projection()->pruneOrganization($organization->id)['deleted']);
+        $this->assertSame(2, RagExpectedSource::query()->where('generation', $boundary)->count());
+        $this->assertSame(0, RagExpectedSource::query()->where('generation', $expired)->count());
     }
 
     public function test_cleanup_deletes_only_bounded_batches_and_continues_on_the_next_invocation(): void
@@ -184,6 +224,37 @@ final class RagProjectionRetentionTest extends TestCase
         $this->artisan('ai-assistant:prune-rag-projections', ['--max-rows' => 1])->assertSuccessful();
         $this->assertSame(1, RagExpectedSource::query()->where('organization_id', $second->id)->count());
         $this->assertSame($second->id, Cache::get('ai-rag-projection-retention:organization-cursor'));
+    }
+
+    public function test_command_wraps_its_cursor_and_processes_backlog_in_the_same_invocation(): void
+    {
+        $first = Organization::factory()->create();
+        $second = Organization::factory()->create();
+        $this->rows($first->id, (string) Str::uuid(), 2, now()->subHours(4));
+        $this->rows($second->id, (string) Str::uuid(), 2, now()->subHours(4));
+        Cache::forever('ai-rag-projection-retention:organization-cursor', $second->id);
+
+        $this->artisan('ai-assistant:prune-rag-projections', ['--max-rows' => 1])->assertSuccessful();
+        $this->assertSame(1, RagExpectedSource::query()->where('organization_id', $first->id)->count());
+        $this->assertSame(2, RagExpectedSource::query()->where('organization_id', $second->id)->count());
+        $this->artisan('ai-assistant:prune-rag-projections', ['--max-rows' => 1])->assertSuccessful();
+        $this->assertSame(1, RagExpectedSource::query()->where('organization_id', $second->id)->count());
+    }
+
+    public function test_command_accepts_a_larger_bounded_budget_and_rejects_an_unbounded_one(): void
+    {
+        $organization = Organization::factory()->create();
+        $generation = (string) Str::uuid();
+        $this->rows($organization->id, $generation, 2, now()->subHours(4));
+        $this->artisan('ai-assistant:prune-rag-projections', [
+            '--organization-id' => $organization->id, '--max-rows' => 1000001,
+        ])->assertExitCode(2);
+        $this->assertSame(2, RagExpectedSource::query()->where('generation', $generation)->count());
+
+        $this->artisan('ai-assistant:prune-rag-projections', [
+            '--organization-id' => $organization->id, '--max-rows' => 500000,
+        ])->assertSuccessful();
+        $this->assertSame(0, RagExpectedSource::query()->where('generation', $generation)->count());
     }
 
     private function projection(): RagExpectedSourceProjection

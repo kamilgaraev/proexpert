@@ -292,7 +292,7 @@ final class RagCoverageService
                 return $this->coverage($organizationId, $projectId, $sourceType);
             }
             if ($projectId === null && $sourceType === null) {
-                ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->pruneWhileLocked($organizationId, 100000, min($deadline, microtime(true) + 5));
+                ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->pruneOrganization($organizationId, 100000, min($deadline, microtime(true) + 5));
                 $guard();
             }
             $generation = $projectId === null && $sourceType === null ? (string) Str::uuid() : null;
