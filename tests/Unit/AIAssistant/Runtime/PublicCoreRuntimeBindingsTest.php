@@ -18,6 +18,7 @@ use App\Models\User;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelTransport;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -38,6 +39,7 @@ use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Tests\Unit\AIAssistant\Loop\OfflineLoopFixtures;
+use Tests\Unit\Privacy\PublicCore\PublicCoreAuthorityTest;
 
 final class PublicCoreRuntimeBindingsTest extends TestCase
 {
@@ -407,6 +409,89 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         $request = self::gatewayRequest($profile, $body);
         self::assertNull((new GatewayPublicCoreRequestValidator())->validate($request, $profile, 1000));
         self::assertSame(hash('sha256', $body), $request->projectionDigest);
+    }
+
+    #[DataProvider('conditionalDriverState')]
+    public function testConditionalDriverUsesNativeCommittedProjectionAndBothFences(string $mode, ?string $reason): void
+    {
+        $fixture = new PublicCoreAuthorityTest('testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt');
+        (new \ReflectionMethod($fixture, 'setUp'))->invoke($fixture);
+        try {
+            [$dispatch, , $readiness, , $input, $binding] = (new \ReflectionMethod($fixture, 'dispatchPreparation'))->invoke($fixture);
+            $profile = $readiness->qualifiedProfile();
+            self::assertInstanceOf(GatewayModelProfile::class, $profile);
+            self::assertFalse($readiness->resolve()['model_enabled']);
+            $state = new class {
+                public int $writes = 0;
+                public ?GatewayModelRequest $packet = null;
+            };
+            if ($mode === 'input') { $input['context']['messages'][0]['content'] = 'replacement'; }
+            if ($mode === 'binding') { $binding['receipt']['payloadDigest'] = str_repeat('f', 64); }
+            if ($mode === 'viewer') {
+                $viewer = (new \ReflectionProperty($fixture, 'viewer'))->getValue($fixture);
+                $viewer['authorized'] = false;
+                (new \ReflectionProperty($fixture, 'viewer'))->setValue($fixture, $viewer);
+            }
+            if ($mode === 'source') {
+                $source = (new \ReflectionProperty($fixture, 'runtimeSource'))->getValue($fixture);
+                $source['runtimeGenerationRef'] = 'ref_changed_source_generation';
+                (new \ReflectionProperty($fixture, 'runtimeSource'))->setValue($fixture, $source);
+            }
+            if ($mode === 'native') { (new \ReflectionProperty($fixture, 'nativeQualification'))->setValue($fixture, 'unknown'); }
+            if ($mode === 'grant') { (new \ReflectionProperty($fixture, 'grantBudget'))->setValue($fixture, 0); }
+            $gateway = (new \ReflectionMethod($fixture, 'localGateway'))->invoke($fixture, $dispatch, $readiness,
+                static function (GatewayModelProfile $current, string $bytes) use ($fixture, $dispatch, $state): array {
+                    $state->writes++;
+                    self::assertInstanceOf(GatewayModelRequest::class, $state->packet);
+                    self::assertSame($state->packet->bodyBytes, $bytes);
+                    self::assertTrue((new \ReflectionProperty($fixture, 'appHeld'))->getValue($fixture));
+                    (new \ReflectionProperty($fixture, 'nativeEvent'))->setValue($fixture, 'uploaded');
+                    self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($state->packet));
+                    self::assertFalse((new \ReflectionProperty($fixture, 'appHeld'))->getValue($fixture));
+
+                    return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Выбрать материал.']), 'usage' => null];
+                });
+            $transport = new class($gateway, $state) implements GatewayModelTransport {
+                public function __construct(private GatewayModelTransport $gateway, private object $state) {}
+
+                public function send(GatewayModelRequest $request): GatewayModelResponse
+                {
+                    $this->state->packet = $request;
+
+                    return $this->gateway->send($request);
+                }
+            };
+            $driver = new PublicCoreGatewayModelDriver($profile, $dispatch, $transport,
+                static function (string $contextRef) use ($binding, $mode): ?array {
+                    if ($mode === 'binding-throws') { throw new LogicException('private source unavailable'); }
+
+                    return $mode !== 'binding-unavailable' && $contextRef === $binding['receipt']['contextRef'] ? $binding : null;
+                });
+            try {
+                $action = $driver($input);
+                self::assertNull($reason);
+                self::assertEquals(['type' => 'plan', 'plan' => 'Выбрать материал.'], $action);
+                self::assertSame(1, $state->writes);
+                self::assertInstanceOf(GatewayModelRequest::class, $state->packet);
+                self::assertSame(hash('sha256', $state->packet->bodyBytes), $state->packet->projectionDigest);
+                self::assertEquals($input, json_decode(json_decode($state->packet->bodyBytes, true, 64, JSON_THROW_ON_ERROR)['messages'][1]['content'], true, 64, JSON_THROW_ON_ERROR));
+            } catch (LogicException $error) {
+                self::assertNotNull($reason, $error->getMessage());
+                self::assertSame($reason, $error->getMessage());
+                self::assertSame(0, $state->writes);
+            }
+        } finally {
+            (new \ReflectionMethod($fixture, 'tearDown'))->invoke($fixture);
+        }
+    }
+
+    public static function conditionalDriverState(): array
+    {
+        return [
+            ['valid', null], ['input', 'receipt_changed'], ['binding', 'receipt_changed'],
+            ['viewer', 'receipt_unavailable'], ['source', 'receipt_unavailable'], ['native', 'gateway_unavailable'],
+            ['grant', 'gateway_unavailable'], ['binding-unavailable', 'receipt_unavailable'], ['binding-throws', 'receipt_unavailable'],
+        ];
     }
 
     public function testDriverDecodesExactCanonicalActionAndRejectsForeignResponseBindings(): void

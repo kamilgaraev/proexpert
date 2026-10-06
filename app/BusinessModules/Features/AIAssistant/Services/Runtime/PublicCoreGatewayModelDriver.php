@@ -8,12 +8,18 @@ use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelTransport;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
+use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
+use Closure;
 use LogicException;
+use Throwable;
 
 final readonly class PublicCoreGatewayModelDriver
 {
-    public function __construct(private GatewayModelProfile $profile)
+    public function __construct(private GatewayModelProfile $profile,
+        private ?PublicCoreDispatchAuthority $dispatch = null, private ?GatewayModelTransport $transport = null,
+        private ?Closure $privateBindingSource = null)
     {
     }
 
@@ -60,6 +66,24 @@ final readonly class PublicCoreGatewayModelDriver
 
     public function __invoke(array $input): array
     {
-        throw new LogicException('receipt_unavailable');
+        if ($this->dispatch === null || $this->transport === null || $this->privateBindingSource === null) {
+            throw new LogicException('receipt_unavailable');
+        }
+        $contextRef = $input['context']['contextRef'] ?? null;
+        if (!GatewayModelRequest::isReference($contextRef)) { throw new LogicException('receipt_changed'); }
+        try {
+            $binding = ($this->privateBindingSource)($contextRef);
+        } catch (Throwable $error) {
+            throw new LogicException('receipt_unavailable', 0, $error);
+        }
+        if (!is_array($binding)) { throw new LogicException('receipt_unavailable'); }
+        $packet = $this->dispatch->projectForDispatch($input, $binding, $this->profile);
+        if (!$packet instanceof GatewayModelRequest) {
+            $reason = $packet['reasonCode'] ?? 'receipt_unavailable';
+            throw new LogicException(in_array($reason, GatewayModelResponse::REASON_CODES, true) ? $reason : 'receipt_unavailable');
+        }
+        $response = $this->dispatch->withDispatchFence($packet, $this->transport->send(...));
+
+        return $this->action($packet, $response);
     }
 }
