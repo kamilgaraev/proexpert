@@ -193,17 +193,19 @@ class AuthorizationService
                 ->with('customRole');
             
             if ($context) {
-                $contextIds = $this->getContextHierarchy($context)->pluck('id');
+                $hierarchy = $this->getContextHierarchy($context);
+                $contextIds = $hierarchy->pluck('id');
                 
                 // Для проектных контекстов также добавляем все проектные контексты организации
                 // (роли могут быть назначены в разных проектных контекстах)
                 if ($context->type === AuthorizationContext::TYPE_PROJECT && $context->parent_context_id) {
                     try {
-                        $orgContext = AuthorizationContext::find($context->parent_context_id);
+                        $orgContext = $hierarchy->firstWhere('id', $context->parent_context_id);
                         if ($orgContext) {
-                            $projectContexts = AuthorizationContext::where('parent_context_id', $orgContext->id)
+                            $projectContexts = $this->rememberRead('sibling_project_contexts_'.$orgContext->id,
+                                fn (): Collection => AuthorizationContext::where('parent_context_id', $orgContext->id)
                                 ->where('type', AuthorizationContext::TYPE_PROJECT)
-                                ->pluck('id');
+                                ->pluck('id'));
                             $contextIds = $contextIds->merge($projectContexts)->unique();
                         }
                     } catch (\Exception $e) {
