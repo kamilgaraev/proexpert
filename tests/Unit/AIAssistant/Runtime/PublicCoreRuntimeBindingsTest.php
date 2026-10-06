@@ -57,7 +57,12 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     public static function createIsolatedApplication(): Application
     {
         $app = new Application(sys_get_temp_dir());
-        $app->instance('config', new Repository(['app' => ['locale' => 'ru', 'fallback_locale' => 'ru']]));
+        $app->instance('config', new Repository([
+            'app' => ['locale' => 'ru', 'fallback_locale' => 'ru'],
+            'logging' => ['default' => 'public-core-test', 'channels' => [
+                'public-core-test' => ['driver' => 'monolog', 'handler' => \Monolog\Handler\NullHandler::class],
+            ]],
+        ]));
         $translator = new Translator(new FileLoader(new Filesystem(), dirname(__DIR__, 4).'/lang'), 'ru');
         $app->instance('translator', $translator);
         $validator = new Factory($translator, $app);
@@ -105,6 +110,17 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                 self::assertSame('authorization_changed', $error->getMessage());
             }
         }
+    }
+
+    public function testIsolatedHarnessResolvesExplicitLoggingChannel(): void
+    {
+        $application = Facade::getFacadeApplication();
+        self::assertInstanceOf(Application::class, $application);
+        $manager = $application->make('log');
+        self::assertSame('public-core-test', $manager->getDefaultDriver());
+        $logger = $manager->channel();
+        self::assertInstanceOf(\Illuminate\Log\Logger::class, $logger);
+        $logger->warning('Public Core isolated fixture logging probe.');
     }
 
     public function testProcessorFactoryComposesNativeContextLoopAndMaterialPortsWithoutQualifyingTransport(): void
