@@ -43,13 +43,11 @@ final class AssistantApiRoutesTest extends DatabaseLessTestCase
         $lkToken = $tokens->issue($user, 'lk', (string) Str::uuid(), 1, false);
         self::assertSame('lk', $tokens->parse($lkToken->accessToken, 'lk', 'access')->audience);
         $adminToken = $tokens->issue($user, 'admin', (string) Str::uuid(), 1, false);
-        $request = Request::create('/api/v1/ai-assistant/usage', 'GET');
-        $request->headers->set('Authorization', 'Bearer '.$adminToken->accessToken);
-
-        $response = $this->app->make(WebInterfaceSecurityMiddleware::class)
-            ->handle($request, fn () => response('unprotected'));
-
-        self::assertSame(401, $response->getStatusCode());
+        $this->getJson('/api/v1/ai-assistant/usage', [
+            'Authorization' => 'Bearer '.$adminToken->accessToken,
+        ])->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('code', 'http_401');
     }
 
     public function test_lk_assistant_does_not_promote_a_legacy_cookie_to_bearer_authentication(): void
@@ -89,7 +87,10 @@ final class AssistantApiRoutesTest extends DatabaseLessTestCase
     public function test_lk_assistant_endpoints_require_authentication_instead_of_returning_server_errors(): void
     {
         foreach (['rag/status', 'conversations', 'memory', 'credits/balance', 'usage'] as $endpoint) {
-            $this->getJson('/api/v1/ai-assistant/'.$endpoint)->assertUnauthorized();
+            $this->getJson('/api/v1/ai-assistant/'.$endpoint)
+                ->assertUnauthorized()
+                ->assertJsonPath('success', false)
+                ->assertJsonPath('code', 'http_401');
         }
     }
 }
