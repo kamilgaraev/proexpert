@@ -1053,12 +1053,6 @@ final class PublicCoreGatewayTest extends TestCase
                 }
                 if ($cancelPartial) {
                     $before = strlen($received);
-                    usleep(150000);
-                    $extra = fread($connection, 4096);
-                    if ($extra !== false && $extra !== '') {
-                        exit(63);
-                    }
-                    file_put_contents($directory.'/cancel-final', (string) $before);
                     if ($mode !== 'peer-loss') {
                         if ($mode === 'expiry') {
                             $control->beginCleanup($request, $expiry);
@@ -1074,6 +1068,12 @@ final class PublicCoreGatewayTest extends TestCase
                             exit(70);
                         }
                     }
+                    usleep(150000);
+                    $extra = fread($connection, 4096);
+                    if ($extra !== false && $extra !== '') {
+                        exit(63);
+                    }
+                    file_put_contents($directory.'/cancel-final', (string) $before);
                 } else {
                     if ($received !== $bytes) {
                         exit(64);
