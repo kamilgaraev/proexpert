@@ -31,6 +31,7 @@ use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
@@ -131,10 +132,23 @@ final class DesignManagementApiTest extends TestCase
         }
         $pirReadable = $pir && ! in_array('design-management.view', $denied, true);
         $qualityReadable = $quality && ! in_array('quality-control.view', $denied, true);
-        $pirList = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $pirList = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+            $listQueries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
         $pirList->assertStatus($pirReadable ? 200 : 403);
         if ($pirReadable) {
             $pirList->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $issues['project']->id);
+            $pirList->assertJsonPath('data.0.author_id', $context->user->id);
+            $unusedRelations = array_filter($listQueries, static fn (array $query): bool =>
+                str_contains($query['query'], 'quality_defect_status_histories')
+                || str_contains($query['query'], '"users"."id" in ('));
+            self::assertSame([], $unusedRelations, 'The issue list returns scalar actor IDs and does not use user or status-history relations');
         }
         foreach ($issues as $kind => $issue) {
             $pirResponse = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/issues/{$issue->id}");
@@ -1828,6 +1842,51 @@ final class DesignManagementApiTest extends TestCase
         ])->assertCreated();
         $this->assertSame($artifact->id, DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-01')->sole()->id);
         $this->assertSame(['AR-01', 'AR-02'], DesignArtifact::query()->where('package_id', $packageId)->where('section_id', $artifact->section_id)->orderBy('document_code')->pluck('document_code')->all());
+    }
+
+    public function test_composition_read_avoids_the_package_detail_graph_and_rejects_a_foreign_package(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()
+            ->where('package_id', $packageId)->sole();
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+
+        try {
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/design-management/composition/packages/'.$packageId.'/composition');
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $response->assertOk()->assertJsonPath('data.revision.id', $revision->id)
+            ->assertJsonPath('data.revision.state_version', 1)
+            ->assertJsonPath('data.revision.composition', $revision->composition)
+            ->assertJsonPath('data.revision.author.id', $context->user->id);
+        $packageDetails = array_filter($queries, static fn (array $query): bool =>
+            preg_match('/from "(?:design_artifacts|design_artifact_versions|design_package_sections)"/', $query['query']) === 1);
+        self::assertSame([], $packageDetails, 'Composition reads must not load unrelated package artifacts or sections');
+
+        $foreignProject = Project::factory()->create();
+        $foreignPackage = DesignPackage::query()->create([
+            'organization_id' => $foreignProject->organization_id,
+            'project_id' => $foreignProject->id,
+            'created_by' => $context->user->id,
+            'updated_by' => $context->user->id,
+            'title' => 'Foreign package',
+            'project_stage' => 'rd',
+            'object_type' => 'non_linear_non_production',
+            'status' => 'draft',
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/design-management/composition/packages/'.$foreignPackage->id.'/composition')
+            ->assertNotFound();
     }
 
     public function test_composition_state_version_rejects_stale_mutations_without_writing(): void
