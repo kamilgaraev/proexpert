@@ -1,7 +1,7 @@
 <x-email-layout :title="trans_message('support.email.title')">
 <p style="margin-top:0;font-size:15px;">
                                 <strong>{{ trans_message('support.email.sender_label') }}</strong>
-                                {{ $senderName }} &lt;{{ $senderEmail }}&gt;
+                                {{ $senderName }} &lt;<a href="mailto:{{ rawurlencode($senderEmail) }}?subject={{ rawurlencode('Re: '.$subjectText) }}" style="color:#B45309;">{{ $senderEmail }}</a>&gt;
                             </p>
 
                             @if($userId)
