@@ -299,6 +299,39 @@ final class AssistantApiContractTest extends TestCase
         }
     }
 
+    public function test_conversation_pages_resolve_current_visibility_once_and_recheck_access(): void
+    {
+        $manager = $this->app->make(ConversationManager::class);
+        $conversation = $manager->createConversation($this->organization->id, $this->actor, 'История');
+        $manager->addMessage($conversation, 'user', 'Вопрос');
+        foreach (self::PREFIXES as $prefix) {
+            foreach (['', '/history'] as $suffix) {
+                DB::enableQueryLog();
+                DB::flushQueryLog();
+                try {
+                    $this->getJson($prefix.'/conversations/'.$conversation->id.$suffix)->assertOk()->assertJsonPath('meta.total', 1);
+                    $conversationReads = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'from "ai_conversations"'));
+                    $this->assertCount(1, $conversationReads);
+                } finally {
+                    DB::disableQueryLog();
+                    DB::flushQueryLog();
+                }
+            }
+        }
+        $context = $this->app->make(AssistantApiFixtureContext::class);
+        foreach (['organization', 'module', 'permission', 'membership'] as $denial) {
+            $context->organizationId = $denial === 'organization' ? $this->organization->id + 100 : $this->organization->id;
+            $this->moduleEnabled = $denial !== 'module';
+            $this->permissionGranted = $denial !== 'permission';
+            DB::table('organization_user')->where('user_id', $this->actor->id)->update(['is_active' => $denial !== 'membership']);
+            foreach (self::PREFIXES as $prefix) {
+                foreach (['', '/history'] as $suffix) {
+                    $this->getJson($prefix.'/conversations/'.$conversation->id.$suffix)->assertForbidden()->assertJsonPath('data', null);
+                }
+            }
+        }
+    }
+
     public function test_numeric_conversation_ids_private_visibility_and_pagination_envelopes(): void
     {
         $other = $this->member('Другой');
