@@ -1,0 +1,48 @@
+# Public core: source-контракты MOSTAI-34
+
+Версия `public-core-authority/0.1-candidate`. Это source preparation пакета 04, не runtime activation и не выполнение полного MOSTAI-34/G1. Coordination input: `most-ai-public-core-coordination/0.2-candidate`, SHA-256 `b61940f7298d460ab23c5d6cbb7da6d7c88ff3a166fac0322ff09bc1ddba97be`.
+
+## Закрытый registry
+
+`RegisteredPublicFixtureRegistry::compiled()` создаёт конечный manifest без метода arbitrary registration. `resolve(fixtureId, fixtureVersion, inputId)` принимает только точную тройку. `input_id` равен `scenario_step`, `scenario_id` содержит fixture и input, версия сценария `public-core-scenario/1`. Row digest — SHA-256 canonical JSON строки до добавления `record_sha256`; question digest — SHA-256 точных UTF-8 bytes `display_text`. Canonical JSON: без escaping Unicode и slash, без пробелов/newline, в порядке ключей producer.
+
+| Fixture / version | Inputs | Corpus и ограничения |
+| --- | --- | --- |
+| `material-search-v1` / `public-material/1` | `price-b25`, `quote-12m3`, `cement-price`, `no-results` | Material38: В25 7800.00 RUB/m3, В30 8250.50 RUB/m3; В15 не имеет подтверждённых currency/basis. Для 12 m3 В25 oracle 93600.00 RUB. |
+| `public-photo-metadata-v1` / `public-photo-metadata/1` | `photo-explain`, `photo-followup-one`, `photo-followup-two` | Только явно учебная текстовая расшифровка. Нет pixels, OCR/redaction или actual vision proof. |
+
+Полные строки, source generations, records и SHA-256 доступны через `manifest()`/`manifestDigest()`. Producer handoff экспортирует этот manifest вместе с проверенным Git HEAD; только Lead acceptance разрешает consumer binding. `concrete-quantity-v1` PRIV17 с 12.5 m3 и старый QA79 oracle 4800/57600 не входят в этот registry и не подменяют Material38. Manifest digest включает всю совокупность records/inputs; любое изменение делает старую session source binding недействительной.
+
+## Real viewer и synthetic realm
+
+`PublicCoreSessionAuthority::openOrResume(trustedViewerBinding, selection, publicSessionRef)` получает только registered selection: `fixture_id`, `fixture_version`, `input_id`, UUID `request_id`. Все лишние ключи, включая message/context/history/uploads/actions/real IDs, отклоняются. Session/request/conversation refs выпускаются сервером. UUID обеспечивает viewer+organization-bound idempotency; новая тройка с тем же UUID конфликтует.
+
+Current viewer callback — доверенный backend adapter/TCB, не клиентский параметр HTTP. Он независимо проверяет серверное credential binding и возвращает ровно `authorized`, `viewerRef`, `organizationRef`, `authorizationRevision`, `policyRevision`. Отсутствующий, неисправный, неполный или отозванный adapter блокирует действие. На каждую операцию проверяются текущие права, policy revision, source generation, ownership и lifetime; expiry не заменяет current authorization.
+
+Literal synthetic IDs 7/11/13 принадлежат только fixture realm Material38. Они никогда не используются для авторизации реального viewer или ERP resolve. Реальный viewer с таким же числовым ID допустим только после независимого backend proof. Ledger сохраняет keyed owner digest, а не credential или открытые viewer/organization IDs; публичный результат содержит только opaque refs.
+
+## Receipt ledger и callback protocol
+
+`PublicCoreReceiptStore` требует отдельный role-local directory и control key не короче 32 bytes. Это ключ внутренней integrity, не AI provider credential. Default store не доступен. State HMAC проверяется до чтения; запись использует fsync и atomic replacement. Все операции fenced отдельным стабильным `authority.lock`; JSON ledger заменяется, lock path не заменяется. Пределы: 1 MiB ledger, 128 sessions, 32 requests/session, 256 receipts; превышение не даёт acknowledgement.
+
+`SessionAuthority::publisher(binding, requestRef, currentCoreBinding)` выдаёт request-bound store. Current core binding — доверенный adapter для существующих exact Context49 source/scope/profile/aliases/sources; его реализация и приемка не заменяются успехом unit double. Store API: `publish(event, data, expected)`; события только `lineage`, `stage`, `commit`, `abort`, `final_guard`. `begin/candidate/ack` не являются callback API.
+
+Stage/commit ack выдаётся лишь после соответствующего сохранения в ledger. Receipt соответствует `assistant-context-receipt/1`; expected — `contextRef`, `payloadDigest`, SHA-256 exact canonical receipt. `final_guard` проверяет committed receipt, current owner/source/profile/snapshot/request/lifetime и возвращает exact `assistant-context-final-guard/1`. Lookup `authority(contextRef)` читает authoritative committed state, а не UI JSON. Abort удаляет matching receipt; replay/changed digest/profile/lineage или revoked request не получают commit/final guard.
+
+Current backend readers и publisher являются Processor-only configuration, не endpoint для app/model. PHP-классы, каталог, HMAC и префикс namespace сами не доказывают это разделение. На данный момент producer/runtime adapters не подключены; все положительные local tests относятся к явно внедрённым test readers и private TEMP ledger.
+
+## Runtime остаётся закрыт
+
+`PublicCoreRuntimeReadiness::resolve()` всегда сообщает source-stage `unavailable`, `runtime_not_activated`, `model_enabled=false`, `actual_model=null`, `private_ready=false`. Нет inference из query/body, ENV role string, key presence или test flags. `projectForDispatch` и `dispatch` не создают packet/grant и не вызывают writer. Это явная точка остановки до Lead-accepted producer27/34 contracts и отдельного runtime amendment; не рабочий transport adapter.
+
+Standalone `processor/public-core/entry.php` выдаёт только unavailable readiness (HTTP 503). Он не запускает Laravel/bootstrap, не читает ENV/provider key, не импортирует legacy providers и не выполняет network calls. Существующие offline core `qualification=offline-synthetic` и `transportAllowed=false` не меняются и не используются как outbound ticket.
+
+## Release prerequisites
+
+До любого фактического dispatch нужны принятый exact producer HEAD, qualified model/profile/tokenizer, реальный current authorization source и доказанные отдельные workload identities, control-key/secret mounts, authenticated Processor→Gateway channel, ledger ownership и deny egress для app/workers. Gateway не получает real viewer binding/Vault/raw history. Source-код, chmod, filesystem lock и local HMAC tests не являются physical isolation/NTFS ACL/network proof; common host/kernel остаётся отдельной границей доверия.
+
+Ни инфраструктура/compose/workflow/.env, ни старые factories/contracts/callsites не меняются этим source scope. Full MOSTAI-34, private G1/53, actual-model/OCR/RAG/wire/effects не Done. Runtime interop и разрешение модели требуют нового принятого handoff; source PASS не переносится как actual-model PASS.
+
+## Проверка source scope
+
+Bare PHPUnit без Laravel/DB bootstrap проверяет registry mappings/digests, immutable snapshots, current viewer/session ownership/idempotency/revoke/expiry, actual durable stage/commit/abort/final_guard, HMAC tamper/wrong key, lock fencing и zero writer invocation. Feature-named isolation suite остаётся локальным source test; она не выполняет deployment/production/egress проверки. Собственные tools/config/cache/fixtures находятся в task TEMP вне checkout. Target PHP 8.2, strict_types; проверки выполняются отдельно на выданных девяти путях.
