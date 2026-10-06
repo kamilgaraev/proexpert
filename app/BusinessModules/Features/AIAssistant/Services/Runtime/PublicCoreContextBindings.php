@@ -131,9 +131,17 @@ final readonly class PublicCoreContextBindings
             $message['ref'] === $current && $message['role'] === 'user'));
         if (count($messages) !== 1 || !is_string($messages[0]['content'])) { return false; }
         $matched = preg_match_all('/(?<![\p{L}\p{N}.,+\-−\/])([+\-−]?[0-9][0-9.,eE+\-−\/]*)\s*(?:m3|m³|м3|м³)(?![\p{L}\p{N}])/iu',
-            $messages[0]['content'], $quantities);
-        if ($matched !== 1 || preg_match('/\A[1-9][0-9]{0,6}\z/D', $quantities[1][0]) !== 1) { return false; }
-        $quantity = (int) $quantities[1][0];
+            $messages[0]['content'], $quantities, PREG_OFFSET_CAPTURE);
+        if ($matched !== 1 || preg_match('/\A[1-9][0-9]{0,6}\z/D', $quantities[1][0][0]) !== 1) { return false; }
+        $before = substr($messages[0]['content'], 0, $quantities[1][0][1]);
+        $after = substr($messages[0]['content'], $quantities[0][0][1] + strlen($quantities[0][0][0]));
+        $number = '(?<![\p{L}\p{N}])[0-9]+(?:[.,][0-9]+)?';
+        $connectors = '(?<![\p{L}\p{N}])(?:от|до|или|либо|и|около|примерно|более|менее|свыше|минимум|максимум|or|to|from|between|about|approximately)';
+        if (preg_match('/(?:[+\-−±<>≤≥]\s*|'.$number.'\s*[\p{Pd}×*÷\/:=^]\s*|'.$number.'\s+|'.$connectors.'\s+)\z/iu', $before) !== 0
+            || preg_match('/\A\s*(?:[\p{Pd}+−±×*÷\/:=^<>≤≥]|(?:или|либо|и|до|or|to)\b)\s*[+\-−]?\s*[0-9]/iu', $after) !== 0) {
+            return false;
+        }
+        $quantity = (int) $quantities[1][0][0];
         if ($quantity < 1 || $quantity > 1000000) { return false; }
         $evidence = $latest->evidence();
         $envelope = $evidence['envelope'];
