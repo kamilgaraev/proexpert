@@ -15,6 +15,9 @@ final class PublicCoreProcessor
     private readonly string $processRef;
     private array $runtimes = [];
     private array $runtimeInstances = [];
+    private bool $publishing = false;
+    private array $publicationRefs = [];
+    private bool $publicationViolated = false;
 
     public function __construct(
         private readonly RegisteredPublicFixtureRegistry $registry,
@@ -25,12 +28,18 @@ final class PublicCoreProcessor
         private readonly ?Closure $viewerBindingSource = null,
         private readonly ?Closure $nativeComposition = null,
         private readonly ?Closure $currentRuntimeSource = null,
+        private readonly ?Closure $finalPublication = null,
+        private readonly ?Closure $publicationBounds = null,
     ) {
         $this->processRef = 'ref_' . bin2hex(random_bytes(16));
     }
 
     public function handle(string $command, array $payload, array $verifiedPeer): array
     {
+        if ($this->publishing) {
+            $this->publicationViolated = true;
+            return self::blocked('receipt_changed');
+        }
         try {
             $peer = $this->peerSource === null ? null : ($this->peerSource)($verifiedPeer);
             if (!GatewayModelRequest::hasExactKeys($verifiedPeer, ['pid', 'uid', 'gid'])
@@ -90,8 +99,13 @@ final class PublicCoreProcessor
 
     public function executeOwned(string $requestRef): array
     {
+        if ($this->publishing) {
+            $this->publicationViolated = true;
+            return self::blocked('receipt_changed');
+        }
         $profile = $this->readiness->qualifiedProfile();
-        if ($this->nativeComposition === null || $profile === null || $this->currentRuntimeSource === null) {
+        if ($this->nativeComposition === null || $profile === null || $this->currentRuntimeSource === null
+            || $this->finalPublication === null || $this->publicationBounds === null) {
             return self::blocked('runtime_not_activated');
         }
         $claim = $this->store->transaction(function (array &$state) use ($requestRef): array {
@@ -103,6 +117,9 @@ final class PublicCoreProcessor
             $execution = $request['execution'] ?? null;
             if ($execution !== null) {
                 return ['status' => 'existing', 'viewer' => $viewer];
+            }
+            if ($this->qualifiedPublicationBounds($request) === null) {
+                return self::blocked('runtime_not_activated');
             }
             $session = $state['sessions'][$request['sessionRef']];
             if (isset($session['runtimeGenerationRef']) && !isset($this->runtimes[$request['sessionRef']])) {
@@ -175,7 +192,7 @@ final class PublicCoreProcessor
                 || !GatewayModelRequest::hasExactKeys($native, ['status', 'mode', 'transportAllowed', 'reply', 'trace'])
                 || $native['status'] !== 'READY' || $native['mode'] !== 'offline-synthetic' || $native['transportAllowed'] !== false
                 || !is_string($native['reply']) || trim($native['reply']) === '' || strlen($native['reply']) > 32768
-                || !is_array($native['trace'])) {
+                || !$this->validTrace($native['trace'])) {
                 throw new \LogicException('invalid_model_output');
             }
             $result = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $requestRef,
@@ -183,7 +200,7 @@ final class PublicCoreProcessor
         } catch (Throwable) {
             $result = self::blocked('source_unavailable') + ['request_ref' => $requestRef];
         }
-        return $this->store->transaction(function (array &$state) use ($viewer, $requestRef, $result, $profile): array {
+        $finished = $this->store->transaction(function (array &$state) use ($viewer, $requestRef, $result, $profile): array {
             $request = $this->sessions->currentRequest($state, $viewer, $requestRef);
             if ($request === null || ($request['execution']['processRef'] ?? null) !== $this->processRef
                 || ($request['execution']['status'] ?? null) !== 'running') {
@@ -206,42 +223,100 @@ final class PublicCoreProcessor
             }
             $state['requests'][$requestRef]['execution']['status'] = $result['status'];
             $state['requests'][$requestRef]['execution']['result'] = PublicCoreReceiptStore::owned($result);
-            return $result;
+            return $result['status'] === 'completed' ? ['status' => 'stored'] : $result;
         }) ?? self::blocked('receipt_unavailable');
+        return $finished['status'] === 'stored' ? $this->lookupOwned($viewer, $requestRef) : $finished;
     }
 
     private function lookupOwned(array $viewer, string $requestRef): array
     {
-        return $this->store->transaction(function (array &$state) use ($viewer, $requestRef): array {
-            $request = $this->sessions->currentRequest($state, $viewer, $requestRef);
-            if ($request === null || ($request['processorViewerBinding'] ?? null) !== $viewer) {
-                return self::blocked('authorization_changed');
+        $request = $this->sessions->lookup($viewer, $requestRef);
+        if ($request === null || ($request['processorViewerBinding'] ?? null) !== $viewer) {
+            return self::blocked('authorization_changed');
+        }
+        $execution = $request['execution'] ?? null;
+        if ($execution === null) {
+            return ['status' => 'accepted', 'reasonCode' => 'none', 'request_ref' => $requestRef, 'transportAllowed' => false];
+        }
+        if ($execution['status'] === 'running') {
+            return self::blocked('receipt_changed') + ['request_ref' => $requestRef];
+        }
+        if ($execution['status'] !== 'completed') {
+            $reason = $execution['result']['reasonCode'] ?? null;
+            return self::blocked(is_string($reason) && $reason !== 'none' && in_array($reason, GatewayModelResponse::REASON_CODES, true)
+                ? $reason : 'receipt_unavailable') + ['request_ref' => $requestRef];
+        }
+        $saved = $execution['resultBinding'] ?? null;
+        $runtime = $this->runtimes[$request['sessionRef']] ?? null;
+        if (!is_array($saved) || !is_object($runtime) || $this->finalPublication === null || $this->publicationBounds === null || $this->publishing) {
+            return self::blocked('runtime_not_activated');
+        }
+        $active = true;
+        $called = false;
+        $staged = null;
+        $this->publishing = true;
+        $this->publicationViolated = false;
+        try {
+            $bounds = $this->qualifiedPublicationBounds($request);
+            if ($bounds === null || count($this->publicationRefs) >= 4096) {
+                return self::blocked('runtime_not_activated');
             }
-            $execution = $request['execution'] ?? null;
-            if ($execution === null) {
-                return ['status' => 'accepted', 'reasonCode' => 'none', 'request_ref' => $requestRef, 'transportAllowed' => false];
-            }
-            if ($execution['status'] === 'running') {
-                return self::blocked('receipt_changed') + ['request_ref' => $requestRef];
-            }
-            $result = $execution['result'] ?? null;
-            if ($execution['status'] !== 'completed') {
-                $reason = is_array($result) ? ($result['reasonCode'] ?? null) : null;
-                return self::blocked(is_string($reason) && $reason !== 'none' && in_array($reason, GatewayModelResponse::REASON_CODES, true)
-                    ? $reason : 'receipt_unavailable') + ['request_ref' => $requestRef];
-            }
-            $saved = $execution['resultBinding'] ?? null;
-            $session = $state['sessions'][$request['sessionRef']];
-            $current = is_array($result) ? $this->completedBinding($request, $session, $result) : null;
-            if ($current === null || $current !== $saved) {
+            $start = intdiv(hrtime(true), 1000000);
+            $operationRef = 'ref_' . bin2hex(random_bytes(16));
+            $input = ['schemaVersion' => 'public-core-publication-operation/1', 'operationRef' => $operationRef,
+                'viewerBinding' => PublicCoreReceiptStore::owned($viewer), 'resultBinding' => PublicCoreReceiptStore::owned($saved),
+                'genuineExpiresAt' => $request['expiresAt'], 'maxDurationMs' => $bounds['maxDurationMs']];
+            $isActive = static function () use (&$active): bool {
+                return $active;
+            };
+            $prepare = function () use ($viewer, $requestRef, $saved, $runtime, $start, $bounds, $isActive, &$called, &$staged): ?array {
+                if (!$isActive() || $called || intdiv(hrtime(true), 1000000) - $start >= $bounds['maxDurationMs']) {
+                    $this->publicationViolated = true;
+                    return null;
+                }
+                $called = true;
+                $staged = $this->store->transaction(function (array &$state) use ($viewer, $requestRef, $saved, $runtime): ?array {
+                    $request = $this->sessions->currentRequest($state, $viewer, $requestRef);
+                    if ($request === null || ($request['processorViewerBinding'] ?? null) !== $viewer
+                        || ($this->runtimes[$request['sessionRef']] ?? null) !== $runtime
+                        || ($request['execution']['status'] ?? null) !== 'completed'
+                        || ($request['execution']['resultBinding'] ?? null) !== $saved) {
+                        return null;
+                    }
+                    $result = $request['execution']['result'] ?? null;
+                    $session = $state['sessions'][$request['sessionRef']];
+                    $current = is_array($result) ? $this->completedBinding($request, $session, $result) : null;
+                    if ($current === null || $current !== $saved) {
+                        return null;
+                    }
+                    $fresh = $this->sessions->currentRequest($state, $viewer, $requestRef);
+                    if ($fresh === null || $fresh !== $request || $this->completedBinding($fresh, $session, $result) !== $saved) {
+                        return null;
+                    }
+                    return ['binding' => PublicCoreReceiptStore::owned($saved), 'resultBytes' => RegisteredPublicFixtureRegistry::canonical($result),
+                        'resultDigest' => $saved['resultDigest']];
+                });
+                if ($this->publicationWasViolated()) {
+                    $staged = null;
+                }
+                return $staged;
+            };
+            $receipt = ($this->finalPublication)(PublicCoreReceiptStore::owned($input), $runtime, $prepare);
+            if (!$called || $staged === null || $this->publicationWasViolated() || intdiv(hrtime(true), 1000000) - $start >= $bounds['maxDurationMs']
+                || !GatewayModelRequest::hasExactKeys($receipt, ['schemaVersion', 'binding', 'publicationRef'])
+                || $receipt['schemaVersion'] !== 'public-core-result-publication/1'
+                || $receipt['binding'] !== $saved || !GatewayModelRequest::isReference($receipt['publicationRef'])
+                || isset($this->publicationRefs[$receipt['publicationRef']])) {
                 return self::blocked('source_changed');
             }
-            $fresh = $this->sessions->currentRequest($state, $viewer, $requestRef);
-            if ($fresh === null || $fresh !== $request || $this->completedBinding($fresh, $session, $result) !== $saved) {
-                return self::blocked('source_changed');
-            }
-            return PublicCoreReceiptStore::owned($result);
-        }) ?? self::blocked('receipt_unavailable');
+            $this->publicationRefs[$receipt['publicationRef']] = true;
+            return PublicCoreReceiptStore::owned($receipt);
+        } catch (Throwable) {
+            return self::blocked('source_changed');
+        } finally {
+            $active = false;
+            $this->publishing = false;
+        }
     }
 
     private function completedBinding(array $request, array $session, array $result): ?array
@@ -254,8 +329,9 @@ final class PublicCoreProcessor
             || !GatewayModelRequest::isReference($instance['instanceRef'])
             || ($request['execution']['processRef'] ?? null) !== $this->processRef
             || !GatewayModelRequest::hasExactKeys($result, ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed'])
+            || array_keys($result) !== ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed']
             || $result['status'] !== 'completed' || $result['reasonCode'] !== 'none' || $result['request_ref'] !== $request['requestRef']
-            || $result['transportAllowed'] !== false || !is_array($result['trace']) || !is_string($result['reply'])
+            || $result['transportAllowed'] !== false || !$this->validTrace($result['trace']) || !is_string($result['reply'])
             || trim($result['reply']) === '' || strlen($result['reply']) > 32768 || preg_match('//u', $result['reply']) !== 1
             || str_contains($result['reply'], "\0")) {
             return null;
@@ -281,10 +357,51 @@ final class PublicCoreProcessor
         }
     }
 
+    private function qualifiedPublicationBounds(array $request): ?array
+    {
+        if ($this->publicationBounds === null || $this->finalPublication === null) {
+            return null;
+        }
+        try {
+            $bounds = ($this->publicationBounds)(PublicCoreReceiptStore::owned($request), $this->finalPublication);
+            $profile = $this->readiness->qualifiedProfile();
+            return GatewayModelRequest::hasExactKeys($bounds, ['qualification', 'profileFingerprint', 'guardEvidenceRef', 'maxDurationMs', 'genuineExpiresAt'])
+                && $profile !== null && $bounds['qualification'] === ($profile->isActualProfile() ? 'actual-publication-guard' : 'source-simulated-tcb')
+                && $bounds['profileFingerprint'] === $profile->fingerprint() && GatewayModelRequest::isReference($bounds['guardEvidenceRef'])
+                && is_int($bounds['maxDurationMs']) && $bounds['maxDurationMs'] > 0 && $bounds['maxDurationMs'] <= 30000
+                && $bounds['genuineExpiresAt'] === $request['expiresAt'] ? $bounds : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function validTrace(mixed $trace): bool
+    {
+        if (!is_array($trace) || !array_is_list($trace)) {
+            return false;
+        }
+        foreach ($trace as $event) {
+            if (!GatewayModelRequest::hasExactKeys($event, ['action', 'step', 'tokens', 'callRef'])
+                || array_keys($event) !== ['action', 'step', 'tokens', 'callRef']
+                || !in_array($event['action'], ['plan', 'tool', 'refine', 'summary', 'final', 'repair', 'ready', 'blocked'], true)
+                || !is_int($event['step']) || $event['step'] < 0 || !is_int($event['tokens']) || $event['tokens'] < 0
+                || ($event['callRef'] !== null && (!is_string($event['callRef']) || preg_match('/^ref_[a-f0-9]{32}$/D', $event['callRef']) !== 1))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private function publicationWasViolated(): bool
+    {
+        return $this->publicationViolated;
+    }
+
     private function readinessDto(): array
     {
         $dto = $this->readiness->resolve();
-        if ($this->viewerBindingSource === null || $this->nativeComposition === null || $this->currentRuntimeSource === null || !$this->store->available()) {
+        if ($this->viewerBindingSource === null || $this->nativeComposition === null || $this->currentRuntimeSource === null
+            || $this->finalPublication === null || $this->publicationBounds === null || !$this->store->available()) {
             $dto['status'] = 'unavailable';
             $dto['reason_code'] = 'runtime_not_activated';
             $dto['actual_model'] = null;

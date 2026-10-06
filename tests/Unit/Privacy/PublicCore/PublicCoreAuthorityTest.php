@@ -55,6 +55,10 @@ final class PublicCoreAuthorityTest extends TestCase
     private int $cachedFactoryCalls = 0;
     private int $currentRuntimeChecks = 0;
     private ?\Closure $onRuntimeRead = null;
+    private array $publications = [];
+    private bool $publicationMutex = false;
+    private bool $publicationQualified = true;
+    private ?string $publicationFault = null;
 
     protected function setUp(): void
     {
@@ -982,21 +986,89 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertNotContains('authorize_write', $this->controlCalls);
     }
 
-    private function processor(?\Closure $composition = null, ?\Closure $currentRuntimeSource = null, bool $withRuntimeReader = true): PublicCoreProcessor
+    private function processor(?\Closure $composition = null, ?\Closure $currentRuntimeSource = null, bool $withRuntimeReader = true,
+        bool $withPublisher = true): PublicCoreProcessor
     {
         $reader = $withRuntimeReader ? ($currentRuntimeSource ?? function (object $runtime, array $request): ?array {
             return $runtime instanceof SyntheticMaterialSearchCorpus && $runtime->guard($runtime->context()) === null
                 ? ['registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
                     'runtimeGenerationRef' => $runtime->records()[0]->generationRef] : null;
         }) : null;
-        return new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $this->qualifiedReadiness(),
+        $readiness = $this->qualifiedReadiness();
+        $publisher = $this->controlledPublication();
+        $bounds = function (array $request, \Closure $implementation) use ($publisher): ?array {
+            return $this->publicationQualified && $implementation === $publisher
+                ? ['qualification' => 'source-simulated-tcb', 'profileFingerprint' => $this->currentGatewayProfile?->fingerprint(),
+                    'guardEvidenceRef' => 'ref_controlled_memory_fixture_only', 'maxDurationMs' => 250, 'genuineExpiresAt' => $request['expiresAt']]
+                : null;
+        };
+        return new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $readiness,
             static fn (array $peer): ?array => $peer === ['pid' => 111, 'uid' => 1001, 'gid' => 1001]
                 ? ['role' => 'app', 'identityRef' => 'ref_simulated_app_identity', 'kernelPeer' => $peer] : null,
             static fn (string $ticket): ?array => $ticket === 'ref_server_viewer_ticket' ? ['viewerTicketRef' => $ticket] : null,
-            $composition, $reader);
+            $composition, $reader, $withPublisher ? $publisher : null, $withPublisher ? $bounds : null);
     }
 
-    private function completedProcessor(bool $withReader = true): array
+    private function controlledPublication(): \Closure
+    {
+        return $this->withAssertions(function (array $input, object $runtime, \Closure $prepare): mixed {
+            if ($this->publicationMutex || !$runtime instanceof SyntheticMaterialSearchCorpus) {
+                return null;
+            }
+            $this->publicationMutex = true;
+            $owner = $this->viewer;
+            $start = intdiv(hrtime(true), 1000000);
+            try {
+                $candidate = $prepare();
+                if ($this->publicationFault === 'double_prepare') {
+                    self::assertNull($prepare());
+                    return null;
+                }
+                if ($this->publicationFault === 'bool') {
+                    return true;
+                }
+                if ($this->publicationFault === 'echo') {
+                    return $candidate;
+                }
+                if ($this->publicationFault === 'bytes' && is_array($candidate)) {
+                    $candidate['resultBytes'] = '{"reply":"altered"}';
+                }
+                if (!GatewayModelRequest::hasExactKeys($candidate, ['binding', 'resultBytes', 'resultDigest'])
+                    || $candidate['binding'] !== $input['resultBinding'] || $candidate['resultDigest'] !== $input['resultBinding']['resultDigest']
+                    || !is_string($candidate['resultBytes']) || hash('sha256', $candidate['resultBytes']) !== $candidate['resultDigest']) {
+                    return null;
+                }
+                $data = json_decode($candidate['resultBytes'], true, flags: JSON_THROW_ON_ERROR);
+                $bytes = RegisteredPublicFixtureRegistry::canonical(['success' => true, 'message' => null, 'data' => $data]);
+                $ref = 'ref_' . bin2hex(random_bytes(16));
+                $record = ['binding' => $input['resultBinding'], 'viewerTicketRef' => $input['viewerBinding']['viewerTicketRef'],
+                    'requestRef' => $input['resultBinding']['requestRef'], 'sessionRef' => $input['resultBinding']['sessionRef'],
+                    'operationRef' => $input['operationRef'], 'publicationRef' => $ref, 'resultDigest' => $candidate['resultDigest'],
+                    'envelopeDigest' => hash('sha256', $bytes), 'bodyBytes' => $bytes, 'expiresAt' => $input['genuineExpiresAt']];
+                $receipt = ['schemaVersion' => 'public-core-result-publication/1', 'binding' => $input['resultBinding'], 'publicationRef' => $ref];
+                if ($this->publicationFault === 'receipt') {
+                    $receipt['binding']['resultDigest'] = str_repeat('0', 64);
+                    return $receipt;
+                }
+                if ($this->publicationFault === 'commit') {
+                    throw new \RuntimeException('controlled sink failed before commit');
+                }
+                if (!$this->publicationQualified || !$this->runtimeReaderAvailable || $this->viewer !== $owner || $owner['authorized'] !== true
+                    || $this->currentGatewayProfile === null || $this->currentGatewayProfile->fingerprint() !== $input['resultBinding']['profileFingerprint']
+                    || ($this->runtimeProof['profileFingerprint'] ?? null) !== $input['resultBinding']['profileFingerprint']
+                    || $this->now >= $input['genuineExpiresAt'] || intdiv(hrtime(true), 1000000) - $start >= $input['maxDurationMs']
+                    || $runtime->guard($runtime->context()) !== null) {
+                    return null;
+                }
+                $this->publications[$ref] = $record;
+                return $receipt;
+            } finally {
+                $this->publicationMutex = false;
+            }
+        });
+    }
+
+    private function completedProcessor(bool $withReader = true, bool $withPublisher = true): array
     {
         $factory = function (): array {
             $this->cachedFactoryCalls++;
@@ -1014,7 +1086,7 @@ final class PublicCoreAuthorityTest extends TestCase
             }
             return $source;
         };
-        $processor = $this->processor($factory, $reader, $withReader);
+        $processor = $this->processor($factory, $reader, $withReader, $withPublisher);
         $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
         $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
         self::assertSame('accepted', $opened['status']);
@@ -1050,8 +1122,19 @@ final class PublicCoreAuthorityTest extends TestCase
     {
         [$processor, $payload, $peer, , $expected] = $this->completedProcessor();
         $before = hash_file('sha256', $this->directory . '/authority.json');
-        self::assertSame($expected, $processor->handle($command, $payload, $peer));
-        self::assertSame($expected, $processor->handle($command, $payload, $peer));
+        $first = $processor->handle($command, $payload, $peer);
+        $second = $processor->handle($command, $payload, $peer);
+        foreach ([$first, $second] as $published) {
+            self::assertSame(['schemaVersion', 'binding', 'publicationRef'], array_keys($published));
+            self::assertSame('public-core-result-publication/1', $published['schemaVersion']);
+            self::assertArrayNotHasKey('reply', $published);
+            self::assertArrayNotHasKey('trace', $published);
+            $record = $this->publications[$published['publicationRef']];
+            self::assertSame($expected, json_decode($record['bodyBytes'], true, flags: JSON_THROW_ON_ERROR)['data']);
+            self::assertSame(hash('sha256', $record['bodyBytes']), $record['envelopeDigest']);
+            self::assertNotSame($record['resultDigest'], $record['envelopeDigest']);
+        }
+        self::assertNotSame($first['publicationRef'], $second['publicationRef']);
         self::assertSame(0, $this->cachedFactoryCalls);
         self::assertGreaterThanOrEqual(4, $this->currentRuntimeChecks);
         self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
@@ -1129,14 +1212,15 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertSame('blocked', $result['status']);
         self::assertArrayNotHasKey('reply', $result);
         self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame([], $this->publications);
     }
 
     #[DataProvider('cachedReadDuringProofFailures')]
-    public function testChangesDuringCachedProofCheckSuppressBytes(string $command, string $change): void
+    public function testChangesDuringCachedProofCheckSuppressBytes(string $command, string $change, int $check): void
     {
         [$processor, $payload, $peer] = $this->completedProcessor();
-        $this->onRuntimeRead = function (SyntheticMaterialSearchCorpus $runtime) use ($change): void {
-            if ($this->currentRuntimeChecks === 1) {
+        $this->onRuntimeRead = function (SyntheticMaterialSearchCorpus $runtime) use ($change, $check): void {
+            if ($this->currentRuntimeChecks === $check) {
                 if ($change === 'owner') {
                     $this->viewer['authorized'] = false;
                 } else {
@@ -1152,7 +1236,118 @@ final class PublicCoreAuthorityTest extends TestCase
 
     public static function cachedReadDuringProofFailures(): array
     {
-        return [['lookup_owned', 'owner'], ['execute_owned', 'owner'], ['lookup_owned', 'source'], ['execute_owned', 'source']];
+        return [['lookup_owned', 'owner', 1], ['execute_owned', 'owner', 1], ['lookup_owned', 'source', 1], ['execute_owned', 'source', 1],
+            ['lookup_owned', 'owner', 2], ['execute_owned', 'owner', 2], ['lookup_owned', 'source', 2], ['execute_owned', 'source', 2]];
+    }
+
+    #[DataProvider('publicationFailures')]
+    public function testUnknownInvalidOrFailedPublicationNeverExposesRawCandidate(string $command, string $failure): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor(withPublisher: $failure !== 'missing');
+        if ($failure === 'unqualified') {
+            $this->publicationQualified = false;
+        } elseif ($failure === 'expiry') {
+            $this->onRuntimeRead = function (): void {
+                if ($this->currentRuntimeChecks === 2) {
+                    $this->now += 120;
+                }
+            };
+        } elseif ($failure === 'reentry') {
+            $this->onRuntimeRead = function () use ($processor, $payload, $peer): void {
+                if ($this->currentRuntimeChecks === 2) {
+                    $nested = $processor->handle('lookup_owned', $payload, $peer);
+                    self::assertSame('blocked', $nested['status']);
+                }
+            };
+        } else {
+            $this->publicationFault = $failure;
+        }
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $result = $processor->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertArrayNotHasKey('trace', $result);
+        self::assertSame([], $this->publications);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    public static function publicationFailures(): array
+    {
+        $cases = [];
+        foreach (['lookup_owned', 'execute_owned'] as $command) {
+            foreach (['missing', 'unqualified', 'double_prepare', 'bool', 'echo', 'bytes', 'receipt', 'commit', 'expiry', 'reentry'] as $failure) {
+                $cases[] = [$command, $failure];
+            }
+        }
+        return $cases;
+    }
+
+    public function testUnqualifiedPublicationCannotStartFactoryOrModel(): void
+    {
+        $processor = $this->processor(function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        });
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $this->publicationQualified = false;
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $result = $processor->handle('execute_owned', ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']], $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame([], $this->publications);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    #[DataProvider('invalidCompletedTraces')]
+    public function testMalformedCompletedTraceCannotReachStagingOrSink(mixed $trace): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor();
+        $this->store->transaction(static function (array &$state) use ($payload, $trace): array {
+            $execution =& $state['requests'][$payload['request_ref']]['execution'];
+            $execution['result']['trace'] = $trace;
+            $execution['resultBinding']['resultDigest'] = hash('sha256', RegisteredPublicFixtureRegistry::canonical($execution['result']));
+            return ['seededMalformedPriorState' => true];
+        });
+        foreach (['lookup_owned', 'execute_owned'] as $command) {
+            $result = $processor->handle($command, $payload, $peer);
+            self::assertSame('blocked', $result['status']);
+            self::assertArrayNotHasKey('reply', $result);
+            self::assertSame([], $this->publications);
+        }
+        self::assertSame(0, $this->cachedFactoryCalls);
+    }
+
+    public static function invalidCompletedTraces(): array
+    {
+        $event = ['action' => 'ready', 'step' => 1, 'tokens' => 32, 'callRef' => null];
+        return [[null], ['PRIVATE raw trace'], [['private' => $event]], [[['action' => 'ready']]],
+            [[array_replace($event, ['action' => 'private_lookup'])]], [[array_replace($event, ['step' => -1])]],
+            [[array_replace($event, ['tokens' => 1.5])]], [[array_replace($event, ['callRef' => 'PRIVATE_SOURCE_REF'])]],
+            [[array_replace($event, ['callRef' => 'ref_' . str_repeat('g', 32)])]], [[$event + ['sourceRef' => 'PRIVATE_SOURCE']]]];
+    }
+
+    public function testClosedNativeTraceKeepsExactCoreDigestAndIndependentEnvelopeDigest(): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor();
+        $trace = [['action' => 'tool', 'step' => 1, 'tokens' => 32, 'callRef' => 'ref_' . str_repeat('a', 32)],
+            ['action' => 'final', 'step' => 2, 'tokens' => 64, 'callRef' => null],
+            ['action' => 'ready', 'step' => 2, 'tokens' => 64, 'callRef' => null]];
+        $this->store->transaction(static function (array &$state) use ($payload, $trace): array {
+            $execution =& $state['requests'][$payload['request_ref']]['execution'];
+            $execution['result']['trace'] = $trace;
+            $execution['resultBinding']['resultDigest'] = hash('sha256', RegisteredPublicFixtureRegistry::canonical($execution['result']));
+            return ['seededValidPriorState' => true];
+        });
+        $receipt = $processor->handle('lookup_owned', $payload, $peer);
+        self::assertSame('public-core-result-publication/1', $receipt['schemaVersion']);
+        $record = $this->publications[$receipt['publicationRef']];
+        $data = json_decode($record['bodyBytes'], true, flags: JSON_THROW_ON_ERROR)['data'];
+        self::assertSame(['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed'], array_keys($data));
+        self::assertSame($trace, $data['trace']);
+        self::assertSame(hash('sha256', RegisteredPublicFixtureRegistry::canonical($data)), $record['resultDigest']);
+        self::assertNotSame($record['resultDigest'], $record['envelopeDigest']);
     }
 
     public function testMissingRuntimeReaderCannotCreateFreshExecutionOrFactoryWrites(): void
