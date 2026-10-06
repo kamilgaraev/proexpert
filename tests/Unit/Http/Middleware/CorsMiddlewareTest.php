@@ -73,6 +73,59 @@ class CorsMiddlewareTest extends DatabaseLessTestCase
         self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
     }
 
+    public function test_allows_lk_preflight_for_assistant_endpoints(): void
+    {
+        $this->configureOrigins();
+
+        foreach (['rag/status', 'conversations', 'memory', 'credits/balance', 'usage'] as $endpoint) {
+            $request = Request::create('/api/v1/ai-assistant/'.$endpoint, 'OPTIONS', server: [
+                'HTTP_ORIGIN' => 'https://lk.example.test',
+                'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'GET',
+                'HTTP_ACCESS_CONTROL_REQUEST_HEADERS' => 'Authorization',
+            ]);
+            $response = $this->middleware()->handle($request, static function (): never {
+                throw new \LogicException('The assistant handler must not run during preflight.');
+            });
+
+            self::assertSame(Response::HTTP_NO_CONTENT, $response->getStatusCode());
+            self::assertSame('https://lk.example.test', $response->headers->get('Access-Control-Allow-Origin'));
+            self::assertSame('true', $response->headers->get('Access-Control-Allow-Credentials'));
+        }
+    }
+
+    public function test_lk_assistant_response_preserves_authentication_status_with_cors_headers(): void
+    {
+        $this->configureOrigins();
+        $request = Request::create('/api/v1/ai-assistant/conversations', 'GET', server: [
+            'HTTP_ORIGIN' => 'https://lk.example.test',
+        ]);
+        $downstreamResponse = new Response('Authentication required', Response::HTTP_UNAUTHORIZED);
+        $response = $this->middleware()->handle($request, static fn (): Response => $downstreamResponse);
+
+        self::assertSame($downstreamResponse, $response);
+        self::assertSame(Response::HTTP_UNAUTHORIZED, $response->getStatusCode());
+        self::assertSame('https://lk.example.test', $response->headers->get('Access-Control-Allow-Origin'));
+    }
+
+    public function test_rejects_other_interface_origins_for_lk_assistant_endpoints(): void
+    {
+        $this->configureOrigins();
+
+        foreach (['https://admin.example.test', 'https://customer.example.test', 'https://www.example.test', 'https://evil.example.test'] as $origin) {
+            $request = Request::create('/api/v1/ai-assistant/conversations', 'OPTIONS', server: [
+                'HTTP_ORIGIN' => $origin,
+                'HTTP_ACCESS_CONTROL_REQUEST_METHOD' => 'GET',
+                'HTTP_ACCESS_CONTROL_REQUEST_HEADERS' => 'Authorization',
+            ]);
+            $response = $this->middleware()->handle($request, static function (): never {
+                throw new \LogicException('The assistant handler must not run.');
+            });
+
+            self::assertSame(Response::HTTP_FORBIDDEN, $response->getStatusCode());
+            self::assertNull($response->headers->get('Access-Control-Allow-Origin'));
+        }
+    }
+
     public function test_allows_customer_preflight_only_from_customer_origin(): void
     {
         $this->configureOrigins();
