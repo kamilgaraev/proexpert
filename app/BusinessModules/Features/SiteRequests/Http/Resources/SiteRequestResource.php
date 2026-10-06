@@ -26,7 +26,7 @@ class SiteRequestResource extends JsonResource
         $equipmentType = $this->resolveEquipmentType();
         $equipmentTypeValue = $this->resolveEquipmentTypeValue();
         $chainSummary = app(ProcurementChainService::class)
-            ->forSiteRequest($this->resource, $request->user());
+            ->forSiteRequest($this->resource, $request->user(), includePermissions: false);
         $actionSummary = app(SiteRequestActionSummaryService::class)
             ->summary($this->resource, $request->user());
 

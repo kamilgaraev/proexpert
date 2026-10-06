@@ -79,9 +79,9 @@ final class ProcurementChainService
         private readonly ProcurementChainActionResolver $actionResolver
     ) {}
 
-    public function forSiteRequest(SiteRequest $siteRequest, ?User $actor = null): ProcurementChainSummary
+    public function forSiteRequest(SiteRequest $siteRequest, ?User $actor = null, bool $includePermissions = true): ProcurementChainSummary
     {
-        return $this->build($this->resolver->fromSiteRequest($siteRequest), 'site-requests', $siteRequest->id, $actor);
+        return $this->build($this->resolver->fromSiteRequest($siteRequest), 'site-requests', $siteRequest->id, $actor, $includePermissions);
     }
 
     public function forPurchaseRequest(PurchaseRequest $purchaseRequest, ?User $actor = null): ProcurementChainSummary
@@ -107,7 +107,7 @@ final class ProcurementChainService
     /**
      * @param  array<string, mixed>  $graph
      */
-    private function build(array $graph, string $rootContext, int $rootId, ?User $actor): ProcurementChainSummary
+    private function build(array $graph, string $rootContext, int $rootId, ?User $actor, bool $includePermissions = true): ProcurementChainSummary
     {
         $organizationId = $this->organizationId($graph);
         [$currentKey, $nextAction, $blockers] = $this->resolveCurrentState($graph, $actor, $organizationId);
@@ -135,7 +135,7 @@ final class ProcurementChainService
             warnings: collect(),
             linkedDocuments: $linkedDocuments,
             stages: $stages,
-            permissions: $this->actionResolver->permissions($actor, $organizationId),
+            permissions: $includePermissions ? $this->actionResolver->permissions($actor, $organizationId) : [],
         );
     }
 
