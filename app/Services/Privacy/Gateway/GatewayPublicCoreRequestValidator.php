@@ -26,10 +26,20 @@ final class GatewayPublicCoreRequestValidator
         if (! hash_equals($request->projectionDigest, hash('sha256', $request->bodyBytes))) {
             return 'source_changed';
         }
+
+        return $this->validateBody($profile, $request->bodyBytes);
+    }
+
+    public function validateBody(GatewayModelProfile $profile, string $bodyBytes): ?string
+    {
+        if (! $profile->isQualified()) {
+            return 'model_profile_unqualified';
+        }
+        $settings = $profile->values();
         try {
-            $body = json_decode($request->bodyBytes, true, 64, JSON_THROW_ON_ERROR);
+            $body = json_decode($bodyBytes, true, 64, JSON_THROW_ON_ERROR);
             if (! GatewayModelRequest::hasExactKeys($body, ['model', 'messages', 'stream', 'store', 'max_completion_tokens', 'response_format'])
-                || $request->bodyBytes !== GatewayModelRequest::canonicalJson($body)
+                || strlen($bodyBytes) > 262144 || $bodyBytes !== GatewayModelRequest::canonicalJson($body)
                 || $body['model'] !== $settings['modelId'] || $body['stream'] !== false || $body['store'] !== false
                 || $body['max_completion_tokens'] !== $settings['maxOutputTokens']
                 || $body['response_format'] !== ['type' => 'json_object']

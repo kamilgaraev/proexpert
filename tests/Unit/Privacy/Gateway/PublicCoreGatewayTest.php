@@ -8,7 +8,9 @@ use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelCont
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
 use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -555,5 +557,362 @@ final class PublicCoreGatewayTest extends TestCase
             'status' => 'unavailable',
             'reasonCode' => 'runtime_not_activated',
         ], json_decode($process->getOutput(), true, 64, JSON_THROW_ON_ERROR));
+    }
+
+    private function httpSourceFixtureProfile(): GatewayModelProfile
+    {
+        return GatewayModelProfile::fromArray(array_replace($this->profile()->values(), [
+            'qualification' => 'actual',
+            'apiMethod' => 'chat_completions',
+            'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
+            'modelId' => 'source-fixture-model',
+            'modelRevision' => 'source-fixture-v1',
+            'tokenizerId' => 'source-fixture-tokenizer',
+        ]));
+    }
+
+    private function providerEnvelope(?string $content = null): array
+    {
+        return [
+            'id' => 'source-fixture-completion-01',
+            'object' => 'chat.completion',
+            'created' => self::NOW,
+            'model' => 'source-fixture-model',
+            'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => $content ?? ' { "type": "plan", "plan": "Проверить публичные источники" } '], 'finish_reason' => 'stop']],
+            'usage' => ['prompt_tokens' => 42, 'completion_tokens' => 8, 'total_tokens' => 50],
+        ];
+    }
+
+    private function sourceHttpExecutor(string $response, int $status = 200, int $error = 0): Closure
+    {
+        return static function ($handle, array $options) use ($response, $status, $error): array {
+            $length = strlen($options[CURLOPT_POSTFIELDS]);
+            $options[CURLOPT_XFERINFOFUNCTION]($handle, 0.0, 0.0, (float) $length, (float) $length);
+            $options[CURLOPT_WRITEFUNCTION]($handle, $response);
+
+            return ['status' => $status, 'errorCode' => $error, 'uploadedBytes' => $length];
+        };
+    }
+
+    public function test_concrete_http_sender_uses_pinned_options_exact_bytes_and_private_decoder(): void
+    {
+        $profile = $this->httpSourceFixtureProfile();
+        $request = $this->request($profile);
+        $phase = 'guard_pending';
+        $exchanges = 0;
+        $executor = $this->sourceHttpExecutor(json_encode($this->providerEnvelope(), JSON_THROW_ON_ERROR));
+        $sender = new GatewayPublicCoreHttpSender(
+            static fn (): string => 'source-fixture-credential-not-a-provider-key',
+            function ($handle, array $options) use ($executor, $request, &$phase, &$exchanges): array {
+                self::assertSame('write_authorized', $phase);
+                self::assertSame(GatewayPublicCoreHttpSender::ENDPOINT, $options[CURLOPT_URL]);
+                self::assertSame($request->bodyBytes, $options[CURLOPT_POSTFIELDS]);
+                self::assertTrue($options[CURLOPT_POST]);
+                self::assertFalse($options[CURLOPT_FOLLOWLOCATION]);
+                self::assertSame(0, $options[CURLOPT_MAXREDIRS]);
+                self::assertSame('', $options[CURLOPT_PROXY]);
+                self::assertSame('*', $options[CURLOPT_NOPROXY]);
+                self::assertSame(CURL_NETRC_IGNORED, $options[CURLOPT_NETRC]);
+                self::assertSame(CURLPROTO_HTTPS, $options[CURLOPT_PROTOCOLS]);
+                self::assertTrue($options[CURLOPT_SSL_VERIFYPEER]);
+                self::assertSame(2, $options[CURLOPT_SSL_VERIFYHOST]);
+                self::assertSame(2000, $options[CURLOPT_CONNECTTIMEOUT_MS]);
+                self::assertSame(10000, $options[CURLOPT_TIMEOUT_MS]);
+                self::assertCount(4, $options[CURLOPT_HTTPHEADER]);
+                $exchanges++;
+
+                return $executor($handle, $options);
+            },
+        );
+        $result = $sender->send($profile, $request->bodyBytes,
+            function () use (&$phase): void {
+                $phase = 'write_authorized';
+            },
+            function (int $length) use ($request, &$phase): void {
+                self::assertSame(strlen($request->bodyBytes), $length);
+                self::assertSame('write_authorized', $phase);
+                $phase = 'uploaded';
+            },
+        );
+        self::assertSame(1, $exchanges);
+        self::assertSame('uploaded', $phase);
+        self::assertSame(GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Проверить публичные источники']), $result['actionBytes']);
+        self::assertSame(['inputTokens' => 42, 'outputTokens' => 8, 'totalTokens' => 50], $result['usage']);
+        self::assertTrue($profile->isActualProfile());
+        self::assertSame('runtime_not_activated', (new GatewayPublicCoreTransport)->send($request)->reasonCode);
+    }
+
+    public function test_concrete_http_sender_rejects_unknown_guard_or_profile_before_exchange(): void
+    {
+        $calls = 0;
+        $keys = 0;
+        $sender = new GatewayPublicCoreHttpSender(
+            static function () use (&$keys): string {
+                $keys++;
+
+                return 'source-fixture-credential-not-a-provider-key';
+            },
+            static function () use (&$calls): array {
+                $calls++;
+
+                return [];
+            },
+        );
+        foreach ([[$this->profile(), 'model_profile_unqualified'], [$this->httpSourceFixtureProfile(), 'gateway_channel_unavailable']] as [$profile, $reason]) {
+            try {
+                $sender->send($profile, $this->request($profile)->bodyBytes);
+                self::fail('Unknown source gate accepted');
+            } catch (LogicException $error) {
+                self::assertSame($reason, $error->getMessage());
+            }
+        }
+        self::assertSame(0, $calls);
+        self::assertSame(0, $keys);
+        try {
+            $profile = $this->httpSourceFixtureProfile();
+            $sender->send($profile, $this->request($profile)->bodyBytes,
+                static function (): void {
+                    throw new LogicException('authorization_changed');
+                },
+                static function (): void {},
+            );
+            self::fail('Revoked write executed');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+        }
+        self::assertSame(0, $calls);
+    }
+
+    #[DataProvider('invalidProviderContents')]
+    public function test_concrete_private_decoder_rejects_malformed_duplicate_or_native_tool_actions(string $content): void
+    {
+        $profile = $this->httpSourceFixtureProfile();
+        $sender = new GatewayPublicCoreHttpSender(
+            static fn (): string => 'source-fixture-credential-not-a-provider-key',
+            $this->sourceHttpExecutor(json_encode($this->providerEnvelope($content), JSON_THROW_ON_ERROR)),
+        );
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('invalid_model_output');
+        $sender->send($profile, $this->request($profile)->bodyBytes, static function (): void {}, static function (): void {});
+    }
+
+    public static function invalidProviderContents(): array
+    {
+        return [
+            ['{broken'],
+            ['{"type":"plan","plan":"one","plan":"two"}'],
+            ['{"type":"plan","plan":"one","pl\\u0061n":"two"}'],
+            ['{"type":"tool","tool":"project.delete","arguments":{}}'],
+            ['{"type":"tool","tool":"material.search","arguments":{"query":"бетон","limit":99}}'],
+            ['```json\n{"type":"plan","plan":"one"}\n```'],
+            ['{"type":"plan","plan":"one","rawPrivateData":"secret"}'],
+        ];
+    }
+
+    public function test_concrete_sender_envelope_usage_and_transport_failures_are_allowlisted(): void
+    {
+        $profile = $this->httpSourceFixtureProfile();
+        $base = $this->providerEnvelope();
+        $cases = [
+            [array_replace($base, ['model' => 'other-model']), 'invalid_model_output', 200, 0],
+            [array_replace($base, ['choices' => []]), 'invalid_model_output', 200, 0],
+            [array_replace_recursive($base, ['choices' => [['finish_reason' => 'length']]]), 'invalid_model_output', 200, 0],
+            [array_replace_recursive($base, ['choices' => [['message' => ['refusal' => 'no']]]]), 'invalid_model_output', 200, 0],
+            [array_replace_recursive($base, ['choices' => [['message' => ['tool_calls' => []]]]]), 'invalid_model_output', 200, 0],
+            [array_replace($base, ['usage' => ['prompt_tokens' => 42, 'completion_tokens' => 513, 'total_tokens' => 555]]), 'budget_exceeded', 200, 0],
+            [array_replace($base, ['usage' => ['prompt_tokens' => 3201, 'completion_tokens' => 0, 'total_tokens' => 3201]]), 'budget_exceeded', 200, 0],
+            [array_replace($base, ['usage' => ['prompt_tokens' => 42, 'completion_tokens' => 8, 'total_tokens' => 99]]), 'invalid_model_output', 200, 0],
+            [['error' => 'raw-private-provider-error'], 'gateway_unavailable', 401, 0],
+            [$base, 'gateway_unavailable', 302, 0],
+            [$base, 'gateway_unavailable', 200, 28],
+        ];
+        foreach ($cases as [$body, $reason, $status, $errorCode]) {
+            $calls = 0;
+            $executor = $this->sourceHttpExecutor(json_encode($body, JSON_THROW_ON_ERROR), $status, $errorCode);
+            $sender = new GatewayPublicCoreHttpSender(
+                static fn (): string => 'source-fixture-credential-not-a-provider-key',
+                static function ($handle, array $options) use ($executor, &$calls): array {
+                    $calls++;
+
+                    return $executor($handle, $options);
+                },
+            );
+            try {
+                $sender->send($profile, $this->request($profile)->bodyBytes, static function (): void {}, static function (): void {});
+                self::fail('Invalid provider result accepted');
+            } catch (LogicException $error) {
+                self::assertSame($reason, $error->getMessage());
+                self::assertStringNotContainsString('private', $error->getMessage());
+            }
+            self::assertSame(1, $calls);
+        }
+    }
+
+    #[DataProvider('nativeControlCases')]
+    public function test_native_channel_composes_real_sender_with_current_guard_and_upload_release(bool $denyWrite): void
+    {
+        if (! AuthenticatedPublicCoreChannel::isNativeAvailable() || ! function_exists('pcntl_fork')) {
+            self::markTestSkipped('Native SCM_CREDENTIALS branch requires isolated Linux sockets/pcntl; Windows skip is not Linux PASS');
+        }
+        $directory = sys_get_temp_dir().'/gate27-'.bin2hex(random_bytes(5));
+        mkdir($directory, 0700);
+        $path = $directory.'/channel.sock';
+        $lockPath = $directory.'/authority.lock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $profile = $this->httpSourceFixtureProfile();
+        $request = $this->request($profile, ['expiresAt' => time() + 10]);
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parentPid = getmypid();
+        $lock = fopen($lockPath, 'c');
+        fclose($lock);
+        $child = pcntl_fork();
+        self::assertGreaterThan(0, $child === 0 ? 1 : $child);
+        if ($child === 0) {
+            socket_close($listener);
+            $held = fopen($lockPath, 'c');
+            flock($held, LOCK_EX);
+            try {
+                $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parentPid], 5000);
+                $expiresAt = min($request->expiresAt, $channel->deadlineExpiresAt());
+                $channel->send('dispatch', $request->requestRef, $request->attemptRef, $request->values(), $expiresAt);
+                $authorized = false;
+                $uploaded = false;
+                $uploadObserved = static function () use (&$uploaded): bool {
+                    return $uploaded;
+                };
+                $checks = 0;
+                while (true) {
+                    $frame = $channel->receive();
+                    if ($frame['requestRef'] !== $request->requestRef || $frame['attemptRef'] !== $request->attemptRef) {
+                        exit(41);
+                    }
+                    if ($frame['command'] === 'check_binding') {
+                        $checks++;
+                        $channel->send('binding', $request->requestRef, $request->attemptRef, $request->binding(), $expiresAt);
+                    } elseif ($frame['command'] === 'authorize_write') {
+                        if ($checks !== 3 || $authorized) {
+                            exit(42);
+                        }
+                        $authorized = true;
+                        $grant = $denyWrite ? ['reasonCode' => 'authorization_changed'] : $request->binding();
+                        $channel->send('write_authorized', $request->requestRef, $request->attemptRef, $grant, $expiresAt);
+                    } elseif ($frame['command'] === 'upload_complete') {
+                        if (! $authorized || $denyWrite || $frame['payload']['projectionDigest'] !== $request->projectionDigest
+                            || $frame['payload']['bodyLength'] !== strlen($request->bodyBytes)) {
+                            exit(43);
+                        }
+                        $uploaded = true;
+                        flock($held, LOCK_UN);
+                        $channel->send('uploaded', $request->requestRef, $request->attemptRef, $frame['payload'], $expiresAt);
+                    } elseif ($frame['command'] === 'result') {
+                        $response = GatewayModelResponse::fromArray($frame['payload']);
+                        if (($denyWrite && ($response->reasonCode !== 'authorization_changed' || $uploadObserved()))
+                            || (! $denyWrite && ($response->status !== 'completed' || ! $uploadObserved()))) {
+                            exit(44);
+                        }
+                        break;
+                    } else {
+                        exit(45);
+                    }
+                }
+                $channel->close();
+                fclose($held);
+                exit(0);
+            } catch (\Throwable) {
+                exit(46);
+            }
+        }
+        $channel = null;
+        $providerCalls = 0;
+        try {
+            $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 5000);
+            $executor = $this->sourceHttpExecutor(json_encode($this->providerEnvelope(), JSON_THROW_ON_ERROR));
+            $sender = new GatewayPublicCoreHttpSender(
+                static fn (): string => 'source-fixture-credential-not-a-provider-key',
+                static function ($handle, array $options) use ($executor, $lockPath, &$providerCalls): array {
+                    $providerCalls++;
+                    $check = fopen($lockPath, 'c');
+                    if (flock($check, LOCK_EX | LOCK_NB)) {
+                        throw new LogicException('authorization_changed');
+                    }
+                    $result = $executor($handle, $options);
+                    if (! flock($check, LOCK_EX | LOCK_NB)) {
+                        throw new LogicException('gateway_channel_unavailable');
+                    }
+                    flock($check, LOCK_UN);
+                    fclose($check);
+
+                    return $result;
+                },
+            );
+            $response = GatewayPublicCoreTransport::handleAuthenticatedChannel($channel, $profile, $sender,
+                fn (string $bytes, GatewayModelProfile $selected): array => $this->tokenCount($selected),
+                static function (GatewayModelProfile $selected, array $peer) use ($profile, $child, $uid, $gid): string {
+                    return $selected->fingerprint() === $profile->fingerprint() && $peer === ['pid' => $child, 'uid' => $uid, 'gid' => $gid]
+                        ? 'none' : 'gateway_identity_unavailable';
+                },
+            );
+            self::assertSame($denyWrite ? 'authorization_changed' : 'none', $response->reasonCode);
+            self::assertSame($denyWrite ? 0 : 1, $providerCalls);
+        } finally {
+            $channel?->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+            unlink($path);
+            unlink($lockPath);
+            rmdir($directory);
+        }
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status));
+    }
+
+    public static function nativeControlCases(): array
+    {
+        return ['qualified source upload' => [false], 'revoke before final write' => [true]];
+    }
+
+    public function test_bootstrap_rejects_caller_role_flags_before_key_or_socket_access(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'gate27-config-');
+        file_put_contents($file, json_encode([
+            'schemaVersion' => 'public-core-gateway-runtime/1',
+            'activation' => 'approved',
+            'role' => 'gateway',
+            'authorized' => true,
+            'gatewayUid' => function_exists('posix_geteuid') ? posix_geteuid() : 1,
+            'gatewayGid' => function_exists('posix_getegid') ? posix_getegid() : 1,
+            'credentialFile' => '/not-a-source-fixture-provider-key',
+            'socketPath' => '/not-a-source-fixture-socket',
+            'profile' => $this->httpSourceFixtureProfile()->values(),
+        ], JSON_THROW_ON_ERROR));
+        try {
+            GatewayPublicCoreTransport::serveProtected($file);
+            self::fail('Caller flags started protected runtime');
+        } catch (LogicException $error) {
+            self::assertContains($error->getMessage(), ['runtime_not_activated', 'gateway_identity_unavailable']);
+        } finally {
+            unlink($file);
+        }
+    }
+
+    public function test_http_sender_bounds_response_and_preserves_unavailable_usage(): void
+    {
+        $profile = $this->httpSourceFixtureProfile();
+        $body = $this->providerEnvelope();
+        unset($body['usage']);
+        $sender = new GatewayPublicCoreHttpSender(
+            static fn (): string => 'source-fixture-credential-not-a-provider-key',
+            $this->sourceHttpExecutor(json_encode($body, JSON_THROW_ON_ERROR)),
+        );
+        $result = $sender->send($profile, $this->request($profile)->bodyBytes, static function (): void {}, static function (): void {});
+        self::assertNull($result['usage']);
+        $sender = new GatewayPublicCoreHttpSender(
+            static fn (): string => 'source-fixture-credential-not-a-provider-key',
+            $this->sourceHttpExecutor(str_repeat('a', GatewayPublicCoreHttpSender::MAX_RESPONSE_BYTES + 1)),
+        );
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('invalid_model_output');
+        $sender->send($profile, $this->request($profile)->bodyBytes, static function (): void {}, static function (): void {});
     }
 }
