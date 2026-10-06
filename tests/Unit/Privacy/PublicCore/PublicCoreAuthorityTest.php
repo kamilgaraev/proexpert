@@ -4,11 +4,18 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Privacy\PublicCore;
 
+use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextPreparationService;
+use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextSourceBinding;
+use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelContextProfile;
+use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantSafeContextSegment;
 use App\Services\Privacy\PublicCore\PublicCoreReceiptStore;
 use App\Services\Privacy\PublicCore\PublicCoreSessionAuthority;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Unit\AIAssistant\Context\OfflineContextFixtures;
+
+require_once __DIR__ . '/../../AIAssistant/Context/OfflineContextFixtures.php';
 
 final class PublicCoreAuthorityTest extends TestCase
 {
@@ -69,7 +76,7 @@ final class PublicCoreAuthorityTest extends TestCase
         $binding = ['scope' => $scope, 'snapshotHash' => hash('sha256', 'registered-snapshot'),
             'profileFingerprint' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($profile)),
             'registryDigest' => $this->registry->manifestDigest(), 'aliases' => ['public-current' => 'input-current'],
-            'sources' => ['input-current' => ['version' => 'public-material/1']]];
+            'sources' => ['input-current' => ['version' => 'public-material/1']], 'trustedModelProfile' => $profile];
         $publisher = $this->sessions->publisher(['credential' => 'server-ticket'], $opened['request_ref'], fn (array $request): array => $binding);
         $lineage = $publisher->publish('lineage', ['scope' => $scope, 'conversationRef' => $this->sessions->lookup(['credential' => 'server-ticket'], $opened['request_ref'])['conversationRef']]);
         self::assertSame(['requestRef', 'requestRevision', 'conversationRef', 'issuedAt', 'expiresAt', 'now'], array_keys($lineage));
@@ -77,7 +84,8 @@ final class PublicCoreAuthorityTest extends TestCase
             'payloadDigest' => hash('sha256', 'registered-public-payload'),
             'scopeHash' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($scope)), 'scope' => $scope,
             'conversationRef' => $lineage['conversationRef'], 'profileRef' => 'offline', 'profileFingerprint' => $binding['profileFingerprint'],
-            'modelProfile' => $profile, 'aliases' => $binding['aliases'], 'sources' => $binding['sources'],
+            'modelProfile' => AssistantModelContextProfile::resolve('offline', static fn (): array => $profile)->modelPayload(),
+            'aliases' => $binding['aliases'], 'sources' => $binding['sources'],
             'lineage' => array_diff_key($lineage, ['now' => true])];
         $expected = ['contextRef' => $receipt['contextRef'], 'payloadDigest' => $receipt['payloadDigest'],
             'receiptDigest' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($receipt))];
@@ -225,5 +233,132 @@ final class PublicCoreAuthorityTest extends TestCase
         $binding['snapshotHash'] = hash('sha256', 'registered-snapshot');
         $binding['profileFingerprint'] = hash('sha256', 'changed-profile');
         self::assertSame([], $this->sessions->publisher(['credential' => 'server-ticket'], $opened['request_ref'], fn (array $request): array => $binding)->publish('commit', $receipt, $expected));
+    }
+
+    private function nativePreparation(?string $negative = null): array
+    {
+        $opened = $this->open();
+        $request = $this->sessions->lookup(['credential' => 'server-ticket'], $opened['request_ref']);
+        $fixture = new OfflineContextFixtures(0);
+        $fixture->snapshot['conversation']['ref'] = $request['conversationRef'];
+        foreach ($fixture->snapshot['sources'] as &$source) {
+            $source['conversationRef'] = $request['conversationRef'];
+        }
+        unset($source);
+        $aliases = [];
+        $sources = [];
+        $trustedProfile = $fixture->profile;
+        $publisher = $this->sessions->publisher(['credential' => 'server-ticket'], $opened['request_ref'],
+            function (array $request) use ($fixture, &$aliases, &$sources, &$trustedProfile): array {
+                $profile = AssistantModelContextProfile::resolve('offline', fn (): array => $trustedProfile ?? $fixture->profile);
+                return ['scope' => $fixture->snapshot['scope'],
+                    'snapshotHash' => AssistantContextSourceBinding::snapshotHash($fixture->snapshot),
+                    'profileFingerprint' => $profile->fingerprint(), 'registryDigest' => $this->registry->manifestDigest(),
+                    'aliases' => $aliases, 'sources' => $sources, 'trustedModelProfile' => $trustedProfile];
+            });
+        $events = [];
+        $captured = null;
+        $expectedCaptured = null;
+        $stageAck = null;
+        $service = new AssistantContextPreparationService(
+            fn (): array => $fixture->snapshot,
+            fn (string $ref, array $snapshot): ?array => $fixture->artifacts[$ref] ?? null,
+            fn (string $ref): array => $fixture->profile,
+            static fn (string $bytes, array $identity): array => $identity + ['tokens' => strlen($bytes)],
+            function (string $event, array $data, array $expected = []) use ($fixture, $publisher, $negative,
+                &$aliases, &$sources, &$trustedProfile, &$events, &$captured, &$expectedCaptured, &$stageAck): array {
+                $events[] = $event;
+                if ($event === 'stage') {
+                    foreach ($data['sources'] as $source) {
+                        self::assertSame($fixture->snapshot['sources'][$source['sourceRef']], $source['source']);
+                    }
+                    foreach ($data['aliases'] as $alias) {
+                        $segment = AssistantSafeContextSegment::project($alias['artifactRef'], $fixture->snapshot,
+                            fn (string $ref, array $snapshot): ?array => $fixture->artifacts[$ref] ?? null);
+                        self::assertSame($segment->kind(), $alias['kind']);
+                        self::assertSame($segment->fields(), $alias['fields']);
+                        self::assertSame($segment->metadata(), $alias['metadata']);
+                    }
+                    $aliases = AssistantContextSourceBinding::detached($data['aliases']);
+                    $sources = AssistantContextSourceBinding::detached($data['sources']);
+                    $captured = AssistantContextSourceBinding::detached($data);
+                    $expectedCaptured = $expected;
+                    if ($negative === 'missing_profile') {
+                        $trustedProfile = null;
+                    }
+                    if ($negative === 'payload') {
+                        $data['modelProfile']['modelId'] = 'forged-model';
+                        $expected['receiptDigest'] = hash('sha256', AssistantContextSourceBinding::canonical($data));
+                    }
+                    if ($negative === 'fingerprint') {
+                        $data['profileFingerprint'] = hash('sha256', AssistantContextSourceBinding::canonical($data['modelProfile']));
+                        $expected['receiptDigest'] = hash('sha256', AssistantContextSourceBinding::canonical($data));
+                    }
+                }
+                if ($event === 'commit' && $negative === 'changed_profile') {
+                    $trustedProfile['modelRevision'] = 'changed/2';
+                }
+                if ($event === 'final_guard' && $negative === 'changed_final_profile') {
+                    $trustedProfile['tokenizerRevision'] = 'changed/2';
+                }
+                $answer = $publisher->publish($event, $data, $expected);
+                if ($event === 'stage') {
+                    $stageAck = $answer;
+                }
+                return $answer;
+            },
+        );
+        $result = $service->prepare('offline', $fixture->request());
+        return [$result, $events, $captured, $expectedCaptured, $publisher, $stageAck, $fixture];
+    }
+
+    public function testFrozenCorePublishesNativePayloadWithOriginalFullProfileFingerprint(): void
+    {
+        [$result, $events, $receipt, $expected, $publisher, $stageAck, $fixture] = $this->nativePreparation();
+        self::assertSame('READY', $result['status']);
+        self::assertFalse($result['transportAllowed']);
+        self::assertSame('offline-synthetic', $result['mode']);
+        self::assertContains('stage', $events);
+        self::assertContains('commit', $events);
+        self::assertContains('final_guard', $events);
+        self::assertSame('staged', $stageAck['status']);
+        self::assertCount(8, $receipt['modelProfile']);
+        $profile = AssistantModelContextProfile::resolve('offline', fn (): array => $fixture->profile);
+        self::assertSame($profile->fingerprint(), $receipt['profileFingerprint']);
+        self::assertNotSame(hash('sha256', AssistantContextSourceBinding::canonical($receipt['modelProfile'])), $receipt['profileFingerprint']);
+        self::assertSame(hash('sha256', AssistantContextSourceBinding::canonical($receipt)), $expected['receiptDigest']);
+        self::assertSame($receipt, $publisher->authority($receipt['contextRef'])['receipt']);
+        self::assertSame($expected, $publisher->authority($receipt['contextRef'])['expected']);
+    }
+
+    #[DataProvider('nativeProfileDenials')]
+    public function testFrozenCoreCannotCommitForgedOrUnavailableCurrentProfile(string $negative): void
+    {
+        [$result, , $receipt, , $publisher, $stageAck] = $this->nativePreparation($negative);
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertArrayNotHasKey('payload', $result);
+        if (!in_array($negative, ['changed_profile', 'changed_final_profile'], true)) {
+            self::assertSame([], $stageAck);
+        }
+        self::assertNull($publisher->authority($receipt['contextRef']));
+    }
+
+    public static function nativeProfileDenials(): array
+    {
+        return [['payload'], ['fingerprint'], ['missing_profile'], ['changed_profile'], ['changed_final_profile']];
+    }
+
+    public function testMissingTrustedFullProfileKeyAndNonNativeReceiptDoNotStage(): void
+    {
+        [$publisher, $receipt, $expected, $opened, $binding] = $this->publication();
+        $fullReceipt = $receipt;
+        $fullReceipt['modelProfile'] = $binding['trustedModelProfile'];
+        $fullExpected = $expected;
+        $fullExpected['receiptDigest'] = hash('sha256', RegisteredPublicFixtureRegistry::canonical($fullReceipt));
+        self::assertSame([], $publisher->publish('stage', $fullReceipt, $fullExpected));
+        unset($binding['trustedModelProfile']);
+        $missing = $this->sessions->publisher(['credential' => 'server-ticket'], $opened['request_ref'], fn (array $request): array => $binding);
+        self::assertSame([], $missing->publish('stage', $receipt, $expected));
+        self::assertNull($missing->authority($receipt['contextRef']));
     }
 }

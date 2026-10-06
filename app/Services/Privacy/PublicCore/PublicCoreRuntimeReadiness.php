@@ -18,7 +18,7 @@ final readonly class PublicCoreRuntimeReadiness
             'data_scope' => 'registered_public_fixture',
             'status' => 'unavailable',
             'reason_code' => 'runtime_not_activated',
-            'source_contract_version' => 'public-core-authority/0.1-candidate',
+            'source_contract_version' => 'public-core-authority/0.2-candidate',
             'actual_model' => null,
             'model_enabled' => false,
             'capabilities' => ['text' => false, 'tools' => false, 'vision' => false],

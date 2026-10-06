@@ -1,6 +1,6 @@
 # Public core: source-контракты MOSTAI-34
 
-Версия `public-core-authority/0.1-candidate`. Это source preparation пакета 04, не runtime activation и не выполнение полного MOSTAI-34/G1. Coordination input: `most-ai-public-core-coordination/0.2-candidate`, SHA-256 `b61940f7298d460ab23c5d6cbb7da6d7c88ff3a166fac0322ff09bc1ddba97be`.
+Версия `public-core-authority/0.2-candidate`. Это source preparation пакета 04, не runtime activation и не выполнение полного MOSTAI-34/G1. Coordination input: `most-ai-public-core-coordination/0.2-candidate`, SHA-256 `b61940f7298d460ab23c5d6cbb7da6d7c88ff3a166fac0322ff09bc1ddba97be`.
 
 ## Закрытый registry
 
@@ -30,6 +30,8 @@ Literal synthetic IDs 7/11/13 принадлежат только fixture realm 
 Stage/commit ack выдаётся лишь после соответствующего сохранения в ledger. Receipt соответствует `assistant-context-receipt/1`; expected — `contextRef`, `payloadDigest`, SHA-256 exact canonical receipt. `final_guard` проверяет committed receipt, current owner/source/profile/snapshot/request/lifetime и возвращает exact `assistant-context-final-guard/1`. Lookup `authority(contextRef)` читает authoritative committed state, а не UI JSON. Abort удаляет matching receipt; replay/changed digest/profile/lineage или revoked request не получают commit/final guard.
 
 Current backend readers и publisher являются Processor-only configuration, не endpoint для app/model. PHP-классы, каталог, HMAC и префикс namespace сами не доказывают это разделение. На данный момент producer/runtime adapters не подключены; все положительные local tests относятся к явно внедрённым test readers и private TEMP ledger.
+
+Current core binding v0.2 требует ровно `scope`, `snapshotHash`, `profileFingerprint`, `registryDigest`, `aliases`, `sources`, `trustedModelProfile`. Последнее поле — независимо загруженный текущий полный 11-field trusted profile, не копия receipt/model payload. Store разрешает его через frozen `AssistantModelContextProfile::resolve`, проверяет исходный full-profile fingerprint и сравнивает receipt `modelProfile` с native `modelPayload()` (8 полей). Fingerprint и receipt digest не пересчитываются по сокращённому payload и не заменяются. Отсутствующий/изменённый trusted profile, forged payload/fingerprint и 11-field receipt вместо native payload блокируются. Старый six-field current binding v0.1 несовместим и не получает allowance; consumers должны принять новый exact producer handoff. Frozen Core не изменён.
 
 ## Runtime остаётся закрыт
 

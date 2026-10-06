@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Privacy\PublicCore;
 
+use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelContextProfile;
 use Closure;
 use RuntimeException;
 use Throwable;
@@ -192,7 +193,7 @@ final class PublicCoreReceiptStore
 
     private function validBinding(array $binding): bool
     {
-        $keys = ['lineage', 'scope', 'snapshotHash', 'profileFingerprint', 'registryDigest', 'aliases', 'sources'];
+        $keys = ['lineage', 'scope', 'snapshotHash', 'profileFingerprint', 'registryDigest', 'aliases', 'sources', 'trustedModelProfile'];
         if (array_keys($binding) !== $keys || !is_array($binding['lineage']) || !is_array($binding['scope'])
             || !is_array($binding['aliases']) || !is_array($binding['sources'])) {
             return false;
@@ -216,8 +217,24 @@ final class PublicCoreReceiptStore
                 return false;
             }
         }
-        return $lineage['issuedAt'] <= $lineage['now'] && $lineage['now'] < $lineage['expiresAt']
+        return $this->trustedProfile($binding) !== null
+            && $lineage['issuedAt'] <= $lineage['now'] && $lineage['now'] < $lineage['expiresAt']
             && $lineage['expiresAt'] - $lineage['issuedAt'] <= 300;
+    }
+
+    private function trustedProfile(array $binding): ?AssistantModelContextProfile
+    {
+        $values = $binding['trustedModelProfile'] ?? null;
+        if (!is_array($values) || !is_string($values['profileRef'] ?? null)) {
+            return null;
+        }
+        try {
+            $profile = AssistantModelContextProfile::resolve($values['profileRef'],
+                static fn (string $ref): array => self::owned($values));
+            return $profile->fingerprint() === $binding['profileFingerprint'] ? $profile : null;
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     private function validReceipt(array $data, array $expected, array $binding): bool
@@ -237,12 +254,10 @@ final class PublicCoreReceiptStore
             || $data['aliases'] !== $binding['aliases'] || $data['sources'] !== $binding['sources']) {
             return false;
         }
-        if (!is_array($data['modelProfile'])
-            || array_keys($data['modelProfile']) !== ['profileRef', 'qualification', 'adapterRevision', 'modelId',
-                'modelRevision', 'tokenizerId', 'tokenizerRevision', 'contextWindow', 'maxOutputTokens', 'answerReserve', 'toolReserve']
-            || $data['modelProfile']['qualification'] !== 'offline-synthetic'
-            || $data['profileRef'] !== $data['modelProfile']['profileRef']
-            || hash('sha256', RegisteredPublicFixtureRegistry::canonical($data['modelProfile'])) !== $binding['profileFingerprint']) {
+        $profile = $this->trustedProfile($binding);
+        if ($profile === null || !is_array($data['modelProfile'])
+            || $data['profileRef'] !== $binding['trustedModelProfile']['profileRef']
+            || $data['modelProfile'] !== $profile->modelPayload()) {
             return false;
         }
         return true;

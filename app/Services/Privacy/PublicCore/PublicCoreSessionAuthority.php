@@ -131,7 +131,7 @@ final class PublicCoreSessionAuthority
                 return [];
             }
             $binding = $currentCoreBinding(PublicCoreReceiptStore::owned($request));
-            if (!is_array($binding) || array_keys($binding) !== ['scope', 'snapshotHash', 'profileFingerprint', 'registryDigest', 'aliases', 'sources']
+            if (!is_array($binding) || array_keys($binding) !== ['scope', 'snapshotHash', 'profileFingerprint', 'registryDigest', 'aliases', 'sources', 'trustedModelProfile']
                 || $binding['registryDigest'] !== $this->registry->manifestDigest()
                 || $this->currentRequest($state, $trustedViewerBinding, $requestRef) === null) {
                 return [];
