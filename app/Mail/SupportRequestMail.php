@@ -21,7 +21,6 @@ class SupportRequestMail extends Mailable
     {
         return $this
             ->subject(trans_message('support.email.subject', ['subject' => $this->subjectText]))
-            ->replyTo($this->senderEmail, $this->senderName)
             ->view('emails.support_request')
             ->with([
                 'senderName' => $this->senderName,
