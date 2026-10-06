@@ -11,3 +11,4 @@ tests/Fixtures/EstimateGeneration/acceptance-candidate/**/*.pdf binary
 /.github export-ignore
 CHANGELOG.md export-ignore
 .styleci.yml export-ignore
+resources/legal/*.json text eol=lf

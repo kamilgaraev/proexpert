@@ -16,9 +16,16 @@ final readonly class EnterpriseInquiryService
         private EnterpriseInquiryPayloadFactory $payloadFactory,
     ) {}
 
-    public function create(User $user, int $organizationId, EnterpriseInquiryData $data): ContactForm
+    public function create(User $user, int $organizationId, EnterpriseInquiryData $data, array $legalInput, \Illuminate\Http\Request $request): ContactForm
     {
-        return DB::transaction(function () use ($user, $organizationId, $data): ContactForm {
+        if (! filter_var($legalInput['consent_to_personal_data'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['consent_to_personal_data' => trans_message('public_contact.validation.consent_required')]);
+        }
+        app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($legalInput, ['contactConsent'], false);
+        if (! $user->organizations()->whereKey($organizationId)->exists()) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('legal.authority'));
+        }
+        return DB::transaction(function () use ($user, $organizationId, $data, $request): ContactForm {
             $organization = Organization::query()->lockForUpdate()->findOrFail($organizationId);
             $existing = ContactForm::query()
                 ->where('organization_id', $organizationId)
@@ -30,7 +37,10 @@ final readonly class EnterpriseInquiryService
                 return $existing;
             }
 
-            return ContactForm::query()->create($this->payloadFactory->make($user, $organization, $data));
+            $contact = ContactForm::query()->create($this->payloadFactory->make($user, $organization, $data));
+            app(\App\Services\Legal\LegalAcceptanceService::class)->record('contactConsent', 'enterprise_inquiry', (string) $contact->id, $request, $user, $organization);
+
+            return $contact;
         });
     }
 }

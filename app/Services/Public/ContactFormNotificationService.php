@@ -43,7 +43,7 @@ class ContactFormNotificationService
         $delivery['next_attempt_at'] = now()->addMinutes(5)->toISOString();
         $contactForm->update(['notification_delivery' => $delivery]);
 
-        $telegramEnabled = (bool) config('telegram.notifications.contact_forms');
+        $telegramEnabled = (bool) config('legal.telegram_contact_notifications', false) && (bool) config('telegram.notifications.contact_forms');
         $recipients = $this->notificationRecipients();
         $telegramSent = ! empty($contactForm->telegram_data['sent_at']);
         $emailSent = ! empty($delivery['email_sent_at']);
