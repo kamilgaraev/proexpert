@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\SiteRequests\Services;
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\MachineryOperations\Services\SiteRequestAssetProjectionService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
@@ -126,7 +127,9 @@ class SiteRequestService
     ): LengthAwarePaginator {
         $query = SiteRequest::forOrganization($organizationId)
             ->visibleToActor($actorId)
-            ->with(['project', 'user', 'assignedUser', 'group', 'estimateItem.measurementUnit', 'materialDeliveries.latestEvent']);
+            ->with(['project', 'user', 'assignedUser', 'group', 'estimateItem.measurementUnit', 'materialDeliveries.latestEvent'])
+            ->with(ProcurementChainResolver::SITE_REQUEST_RELATIONS)
+            ->withExists('paymentDocuments');
 
         // Применяем фильтры
         $this->applyFilters($query, $filters);

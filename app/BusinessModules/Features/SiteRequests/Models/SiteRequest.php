@@ -526,7 +526,13 @@ class SiteRequest extends Model
      */
     public function hasPaymentDocument(): bool
     {
-        return $this->paymentDocuments()->exists() || $this->payment_document_id !== null;
+        if ($this->payment_document_id !== null) {
+            return true;
+        }
+
+        $exists = $this->getAttribute('payment_documents_exists');
+
+        return $exists !== null ? (bool) $exists : $this->paymentDocuments()->exists();
     }
 
     /**

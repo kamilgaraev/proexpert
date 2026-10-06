@@ -8,8 +8,10 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Workflow\JournalScheduleTaskResolver;
 use App\Services\Workflow\WorkflowGuardService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Gate;
 
 class ConstructionJournalPayloadService
@@ -33,7 +35,23 @@ class ConstructionJournalPayloadService
     public function __construct(
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly WorkflowGuardService $workflowGuardService,
+        private readonly JournalScheduleTaskResolver $journalScheduleTaskResolver,
     ) {}
+
+    public static function journalCountRelations(): array
+    {
+        return [
+            'entries',
+            'entries as approved_entries_count' => fn ($query) => $query->approved(),
+            'entries as submitted_entries_count' => fn ($query) => $query->submitted(),
+            'entries as rejected_entries_count' => fn ($query) => $query->rejected(),
+        ];
+    }
+
+    public function prepareEntryPage(Collection $entries): void
+    {
+        $this->journalScheduleTaskResolver->loadForEntryPage($entries);
+    }
 
     public function mapJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
     {

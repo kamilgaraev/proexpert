@@ -34,12 +34,7 @@ class ConstructionJournalController extends Controller
 
             $journals = $project->journals()
                 ->with(['contract', 'createdBy', 'project'])
-                ->withCount([
-                    'entries',
-                    'entries as approved_entries_count' => fn ($query) => $query->approved(),
-                    'entries as submitted_entries_count' => fn ($query) => $query->submitted(),
-                    'entries as rejected_entries_count' => fn ($query) => $query->rejected(),
-                ])
+                ->withCount(ConstructionJournalPayloadService::journalCountRelations())
                 ->when($request->filled('status'), function ($query) use ($request): void {
                     $query->where('status', $request->string('status'));
                 })
@@ -132,12 +127,9 @@ class ConstructionJournalController extends Controller
                         ->orderByDesc('entry_number')
                         ->limit(10);
                 },
-            ])->loadCount([
-                'entries',
-                'entries as approved_entries_count' => fn ($query) => $query->approved(),
-                'entries as submitted_entries_count' => fn ($query) => $query->submitted(),
-                'entries as rejected_entries_count' => fn ($query) => $query->rejected(),
-            ]);
+            ])->loadCount(ConstructionJournalPayloadService::journalCountRelations());
+
+            $this->payloadService->prepareEntryPage($journal->entries);
 
             return AdminResponse::success($this->payloadService->mapJournal($journal, $request->user(), true));
         } catch (AuthorizationException $exception) {
@@ -250,8 +242,11 @@ class ConstructionJournalController extends Controller
         try {
             $this->authorize('view', $journal);
 
+            $journal->loadCount(ConstructionJournalPayloadService::journalCountRelations());
+
             $query = $journal->entries()
                 ->with(ConstructionJournalPayloadService::ENTRY_RELATIONS)
+                ->with(['journal' => fn ($query) => $query->withCount(ConstructionJournalPayloadService::journalCountRelations())])
                 ->withCount('completedWorks');
 
             if ($request->filled('status')) {
@@ -274,7 +269,10 @@ class ConstructionJournalController extends Controller
                 ->orderByDesc('entry_number')
                 ->paginate(min(100, max(1, $request->integer('per_page', 20))));
 
-            $data = collect($entries->items())
+            $pageEntries = collect($entries->items());
+            $this->payloadService->prepareEntryPage($pageEntries);
+
+            $data = $pageEntries
                 ->map(fn (ConstructionJournalEntry $entry): array => $this->payloadService->mapEntry($entry, $request->user()))
                 ->values()
                 ->all();

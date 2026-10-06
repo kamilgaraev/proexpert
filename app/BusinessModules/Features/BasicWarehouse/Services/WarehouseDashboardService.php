@@ -30,7 +30,7 @@ final class WarehouseDashboardService
     {
         /** @var Collection<int, array<string, mixed>> $stock */
         $stock = collect($this->warehouseService->getStockData($organizationId, ['warehouse_id' => $warehouseId]));
-        $movements = collect($this->warehouseService->getMovementsData($organizationId, ['warehouse_id' => $warehouseId]));
+        $movements = collect($this->warehouseService->paginateMovementsData($organizationId, ['warehouse_id' => $warehouseId], 6)->items());
         $now = now();
 
         $activeTaskStatuses = [

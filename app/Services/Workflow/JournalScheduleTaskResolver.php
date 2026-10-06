@@ -11,6 +11,52 @@ use Illuminate\Support\Collection;
 
 class JournalScheduleTaskResolver
 {
+    public function loadForEntryPage(Collection $entries): void
+    {
+        $groups = [];
+        foreach ($entries as $entry) {
+            if ($entry->schedule_task_id) {
+                continue;
+            }
+
+            foreach ($entry->workVolumes as $volume) {
+                if ($volume->estimate_item_id) {
+                    $groups[$entry->journal->project_id][$volume->estimate_item_id] = true;
+                }
+            }
+        }
+
+        if ($groups === []) {
+            return;
+        }
+
+        $tasks = ScheduleTask::query()
+            ->with('schedule')
+            ->where(function ($query) use ($groups): void {
+                foreach ($groups as $projectId => $itemIds) {
+                    $query->orWhere(function ($query) use ($projectId, $itemIds): void {
+                        $query->whereIn('estimate_item_id', array_keys($itemIds))
+                            ->whereHas('schedule', fn ($query) => $query->where('project_id', $projectId));
+                    });
+                }
+            })
+            ->orderByDesc('updated_at')
+            ->get()
+            ->filter(fn (ScheduleTask $task): bool => $task->schedule !== null)
+            ->groupBy(fn (ScheduleTask $task): string => $task->schedule->project_id.':'.$task->estimate_item_id);
+
+        foreach ($entries as $entry) {
+            if ($entry->schedule_task_id) {
+                continue;
+            }
+
+            foreach ($entry->workVolumes as $volume) {
+                $key = $entry->journal->project_id.':'.$volume->estimate_item_id;
+                $volume->setRelation('journalScheduleTasks', $tasks->get($key, collect()));
+            }
+        }
+    }
+
     public function resolveForVolume(ConstructionJournalEntry $entry, JournalWorkVolume $volume): ?ScheduleTask
     {
         if ($entry->schedule_task_id) {
@@ -23,7 +69,9 @@ class JournalScheduleTaskResolver
             return null;
         }
 
-        $tasks = ScheduleTask::query()
+        $tasks = $volume->relationLoaded('journalScheduleTasks')
+            ? $volume->getRelation('journalScheduleTasks')
+            : ScheduleTask::query()
             ->where('estimate_item_id', $volume->estimate_item_id)
             ->whereHas('schedule', function ($query) use ($entry): void {
                 $query->where('project_id', $entry->journal->project_id);
