@@ -122,6 +122,11 @@ final class PublicCoreSessionAuthority
         return $this->store->transaction(fn (array &$state): ?array => $this->currentRequest($state, $trustedViewerBinding, $requestRef));
     }
 
+    public function currentViewer(array $trustedViewerBinding): ?array
+    {
+        return $this->authorize($trustedViewerBinding);
+    }
+
     public function publisher(array $trustedViewerBinding, string $requestRef, Closure $currentCoreBinding): PublicCoreReceiptStore
     {
         return $this->store->bound(function (array $state) use ($trustedViewerBinding, $requestRef, $currentCoreBinding): array {

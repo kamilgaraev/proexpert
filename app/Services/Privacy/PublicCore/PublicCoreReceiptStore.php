@@ -11,7 +11,12 @@ use Throwable;
 
 final class PublicCoreReceiptStore
 {
+    private static array $heldLocks = [];
+    private ?string $lockedStatePath = null;
     private ?Closure $publicationBinding = null;
+    private mixed $uploadLock = null;
+    private ?string $uploadLockPath = null;
+    private ?array $uploadState = null;
 
     public function __construct(private readonly ?string $directory = null, private readonly ?string $controlKey = null)
     {
@@ -34,19 +39,28 @@ final class PublicCoreReceiptStore
             return null;
         }
         $lock = null;
+        $acquired = false;
+        $lockPath = null;
         try {
             if (is_link($this->directory) || (!is_dir($this->directory) && !@mkdir($this->directory, 0700, true))) {
                 return null;
             }
-            $lockPath = $this->directory . '/authority.lock';
-            $statePath = $this->directory . '/authority.json';
+            $directory = realpath($this->directory);
+            if ($directory === false) {
+                return null;
+            }
+            $lockPath = $directory . '/authority.lock';
+            $statePath = $directory . '/authority.json';
             if (is_link($lockPath) || is_link($statePath)) {
                 return null;
             }
             $lock = @fopen($lockPath, 'c+b');
-            if ($lock === false || !@chmod($lockPath, 0600) || !@flock($lock, LOCK_EX)) {
+            if ($lock === false || isset(self::$heldLocks[$lockPath]) || !@chmod($lockPath, 0600) || !@flock($lock, LOCK_EX)) {
                 return null;
             }
+            self::$heldLocks[$lockPath] = true;
+            $acquired = true;
+            $this->lockedStatePath = $statePath;
             $state = ['schemaVersion' => 'public-core-ledger/1', 'sessions' => [], 'requests' => [], 'receipts' => []];
             if (is_file($statePath)) {
                 $bytes = @file_get_contents($statePath);
@@ -72,10 +86,151 @@ final class PublicCoreReceiptStore
         } catch (Throwable) {
             return null;
         } finally {
+            if ($acquired) {
+                unset(self::$heldLocks[$lockPath]);
+                $this->lockedStatePath = null;
+            }
             if (is_resource($lock)) {
-                flock($lock, LOCK_UN);
+                if ($acquired) {
+                    flock($lock, LOCK_UN);
+                }
                 fclose($lock);
             }
+        }
+    }
+
+    public function withLockedState(Closure $operation): ?array
+    {
+        return $this->transaction($operation);
+    }
+
+    public function checkpointLockedState(array $state): bool
+    {
+        if ($this->lockedStatePath === null) {
+            return false;
+        }
+        try {
+            $this->persist($this->lockedStatePath, $state);
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    public function beginUploadScope(int $timeoutMs, Closure $operation): ?array
+    {
+        if (!$this->available() || $timeoutMs < 1 || $timeoutMs > 2000 || $this->lockedStatePath !== null) {
+            return null;
+        }
+        $lock = null;
+        $lockPath = null;
+        $acquired = false;
+        $retained = false;
+        try {
+            if (is_link($this->directory) || (!is_dir($this->directory) && !@mkdir($this->directory, 0700, true))) {
+                return null;
+            }
+            $directory = realpath($this->directory);
+            if ($directory === false) {
+                return null;
+            }
+            $lockPath = $directory . '/authority.lock';
+            $statePath = $directory . '/authority.json';
+            if (is_link($lockPath) || is_link($statePath) || isset(self::$heldLocks[$lockPath])) {
+                return null;
+            }
+            $lock = @fopen($lockPath, 'c+b');
+            if ($lock === false || !@chmod($lockPath, 0600)) {
+                return null;
+            }
+            $deadline = intdiv(hrtime(true), 1000000) + $timeoutMs;
+            do {
+                $acquired = @flock($lock, LOCK_EX | LOCK_NB);
+                if (!$acquired) {
+                    usleep(1000);
+                }
+            } while (!$acquired && intdiv(hrtime(true), 1000000) < $deadline);
+            if (!$acquired) {
+                return null;
+            }
+            self::$heldLocks[$lockPath] = true;
+            $this->lockedStatePath = $statePath;
+            $state = ['schemaVersion' => 'public-core-ledger/1', 'sessions' => [], 'requests' => [], 'receipts' => []];
+            if (is_file($statePath)) {
+                $bytes = @file_get_contents($statePath);
+                if ($bytes === false || strlen($bytes) > 1048576) {
+                    return null;
+                }
+                $envelope = json_decode($bytes, true, 64, JSON_THROW_ON_ERROR);
+                if (!is_array($envelope) || array_keys($envelope) !== ['state', 'mac'] || !is_array($envelope['state'])
+                    || !is_string($envelope['mac'])
+                    || !hash_equals(hash_hmac('sha256', RegisteredPublicFixtureRegistry::canonical($envelope['state']), $this->controlKey), $envelope['mac'])
+                    || array_keys($envelope['state']) !== ['schemaVersion', 'sessions', 'requests', 'receipts']
+                    || $envelope['state']['schemaVersion'] !== 'public-core-ledger/1') {
+                    return null;
+                }
+                $state = $envelope['state'];
+            }
+            $result = $operation($state);
+            if (!is_array($result) || ($result['status'] ?? null) !== 'held') {
+                return null;
+            }
+            $this->persist($statePath, $state);
+            $this->uploadState = $state;
+            $this->uploadLock = $lock;
+            $this->uploadLockPath = $lockPath;
+            $retained = true;
+            return self::owned($result);
+        } catch (Throwable) {
+            return null;
+        } finally {
+            if (!$retained) {
+                if ($acquired) {
+                    unset(self::$heldLocks[$lockPath]);
+                    $this->lockedStatePath = null;
+                }
+                if (is_resource($lock)) {
+                    if ($acquired) {
+                        flock($lock, LOCK_UN);
+                    }
+                    fclose($lock);
+                }
+            }
+        }
+    }
+
+    public function inspectUploadScope(Closure $operation): ?array
+    {
+        if ($this->uploadState === null || !is_resource($this->uploadLock)) {
+            return null;
+        }
+        try {
+            $result = $operation($this->uploadState);
+            return is_array($result) ? self::owned($result) : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    public function finishUploadScope(Closure $operation): ?array
+    {
+        if ($this->uploadState === null || !is_resource($this->uploadLock)) {
+            return null;
+        }
+        try {
+            $result = $operation($this->uploadState);
+            $this->persist($this->lockedStatePath, $this->uploadState);
+            return is_array($result) ? self::owned($result) : null;
+        } catch (Throwable) {
+            return null;
+        } finally {
+            unset(self::$heldLocks[$this->uploadLockPath]);
+            flock($this->uploadLock, LOCK_UN);
+            fclose($this->uploadLock);
+            $this->uploadLock = null;
+            $this->uploadLockPath = null;
+            $this->uploadState = null;
+            $this->lockedStatePath = null;
         }
     }
 
@@ -179,16 +334,22 @@ final class PublicCoreReceiptStore
         if ($contextRef === null || $this->publicationBinding === null) {
             return null;
         }
-        return $this->transaction(function (array &$state) use ($contextRef): ?array {
-            $saved = $state['receipts'][$contextRef] ?? null;
-            $binding = ($this->publicationBinding)($state);
-            if ($saved === null || $saved['status'] !== 'committed' || !is_array($binding)
-                || !$this->validBinding($binding) || !$this->validReceipt($saved['receipt'], $saved['expected'], $binding)
-                || $saved['snapshotHash'] !== $binding['snapshotHash'] || $saved['registryDigest'] !== $binding['registryDigest']) {
-                return null;
-            }
-            return ['receipt' => $saved['receipt'], 'expected' => $saved['expected'], 'binding' => $binding];
-        });
+        return $this->transaction(fn (array &$state): ?array => $this->authorityFromLockedState($state, $contextRef));
+    }
+
+    public function authorityFromLockedState(array $state, string $contextRef): ?array
+    {
+        if ($this->publicationBinding === null || $this->lockedStatePath === null) {
+            return null;
+        }
+        $saved = $state['receipts'][$contextRef] ?? null;
+        $binding = ($this->publicationBinding)($state);
+        if ($saved === null || $saved['status'] !== 'committed' || !is_array($binding)
+            || !$this->validBinding($binding) || !$this->validReceipt($saved['receipt'], $saved['expected'], $binding)
+            || $saved['snapshotHash'] !== $binding['snapshotHash'] || $saved['registryDigest'] !== $binding['registryDigest']) {
+            return null;
+        }
+        return self::owned(['receipt' => $saved['receipt'], 'expected' => $saved['expected'], 'binding' => $binding]);
     }
 
     private function validBinding(array $binding): bool

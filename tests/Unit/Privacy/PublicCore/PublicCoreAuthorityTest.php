@@ -8,7 +8,16 @@ use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextPr
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextSourceBinding;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelContextProfile;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantSafeContextSegment;
+use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantContextReceipt;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\MaterialSearch\SyntheticMaterialSearchCorpus;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
+use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
+use App\Services\Privacy\PublicCore\PublicCoreProcessor;
 use App\Services\Privacy\PublicCore\PublicCoreReceiptStore;
+use App\Services\Privacy\PublicCore\PublicCoreRuntimeReadiness;
 use App\Services\Privacy\PublicCore\PublicCoreSessionAuthority;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -25,6 +34,31 @@ final class PublicCoreAuthorityTest extends TestCase
     private PublicCoreSessionAuthority $sessions;
     private array $viewer;
     private int $now;
+    private array $runtimeSource = [];
+    private array $runtimeProof = [];
+    private int $monoMs = 1000;
+    private int $appSequence = 1;
+    private int $rpcDelayMs = 0;
+    private mixed $grantBudget = 2000;
+    private int $predicateBudget = 2000;
+    private int $loopBudget = 2000;
+    private string $nativeEvent = 'pending';
+    private string $nativeQualification = 'local-source-test';
+    private bool $cancelAllowed = true;
+    private bool $appHeld = false;
+    private ?\Closure $controlMutator = null;
+    private array $controlCalls = [];
+    private ?\Throwable $callbackFailure = null;
+    private array $nativeOverrides = [];
+    private ?GatewayModelProfile $currentGatewayProfile = null;
+    private bool $runtimeReaderAvailable = true;
+    private int $cachedFactoryCalls = 0;
+    private int $currentRuntimeChecks = 0;
+    private ?\Closure $onRuntimeRead = null;
+    private array $publications = [];
+    private bool $publicationMutex = false;
+    private bool $publicationQualified = true;
+    private ?string $publicationFault = null;
 
     protected function setUp(): void
     {
@@ -35,7 +69,8 @@ final class PublicCoreAuthorityTest extends TestCase
         $this->viewer = ['authorized' => true, 'viewerRef' => 'real-backend-viewer-A', 'organizationRef' => 'real-backend-organization-A',
             'authorizationRevision' => 'authorization/1', 'policyRevision' => 'public-policy/1'];
         $this->sessions = new PublicCoreSessionAuthority($this->registry, $this->store,
-            fn (array $binding): ?array => $binding === ['credential' => 'server-ticket'] ? $this->viewer : null,
+            fn (array $binding): ?array => in_array($binding, [['credential' => 'server-ticket'], ['viewerTicketRef' => 'ref_server_viewer_ticket']], true)
+                ? $this->viewer : null,
             fn (): int => $this->now);
     }
 
@@ -48,6 +83,9 @@ final class PublicCoreAuthorityTest extends TestCase
         }
         if (is_dir($this->directory)) {
             rmdir($this->directory);
+        }
+        if ($this->callbackFailure !== null) {
+            throw $this->callbackFailure;
         }
     }
 
@@ -360,5 +398,1029 @@ final class PublicCoreAuthorityTest extends TestCase
         $missing = $this->sessions->publisher(['credential' => 'server-ticket'], $opened['request_ref'], fn (array $request): array => $binding);
         self::assertSame([], $missing->publish('stage', $receipt, $expected));
         self::assertNull($missing->authority($receipt['contextRef']));
+    }
+
+    private function qualifiedReadiness(): PublicCoreRuntimeReadiness
+    {
+        $profile = GatewayModelProfile::fromArray([
+            'profileRef' => 'ref_source_test_profile', 'qualification' => 'local-stub', 'adapterRevision' => 'fixture-adapter/1',
+            'apiMethod' => 'local_action', 'endpoint' => 'local://public-core-stub', 'modelId' => 'local-action-stub',
+            'modelRevision' => 'source/1', 'tokenizerId' => 'local-byte-counter', 'tokenizerRevision' => 'source/1',
+            'mappingEvidenceRef' => 'ref_source_mapping_evidence', 'capabilityEvidenceRef' => 'ref_source_capability_evidence',
+            'capacityEvidenceRef' => 'ref_source_capacity_evidence', 'contextWindow' => 100000,
+            'maxOutputTokens' => 1024, 'answerReserve' => 1024, 'toolReserve' => 2048,
+        ]);
+        $this->runtimeProof = ['schemaVersion' => 'public-core-runtime-proof/1', 'qualification' => 'local-source-test',
+            'profileFingerprint' => $profile->fingerprint(), 'registryDigest' => $this->registry->manifestDigest(),
+            'authorizationFenceEvidenceRef' => 'ref_simulated_fence_evidence', 'identityEvidenceRef' => 'ref_simulated_identity_evidence',
+            'channelEvidenceRef' => 'ref_simulated_channel_evidence', 'egressEvidenceRef' => 'ref_simulated_egress_evidence',
+            'secretEvidenceRef' => 'ref_simulated_secret_evidence', 'activationRef' => 'ref_simulated_activation_evidence'];
+        $this->currentGatewayProfile = $profile;
+        return new PublicCoreRuntimeReadiness($this->registry, fn (): ?GatewayModelProfile => $this->currentGatewayProfile,
+            fn (): array => $this->runtimeProof,
+            static fn (string $bytes, GatewayModelProfile $current): array => ['inputTokens' => strlen($bytes),
+                'tokenizerId' => $current->values()['tokenizerId'], 'tokenizerRevision' => $current->values()['tokenizerRevision'],
+                'mappingEvidenceRef' => $current->values()['mappingEvidenceRef']]);
+    }
+
+    private function dispatchPreparation(): array
+    {
+        $readiness = $this->qualifiedReadiness();
+        $profile = $readiness->qualifiedProfile();
+        $opened = $this->open();
+        $request = $this->sessions->lookup(['credential' => 'server-ticket'], $opened['request_ref']);
+        $corpus = SyntheticMaterialSearchCorpus::named('material-search-v1');
+        $this->runtimeSource = ['registryDigest' => $this->registry->manifestDigest(),
+            'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+            'runtimeGenerationRef' => $corpus->records()[0]->generationRef];
+        $this->store->transaction(function (array &$state) use ($request): array {
+            $state['requests'][$request['requestRef']]['runtimeGenerationRef'] = $this->runtimeSource['runtimeGenerationRef'];
+            return ['bound' => true];
+        });
+        $fixture = new OfflineContextFixtures(0);
+        $fixture->profile = $readiness->coreProfile();
+        $fixture->snapshot['conversation']['ref'] = $request['conversationRef'];
+        $fixture->snapshot['sources'] = [];
+        $fixture->artifacts = [];
+        $fixture->addArtifact('system', 'system', 'Answer using only registered public facts.');
+        $fixture->addArtifact('current', 'user', $request['registered']['display_text']);
+        $aliases = [];
+        $sources = [];
+        $publisher = $this->sessions->publisher(['credential' => 'server-ticket'], $request['requestRef'],
+            function () use ($fixture, $readiness, &$aliases, &$sources): array {
+                $trusted = $readiness->coreProfile();
+                $nativeProfile = AssistantModelContextProfile::resolve($trusted['profileRef'], fn (): array => $trusted);
+                return ['scope' => $fixture->snapshot['scope'], 'snapshotHash' => AssistantContextSourceBinding::snapshotHash($fixture->snapshot),
+                    'profileFingerprint' => $nativeProfile->fingerprint(), 'registryDigest' => $this->registry->manifestDigest(),
+                    'aliases' => $aliases, 'sources' => $sources, 'trustedModelProfile' => $trusted];
+            });
+        $service = new AssistantContextPreparationService(fn (): array => $fixture->snapshot,
+            fn (string $ref): ?array => $fixture->artifacts[$ref] ?? null, fn (): array => $readiness->coreProfile(),
+            fn (string $bytes, array $identity): array => $readiness->count($bytes, $identity),
+            function (string $event, array $data, array $expected = []) use ($fixture, $publisher, &$aliases, &$sources): array {
+                if ($event === 'stage') {
+                    foreach ($data['aliases'] as $alias) {
+                        $segment = AssistantSafeContextSegment::project($alias['artifactRef'], $fixture->snapshot,
+                            fn (string $ref): ?array => $fixture->artifacts[$ref] ?? null);
+                        self::assertSame($segment->fields(), $alias['fields']);
+                    }
+                    foreach ($data['sources'] as $source) {
+                        self::assertSame($fixture->snapshot['sources'][$source['sourceRef']], $source['source']);
+                    }
+                    $aliases = $data['aliases'];
+                    $sources = $data['sources'];
+                }
+                return $publisher->publish($event, $data, $expected);
+            });
+        $prepared = $service->prepare($fixture->profile['profileRef'], $fixture->request());
+        self::assertSame('READY', $prepared['status']);
+        $saved = $publisher->authority($prepared['payload']['contextRef']);
+        $authority = ['snapshot' => $fixture->snapshot, 'profile' => $fixture->profile, 'lineage' => $saved['binding']['lineage'],
+            'stored' => ['status' => 'committed', 'receipt' => $saved['receipt'], 'digest' => $saved['expected']['receiptDigest']],
+            'artifacts' => $fixture->artifacts];
+        $native = AssistantContextReceipt::consume($prepared, $authority, $fixture->profile['profileRef']);
+        $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => $native->payload(), 'contextScope' => $native->contextScope(),
+            'tools' => [], 'toolReferences' => null, 'repair' => null];
+        $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, ['viewerTicketRef' => 'ref_server_viewer_ticket'],
+            $request['requestRef'], fn (): array => $this->runtimeSource,
+            $this->appControlSource(), fn (): int => $this->now, fn (): int => $this->monoMs, $this->nativeSource(),
+            fn (): array => ['predicateRemainingMs' => $this->predicateBudget, 'loopRemainingMs' => $this->loopBudget], $this->controlPins(),
+            fn (): int => 1700000120);
+        $packet = $dispatch->projectForDispatch($input, $native->privateBinding(), $profile);
+        self::assertInstanceOf(GatewayModelRequest::class, $packet);
+        return [$dispatch, $packet, $readiness, $publisher, $input, $native->privateBinding()];
+    }
+
+    private function controlPins(): array
+    {
+        return ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
+            'gatewayPeer' => ['pid' => 222, 'uid' => 1002, 'gid' => 1002], 'gatewayChannelRef' => 'channel_gateway_source_test'];
+    }
+
+    private function appControlSource(): \Closure
+    {
+        return $this->withAssertions(function (string $command, array $payload, ?GatewayModelRequest $packet, int $expiresAt): array {
+            $this->controlCalls[] = $command;
+            $tuple = $payload['binding'] ?? null;
+            if ($command === 'authorize_write') {
+                $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
+                self::assertSame('consumed', $disk['state']['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['status']);
+                $this->appHeld = true;
+                $reply = ['schemaVersion' => 'public-core-app-upload-grant/1', 'binding' => $tuple, 'currentViewer' => $this->viewer,
+                    'guardRef' => 'ref_simulated_upload_guard', 'coverageEvidenceRef' => 'ref_simulated_guard_coverage', 'uploadTimeoutMs' => $this->grantBudget];
+                $replyCommand = 'write_authorized';
+            } elseif ($command === 'upload_complete') {
+                self::assertContains($this->nativeEvent, ['uploaded', 'stopped']);
+                self::assertTrue(GatewayModelRequest::isReference($payload['completionRef']));
+                self::assertNotNull($this->store->transaction(static fn (): array => ['ledgerReleased' => true]));
+                $this->appHeld = false;
+                $reply = ['schemaVersion' => 'public-core-app-upload-released/1', 'binding' => $tuple, 'guardRef' => $payload['guardRef']];
+                $replyCommand = 'uploaded';
+            } elseif ($payload['schemaVersion'] === 'public-core-app-viewer-ticket-check/1') {
+                self::assertNull($packet);
+                self::assertSame(['schemaVersion', 'viewerTicketRef'], array_keys($payload));
+                $reply = ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $payload['viewerTicketRef'], 'currentViewer' => $this->viewer];
+                $replyCommand = 'binding';
+            } else {
+                $reply = ['schemaVersion' => 'public-core-app-viewer-binding/1', 'binding' => $tuple, 'currentViewer' => $this->viewer];
+                $replyCommand = 'binding';
+            }
+            $this->monoMs += $this->rpcDelayMs;
+            $result = ['frame' => ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['appChannelRef'],
+                'sequence' => ++$this->appSequence, 'command' => $replyCommand, 'requestRef' => $packet?->requestRef,
+                'attemptRef' => $packet?->attemptRef, 'expiresAt' => $expiresAt, 'payload' => $reply], 'peer' => $this->controlPins()['appPeer']];
+            return $this->controlMutator === null ? $result : ($this->controlMutator)($command, $result);
+        });
+    }
+
+    private function nativeSource(): \Closure
+    {
+        return $this->withAssertions(function (string $operation, GatewayModelRequest $packet, ?array $cancelRequest = null): ?array {
+            if ($operation === 'cancel') {
+                self::assertSame(['schemaVersion', 'binding', 'reasonCode'], array_keys($cancelRequest));
+                self::assertSame('public-core-gateway-upload-cancel/1', $cancelRequest['schemaVersion']);
+                self::assertSame($packet->binding(), $cancelRequest['binding']);
+                if (!$this->cancelAllowed) {
+                    return null;
+                }
+                $this->nativeEvent = 'stopped';
+            }
+            return array_replace(['qualification' => $this->nativeQualification, 'channelRef' => $this->controlPins()['gatewayChannelRef'],
+                'transferRef' => 'ref_simulated_transfer_instance', 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                'projectionDigest' => $packet->projectionDigest, 'event' => $this->nativeEvent], $this->nativeOverrides);
+        });
+    }
+
+    private function localGateway(PublicCoreDispatchAuthority $dispatch, PublicCoreRuntimeReadiness $readiness, \Closure $sender): GatewayPublicCoreTransport
+    {
+        $profile = $readiness->qualifiedProfile();
+        return new GatewayPublicCoreTransport($profile, fn (): string => $readiness->qualifiedProfile() === null ? 'runtime_not_activated' : 'none',
+            static fn (): string => 'ref_simulated_processor_peer', 'ref_simulated_processor_peer', $dispatch->currentBinding(...),
+            $dispatch->withGatewayFence(...), static fn (string $bytes): array => ['inputTokens' => strlen($bytes),
+                'tokenizerId' => $profile->values()['tokenizerId'], 'tokenizerRevision' => $profile->values()['tokenizerRevision'],
+                'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']], $this->withAssertions($sender), fn (): int => $this->now);
+    }
+
+    private function withAssertions(\Closure $operation): \Closure
+    {
+        return function (...$arguments) use ($operation): mixed {
+            try {
+                return $operation(...$arguments);
+            } catch (\PHPUnit\Framework\AssertionFailedError $failure) {
+                $this->callbackFailure ??= $failure;
+                throw $failure;
+            }
+        };
+    }
+
+    private function runDispatch(PublicCoreDispatchAuthority $dispatch, GatewayModelRequest $packet, \Closure $operation): GatewayModelResponse
+    {
+        return $dispatch->withDispatchFence($packet, $this->withAssertions($operation));
+    }
+
+    public function testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt(): void
+    {
+        [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
+        self::assertFalse($readiness->resolve()['model_enabled']);
+        self::assertNull($readiness->resolve()['actual_model']);
+        self::assertNotSame($packet->profileFingerprint, $packet->corePayloadDigest);
+        $writes = 0;
+        $gateway = $this->localGateway($dispatch, $readiness, function (GatewayModelProfile $profile, string $bytes) use ($dispatch, $packet, &$writes): array {
+            $writes++;
+            self::assertSame($packet->bodyBytes, $bytes);
+            $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame('consumed', $disk['state']['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['status']);
+            self::assertTrue($this->appHeld);
+            self::assertNull($this->store->transaction(static fn (): array => ['held' => true]));
+            $this->nativeEvent = 'uploaded';
+            self::assertSame(['projectionDigest' => $packet->projectionDigest, 'bodyLength' => strlen($packet->bodyBytes)], $dispatch->uploadComplete($packet));
+            self::assertFalse($this->appHeld);
+            self::assertNotNull($this->store->transaction(static fn (): array => ['released' => true]));
+            $this->monoMs += 3000;
+            $this->now += 3;
+            return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Find the public price using material.search.']), 'usage' => null];
+        });
+        self::assertSame('completed', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
+        self::assertSame('blocked', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
+        self::assertSame(1, $writes);
+    }
+
+    #[DataProvider('dispatchDenials')]
+    public function testCurrentDispatchDenialsCauseZeroProviderWrites(string $change): void
+    {
+        [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
+        match ($change) {
+            'authorization' => $this->viewer['authorized'] = false,
+            'policy' => $this->viewer['policyRevision'] = 'public-policy/2',
+            'source' => $this->runtimeSource['runtimeGenerationRef'] = 'ref_lost_runtime_generation',
+            'manifest' => $this->runtimeSource['manifestGenerationRef'] = 'ref_other_manifest_generation',
+            'profile' => $this->runtimeProof['profileFingerprint'] = str_repeat('0', 64),
+            'expiry' => $this->now += 30,
+        };
+        $writes = 0;
+        $gateway = $this->localGateway($dispatch, $readiness, static function () use (&$writes): array {
+            $writes++;
+            return [];
+        });
+        self::assertNotSame('completed', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
+        self::assertSame(0, $writes);
+    }
+
+    public static function dispatchDenials(): array
+    {
+        return [['authorization'], ['policy'], ['source'], ['manifest'], ['profile'], ['expiry']];
+    }
+
+    public function testUncertainSendConsumesAttemptAndBlocksNewProjection(): void
+    {
+        [$dispatch, $packet, $readiness, , $input, $binding] = $this->dispatchPreparation();
+        $preparedBeforeSend = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile());
+        self::assertInstanceOf(GatewayModelRequest::class, $preparedBeforeSend);
+        $writes = 0;
+        $gateway = $this->localGateway($dispatch, $readiness, static function () use (&$writes): never {
+            $writes++;
+            throw new \RuntimeException('uncertain_send');
+        });
+        self::assertSame('gateway_unavailable', $this->runDispatch($dispatch, $packet, $gateway->send(...))->reasonCode);
+        self::assertSame('blocked', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
+        self::assertSame('blocked', $this->runDispatch($dispatch, $preparedBeforeSend, $gateway->send(...))->status);
+        self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
+        self::assertSame(1, $writes);
+    }
+
+    public function testTamperedNativePayloadAndInScopeProfileCannotMintAnotherProjection(): void
+    {
+        [$dispatch, , $readiness, , $input, $binding] = $this->dispatchPreparation();
+        $input['context']['messages'][0]['content'] = 'arbitrary replacement';
+        self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
+        self::assertSame('receipt_changed', $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile())['reasonCode']);
+    }
+
+    private function gatewayFrame(GatewayModelRequest $packet, int $sequence, string $command, array $payload): array
+    {
+        return ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['gatewayChannelRef'],
+            'sequence' => $sequence, 'command' => $command, 'requestRef' => $packet->requestRef,
+            'attemptRef' => $packet->attemptRef, 'expiresAt' => $packet->expiresAt, 'payload' => $payload];
+    }
+
+    private function planResponse(GatewayModelRequest $packet): GatewayModelResponse
+    {
+        return GatewayModelResponse::completed($packet, GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Read public facts.']), null);
+    }
+
+    public function testGrantSubtractsFullRpcAndProcessingWithoutShorteningGenuineResponseExpiry(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->rpcDelayMs = 250;
+        $this->grantBudget = 1000;
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['schemaVersion', 'binding', 'uploadTimeoutMs'], array_keys($grant));
+            self::assertSame('public-core-gateway-upload-grant/1', $grant['schemaVersion']);
+            self::assertSame($packet->binding(), $grant['binding']);
+            self::assertSame(750, $grant['uploadTimeoutMs']);
+            $this->monoMs += 100;
+            self::assertSame(650, $dispatch->remainingUploadMs());
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            $this->monoMs += 3000;
+            $this->now += 3;
+            self::assertSame(1700000030, $packet->expiresAt);
+            self::assertFalse($this->appHeld);
+            return $this->planResponse($packet);
+        });
+        self::assertSame('completed', $response->status);
+    }
+
+    #[DataProvider('invalidUploadBudgets')]
+    public function testUnknownNonpositiveMalformedOrOverflowBudgetHasNoWriteAllowance(mixed $budget): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->grantBudget = $budget;
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['reasonCode'], array_keys($grant));
+            self::assertFalse($this->appHeld);
+            return GatewayModelResponse::blocked($packet, $grant['reasonCode']);
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertNotNull($this->store->transaction(static fn (): array => ['notHeld' => true]));
+    }
+
+    public static function invalidUploadBudgets(): array
+    {
+        return [[null], [0], [-1], ['2000'], [2000.0], [PHP_INT_MAX], [[]]];
+    }
+
+    public function testNearExpiryGrantCannotResetBudget(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->grantBudget = 100;
+        $this->rpcDelayMs = 101;
+        self::assertNotSame('completed', $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('expired', $dispatch->authorizeWrite($packet)['reasonCode']);
+            return GatewayModelResponse::blocked($packet, 'expired');
+        })->status);
+        self::assertFalse($this->appHeld);
+    }
+
+    private function bootstrapAuthority(): PublicCoreDispatchAuthority
+    {
+        return new PublicCoreDispatchAuthority($this->store, $this->qualifiedReadiness(), appControl: $this->appControlSource(),
+            clock: fn (): int => $this->now, controlPins: $this->controlPins(), bootstrapExpiry: static fn (): int => 1700000120);
+    }
+
+    public function testTicketBootstrapAuthenticatesBeforeOwnedTupleAndNeverGrantsUpload(): void
+    {
+        $authority = $this->bootstrapAuthority();
+        self::assertSame($this->viewer, $authority->bootstrapViewer('ref_server_viewer_ticket'));
+        self::assertSame(['check_binding'], $this->controlCalls);
+        self::assertFalse($this->appHeld);
+        $this->viewer['authorized'] = false;
+        self::assertNull($authority->bootstrapViewer('ref_server_viewer_ticket'));
+    }
+
+    #[DataProvider('invalidBootstrapControls')]
+    public function testBootstrapRolePhaseSchemaAndReplayConfusionIsDenied(string $change): void
+    {
+        $authority = $this->bootstrapAuthority();
+        $this->controlMutator = function (string $command, array $result) use ($change): array {
+            switch ($change) {
+                case 'role': $result['peer'] = $this->controlPins()['gatewayPeer']; break;
+                case 'channel': $result['frame']['channelRef'] = $this->controlPins()['gatewayChannelRef']; break;
+                case 'sequence': $result['frame']['sequence'] = 1; break;
+                case 'expiry': $result['frame']['expiresAt'] = $this->now; break;
+                case 'owned_ref': $result['frame']['requestRef'] = 'ref_unowned_request'; break;
+                case 'grant': $result['frame']['payload'] = ['schemaVersion' => 'public-core-app-upload-grant/1', 'binding' => [],
+                    'currentViewer' => $this->viewer, 'guardRef' => 'ref_manual_guard', 'coverageEvidenceRef' => 'ref_manual_coverage', 'uploadTimeoutMs' => 2000]; break;
+                case 'native12': $result['frame']['payload'] = array_fill_keys(['requestRef', 'attemptRef', 'publicAdmissionRef', 'contextReceiptRef',
+                    'corePayloadDigest', 'coreReceiptDigest', 'projectionRef', 'projectionDigest', 'profileRef', 'profileFingerprint', 'purpose', 'expiresAt'], null); break;
+            }
+            return $result;
+        };
+        self::assertNull($authority->bootstrapViewer('ref_server_viewer_ticket'));
+        self::assertNotContains('authorize_write', $this->controlCalls);
+    }
+
+    public static function invalidBootstrapControls(): array
+    {
+        return [['role'], ['channel'], ['sequence'], ['expiry'], ['owned_ref'], ['grant'], ['native12']];
+    }
+
+    public function testManualUploadAndStoppedAckCannotCreatePrivateCompletionReference(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $peer = $this->controlPins()['gatewayPeer'];
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet, $peer): GatewayModelResponse {
+            $payload = ['projectionDigest' => $packet->projectionDigest, 'profileFingerprint' => $packet->profileFingerprint];
+            self::assertSame($packet->binding(), $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 2, 'check_binding', $payload), $peer, $packet));
+            $grant = $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 3, 'authorize_write', $payload), $peer, $packet);
+            self::assertSame('public-core-gateway-upload-grant/1', $grant['schemaVersion']);
+            self::assertSame('gateway_channel_unavailable', $dispatch->authorizeWrite($packet)['reasonCode']);
+            $manual = $this->gatewayFrame($packet, 4, 'upload_complete', ['projectionDigest' => $packet->projectionDigest, 'bodyLength' => strlen($packet->bodyBytes)]);
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($manual, $peer, $packet));
+            self::assertTrue($this->appHeld);
+            self::assertNotContains('upload_complete', $this->controlCalls);
+            $cancel = $dispatch->gatewayCancelRequest($packet, 'expired');
+            $ack = ['schemaVersion' => 'public-core-gateway-upload-stopped/1', 'binding' => $cancel['binding'], 'reasonCode' => 'expired'];
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 5, 'abort', $ack), $peer, $packet));
+            self::assertTrue($this->appHeld);
+            $this->nativeEvent = 'stopped';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 6, 'abort', $ack), $peer, $packet));
+            self::assertFalse($this->appHeld);
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 6, 'abort', $ack), $peer, $packet));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+    }
+
+    public function testEofAndUnknownStopKeepScopeUntilVerifiedSameTransferStop(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->cancelAllowed = false;
+        try {
+            $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+                self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+                throw new \RuntimeException('EOF is not stopped');
+            });
+            self::assertNotSame('completed', $response->status);
+            self::assertTrue($this->appHeld);
+            self::assertNull($this->store->transaction(static fn (): array => ['held' => true]));
+            self::assertNotContains('upload_complete', $this->controlCalls);
+        } finally {
+            $this->cancelAllowed = true;
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet));
+        }
+        self::assertFalse($this->appHeld);
+        self::assertNotNull($this->store->transaction(static fn (): array => ['released' => true]));
+    }
+
+    public function testMissingReleaseAckDoesNotWaitForModelOrResendRelease(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->controlMutator = static function (string $command, array $result): array {
+            if ($command === 'upload_complete') {
+                $result['frame']['payload'] = [];
+            }
+            return $result;
+        };
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            throw new \RuntimeException('release not acknowledged');
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertSame(1, count(array_filter($this->controlCalls, static fn (string $command): bool => $command === 'upload_complete')));
+        self::assertNotNull($this->store->transaction(static fn (): array => ['ledgerReleased' => true]));
+    }
+
+    public function testBackwardClockDuringGrantDeniesAndCancelsWithoutWriteAllowance(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->controlMutator = function (string $command, array $result): array {
+            if ($command === 'authorize_write') {
+                $this->monoMs--;
+            }
+            return $result;
+        };
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['reasonCode'], array_keys($grant));
+            return GatewayModelResponse::blocked($packet, $grant['reasonCode']);
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertFalse($this->appHeld);
+    }
+
+    #[DataProvider('invalidNativeEvents')]
+    public function testUnknownNativeQualificationOrWrongTransferTupleGrantsNothing(string $field, mixed $value): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->nativeOverrides[$field] = $value;
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['reasonCode'], array_keys($grant));
+            return GatewayModelResponse::blocked($packet, $grant['reasonCode']);
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertNotContains('authorize_write', $this->controlCalls);
+    }
+
+    public static function invalidNativeEvents(): array
+    {
+        return [['qualification', 'actual-native'], ['channelRef', 'channel_other_source'], ['requestRef', 'ref_other_request'],
+            ['attemptRef', 'ref_other_attempt'], ['projectionDigest', str_repeat('0', 64)], ['event', 'manual_uploaded']];
+    }
+
+    public function testExpiredGrantAndSameAttemptRevocationDenyBeforeFollowingWrite(): void
+    {
+        [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet, $readiness): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->monoMs += 2000;
+            self::assertSame('expired', $dispatch->currentBinding($packet, $readiness->qualifiedProfile())['reasonCode']);
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet, 'expired'));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertFalse($this->appHeld);
+    }
+
+    public function testFreshFinalAuthorizationSuppressesReplyAfterReleasedUpload(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            $this->viewer['authorized'] = false;
+            return $this->planResponse($packet);
+        });
+        self::assertSame('authorization_changed', $response->reasonCode);
+        self::assertNull($response->actionBytes);
+    }
+
+    public function testExpiredStoppedControlDoesNotEnterUndeclaredCleanupFallback(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $cancel = $dispatch->gatewayCancelRequest($packet, 'expired');
+            $frame = $this->gatewayFrame($packet, 2, 'abort', ['schemaVersion' => 'public-core-gateway-upload-stopped/1',
+                'binding' => $cancel['binding'], 'reasonCode' => 'expired']);
+            $frame['expiresAt'] = $this->now;
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($frame, $this->controlPins()['gatewayPeer'], $packet));
+            self::assertTrue($this->appHeld);
+            self::assertNotContains('upload_complete', $this->controlCalls);
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+    }
+
+    public function testOwnedDenialRemainsBoundedDenialAndNeverBecomesGrant(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->controlMutator = function (string $command, array $result): array {
+            if ($command === 'authorize_write') {
+                $this->appHeld = false;
+                $result['frame']['payload'] = ['schemaVersion' => 'public-core-app-control-denial/1',
+                    'binding' => $result['frame']['payload']['binding'], 'reasonCode' => 'source_changed'];
+            }
+            return $result;
+        };
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame(['reasonCode' => 'source_changed'], $dispatch->authorizeWrite($packet));
+            return GatewayModelResponse::blocked($packet, 'source_changed');
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertNotContains('upload_complete', $this->controlCalls);
+    }
+
+    public function testAppAbortRequestsStopWithoutReleasingFromManualFlag(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->cancelAllowed = false;
+        try {
+            $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+                self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+                $tuple = ['viewerTicketRef' => 'ref_server_viewer_ticket', 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                    'projectionDigest' => $packet->projectionDigest, 'profileFingerprint' => $packet->profileFingerprint,
+                    'registryDigest' => $this->runtimeSource['registryDigest'], 'manifestGenerationRef' => $this->runtimeSource['manifestGenerationRef']];
+                $frame = ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['appChannelRef'],
+                    'sequence' => ++$this->appSequence, 'command' => 'abort', 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                    'expiresAt' => $packet->expiresAt, 'payload' => ['schemaVersion' => 'public-core-app-upload-cancel-request/1', 'binding' => $tuple,
+                        'guardRef' => 'ref_simulated_upload_guard', 'reasonCode' => 'authorization_changed']];
+                self::assertArrayHasKey('reasonCode', $dispatch->handleAppCancelFrame($frame, $this->controlPins()['appPeer'], $packet));
+                self::assertTrue($this->appHeld);
+                self::assertNotContains('upload_complete', $this->controlCalls);
+                return GatewayModelResponse::blocked($packet, 'authorization_changed');
+            });
+            self::assertNotSame('completed', $response->status);
+            self::assertTrue($this->appHeld);
+        } finally {
+            $this->cancelAllowed = true;
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet));
+        }
+    }
+
+    public function testCompletedTransferCannotBeReusedForAnotherAttempt(): void
+    {
+        [$dispatch, $packet, $readiness, , $input, $binding] = $this->dispatchPreparation();
+        self::assertSame('completed', $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            return $this->planResponse($packet);
+        })->status);
+        $next = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile());
+        self::assertInstanceOf(GatewayModelRequest::class, $next);
+        $this->nativeEvent = 'pending';
+        $this->controlCalls = [];
+        $result = $this->runDispatch($dispatch, $next, function () use ($dispatch, $next): GatewayModelResponse {
+            self::assertSame(['reasonCode' => 'receipt_changed'], $dispatch->authorizeWrite($next));
+            return GatewayModelResponse::blocked($next, 'receipt_changed');
+        });
+        self::assertNotSame('completed', $result->status);
+        self::assertNotContains('authorize_write', $this->controlCalls);
+    }
+
+    private function processor(?\Closure $composition = null, ?\Closure $currentRuntimeSource = null, bool $withRuntimeReader = true,
+        bool $withPublisher = true): PublicCoreProcessor
+    {
+        $reader = $withRuntimeReader ? ($currentRuntimeSource ?? function (object $runtime, array $request): ?array {
+            return $runtime instanceof SyntheticMaterialSearchCorpus && $runtime->guard($runtime->context()) === null
+                ? ['registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+                    'runtimeGenerationRef' => $runtime->records()[0]->generationRef] : null;
+        }) : null;
+        $readiness = $this->qualifiedReadiness();
+        $publisher = $this->controlledPublication();
+        $bounds = function (array $request, \Closure $implementation) use ($publisher): ?array {
+            return $this->publicationQualified && $implementation === $publisher
+                ? ['qualification' => 'source-simulated-tcb', 'profileFingerprint' => $this->currentGatewayProfile?->fingerprint(),
+                    'guardEvidenceRef' => 'ref_controlled_memory_fixture_only', 'maxDurationMs' => 250, 'genuineExpiresAt' => $request['expiresAt']]
+                : null;
+        };
+        return new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $readiness,
+            static fn (array $peer): ?array => $peer === ['pid' => 111, 'uid' => 1001, 'gid' => 1001]
+                ? ['role' => 'app', 'identityRef' => 'ref_simulated_app_identity', 'kernelPeer' => $peer] : null,
+            static fn (string $ticket): ?array => $ticket === 'ref_server_viewer_ticket' ? ['viewerTicketRef' => $ticket] : null,
+            $composition, $reader, $withPublisher ? $publisher : null, $withPublisher ? $bounds : null);
+    }
+
+    private function controlledPublication(): \Closure
+    {
+        return $this->withAssertions(function (array $input, object $runtime, \Closure $prepare): mixed {
+            if ($this->publicationMutex || !$runtime instanceof SyntheticMaterialSearchCorpus) {
+                return null;
+            }
+            $this->publicationMutex = true;
+            $owner = $this->viewer;
+            $start = intdiv(hrtime(true), 1000000);
+            try {
+                $candidate = $prepare();
+                if ($this->publicationFault === 'double_prepare') {
+                    self::assertNull($prepare());
+                    return null;
+                }
+                if ($this->publicationFault === 'bool') {
+                    return true;
+                }
+                if ($this->publicationFault === 'echo') {
+                    return $candidate;
+                }
+                if ($this->publicationFault === 'bytes' && is_array($candidate)) {
+                    $candidate['resultBytes'] = '{"reply":"altered"}';
+                }
+                if (!GatewayModelRequest::hasExactKeys($candidate, ['binding', 'resultBytes', 'resultDigest'])
+                    || $candidate['binding'] !== $input['resultBinding'] || $candidate['resultDigest'] !== $input['resultBinding']['resultDigest']
+                    || !is_string($candidate['resultBytes']) || hash('sha256', $candidate['resultBytes']) !== $candidate['resultDigest']) {
+                    return null;
+                }
+                $data = json_decode($candidate['resultBytes'], true, flags: JSON_THROW_ON_ERROR);
+                $bytes = RegisteredPublicFixtureRegistry::canonical(['success' => true, 'message' => null, 'data' => $data]);
+                $ref = 'ref_' . bin2hex(random_bytes(16));
+                $record = ['binding' => $input['resultBinding'], 'viewerTicketRef' => $input['viewerBinding']['viewerTicketRef'],
+                    'requestRef' => $input['resultBinding']['requestRef'], 'sessionRef' => $input['resultBinding']['sessionRef'],
+                    'operationRef' => $input['operationRef'], 'publicationRef' => $ref, 'resultDigest' => $candidate['resultDigest'],
+                    'envelopeDigest' => hash('sha256', $bytes), 'bodyBytes' => $bytes, 'expiresAt' => $input['genuineExpiresAt']];
+                $receipt = ['schemaVersion' => 'public-core-result-publication/1', 'binding' => $input['resultBinding'], 'publicationRef' => $ref];
+                if ($this->publicationFault === 'receipt') {
+                    $receipt['binding']['resultDigest'] = str_repeat('0', 64);
+                    return $receipt;
+                }
+                if ($this->publicationFault === 'commit') {
+                    throw new \RuntimeException('controlled sink failed before commit');
+                }
+                if (!$this->publicationQualified || !$this->runtimeReaderAvailable || $this->viewer !== $owner || $owner['authorized'] !== true
+                    || $this->currentGatewayProfile === null || $this->currentGatewayProfile->fingerprint() !== $input['resultBinding']['profileFingerprint']
+                    || ($this->runtimeProof['profileFingerprint'] ?? null) !== $input['resultBinding']['profileFingerprint']
+                    || $this->now >= $input['genuineExpiresAt'] || intdiv(hrtime(true), 1000000) - $start >= $input['maxDurationMs']
+                    || $runtime->guard($runtime->context()) !== null) {
+                    return null;
+                }
+                $this->publications[$ref] = $record;
+                return $receipt;
+            } finally {
+                $this->publicationMutex = false;
+            }
+        });
+    }
+
+    private function completedProcessor(bool $withReader = true, bool $withPublisher = true): array
+    {
+        $factory = function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        };
+        $reader = function (object $runtime, array $request, GatewayModelProfile $profile): ?array {
+            $this->currentRuntimeChecks++;
+            if (!$this->runtimeReaderAvailable || !$runtime instanceof SyntheticMaterialSearchCorpus || $runtime->guard($runtime->context()) !== null) {
+                return null;
+            }
+            $source = ['registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+                'runtimeGenerationRef' => $runtime->records()[0]->generationRef];
+            if ($this->onRuntimeRead !== null) {
+                ($this->onRuntimeRead)($runtime);
+            }
+            return $source;
+        };
+        $processor = $this->processor($factory, $reader, $withReader, $withPublisher);
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        self::assertSame('accepted', $opened['status']);
+        $request = $this->sessions->lookup(['viewerTicketRef' => 'ref_server_viewer_ticket'], $opened['request_ref']);
+        $corpus = SyntheticMaterialSearchCorpus::named('material-search-v1');
+        $reflection = new \ReflectionClass($processor);
+        $processRef = $reflection->getProperty('processRef')->getValue($processor);
+        $instanceRef = 'ref_seeded_retained_source_instance';
+        $reflection->getProperty('runtimes')->setValue($processor, [$request['sessionRef'] => $corpus]);
+        $reflection->getProperty('runtimeInstances')->setValue($processor, [$request['sessionRef'] => ['runtime' => $corpus, 'instanceRef' => $instanceRef]]);
+        $result = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $request['requestRef'],
+            'reply' => 'PUBLIC PRIOR COMPLETED RESULT', 'trace' => [], 'transportAllowed' => false];
+        $generation = $corpus->records()[0]->generationRef;
+        $fingerprint = $this->currentGatewayProfile->fingerprint();
+        $this->store->transaction(function (array &$state) use ($request, $result, $generation, $fingerprint, $processRef, $instanceRef): array {
+            $sessionRef = $request['sessionRef'];
+            $state['sessions'][$sessionRef]['runtimeGenerationRef'] = $generation;
+            $state['requests'][$request['requestRef']]['runtimeGenerationRef'] = $generation;
+            $binding = ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $request['requestRef'], 'sessionRef' => $sessionRef,
+                'processRef' => $processRef, 'ownerDigest' => $state['sessions'][$sessionRef]['ownerDigest'], 'profileFingerprint' => $fingerprint,
+                'registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+                'runtimeGenerationRef' => $generation, 'runtimeInstanceRef' => $instanceRef,
+                'resultDigest' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($result))];
+            $state['requests'][$request['requestRef']]['execution'] = ['status' => 'completed', 'processRef' => $processRef,
+                'result' => $result, 'resultBinding' => $binding];
+            return ['seeded' => true];
+        });
+        return [$processor, ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $request['requestRef']], $peer, $corpus, $result, $request];
+    }
+
+    #[DataProvider('cachedReadPaths')]
+    public function testCompletedReadRequiresExactRetainedCurrentBindingWithoutFactoryOrWrites(string $command): void
+    {
+        [$processor, $payload, $peer, , $expected] = $this->completedProcessor();
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $first = $processor->handle($command, $payload, $peer);
+        $second = $processor->handle($command, $payload, $peer);
+        foreach ([$first, $second] as $published) {
+            self::assertSame(['schemaVersion', 'binding', 'publicationRef'], array_keys($published));
+            self::assertSame('public-core-result-publication/1', $published['schemaVersion']);
+            self::assertArrayNotHasKey('reply', $published);
+            self::assertArrayNotHasKey('trace', $published);
+            $record = $this->publications[$published['publicationRef']];
+            self::assertSame($expected, json_decode($record['bodyBytes'], true, flags: JSON_THROW_ON_ERROR)['data']);
+            self::assertSame(hash('sha256', $record['bodyBytes']), $record['envelopeDigest']);
+            self::assertNotSame($record['resultDigest'], $record['envelopeDigest']);
+        }
+        self::assertNotSame($first['publicationRef'], $second['publicationRef']);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertGreaterThanOrEqual(4, $this->currentRuntimeChecks);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    public static function cachedReadPaths(): array
+    {
+        return [['lookup_owned'], ['execute_owned']];
+    }
+
+    #[DataProvider('cachedReadFailures')]
+    public function testCachedReadAndExistingExecuteRejectLostChangedOrUnprovedCurrentProof(string $command, string $change): void
+    {
+        [$processor, $payload, $peer, $corpus, , $request] = $this->completedProcessor($change !== 'missing_reader');
+        $reflection = new \ReflectionClass($processor);
+        switch ($change) {
+            case 'profile_revoked': $this->runtimeProof['profileFingerprint'] = str_repeat('0', 64); break;
+            case 'profile_missing': $this->currentGatewayProfile = null; break;
+            case 'profile_changed':
+                $values = $this->currentGatewayProfile->values();
+                $values['modelRevision'] = 'source/2';
+                $this->currentGatewayProfile = GatewayModelProfile::fromArray($values);
+                $this->runtimeProof['profileFingerprint'] = $this->currentGatewayProfile->fingerprint();
+                break;
+            case 'lost_runtime': $reflection->getProperty('runtimes')->setValue($processor, []); break;
+            case 'lost_instance': $reflection->getProperty('runtimeInstances')->setValue($processor, []); break;
+            case 'changed_object': $reflection->getProperty('runtimes')->setValue($processor, [$request['sessionRef'] => SyntheticMaterialSearchCorpus::named('material-search-v1')]); break;
+            case 'source_revoked': $corpus->invalidateSource(); break;
+            case 'source_scope_revoked': $corpus->revokeScope(); break;
+            case 'unproved_source': $this->runtimeReaderAvailable = false; break;
+            case 'missing_reader': break;
+            case 'lost_binding': $this->store->transaction(static function (array &$state) use ($request): array {
+                unset($state['requests'][$request['requestRef']]['execution']['resultBinding']);
+                return ['changed' => true];
+            }); break;
+            case 'changed_generation': $this->store->transaction(static function (array &$state) use ($request): array {
+                $state['requests'][$request['requestRef']]['runtimeGenerationRef'] = 'ref_changed_runtime_generation';
+                return ['changed' => true];
+            }); break;
+            case 'changed_result': $this->store->transaction(static function (array &$state) use ($request): array {
+                $state['requests'][$request['requestRef']]['execution']['result']['reply'] = 'REPLACED REPLY';
+                return ['changed' => true];
+            }); break;
+        }
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $result = $processor->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertArrayNotHasKey('trace', $result);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    public static function cachedReadFailures(): array
+    {
+        $cases = [];
+        foreach (['lookup_owned', 'execute_owned'] as $command) {
+            foreach (['profile_revoked', 'profile_missing', 'profile_changed', 'lost_runtime', 'lost_instance', 'changed_object',
+                'source_revoked', 'source_scope_revoked', 'unproved_source', 'missing_reader', 'lost_binding', 'changed_generation', 'changed_result'] as $change) {
+                $cases[] = [$command, $change];
+            }
+        }
+        return $cases;
+    }
+
+    #[DataProvider('cachedReadPaths')]
+    public function testRestartCannotRebuildCachedResultProofWithFactory(string $command): void
+    {
+        [, $payload, $peer] = $this->completedProcessor();
+        $restarted = $this->processor(function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        });
+        $result = $restarted->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame([], $this->publications);
+    }
+
+    #[DataProvider('cachedReadDuringProofFailures')]
+    public function testChangesDuringCachedProofCheckSuppressBytes(string $command, string $change, int $check): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor();
+        $this->onRuntimeRead = function (SyntheticMaterialSearchCorpus $runtime) use ($change, $check): void {
+            if ($this->currentRuntimeChecks === $check) {
+                if ($change === 'owner') {
+                    $this->viewer['authorized'] = false;
+                } else {
+                    $runtime->invalidateSource();
+                }
+            }
+        };
+        $result = $processor->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertSame(0, $this->cachedFactoryCalls);
+    }
+
+    public static function cachedReadDuringProofFailures(): array
+    {
+        return [['lookup_owned', 'owner', 1], ['execute_owned', 'owner', 1], ['lookup_owned', 'source', 1], ['execute_owned', 'source', 1],
+            ['lookup_owned', 'owner', 2], ['execute_owned', 'owner', 2], ['lookup_owned', 'source', 2], ['execute_owned', 'source', 2]];
+    }
+
+    #[DataProvider('publicationFailures')]
+    public function testUnknownInvalidOrFailedPublicationNeverExposesRawCandidate(string $command, string $failure): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor(withPublisher: $failure !== 'missing');
+        if ($failure === 'unqualified') {
+            $this->publicationQualified = false;
+        } elseif ($failure === 'expiry') {
+            $this->onRuntimeRead = function (): void {
+                if ($this->currentRuntimeChecks === 2) {
+                    $this->now += 120;
+                }
+            };
+        } elseif ($failure === 'reentry') {
+            $this->onRuntimeRead = function () use ($processor, $payload, $peer): void {
+                if ($this->currentRuntimeChecks === 2) {
+                    $nested = $processor->handle('lookup_owned', $payload, $peer);
+                    self::assertSame('blocked', $nested['status']);
+                }
+            };
+        } else {
+            $this->publicationFault = $failure;
+        }
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $result = $processor->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertArrayNotHasKey('trace', $result);
+        self::assertSame([], $this->publications);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    public static function publicationFailures(): array
+    {
+        $cases = [];
+        foreach (['lookup_owned', 'execute_owned'] as $command) {
+            foreach (['missing', 'unqualified', 'double_prepare', 'bool', 'echo', 'bytes', 'receipt', 'commit', 'expiry', 'reentry'] as $failure) {
+                $cases[] = [$command, $failure];
+            }
+        }
+        return $cases;
+    }
+
+    public function testUnqualifiedPublicationCannotStartFactoryOrModel(): void
+    {
+        $processor = $this->processor(function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        });
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $this->publicationQualified = false;
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $result = $processor->handle('execute_owned', ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']], $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame([], $this->publications);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    #[DataProvider('invalidCompletedTraces')]
+    public function testMalformedCompletedTraceCannotReachStagingOrSink(mixed $trace): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor();
+        $this->store->transaction(static function (array &$state) use ($payload, $trace): array {
+            $execution =& $state['requests'][$payload['request_ref']]['execution'];
+            $execution['result']['trace'] = $trace;
+            $execution['resultBinding']['resultDigest'] = hash('sha256', RegisteredPublicFixtureRegistry::canonical($execution['result']));
+            return ['seededMalformedPriorState' => true];
+        });
+        foreach (['lookup_owned', 'execute_owned'] as $command) {
+            $result = $processor->handle($command, $payload, $peer);
+            self::assertSame('blocked', $result['status']);
+            self::assertArrayNotHasKey('reply', $result);
+            self::assertSame([], $this->publications);
+        }
+        self::assertSame(0, $this->cachedFactoryCalls);
+    }
+
+    public static function invalidCompletedTraces(): array
+    {
+        $event = ['action' => 'ready', 'step' => 1, 'tokens' => 32, 'callRef' => null];
+        return [[null], ['PRIVATE raw trace'], [['private' => $event]], [[['action' => 'ready']]],
+            [[array_replace($event, ['action' => 'private_lookup'])]], [[array_replace($event, ['step' => -1])]],
+            [[array_replace($event, ['tokens' => 1.5])]], [[array_replace($event, ['callRef' => 'PRIVATE_SOURCE_REF'])]],
+            [[array_replace($event, ['callRef' => 'ref_' . str_repeat('g', 32)])]], [[$event + ['sourceRef' => 'PRIVATE_SOURCE']]]];
+    }
+
+    public function testClosedNativeTraceKeepsExactCoreDigestAndIndependentEnvelopeDigest(): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor();
+        $trace = [['action' => 'tool', 'step' => 1, 'tokens' => 32, 'callRef' => 'ref_' . str_repeat('a', 32)],
+            ['action' => 'final', 'step' => 2, 'tokens' => 64, 'callRef' => null],
+            ['action' => 'ready', 'step' => 2, 'tokens' => 64, 'callRef' => null]];
+        $this->store->transaction(static function (array &$state) use ($payload, $trace): array {
+            $execution =& $state['requests'][$payload['request_ref']]['execution'];
+            $execution['result']['trace'] = $trace;
+            $execution['resultBinding']['resultDigest'] = hash('sha256', RegisteredPublicFixtureRegistry::canonical($execution['result']));
+            return ['seededValidPriorState' => true];
+        });
+        $receipt = $processor->handle('lookup_owned', $payload, $peer);
+        self::assertSame('public-core-result-publication/1', $receipt['schemaVersion']);
+        $record = $this->publications[$receipt['publicationRef']];
+        $data = json_decode($record['bodyBytes'], true, flags: JSON_THROW_ON_ERROR)['data'];
+        self::assertSame(['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed'], array_keys($data));
+        self::assertSame($trace, $data['trace']);
+        self::assertSame(hash('sha256', RegisteredPublicFixtureRegistry::canonical($data)), $record['resultDigest']);
+        self::assertNotSame($record['resultDigest'], $record['envelopeDigest']);
+    }
+
+    public function testMissingRuntimeReaderCannotCreateFreshExecutionOrFactoryWrites(): void
+    {
+        $processor = $this->processor(function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        }, withRuntimeReader: false);
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $result = $processor->handle('execute_owned', ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']], $peer);
+        self::assertSame('runtime_not_activated', $result['reasonCode']);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertArrayNotHasKey('reply', $result);
+    }
+
+    public function testProcessorCommandsRequireProtectedPeerAndServerOwnedViewerTicket(): void
+    {
+        $processor = $this->processor();
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $payload = $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'];
+        self::assertSame('blocked', $processor->handle('open_or_resume', $payload, ['role' => 'processor', 'authorized' => true])['status']);
+        self::assertSame('blocked', $processor->handle('open_or_resume', $payload + ['message' => 'PRIVATE arbitrary input'], $peer)['status']);
+        $opened = $processor->handle('open_or_resume', $payload, $peer);
+        self::assertSame('accepted', $opened['status']);
+        self::assertSame($opened, $processor->handle('open_or_resume', $payload, $peer));
+        $lookup = ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']];
+        self::assertSame('accepted', $processor->handle('lookup_owned', $lookup, $peer)['status']);
+        self::assertSame('runtime_not_activated', $processor->handle('execute_owned', $lookup, $peer)['reasonCode']);
+        self::assertFalse($processor->handle('readiness', [], $peer)['model_enabled']);
+        $this->viewer['authorizationRevision'] = 'authorization/2';
+        self::assertSame('authorization_changed', $processor->handle('lookup_owned', $lookup, $peer)['reasonCode']);
+    }
+
+    public function testFailedCompositionIsTerminalAndCannotBeRetriedByCommandReplay(): void
+    {
+        $compositions = 0;
+        $processor = $this->processor(static function () use (&$compositions): array {
+            $compositions++;
+            return ['loop' => (object) ['status' => 'READY']];
+        });
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $payload = ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']];
+        $first = $processor->handle('execute_owned', $payload, $peer);
+        self::assertSame('blocked', $first['status']);
+        self::assertSame($first, $processor->handle('execute_owned', $payload, $peer));
+        self::assertSame($first, $processor->handle('lookup_owned', $payload, $peer));
+        self::assertSame(1, $compositions);
+    }
+
+    public function testLostRuntimeGenerationOrRunningClaimDoesNotResumeAfterRestart(): void
+    {
+        $compositions = 0;
+        $factory = static function () use (&$compositions): array {
+            $compositions++;
+            return [];
+        };
+        $processor = $this->processor($factory);
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $this->store->transaction(static function (array &$state) use ($opened): array {
+            $sessionRef = $state['requests'][$opened['request_ref']]['sessionRef'];
+            $state['sessions'][$sessionRef]['runtimeGenerationRef'] = 'ref_previous_process_generation';
+            return ['lost' => true];
+        });
+        $restarted = $this->processor($factory);
+        self::assertSame('source_changed', $restarted->executeOwned($opened['request_ref'])['reasonCode']);
+        $this->store->transaction(static function (array &$state) use ($opened): array {
+            $state['requests'][$opened['request_ref']]['execution'] = ['status' => 'running', 'processRef' => 'ref_previous_process'];
+            return ['claimed' => true];
+        });
+        self::assertSame('receipt_changed', $restarted->executeOwned($opened['request_ref'])['reasonCode']);
+        self::assertSame(0, $compositions);
     }
 }

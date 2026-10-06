@@ -119,4 +119,56 @@ final class PublicCoreIsolationTest extends TestCase
         });
         self::assertSame(['fenced' => true], $result);
     }
+
+    public function testNestedStoreAttemptCannotReleaseOrReenterOuterFence(): void
+    {
+        $store = new PublicCoreReceiptStore($this->directory, str_repeat('s', 32));
+        $result = $store->withLockedState(function (array &$state) use ($store): array {
+            self::assertNull($store->transaction(static fn (): array => ['nested' => true]));
+            $other = new PublicCoreReceiptStore($this->directory . '/.', str_repeat('s', 32));
+            self::assertNull($other->transaction(static fn (): array => ['nested' => true]));
+            $state['requests']['checkpoint'] = ['consumed' => true];
+            self::assertTrue($store->checkpointLockedState($state));
+            $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
+            self::assertTrue($disk['state']['requests']['checkpoint']['consumed']);
+            return ['held' => true];
+        });
+        self::assertSame(['held' => true], $result);
+        self::assertFalse($store->checkpointLockedState([]));
+        self::assertNotNull($store->transaction(static fn (): array => ['released' => true]));
+    }
+
+    public function testUploadScopeReleasesStableLockBeforeResponseWaiting(): void
+    {
+        $store = new PublicCoreReceiptStore($this->directory, str_repeat('s', 32));
+        self::assertSame(['status' => 'held'], $store->beginUploadScope(2000, static function (array &$state): array {
+            $state['requests']['attempt'] = ['status' => 'consumed'];
+            return ['status' => 'held'];
+        }));
+        $probe = $this->directory . '/upload-lock-probe.php';
+        file_put_contents($probe, '<?php $f=fopen($argv[1],"c+b"); $ok=flock($f,LOCK_EX|LOCK_NB); echo $ok?"acquired":"blocked"; if($ok){flock($f,LOCK_UN);} fclose($f);');
+        $runProbe = function () use ($probe): string {
+            $process = proc_open([PHP_BINARY, $probe, $this->directory . '/authority.lock'],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            self::assertIsResource($process);
+            fclose($pipes[0]);
+            $output = stream_get_contents($pipes[1]);
+            $error = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            self::assertSame(0, proc_close($process));
+            self::assertSame('', $error);
+            return $output;
+        };
+        self::assertSame('blocked', $runProbe());
+        self::assertNull($store->transaction(static fn (): array => ['nested' => true]));
+        self::assertSame(['status' => 'consumed'], $store->inspectUploadScope(static fn (array &$state): array => $state['requests']['attempt']));
+        self::assertSame(['phase' => 'WAITING_RESPONSE'], $store->finishUploadScope(static function (array &$state): array {
+            $state['requests']['attempt']['phase'] = 'WAITING_RESPONSE';
+            return ['phase' => 'WAITING_RESPONSE'];
+        }));
+        self::assertSame('acquired', $runProbe());
+        self::assertNull($store->inspectUploadScope(static fn (): array => ['stale' => true]));
+        self::assertNull($store->finishUploadScope(static fn (): array => ['duplicate' => true]));
+    }
 }
