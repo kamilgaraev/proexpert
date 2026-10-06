@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Services\Privacy\PublicCore\Transport;
 
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
+use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
 use LogicException;
 use Socket;
 use Throwable;
@@ -14,6 +17,8 @@ final class AuthenticatedPublicCoreChannel
     public const SCHEMA_VERSION = 'public-core-channel/1';
 
     public const MAX_FRAME_BYTES = 1048576;
+
+    public const CLEANUP_GRACE_MS = 250;
 
     public const COMMANDS = [
         'hello', 'readiness', 'open_or_resume', 'execute_owned', 'lookup_owned',
@@ -32,6 +37,16 @@ final class AuthenticatedPublicCoreChannel
     private readonly int $deadline;
 
     private readonly int $expiresAt;
+
+    private ?array $cleanupBinding = null;
+
+    private ?int $cleanupDeadline = null;
+
+    private ?array $gatewayTransfer = null;
+
+    private bool $publishingLifecycle = false;
+
+    private ?string $bootstrapTicket = null;
 
     private function __construct(
         private readonly Socket $socket,
@@ -195,6 +210,7 @@ final class AuthenticatedPublicCoreChannel
             'payload' => $payload,
         ];
         $this->validateFrame($frame, $this->sentSequence + 1);
+        $this->validateGatewayFrame($frame, true);
         if ($command !== 'hello' && $this->verifiedPeer === null) {
             throw new LogicException('gateway_identity_unavailable');
         }
@@ -212,6 +228,7 @@ final class AuthenticatedPublicCoreChannel
             $wire = substr($wire, $sent);
         }
         $this->sentSequence++;
+        $this->recordGatewayFrame($frame, true);
     }
 
     public function receive(): array
@@ -233,7 +250,9 @@ final class AuthenticatedPublicCoreChannel
                 $this->reference = $frame['channelRef'];
             }
             $this->validateFrame($frame, $this->receivedSequence + 1);
+            $this->validateGatewayFrame($frame, false);
             $this->receivedSequence++;
+            $this->recordGatewayFrame($frame, false);
 
             return $frame;
         } catch (Throwable) {
@@ -243,6 +262,7 @@ final class AuthenticatedPublicCoreChannel
 
     private function validateFrame(array $frame, int $sequence): void
     {
+        $cleanup = $this->cleanupBinding !== null;
         if (! GatewayModelRequest::hasExactKeys($frame, [
             'schemaVersion', 'channelRef', 'sequence', 'command', 'requestRef', 'attemptRef', 'expiresAt', 'payload',
         ]) || $frame['schemaVersion'] !== self::SCHEMA_VERSION
@@ -252,9 +272,243 @@ final class AuthenticatedPublicCoreChannel
             || (($sequence === 1) !== ($frame['command'] === 'hello'))
             || ($frame['requestRef'] !== null && ! GatewayModelRequest::isReference($frame['requestRef']))
             || ($frame['attemptRef'] !== null && ! GatewayModelRequest::isReference($frame['attemptRef']))
-            || ! is_int($frame['expiresAt']) || $frame['expiresAt'] <= time() || $frame['expiresAt'] > $this->expiresAt
+            || ! is_int($frame['expiresAt']) || (! $cleanup && ($frame['expiresAt'] <= time() || $frame['expiresAt'] > $this->expiresAt))
             || ! is_array($frame['payload'])) {
             throw new LogicException('gateway_channel_unavailable');
+        }
+        if ($frame['command'] === 'hello') {
+            if ($frame['requestRef'] !== null || $frame['attemptRef'] !== null || $frame['payload'] !== []) {
+                throw new LogicException('gateway_channel_unavailable');
+            }
+        } elseif ($frame['requestRef'] === null || $frame['attemptRef'] === null) {
+            $payload = $frame['payload'];
+            $schema = $payload['schemaVersion'] ?? null;
+            $keys = match ($schema) {
+                'public-core-app-viewer-ticket-check/1' => ['schemaVersion', 'viewerTicketRef'],
+                'public-core-app-viewer-ticket-binding/1' => ['schemaVersion', 'viewerTicketRef', 'currentViewer'],
+                'public-core-app-viewer-ticket-denial/1' => ['schemaVersion', 'viewerTicketRef', 'reasonCode'],
+                default => [],
+            };
+            if ($frame['requestRef'] !== null || $frame['attemptRef'] !== null || $keys === []
+                || ! GatewayModelRequest::hasExactKeys($payload, $keys) || ! GatewayModelRequest::isReference($payload['viewerTicketRef'])
+                || ($schema === 'public-core-app-viewer-ticket-check/1' ? $frame['command'] !== 'check_binding'
+                    : ($frame['command'] !== 'binding' || $this->bootstrapTicket !== $payload['viewerTicketRef']))
+                || ($schema === 'public-core-app-viewer-ticket-binding/1' && ! self::validViewer($payload['currentViewer']))
+                || ($schema === 'public-core-app-viewer-ticket-denial/1' && (! in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true)
+                    || $payload['reasonCode'] === 'none'))) {
+                throw new LogicException('gateway_channel_unavailable');
+            }
+            $this->bootstrapTicket = $schema === 'public-core-app-viewer-ticket-check/1' ? $payload['viewerTicketRef'] : null;
+        }
+        if ($cleanup && ($frame['command'] !== 'abort' || $frame['requestRef'] !== $this->cleanupBinding['requestRef']
+            || $frame['attemptRef'] !== $this->cleanupBinding['attemptRef'] || $frame['expiresAt'] !== $this->cleanupBinding['outerExpiry']
+            || ! GatewayModelRequest::hasExactKeys($frame['payload'], ['schemaVersion', 'binding', 'reasonCode'])
+            || ! in_array($frame['payload']['schemaVersion'], ['public-core-gateway-upload-cancel/1', 'public-core-gateway-upload-stopped/1'], true)
+            || ! in_array($frame['payload']['reasonCode'], GatewayModelResponse::REASON_CODES, true) || $frame['payload']['reasonCode'] === 'none'
+            || GatewayModelRequest::canonicalJson($frame['payload']['binding']) !== GatewayModelRequest::canonicalJson($this->cleanupBinding['binding']))) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+    }
+
+    private static function validViewer(mixed $viewer): bool
+    {
+        if (! GatewayModelRequest::hasExactKeys($viewer, ['authorized', 'viewerRef', 'organizationRef', 'authorizationRevision', 'policyRevision'])
+            || $viewer['authorized'] !== true) {
+            return false;
+        }
+        foreach (['viewerRef', 'organizationRef', 'authorizationRevision', 'policyRevision'] as $key) {
+            if (! is_string($viewer[$key]) || $viewer[$key] === '' || strlen($viewer[$key]) > 160 || preg_match('//u', $viewer[$key]) !== 1) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function dispatchGatewayRequest(GatewayModelRequest $request, int $outerExpiry): void
+    {
+        $this->bindGatewayTransfer($request, $outerExpiry, 'processor');
+        $this->send('dispatch', $request->requestRef, $request->attemptRef, $request->values(), $outerExpiry);
+    }
+
+    public function acceptGatewayRequest(): GatewayModelRequest
+    {
+        $frame = $this->receive();
+        if ($frame['command'] !== 'dispatch') {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $request = GatewayModelRequest::fromArray($frame['payload']);
+        if ($frame['requestRef'] !== $request->requestRef || $frame['attemptRef'] !== $request->attemptRef) {
+            throw new LogicException('receipt_changed');
+        }
+        $this->bindGatewayTransfer($request, $frame['expiresAt'], 'gateway');
+
+        return $request;
+    }
+
+    private function bindGatewayTransfer(GatewayModelRequest $request, int $outerExpiry, string $role): void
+    {
+        if ($this->gatewayTransfer !== null || $this->cleanupBinding !== null || $outerExpiry <= time()
+            || $outerExpiry > min($request->expiresAt, $this->expiresAt) || $this->verifiedPeer === null) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $this->gatewayTransfer = ['role' => $role, 'request' => $request, 'outerExpiry' => $outerExpiry,
+            'genuineDeadline' => min($this->deadline, hrtime(true) + (int) floor(($outerExpiry - microtime(true)) * 1000000000)),
+            'phase' => 'pending', 'control' => null, 'event' => null, 'eventSequence' => null, 'reasonCode' => 'none'];
+    }
+
+    public function gatewayOuterExpiry(): int
+    {
+        if ($this->gatewayTransfer === null) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+
+        return $this->gatewayTransfer['outerExpiry'];
+    }
+
+    public function gatewayDeadline(): int
+    {
+        if ($this->gatewayTransfer === null) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+
+        return $this->gatewayTransfer['genuineDeadline'];
+    }
+
+    public function receiveGatewayControl(): array
+    {
+        if (($this->gatewayTransfer['role'] ?? null) !== 'processor') {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+
+        return $this->receive();
+    }
+
+    public function gatewayLifecycle(): array
+    {
+        if (($this->gatewayTransfer['role'] ?? null) !== 'processor') {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $request = $this->gatewayTransfer['request'];
+
+        return ['schemaVersion' => 'public-core-processor-gateway-lifecycle/1', 'channelRef' => $this->reference,
+            'binding' => $request->binding(), 'state' => $this->gatewayTransfer['event'] ?? 'pending',
+            'eventSequence' => $this->gatewayTransfer['eventSequence'], 'reasonCode' => $this->gatewayTransfer['reasonCode'],
+            'bodyLength' => strlen($request->bodyBytes)];
+    }
+
+    public function publishGatewayLifecycle(GatewayPublicCoreHttpSender $sender, string $event): void
+    {
+        if (($this->gatewayTransfer['role'] ?? null) !== 'gateway' || ! in_array($event, ['uploaded', 'stopped'], true)
+            || $this->gatewayTransfer['event'] !== null) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $request = $this->gatewayTransfer['request'];
+        $state = $sender->nativeLifecycle($request, $this->reference);
+        if ($state['state'] !== $event || $state['nativeStarted'] !== true || $state['bodyLength'] !== strlen($request->bodyBytes)) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        if ($event === 'stopped') {
+            $this->beginCleanup($request, $this->gatewayTransfer['outerExpiry']);
+        }
+        $this->publishingLifecycle = true;
+        try {
+            $this->send($event === 'uploaded' ? 'upload_complete' : 'abort', $request->requestRef, $request->attemptRef,
+                $event === 'uploaded' ? ['projectionDigest' => $request->projectionDigest, 'bodyLength' => $state['bodyLength']]
+                    : ['schemaVersion' => 'public-core-gateway-upload-stopped/1', 'binding' => $request->binding(), 'reasonCode' => $state['reasonCode']],
+                $this->gatewayTransfer['outerExpiry']);
+            $this->gatewayTransfer['event'] = $event;
+        } finally {
+            $this->publishingLifecycle = false;
+        }
+    }
+
+    private function validateGatewayFrame(array $frame, bool $outgoing): void
+    {
+        if ($this->gatewayTransfer === null) {
+            return;
+        }
+        $request = $this->gatewayTransfer['request'];
+        if ($frame['requestRef'] !== $request->requestRef || $frame['attemptRef'] !== $request->attemptRef
+            || $frame['expiresAt'] !== $this->gatewayTransfer['outerExpiry']) {
+            throw new LogicException('receipt_changed');
+        }
+        $gatewaySide = ($this->gatewayTransfer['role'] === 'gateway') === $outgoing;
+        $command = $frame['command'];
+        $payload = $frame['payload'];
+        $phase = $this->gatewayTransfer['phase'];
+        $validator = new GatewayPublicCoreRequestValidator;
+        if ($gatewaySide) {
+            $valid = match ($command) {
+                'check_binding', 'authorize_write' => $phase === 'pending' && $this->gatewayTransfer['control'] === null
+                    && GatewayModelRequest::hasExactKeys($payload, ['projectionDigest', 'profileFingerprint'])
+                    && $payload['projectionDigest'] === $request->projectionDigest && $payload['profileFingerprint'] === $request->profileFingerprint,
+                'upload_complete' => in_array($phase, ['authorized', 'cancelling'], true) && $this->gatewayTransfer['event'] === null
+                    && GatewayModelRequest::hasExactKeys($payload, ['projectionDigest', 'bodyLength'])
+                    && $payload['projectionDigest'] === $request->projectionDigest && $payload['bodyLength'] === strlen($request->bodyBytes),
+                'abort' => in_array($phase, ['authorized', 'cancelling'], true) && $this->gatewayTransfer['event'] === null
+                    && GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'reasonCode'])
+                    && $payload['schemaVersion'] === 'public-core-gateway-upload-stopped/1'
+                    && $validator->validateBinding($request, $payload['binding']) === null
+                    && in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true) && $payload['reasonCode'] !== 'none',
+                'result' => in_array($phase, ['pending', 'denied', 'authorized', 'cancelling', 'uploaded'], true) && $this->gatewayTransfer['control'] === null
+                    && GatewayModelResponse::fromArray($payload)->requestRef === $request->requestRef
+                    && GatewayModelResponse::fromArray($payload)->attemptRef === $request->attemptRef
+                    && GatewayModelResponse::fromArray($payload)->profileFingerprint === $request->profileFingerprint
+                    && ($phase === 'uploaded' || GatewayModelResponse::fromArray($payload)->status !== 'completed'),
+                default => false,
+            };
+            if ($outgoing && in_array($command, ['upload_complete', 'abort'], true) && ! $this->publishingLifecycle) {
+                $valid = false;
+            }
+        } else {
+            $valid = match ($command) {
+                'dispatch' => $phase === 'pending' && $outgoing && $this->sentSequence === 1,
+                'binding' => $this->gatewayTransfer['control'] === 'check_binding',
+                'write_authorized' => $this->gatewayTransfer['control'] === 'authorize_write',
+                'uploaded' => $phase === 'uploaded' && GatewayModelRequest::hasExactKeys($payload, ['projectionDigest', 'bodyLength'])
+                    && $payload['projectionDigest'] === $request->projectionDigest && $payload['bodyLength'] === strlen($request->bodyBytes),
+                'abort' => $phase === 'authorized' && GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'reasonCode'])
+                    && $payload['schemaVersion'] === 'public-core-gateway-upload-cancel/1'
+                    && $validator->validateBinding($request, $payload['binding']) === null
+                    && in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true) && $payload['reasonCode'] !== 'none',
+                default => false,
+            };
+        }
+        if (! $valid) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+    }
+
+    private function recordGatewayFrame(array $frame, bool $outgoing): void
+    {
+        if ($this->gatewayTransfer === null) {
+            return;
+        }
+        $gatewaySide = ($this->gatewayTransfer['role'] === 'gateway') === $outgoing;
+        $command = $frame['command'];
+        if ($gatewaySide && in_array($command, ['check_binding', 'authorize_write'], true)) {
+            $this->gatewayTransfer['control'] = $command;
+        } elseif (! $gatewaySide && in_array($command, ['binding', 'write_authorized'], true)) {
+            $this->gatewayTransfer['control'] = null;
+            if ($command === 'write_authorized') {
+                $request = $this->gatewayTransfer['request'];
+                $payload = $frame['payload'];
+                $valid = GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'uploadTimeoutMs'])
+                    && $payload['schemaVersion'] === 'public-core-gateway-upload-grant/1' && is_int($payload['uploadTimeoutMs'])
+                    && $payload['uploadTimeoutMs'] > 0 && $payload['uploadTimeoutMs'] <= intdiv(PHP_INT_MAX, 1000000)
+                    && (new GatewayPublicCoreRequestValidator)->validateBinding($request, $payload['binding']) === null;
+                $this->gatewayTransfer['phase'] = $valid ? 'authorized' : 'denied';
+            }
+        } elseif ($gatewaySide && in_array($command, ['upload_complete', 'abort'], true)) {
+            $this->gatewayTransfer['event'] = $command === 'upload_complete' ? 'uploaded' : 'stopped';
+            $this->gatewayTransfer['phase'] = $this->gatewayTransfer['event'];
+            $this->gatewayTransfer['eventSequence'] = $frame['sequence'];
+            $this->gatewayTransfer['reasonCode'] = $command === 'abort' ? $frame['payload']['reasonCode'] : 'none';
+        } elseif (! $gatewaySide && $command === 'abort') {
+            $this->gatewayTransfer['phase'] = 'cancelling';
+        } elseif ($gatewaySide && $command === 'result') {
+            $this->gatewayTransfer['phase'] = 'result';
         }
     }
 
@@ -314,7 +568,7 @@ final class AuthenticatedPublicCoreChannel
 
     private function wait(bool $reading): void
     {
-        $remaining = $this->deadline - hrtime(true);
+        $remaining = ($this->cleanupDeadline ?? $this->deadline) - hrtime(true);
         if ($this->closed || $remaining <= 0) {
             throw new LogicException('gateway_channel_unavailable');
         }
@@ -338,6 +592,46 @@ final class AuthenticatedPublicCoreChannel
         if (@socket_select($read, $write, $except, 0, 0) !== 0) {
             throw new LogicException('gateway_channel_unavailable');
         }
+    }
+
+    public function poll(): ?array
+    {
+        if ($this->closed || hrtime(true) >= ($this->cleanupDeadline ?? $this->deadline)) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $read = $except = [$this->socket];
+        $write = [];
+        $ready = @socket_select($read, $write, $except, 0, 0);
+        if ($ready === false || $except !== []) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+
+        return $ready === 0 ? null : $this->receive();
+    }
+
+    public function beginCleanup(GatewayModelRequest $request, int $originalOuterExpiry): void
+    {
+        if ($this->closed || $this->verifiedPeer === null || $this->cleanupBinding !== null
+            || $originalOuterExpiry < 1 || $originalOuterExpiry > $request->expiresAt
+            || $this->gatewayTransfer === null || $this->gatewayTransfer['request'] !== $request
+            || $this->gatewayTransfer['outerExpiry'] !== $originalOuterExpiry
+            || ! in_array($this->gatewayTransfer['phase'], ['authorized', 'cancelling'], true)
+            || hrtime(true) >= $this->gatewayTransfer['genuineDeadline'] + self::CLEANUP_GRACE_MS * 1000000) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $this->cleanupBinding = [
+            'requestRef' => $request->requestRef,
+            'attemptRef' => $request->attemptRef,
+            'outerExpiry' => $originalOuterExpiry,
+            'binding' => $request->binding(),
+        ];
+        $this->cleanupDeadline = min(hrtime(true) + self::CLEANUP_GRACE_MS * 1000000,
+            $this->gatewayTransfer['genuineDeadline'] + self::CLEANUP_GRACE_MS * 1000000);
+    }
+
+    public function isCleanupOnly(): bool
+    {
+        return $this->cleanupBinding !== null;
     }
 
     public function peer(): array

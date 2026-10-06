@@ -19,15 +19,61 @@ final class GatewayPublicCoreHttpSender
 
     public const MAX_RESPONSE_BYTES = 262144;
 
+    private ?array $lifecycle = null;
+
+    private bool $sending = false;
+
+    private bool $boundConsumed = false;
+
     public function __construct(
         private readonly ?Closure $credentialReader = null,
         private readonly ?Closure $executor = null,
+        private readonly ?Closure $nativeTestSetup = null,
+        private readonly ?Closure $nativeTestRemove = null,
     ) {}
 
-    public function send(GatewayModelProfile $profile, string $bodyBytes, ?Closure $beforeWrite = null, ?Closure $uploaded = null): array
+    public function sendBound(GatewayModelProfile $profile, GatewayModelRequest $request, string $channelRef, Closure $beforeWrite, Closure $uploaded, ?Closure $cancel = null, ?Closure $stopped = null): array
     {
+        if ($this->lifecycle !== null || ! GatewayModelRequest::isReference($channelRef)
+            || $request->profileFingerprint !== $profile->fingerprint()) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $this->lifecycle = [
+            'schemaVersion' => 'public-core-gateway-native-lifecycle/1',
+            'transferRef' => 'transfer:'.bin2hex(random_bytes(16)),
+            'channelRef' => $channelRef,
+            'binding' => $request->binding(),
+            'state' => 'pending',
+            'nativeStarted' => false,
+            'bodyLength' => strlen($request->bodyBytes),
+            'reasonCode' => 'none',
+        ];
+
+        return $this->send($profile, $request->bodyBytes, $beforeWrite, $uploaded, $cancel, $stopped);
+    }
+
+    public function nativeLifecycle(GatewayModelRequest $request, string $channelRef): array
+    {
+        if ($this->executor !== null || $this->lifecycle === null || $this->lifecycle['channelRef'] !== $channelRef
+            || GatewayModelRequest::canonicalJson($this->lifecycle['binding']) !== GatewayModelRequest::canonicalJson($request->binding())) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+
+        return $this->lifecycle;
+    }
+
+    public function send(GatewayModelProfile $profile, string $bodyBytes, ?Closure $beforeWrite = null, ?Closure $uploaded = null, ?Closure $cancel = null, ?Closure $stopped = null): array
+    {
+        if ($this->sending || ($this->lifecycle !== null && $this->boundConsumed)) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $this->sending = true;
+        $this->boundConsumed = $this->lifecycle !== null;
         $handle = null;
         try {
+            if ($this->lifecycle !== null && $this->lifecycle['state'] !== 'pending') {
+                throw new LogicException('gateway_channel_unavailable');
+            }
             if (! $profile->isActualProfile() || $profile->values()['endpoint'] !== self::ENDPOINT
                 || $profile->values()['apiMethod'] !== 'chat_completions') {
                 throw new LogicException('model_profile_unqualified');
@@ -54,9 +100,14 @@ final class GatewayPublicCoreHttpSender
             $response = '';
             $overflow = false;
             $uploadReported = false;
+            $uploadDeadline = null;
+            $readDeadline = static function () use (&$uploadDeadline): ?int {
+                return $uploadDeadline;
+            };
             $callbackReason = null;
             $headerBytes = 0;
             $length = strlen($bodyBytes);
+            $nativeObservation = $this->executor === null;
             $options = [
                 CURLOPT_URL => self::ENDPOINT,
                 CURLOPT_POST => true,
@@ -74,6 +125,8 @@ final class GatewayPublicCoreHttpSender
                 CURLOPT_CONNECTTIMEOUT_MS => 2000,
                 CURLOPT_TIMEOUT_MS => 10000,
                 CURLOPT_NOSIGNAL => true,
+                CURLOPT_FRESH_CONNECT => true,
+                CURLOPT_FORBID_REUSE => true,
                 CURLOPT_RETURNTRANSFER => false,
                 CURLOPT_HEADER => false,
                 CURLOPT_NOPROGRESS => false,
@@ -97,9 +150,19 @@ final class GatewayPublicCoreHttpSender
 
                     return strlen($line);
                 },
-                CURLOPT_XFERINFOFUNCTION => static function (CurlHandle $curl, float $downloadTotal, float $downloadNow, float $uploadTotal, float $uploadNow) use ($length, $uploaded, &$uploadReported, &$callbackReason): int {
-                    if (! $uploadReported && $uploadTotal >= $length && $uploadNow >= $length) {
+                CURLOPT_XFERINFOFUNCTION => function (CurlHandle $curl, float $downloadTotal, float $downloadNow, float $uploadTotal, float $uploadNow) use ($length, $uploaded, &$uploadReported, &$callbackReason, $readDeadline, $nativeObservation): int {
+                    $deadline = $readDeadline();
+                    if (! $uploadReported && (! is_int($deadline) || hrtime(true) >= $deadline)) {
+                        $callbackReason = 'expired';
+
+                        return 1;
+                    }
+                    if (! $uploadReported && $uploadTotal === (float) $length && $uploadNow === (float) $length
+                        && (! $nativeObservation || (float) curl_getinfo($curl, CURLINFO_SIZE_UPLOAD) === (float) $length)) {
                         $uploadReported = true;
+                        if ($nativeObservation && $this->lifecycle !== null) {
+                            $this->lifecycle['state'] = 'uploaded';
+                        }
                         try {
                             $uploaded($length);
                         } catch (Throwable $error) {
@@ -116,16 +179,33 @@ final class GatewayPublicCoreHttpSender
             if (! curl_setopt_array($handle, $options)) {
                 throw new LogicException('gateway_unavailable');
             }
-            $beforeWrite();
+            $uploadDeadline = $beforeWrite();
+            $now = hrtime(true);
+            if (! is_int($uploadDeadline) || $uploadDeadline <= $now || $uploadDeadline - $now > 2000000000) {
+                throw new LogicException('expired');
+            }
             if ($this->executor !== null) {
                 $result = ($this->executor)($handle, $options);
             } else {
-                curl_exec($handle);
-                $result = [
-                    'status' => curl_getinfo($handle, CURLINFO_RESPONSE_CODE),
-                    'errorCode' => curl_errno($handle),
-                    'uploadedBytes' => curl_getinfo($handle, CURLINFO_SIZE_UPLOAD),
-                ];
+                if ($this->nativeTestSetup !== null) {
+                    ($this->nativeTestSetup)($handle);
+                }
+                $isUploaded = static function () use (&$uploadReported): bool {
+                    return $uploadReported;
+                };
+                $failure = static function () use (&$callbackReason): ?string {
+                    return $callbackReason;
+                };
+                $takeHandle = static function () use (&$handle): CurlHandle {
+                    if (! $handle instanceof CurlHandle) {
+                        throw new LogicException('gateway_unavailable');
+                    }
+                    $owned = $handle;
+                    $handle = null;
+
+                    return $owned;
+                };
+                $result = $this->performNative($takeHandle, $uploadDeadline, $isUploaded, $failure, $cancel, $stopped);
             }
             if ($callbackReason !== null) {
                 throw new LogicException($callbackReason);
@@ -144,12 +224,110 @@ final class GatewayPublicCoreHttpSender
         } catch (Throwable $error) {
             $reason = $error instanceof LogicException && in_array($error->getMessage(), GatewayModelResponse::REASON_CODES, true)
                 ? $error->getMessage() : 'gateway_unavailable';
+            if ($this->lifecycle !== null && $this->lifecycle['state'] === 'pending') {
+                $this->lifecycle['state'] = 'uncertain';
+                $this->lifecycle['reasonCode'] = $reason;
+            }
             throw new LogicException($reason);
         } finally {
-            if ($handle instanceof CurlHandle) {
-                curl_close($handle);
+            $handle = null;
+            $this->sending = false;
+        }
+    }
+
+    private function performNative(Closure $takeHandle, int $uploadDeadline, Closure $isUploaded, Closure $failure, ?Closure $cancel, ?Closure $stopped): array
+    {
+        $handle = $takeHandle();
+        if (! $handle instanceof CurlHandle) {
+            throw new LogicException('gateway_unavailable');
+        }
+        $multi = curl_multi_init();
+        $added = false;
+        $reason = null;
+        $result = null;
+        try {
+            if (curl_multi_add_handle($multi, $handle) !== CURLM_OK) {
+                throw new LogicException('gateway_unavailable');
+            }
+            $added = true;
+            if ($this->lifecycle !== null) {
+                $this->lifecycle['nativeStarted'] = true;
+            }
+            $running = 1;
+            $completion = null;
+            while ($running > 0) {
+                if (! $isUploaded() && hrtime(true) >= $uploadDeadline) {
+                    throw new LogicException('expired');
+                }
+                if ($cancel !== null) {
+                    $cancellation = $cancel();
+                    if ($cancellation !== null) {
+                        throw new LogicException(in_array($cancellation, GatewayModelResponse::REASON_CODES, true) && $cancellation !== 'none'
+                            ? $cancellation : 'gateway_channel_unavailable');
+                    }
+                }
+                if (curl_multi_exec($multi, $running) !== CURLM_OK) {
+                    throw new LogicException('gateway_unavailable');
+                }
+                while (($message = curl_multi_info_read($multi)) !== false) {
+                    if (($message['msg'] ?? null) !== CURLMSG_DONE || ($message['handle'] ?? null) !== $handle) {
+                        throw new LogicException('gateway_unavailable');
+                    }
+                    $completion = $message['result'];
+                }
+                if ($running > 0) {
+                    $wait = $isUploaded() ? 0.01 : min(0.01, max(0.0, ($uploadDeadline - hrtime(true)) / 1000000000));
+                    if (curl_multi_select($multi, $wait) === -1) {
+                        usleep(1000);
+                    }
+                }
+            }
+            if (! is_int($completion)) {
+                throw new LogicException('gateway_unavailable');
+            }
+            if ($completion !== CURLE_OK || ! $isUploaded()) {
+                throw new LogicException($failure() ?? 'gateway_unavailable');
+            }
+
+            $result = [
+                'status' => curl_getinfo($handle, CURLINFO_RESPONSE_CODE),
+                'errorCode' => $completion,
+                'uploadedBytes' => curl_getinfo($handle, CURLINFO_SIZE_UPLOAD),
+            ];
+        } catch (Throwable $error) {
+            $reason = $error instanceof LogicException && in_array($error->getMessage(), GatewayModelResponse::REASON_CODES, true)
+                ? $error->getMessage() : 'gateway_unavailable';
+            unset($error);
+        } finally {
+            $weakHandle = \WeakReference::create($handle);
+            $removed = $added && ($this->nativeTestRemove === null
+                ? curl_multi_remove_handle($multi, $handle)
+                : ($this->nativeTestRemove)($multi, $handle)) === CURLM_OK;
+            unset($message);
+            $handle = null;
+            $multi = null;
+            $destroyed = $weakHandle->get() === null;
+            if (! $removed || ! $destroyed) {
+                $reason = 'gateway_unavailable';
+                if ($this->lifecycle !== null) {
+                    $this->lifecycle['state'] = 'uncertain';
+                    $this->lifecycle['reasonCode'] = $reason;
+                }
+            } elseif ($reason !== null) {
+                if ($this->lifecycle !== null) {
+                    $this->lifecycle['state'] = 'stopped';
+                    $this->lifecycle['reasonCode'] = $reason;
+                }
+                if ($stopped !== null) {
+                    $stopped($reason);
+                }
             }
         }
+        if ($reason !== null) {
+            throw new LogicException($reason);
+        }
+
+        return $result;
     }
 
     private function decode(GatewayModelProfile $profile, string $bytes): array

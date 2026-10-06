@@ -129,7 +129,7 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                 throw new LogicException('runtime_not_activated');
             }
         }
-        $kinds = ['catalog', 'method', 'capacity', 'tokenizer', 'key', 'identity', 'channel', 'egress', 'backendAuthority'];
+        $kinds = ['catalog', 'method', 'capacity', 'tokenizer', 'key', 'identity', 'channel', 'egress', 'backendAuthority', 'nativeTransfer'];
         if (! GatewayModelRequest::hasExactKeys($configuration['evidence'], $kinds)) {
             throw new LogicException('runtime_not_activated');
         }
@@ -188,7 +188,19 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
             || ! GatewayModelRequest::isDigest($proofs['egress']['policyDigest'] ?? null)
             || ! GatewayModelRequest::isDigest($proofs['backendAuthority']['coverageDigest'] ?? null)
             || ! GatewayModelRequest::isReference($proofs['backendAuthority']['strategyVersion'] ?? null)
-            || ($proofs['backendAuthority']['releasePhase'] ?? null) !== 'guarded_upload') {
+            || ($proofs['backendAuthority']['releasePhase'] ?? null) !== 'guarded_upload'
+            || ($proofs['nativeTransfer']['strategy'] ?? null) !== 'curl_multi_watchdog/1'
+            || ($proofs['nativeTransfer']['phpVersionId'] ?? null) !== PHP_VERSION_ID
+            || ($proofs['nativeTransfer']['curlVersionNumber'] ?? null) !== (curl_version()['version_number'] ?? null)
+            || ($proofs['nativeTransfer']['uploadEvent'] ?? null) !== 'same_handle_xferinfo_complete'
+            || ($proofs['nativeTransfer']['cancellation'] ?? null) !== 'verified_remove_destroy_no_reuse'
+            || ($proofs['nativeTransfer']['uploadMaxMs'] ?? null) !== 2000) {
+            throw new LogicException('runtime_not_activated');
+        }
+        if (PHP_INT_SIZE !== 8
+            || ($proofs['nativeTransfer']['senderSourceSha256'] ?? null) !== hash_file('sha256', __DIR__.'/GatewayPublicCoreHttpSender.php')
+            || ($proofs['nativeTransfer']['channelSourceSha256'] ?? null) !== hash_file('sha256', dirname(__DIR__).'/PublicCore/Transport/AuthenticatedPublicCoreChannel.php')
+            || ($proofs['nativeTransfer']['gatewaySourceSha256'] ?? null) !== hash_file('sha256', __FILE__)) {
             throw new LogicException('runtime_not_activated');
         }
 
@@ -236,14 +248,10 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
         Closure $tokenCounter,
         Closure $runtimeReadiness,
     ): GatewayModelResponse {
-        $frame = $channel->receive();
-        if ($frame['command'] !== 'dispatch' || ! $profile->isActualProfile()) {
+        $request = $channel->acceptGatewayRequest();
+        $frame = ['expiresAt' => $channel->gatewayOuterExpiry()];
+        if (! $profile->isActualProfile()) {
             throw new \LogicException('gateway_channel_unavailable');
-        }
-        $request = GatewayModelRequest::fromArray($frame['payload']);
-        if ($frame['requestRef'] !== $request->requestRef || $frame['attemptRef'] !== $request->attemptRef
-            || $frame['expiresAt'] > $request->expiresAt) {
-            throw new \LogicException('receipt_changed');
         }
         $exchange = static function (string $command, string $expectedCommand, array $payload) use ($channel, $request, $frame): array {
             $channel->assertAlive();
@@ -276,32 +284,101 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                 return $reason === null ? $write() : GatewayModelResponse::blocked($packet, $reason);
             },
             tokenCounter: $tokenCounter,
-            sender: static function (GatewayModelProfile $selected, string $bytes) use ($httpSender, $exchange, $probe, $channel, $request, $validator, $runtimeReadiness): array {
-                return $httpSender->send($selected, $bytes,
-                    static function () use ($exchange, $probe, $channel, $request, $selected, $validator, $runtimeReadiness): void {
-                        $binding = $exchange('authorize_write', 'write_authorized', $probe);
-                        $reason = $validator->validateBinding($request, $binding)
+            sender: static function (GatewayModelProfile $selected, string $bytes) use ($httpSender, $exchange, $probe, $channel, $request, $validator, $runtimeReadiness, $frame): array {
+                if ($bytes !== $request->bodyBytes) {
+                    throw new LogicException('projection_digest_mismatch');
+                }
+                $published = false;
+                $isPublished = static function () use (&$published): bool {
+                    return $published;
+                };
+
+                return $httpSender->sendBound($selected, $request, $channel->channelRef(),
+                    static function () use ($exchange, $probe, $channel, $request, $selected, $validator, $runtimeReadiness): int {
+                        $started = hrtime(true);
+                        $grant = $exchange('authorize_write', 'write_authorized', $probe);
+                        $received = hrtime(true);
+                        if (GatewayModelRequest::hasExactKeys($grant, ['reasonCode'])) {
+                            $reason = $validator->validateBinding($request, $grant);
+                            throw new LogicException($reason ?? 'receipt_changed');
+                        }
+                        if (! GatewayModelRequest::hasExactKeys($grant, ['schemaVersion', 'binding', 'uploadTimeoutMs'])
+                            || $grant['schemaVersion'] !== 'public-core-gateway-upload-grant/1'
+                            || ! is_int($grant['uploadTimeoutMs']) || $grant['uploadTimeoutMs'] < 1
+                            || $grant['uploadTimeoutMs'] > intdiv(PHP_INT_MAX, 1000000)) {
+                            throw new LogicException('receipt_changed');
+                        }
+                        $remaining = min($grant['uploadTimeoutMs'], 2000) * 1000000 - ($received - $started);
+                        $genuineRemaining = (int) floor(($request->expiresAt - microtime(true)) * 1000000000);
+                        if ($remaining <= 0 || $genuineRemaining <= 0) {
+                            throw new LogicException('expired');
+                        }
+                        $deadline = min($received + min($remaining, $genuineRemaining), $channel->gatewayDeadline());
+                        $reason = $validator->validateBinding($request, $grant['binding'])
                             ?? $validator->validate($request, $selected, time());
                         $ready = $runtimeReadiness($selected, $channel->peer());
                         if ($reason !== null || $ready !== 'none') {
                             throw new \LogicException($reason ?? (in_array($ready, GatewayModelResponse::REASON_CODES, true) ? $ready : 'runtime_not_activated'));
                         }
                         $channel->assertAlive();
+                        if (hrtime(true) >= $deadline) {
+                            throw new LogicException('expired');
+                        }
+
+                        return $deadline;
                     },
-                    static function (int $bodyLength) use ($exchange, $request): void {
+                    static function (int $bodyLength) use ($channel, $httpSender, $request, $frame, &$published): void {
                         $uploaded = ['projectionDigest' => $request->projectionDigest, 'bodyLength' => $bodyLength];
-                        $reply = $exchange('upload_complete', 'uploaded', $uploaded);
+                        $channel->publishGatewayLifecycle($httpSender, 'uploaded');
+                        $published = true;
+                        $replyFrame = $channel->receive();
+                        if ($replyFrame['command'] !== 'uploaded' || $replyFrame['expiresAt'] !== $frame['expiresAt']) {
+                            throw new LogicException('gateway_channel_unavailable');
+                        }
+                        $reply = $replyFrame['payload'];
                         if (! GatewayModelRequest::hasExactKeys($reply, array_keys($uploaded))
                             || $reply['projectionDigest'] !== $uploaded['projectionDigest']
                             || $reply['bodyLength'] !== $uploaded['bodyLength']) {
                             throw new \LogicException('receipt_changed');
                         }
                     },
+                    static function () use ($channel, $request, $frame, $validator): ?string {
+                        if (hrtime(true) >= $channel->gatewayDeadline()) {
+                            return 'expired';
+                        }
+                        $cancel = $channel->poll();
+                        if ($cancel === null) {
+                            return null;
+                        }
+                        $payload = $cancel['payload'];
+                        if ($cancel['command'] !== 'abort' || $cancel['requestRef'] !== $request->requestRef
+                            || $cancel['attemptRef'] !== $request->attemptRef || $cancel['expiresAt'] !== $frame['expiresAt']
+                            || ! GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'reasonCode'])
+                            || $payload['schemaVersion'] !== 'public-core-gateway-upload-cancel/1'
+                            || ! in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true) || $payload['reasonCode'] === 'none'
+                            || $validator->validateBinding($request, $payload['binding']) !== null) {
+                            throw new LogicException('gateway_channel_unavailable');
+                        }
+
+                        return $payload['reasonCode'];
+                    },
+                    static function (string $reason) use ($channel, $httpSender, $isPublished): void {
+                        if (! $isPublished()) {
+                            $channel->publishGatewayLifecycle($httpSender, 'stopped');
+                        }
+                    },
                 );
             },
         );
         $response = $transport->send($request);
-        $channel->send('result', $request->requestRef, $request->attemptRef, $response->values(), $frame['expiresAt']);
+        if (time() >= $frame['expiresAt']) {
+            $channel->close();
+
+            return GatewayModelResponse::blocked($request, 'expired');
+        }
+        if (! $channel->isCleanupOnly()) {
+            $channel->send('result', $request->requestRef, $request->attemptRef, $response->values(), $frame['expiresAt']);
+        }
 
         return $response;
     }
@@ -377,6 +454,10 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                         return $response = GatewayModelResponse::blocked($request, $reason);
                     }
                     $provider = ($this->sender)($this->profile, $request->bodyBytes);
+                    $now = $this->clock === null ? time() : ($this->clock)();
+                    if (! is_int($now) || $now >= $request->expiresAt) {
+                        return $response = GatewayModelResponse::blocked($request, 'expired');
+                    }
                     try {
                         if (! GatewayModelRequest::hasExactKeys($provider, ['actionBytes', 'usage'])
                             || ! is_string($provider['actionBytes'])
