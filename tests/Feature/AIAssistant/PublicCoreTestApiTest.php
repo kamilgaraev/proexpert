@@ -77,7 +77,8 @@ final class PublicCoreTestApiTest extends TestCase
         self::assertFalse($body['data']['model_enabled']);
         self::assertFalse($body['data']['private_ready']);
         self::assertNull($body['data']['actual_model']);
-        self::assertSame([], $body['data']['fixtures']);
+        self::assertCount(2, $body['data']['fixtures']);
+        self::assertSame(7, array_sum(array_map(static fn (array $fixture): int => count($fixture['inputs']), $body['data']['fixtures'])));
     }
 
     #[DataProvider('forbiddenFields')]
