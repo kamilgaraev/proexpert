@@ -19,6 +19,8 @@ final class AssistantStatusSnapshotEpoch
     public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', self::CHANGE_TABLE, self::CONTROL_TABLE];
     public const FUNCTION_BODY = "\nBEGIN\n    INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    RETURN NULL;\nEND;\n";
 
+    private const PURGE_BATCH_SIZE = 10000;
+
     public function __construct(private readonly ?string $connectionName = null) {}
 
     public function capture(?array $usedRelations = null): array
@@ -82,7 +84,9 @@ final class AssistantStatusSnapshotEpoch
         }
 
         return $connection->transaction(function () use ($connection, $retentionSeconds): int {
-            $deleted = $connection->delete('DELETE FROM public.'.self::CHANGE_TABLE.' WHERE created_at < clock_timestamp() - make_interval(secs => ?)', [$retentionSeconds]);
+            $deleted = $connection->delete('DELETE FROM public.'.self::CHANGE_TABLE.' WHERE ctid = ANY(ARRAY('
+                .'SELECT ctid FROM public.'.self::CHANGE_TABLE.' WHERE created_at < statement_timestamp() - make_interval(secs => ?) '
+                .'ORDER BY created_at LIMIT ?))', [$retentionSeconds, self::PURGE_BATCH_SIZE]);
             if ($deleted > 0) {
                 $updated = $connection->update('UPDATE public.'.self::CONTROL_TABLE.' SET gc_generation = gc_generation + 1 WHERE id = 1');
                 if ($updated !== 1) { throw new LogicException('assistant_snapshot_control_missing'); }
