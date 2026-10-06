@@ -136,9 +136,11 @@ final readonly class PublicCoreContextBindings
         $before = substr($messages[0]['content'], 0, $quantities[1][0][1]);
         $after = substr($messages[0]['content'], $quantities[0][0][1] + strlen($quantities[0][0][0]));
         $number = '(?<![\p{L}\p{N}])[0-9]+(?:[.,][0-9]+)?';
-        $connectors = '(?<![\p{L}\p{N}])(?:от|до|или|либо|и|около|примерно|более|менее|свыше|минимум|максимум|or|to|from|between|about|approximately)';
-        if (preg_match('/(?:[+\-−±<>≤≥]\s*|'.$number.'\s*[\p{Pd}×*÷\/:=^]\s*|'.$number.'\s+|'.$connectors.'\s+)\z/iu', $before) !== 0
-            || preg_match('/\A\s*(?:[\p{Pd}+−±×*÷\/:=^<>≤≥]|(?:или|либо|и|до|or|to)\b)\s*[+\-−]?\s*[0-9]/iu', $after) !== 0) {
+        $connectors = '(?<![\p{L}\p{N}])(?:от|до|или|либо|и|более|менее|больше|меньше|свыше|минимум|максимум|or|to|from|between|least|most)(?![\p{L}\p{N}])';
+        $approximation = '(?<![\p{L}\p{N}])(?:приблизительн\p{L}*|ориентировочн\p{L}*|примерн\p{L}*|прибл|около|порядка|почти|approx(?:imate(?:ly)?)?|roughly|around|about|circa|nearly|almost)(?![\p{L}\p{N}])';
+        if (preg_match('/'.$approximation.'/iu', $messages[0]['content']) !== 0
+            || preg_match('/(?:[\p{Sm}\p{Pd}~～⁓*\/]|'.$number.'\s*[:=^]|'.$number.'\s+|'.$connectors.'|(?<![\p{L}\p{N}])[xх](?![\p{L}\p{N}]))[\s(\[]*\z/iu', $before) !== 0
+            || preg_match('/\A[\s)\]]*(?:[\p{Sm}~～⁓*\/]|[xх](?![\p{L}\p{N}])|(?:[\p{Pd}:]|(?:или|либо|и|до|or|to)(?![\p{L}\p{N}]))\s*[+\-−]?\s*[0-9])/iu', $after) !== 0) {
             return false;
         }
         $quantity = (int) $quantities[1][0][0];

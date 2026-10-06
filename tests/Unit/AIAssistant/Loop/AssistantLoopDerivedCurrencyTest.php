@@ -86,6 +86,27 @@ final class AssistantLoopDerivedCurrencyTest extends TestCase
             'lower bound' => ['Нужно от 12 м3 бетона В25.', '93600.00'],
             'upper bound' => ['Нужно до 12 м3 бетона В25.', '93600.00'],
             'approximate' => ['Нужно около 12 м3 бетона В25.', '93600.00'],
+            'approximate adverb' => ['Нужно приблизительно 12 м³ бетона В25.', '93600.00'],
+            'uppercase approximate adverb' => ['Нужно ПРИБЛИЗИТЕЛЬНО 12 м³ бетона В25.', '93600.00'],
+            'approximate before verb' => ['Приблизительно нужно 12 м³ бетона В25.', '93600.00'],
+            'approximate adjective' => ['Ориентировочный объём: 12 м³ бетона В25.', '93600.00'],
+            'approximate abbreviation' => ['Нужно прибл. 12 м³ бетона В25.', '93600.00'],
+            'approximate suffix' => ['Нужно 12 м³ бетона В25 (примерно).', '93600.00'],
+            'ascii approximation' => ['Нужно ~12 м³ бетона В25.', '93600.00'],
+            'unicode approximation' => ['Нужно ≈ 12 м³ бетона В25.', '93600.00'],
+            'unicode similar approximation' => ['Нужно ∼12 m³ бетона B25.', '93600.00'],
+            'unicode asymptotic approximation' => ['Нужно ≃12 m3 бетона B25.', '93600.00'],
+            'fullwidth approximation' => ['Нужно ～12 м³ бетона В25.', '93600.00'],
+            'parenthesized approximation' => ['Нужно ≈ (12 м³) бетона В25.', '93600.00'],
+            'english approximation' => ['Need roughly 12 m3 of B25 concrete.', '93600.00'],
+            'latin letter multiplication' => ['Нужно 2 x 12 m3 бетона B25.', '93600.00'],
+            'uppercase latin multiplication' => ['Нужно 2 X 12 m3 бетона B25.', '93600.00'],
+            'cyrillic letter multiplication' => ['Нужно 2 х 12 м3 бетона В25.', '93600.00'],
+            'uppercase cyrillic multiplication' => ['Нужно 2 Х 12 м3 бетона В25.', '93600.00'],
+            'nonbreaking multiplication spaces' => ["Нужно 2\u{00a0}x\u{00a0}12 m3 бетона B25.", '93600.00'],
+            'parenthesized multiplication' => ['Нужно 2 x (12 m3) бетона B25.', '93600.00'],
+            'trailing letter multiplication' => ['Нужно 12 м3 x 2 бетона В25.', '93600.00'],
+            'trailing cyrillic multiplication' => ['Нужно 12 м3 х 2 бетона В25.', '93600.00'],
         ];
     }
 
@@ -121,6 +142,8 @@ final class AssistantLoopDerivedCurrencyTest extends TestCase
     {
         foreach ([['Нужно 1 m3 бетона В25.', '7800.00', 'бетон В25 м3'],
             ['Нужно 1000000 м³ бетона В25.', '7800000000.00', 'бетон В25 м3'],
+            ['Проект №42, этап 2–4: нужно 1 m3 бетона B25.', '7800.00', 'бетон В25 м3'],
+            ['Проект 2026, этаж 4: нужно 1000000 м³ бетона В25.', '7800000000.00', 'бетон В25 м3'],
             ['Нужно 7 m³ бетона В30.', '57753.50', 'бетон В30 м3']] as [$text, $amount, $query]) {
             [$result] = $this->runQuote($text, $amount, null, 1, null, null, $query);
             self::assertSame('READY', $result['status']);
