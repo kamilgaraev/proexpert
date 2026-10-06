@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreBackendAuthorityFence;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreContextBindings;
 use App\Domain\Authorization\Models\RoleCondition;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\Project;
 use App\Services\Logging\LoggingService;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -24,6 +27,9 @@ final class PublicCoreAuthorizationFenceTest extends TestCase
     private AssistantRealAuthorizationFixture $fixture;
     private PublicCoreBackendAuthorityFence $fence;
     private Connection $writer;
+    private Repository $tickets;
+    private string $ticketKey;
+    private LoggingService $logging;
 
     public function beginDatabaseTransaction(): void
     {
@@ -37,7 +43,10 @@ final class PublicCoreAuthorizationFenceTest extends TestCase
         $this->fixture = AssistantRealAuthorizationFixture::create();
         $logging = Mockery::mock(LoggingService::class);
         $logging->shouldReceive('security', 'technical')->andReturnNull();
-        $this->fence = new PublicCoreBackendAuthorityFence(DB::connection(), $logging);
+        $this->logging = $logging;
+        $this->tickets = new Repository(new ArrayStore());
+        $this->ticketKey = bin2hex(random_bytes(32));
+        $this->fence = new PublicCoreBackendAuthorityFence(DB::connection(), $logging, $this->tickets, $this->ticketKey);
         config(['database.connections.mostai_fence_writer' => DB::connection()->getConfig()]);
         $this->writer = DB::connection('mostai_fence_writer');
         self::assertSame(DB::connection()->getDatabaseName(), $this->writer->getDatabaseName());
@@ -159,6 +168,249 @@ final class PublicCoreAuthorizationFenceTest extends TestCase
         RoleCondition::query()->create(['assignment_id' => $this->fixture->ownerAssignment->id,
             'condition_type' => 'location', 'condition_data' => ['allowed_ips' => ['127.0.0.1']], 'is_active' => true]);
         $this->assertDenied();
+    }
+
+    public function testBusyActorAcquireTimesOutWithoutRunningInspectorOrRollingBackWriter(): void
+    {
+        $this->writer->beginTransaction();
+        $this->writer->table('users')->where('id', $this->fixture->owner->id)->update(['is_active' => false]);
+        $started = hrtime(true);
+        $this->assertDenied();
+        self::assertLessThan(750, (hrtime(true) - $started) / 1000000);
+        self::assertSame(1, $this->writer->transactionLevel());
+        $this->writer->rollBack();
+        $this->inspect(static fn (): null => null);
+    }
+
+    public function testAmbiguousOrganizationContextAndCyclicHierarchyDenyBeforeCanonicalTraversal(): void
+    {
+        $duplicateId = DB::table('authorization_contexts')->insertGetId([
+            'type' => 'organization', 'resource_id' => $this->fixture->organization->id,
+        ]);
+        $this->assertDenied();
+        DB::table('authorization_contexts')->where('id', $duplicateId)->delete();
+        DB::table('authorization_contexts')->where('id', $this->fixture->ownerAssignment->context_id)
+            ->update(['parent_context_id' => $this->fixture->ownerAssignment->context_id]);
+        $this->assertDenied();
+    }
+
+    public function testInspectorFailureReleasesOnlyItsTransactionAndDoesNotIssueRuntimeAuthority(): void
+    {
+        try {
+            $this->inspect(static function (): never { throw new LogicException('source_inspection_failed'); });
+            self::fail('Inspector failure must not return a candidate');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+            self::assertSame('source_inspection_failed', $error->getPrevious()?->getMessage());
+        }
+        self::assertSame(0, DB::connection()->transactionLevel());
+        self::assertSame(1, $this->writer->table('users')->where('id', $this->fixture->owner->id)->update(['is_active' => false]));
+        self::assertFalse($this->fence->available());
+        $this->assertDenied();
+    }
+
+    public function testOwnedViewerTicketBootstrapReloadsRealActorAcrossFenceInstances(): void
+    {
+        $expiry = time() + 60;
+        $reference = $this->fence->issueViewerTicket($this->fixture->owner, $this->fixture->organization->id,
+            Request::create('/public-core/ticket', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']), $expiry);
+        $reopened = new PublicCoreBackendAuthorityFence(DB::connection(), $this->logging, $this->tickets, $this->ticketKey);
+        $reply = $reopened->viewerTicketBinding(self::ticketCheck($reference), $expiry);
+        self::assertSame(['schemaVersion', 'viewerTicketRef', 'currentViewer'], array_keys($reply));
+        self::assertSame('public-core-app-viewer-ticket-binding/1', $reply['schemaVersion']);
+        self::assertSame($reference, $reply['viewerTicketRef']);
+        self::assertSame(['authorized', 'viewerRef', 'organizationRef', 'authorizationRevision', 'policyRevision'],
+            array_keys($reply['currentViewer']));
+        self::assertTrue($reply['currentViewer']['authorized']);
+        self::assertMatchesRegularExpression('/\Aactor_[a-f0-9]{64}\z/D', $reply['currentViewer']['viewerRef']);
+        self::assertMatchesRegularExpression('/\Aorganization_[a-f0-9]{64}\z/D', $reply['currentViewer']['organizationRef']);
+        self::assertSame($reply, $this->fence->viewerTicketBinding(self::ticketCheck($reference), $expiry));
+        self::assertFalse($reopened->available());
+        $channel = 'channel_'.str_repeat('b', 32);
+        $frame = ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $channel, 'sequence' => 2,
+            'command' => 'check_binding', 'requestRef' => null, 'attemptRef' => null, 'expiresAt' => $expiry,
+            'payload' => self::ticketCheck($reference)];
+        self::assertSame($reply, $reopened->viewerTicketControl($frame, $channel, 2, $expiry, 'Processor'));
+        $this->fixture->ownerAssignment->update(['is_active' => false]);
+        $this->assertTicketDenied(self::ticketCheck($reference), $expiry);
+        self::assertSame(['schemaVersion' => 'public-core-app-viewer-ticket-denial/1', 'viewerTicketRef' => $reference,
+            'reasonCode' => 'authorization_changed'], $reopened->viewerTicketControl($frame, $channel, 2, $expiry, 'Processor'));
+    }
+
+    public function testTicketBootstrapRejectsPrincipalFlagsUploadSchemaAndUnknownOwnership(): void
+    {
+        $expiry = time() + 60;
+        $reference = $this->fence->issueViewerTicket($this->fixture->owner, $this->fixture->organization->id,
+            Request::create('/public-core/ticket', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']), $expiry);
+        $this->assertTicketDenied(self::ticketCheck($reference) + ['actorId' => $this->fixture->foreignOwner->id], $expiry);
+        $this->assertTicketDenied(self::ticketCheck($reference) + ['authorized' => true], $expiry);
+        $this->assertTicketDenied(['schemaVersion' => 'public-core-app-upload-acquire/1', 'viewerTicketRef' => $reference], $expiry);
+        $this->assertTicketDenied(self::ticketCheck('viewer_'.str_repeat('0', 48)), $expiry);
+        $this->assertTicketDenied(self::ticketCheck($reference), $expiry + 1);
+        $this->assertTicketDenied(self::ticketCheck($reference), time() - 1);
+    }
+
+    public function testTicketTamperWrongKeyAndExplicitRevocationCannotReuseCurrentViewer(): void
+    {
+        $expiry = time() + 60;
+        $reference = $this->fence->issueViewerTicket($this->fixture->owner, $this->fixture->organization->id,
+            Request::create('/public-core/ticket', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']), $expiry);
+        $stored = $this->tickets->get('ai-public-core:viewer:'.$reference);
+        $tampered = $stored;
+        $tampered['record']['actorId'] = $this->fixture->foreignOwner->id;
+        $this->tickets->put('ai-public-core:viewer:'.$reference, $tampered, 60);
+        $this->assertTicketDenied(self::ticketCheck($reference), $expiry);
+        $this->tickets->put('ai-public-core:viewer:'.$reference, $stored, 60);
+        $wrongKey = new PublicCoreBackendAuthorityFence(DB::connection(), $this->logging, $this->tickets, bin2hex(random_bytes(32)));
+        try {
+            $wrongKey->viewerTicketBinding(self::ticketCheck($reference), $expiry);
+            self::fail('Foreign ticket key cannot authorize a viewer');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+        }
+        $this->fence->revokeViewerTicket($reference);
+        $this->assertTicketDenied(self::ticketCheck($reference), $expiry);
+    }
+
+    public function testSourceHeldGrantReleasesOnlyAfterPrivateCompletionBeforeDelayedResponse(): void
+    {
+        $proofs = (object) ['records' => []];
+        [$binding, $expiry, $port] = $this->sourceAttempt($proofs);
+        $grant = $this->fence->acquireSourceGuard(self::sourceFrame($binding, $expiry, $port, 2, 'authorize_write',
+            ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]), $port);
+        self::assertSame(['schemaVersion', 'binding', 'currentViewer', 'guardRef', 'coverageEvidenceRef', 'uploadTimeoutMs'], array_keys($grant));
+        self::assertSame('public-core-app-upload-grant/1', $grant['schemaVersion']);
+        self::assertGreaterThan(0, $grant['uploadTimeoutMs']);
+        self::assertLessThanOrEqual(2000, $grant['uploadTimeoutMs']);
+        self::assertSame(1, DB::connection()->transactionLevel());
+        self::assertTrue($port->sourceOnly());
+        self::assertFalse($this->fence->available());
+        $write = fn (): int => $this->writer->table('user_role_assignments')->where('id', $this->fixture->ownerAssignment->id)
+            ->update(['is_active' => false]);
+        $this->assertWriterBlocked($write);
+        $completion = 'completion_'.bin2hex(random_bytes(24));
+        $proofs->records[$completion] = ['binding' => $binding, 'guardRef' => $grant['guardRef'],
+            'completionRef' => $completion, 'terminal' => 'uploaded'];
+        $release = $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, 3, 'upload_complete',
+            self::sourceRelease($binding, $grant['guardRef'], $completion)), $port);
+        self::assertSame(['schemaVersion' => 'public-core-app-upload-released/1', 'binding' => $binding,
+            'guardRef' => $grant['guardRef']], $release);
+        self::assertSame(0, DB::connection()->transactionLevel());
+        usleep(50000);
+        self::assertSame(1, $write());
+        $this->assertDenied();
+    }
+
+    public function testSourceCancelAndUnknownManualCompletionKeepGuardUntilPrivateStoppedRecord(): void
+    {
+        $proofs = (object) ['records' => []];
+        [$binding, $expiry, $port] = $this->sourceAttempt($proofs);
+        $grant = $this->fence->acquireSourceGuard(self::sourceFrame($binding, $expiry, $port, 2, 'authorize_write',
+            ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]), $port);
+        $cancel = $this->fence->cancelSourceGuard('gateway_unavailable');
+        self::assertSame(['schemaVersion' => 'public-core-app-upload-cancel-request/1', 'binding' => $binding,
+            'guardRef' => $grant['guardRef'], 'reasonCode' => 'gateway_unavailable'], $cancel);
+        $manual = 'completion_'.str_repeat('0', 48);
+        try {
+            $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, 3, 'upload_complete',
+                self::sourceRelease($binding, $grant['guardRef'], $manual)), $port);
+            self::fail('Manual completion cannot release a held scope');
+        } catch (LogicException $error) {
+            self::assertSame('receipt_unavailable', $error->getMessage());
+        }
+        self::assertSame(1, DB::connection()->transactionLevel());
+        $this->assertWriterBlocked(fn (): int => $this->writer->table('users')->where('id', $this->fixture->owner->id)
+            ->update(['is_active' => false]));
+        $completion = 'completion_'.bin2hex(random_bytes(24));
+        $proofs->records[$completion] = ['binding' => $binding, 'guardRef' => $grant['guardRef'],
+            'completionRef' => $completion, 'terminal' => 'stopped'];
+        $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, 4, 'upload_complete',
+            self::sourceRelease($binding, $grant['guardRef'], $completion)), $port);
+        self::assertSame(0, DB::connection()->transactionLevel());
+    }
+
+    public function testSourceHeldProtocolRejectsWrongPeerAndReplayedConsumedAttempt(): void
+    {
+        $proofs = (object) ['records' => []];
+        [$binding, $expiry, $port] = $this->sourceAttempt($proofs);
+        $wrongPeer = PublicCoreContextBindings::sourceAppControlPort($port->sourceChannel(), 'Gateway', static fn (): null => null);
+        try {
+            $this->fence->acquireSourceGuard(self::sourceFrame($binding, $expiry, $wrongPeer, 2, 'authorize_write',
+                ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]), $wrongPeer);
+            self::fail('Gateway role cannot acquire App backend scope');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+        }
+        self::assertSame(0, DB::connection()->transactionLevel());
+        $acquire = self::sourceFrame($binding, $expiry, $port, 2, 'authorize_write',
+            ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]);
+        $grant = $this->fence->acquireSourceGuard($acquire, $port);
+        $completion = 'completion_'.bin2hex(random_bytes(24));
+        $proofs->records[$completion] = ['binding' => $binding, 'guardRef' => $grant['guardRef'],
+            'completionRef' => $completion, 'terminal' => 'uploaded'];
+        $release = self::sourceFrame($binding, $expiry, $port, 3, 'upload_complete', self::sourceRelease($binding, $grant['guardRef'], $completion));
+        $this->fence->releaseSourceGuard($release, $port);
+        try {
+            $this->fence->releaseSourceGuard($release, $port);
+            self::fail('Released guard cannot release again');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+        }
+        $newPort = PublicCoreContextBindings::sourceAppControlPort($port->sourceChannel(), 'Processor', static fn (): null => null);
+        try {
+            $this->fence->acquireSourceGuard($acquire, $newPort);
+            self::fail('Consumed source attempt cannot acquire a second guard');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+        }
+        self::assertSame(0, DB::connection()->transactionLevel());
+    }
+
+    private function sourceAttempt(object $proofs): array
+    {
+        $expiry = time() + 60;
+        $ticket = $this->fence->issueViewerTicket($this->fixture->owner, $this->fixture->organization->id,
+            Request::create('/public-core/source-tcb', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']), $expiry);
+        $binding = ['viewerTicketRef' => $ticket, 'requestRef' => 'request_'.bin2hex(random_bytes(24)),
+            'attemptRef' => 'attempt_'.bin2hex(random_bytes(24)), 'projectionDigest' => str_repeat('a', 64),
+            'profileFingerprint' => str_repeat('b', 64),
+            'registryDigest' => 'f6bfc3c523c792ab9a80dbe2c3a950aebec1dfad65456243bbaadfcdb50a85fe',
+            'manifestGenerationRef' => 'source-only-fixture-generation/1'];
+        $this->fence->registerSourceAttempt($binding, $expiry);
+        $port = PublicCoreContextBindings::sourceAppControlPort('channel_'.bin2hex(random_bytes(24)), 'Processor',
+            static fn (string $ref): ?array => $proofs->records[$ref] ?? null);
+
+        return [$binding, $expiry, $port];
+    }
+
+    private static function sourceFrame(array $binding, int $expiry, PublicCoreContextBindings $port, int $sequence,
+        string $command, array $payload): array
+    {
+        return ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $port->sourceChannel(), 'sequence' => $sequence,
+            'command' => $command, 'requestRef' => $binding['requestRef'], 'attemptRef' => $binding['attemptRef'],
+            'expiresAt' => $expiry, 'payload' => $payload];
+    }
+
+    private static function sourceRelease(array $binding, string $guard, string $completion): array
+    {
+        return ['schemaVersion' => 'public-core-app-upload-release/1', 'binding' => $binding,
+            'guardRef' => $guard, 'completionRef' => $completion];
+    }
+
+    private static function ticketCheck(string $reference): array
+    {
+        return ['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => $reference];
+    }
+
+    private function assertTicketDenied(array $payload, int $expiry): void
+    {
+        try {
+            $this->fence->viewerTicketBinding($payload, $expiry);
+            self::fail('Unowned or stale ticket cannot authorize a viewer');
+        } catch (LogicException $error) {
+            self::assertContains($error->getMessage(), ['authorization_changed', 'expired']);
+        }
+        self::assertSame(0, DB::connection()->transactionLevel());
     }
 
     private function inspect(\Closure $operation): mixed

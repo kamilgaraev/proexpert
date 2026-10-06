@@ -26,6 +26,7 @@ use App\Services\Modules\PackageCatalogService;
 use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonImmutable;
 use Closure;
+use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Database\Connection;
 use Illuminate\Http\Request;
 use LogicException;
@@ -35,9 +36,13 @@ class PublicCoreBackendAuthorityFence
 {
     private const ACQUIRE_MS = 250;
     private const GUARD_MS = 2000;
+    private const TUPLE_KEYS = ['viewerTicketRef', 'requestRef', 'attemptRef', 'projectionDigest',
+        'profileFingerprint', 'registryDigest', 'manifestGenerationRef'];
+    private ?array $sourceHeld = null;
 
     public function __construct(private readonly ?Connection $connection = null,
-        private readonly ?LoggingService $logging = null)
+        private readonly ?LoggingService $logging = null, private readonly ?Repository $tickets = null,
+        private readonly ?string $ticketKey = null)
     {
     }
 
@@ -56,7 +61,130 @@ class PublicCoreBackendAuthorityFence
         throw new LogicException('authorization_changed');
     }
 
+    public function issueViewerTicket(User $actor, int $organizationId, Request $origin, int $expiresAt): string
+    {
+        $this->assertTicketStore();
+        if ($expiresAt <= time()) { throw new LogicException('expired'); }
+        $this->inspectSourceCandidate($actor, $organizationId, $origin, static fn (): null => null);
+        if ($expiresAt <= time()) { throw new LogicException('expired'); }
+        $reference = 'viewer_'.bin2hex(random_bytes(24));
+        $record = ['actorId' => $actor->id, 'organizationId' => $organizationId,
+            'originIp' => $origin->ip(), 'expiresAt' => $expiresAt];
+        if (!$this->tickets->put('ai-public-core:viewer:'.$reference,
+            ['record' => $record, 'mac' => $this->ticketMac($reference, $record)], $expiresAt - time())) {
+            throw new LogicException('authorization_changed');
+        }
+
+        return $reference;
+    }
+
+    public function viewerTicketBinding(array $payload, int $frameExpiresAt): array
+    {
+        if (count($payload) !== 2 || array_diff(array_keys($payload), ['schemaVersion', 'viewerTicketRef']) !== []
+            || ($payload['schemaVersion'] ?? null) !== 'public-core-app-viewer-ticket-check/1'
+            || !is_string($payload['viewerTicketRef'] ?? null)) {
+            throw new LogicException('authorization_changed');
+        }
+        $reference = $payload['viewerTicketRef'];
+        $record = $this->ownedViewerTicket($reference);
+        if ($frameExpiresAt <= time() || $frameExpiresAt > $record['expiresAt']) { throw new LogicException('expired'); }
+        $actor = User::query()->find($record['actorId']);
+        if (!$actor instanceof User) { throw new LogicException('authorization_changed'); }
+        $origin = Request::create('/public-core/owned-viewer', 'GET', [], [], [], ['REMOTE_ADDR' => $record['originIp']]);
+        $viewer = $this->inspectSourceCandidate($actor, $record['organizationId'], $origin,
+            fn (array $candidate): array => $this->sourceCurrentViewer($candidate));
+        if ($frameExpiresAt <= time() || $record !== $this->ownedViewerTicket($reference)) {
+            throw new LogicException('authorization_changed');
+        }
+
+        return ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1',
+            'viewerTicketRef' => $reference, 'currentViewer' => $viewer];
+    }
+
+    public function viewerTicketControl(array $frame, string $channelRef, int $sequence, int $expiresAt,
+        string $peerRole): array
+    {
+        $payload = PublicCoreContextBindings::appViewerBootstrapPayload($frame, $channelRef, $sequence, $expiresAt, $peerRole);
+        try {
+            return $this->viewerTicketBinding($payload, $expiresAt);
+        } catch (LogicException $error) {
+            return ['schemaVersion' => 'public-core-app-viewer-ticket-denial/1',
+                'viewerTicketRef' => $payload['viewerTicketRef'],
+                'reasonCode' => $error->getMessage() === 'expired' ? 'expired' : 'authorization_changed'];
+        }
+    }
+
+    public function revokeViewerTicket(string $reference): void
+    {
+        $this->ownedViewerTicket($reference);
+        if (!$this->tickets->forget('ai-public-core:viewer:'.$reference)) {
+            throw new LogicException('authorization_changed');
+        }
+    }
+
+    private function ownedViewerTicket(string $reference): array
+    {
+        $this->assertTicketStore();
+        if (preg_match('/\Aviewer_[a-f0-9]{48}\z/D', $reference) !== 1) {
+            throw new LogicException('authorization_changed');
+        }
+        $value = $this->tickets->get('ai-public-core:viewer:'.$reference);
+        if (!is_array($value) || count($value) !== 2 || !is_array($value['record'] ?? null)
+            || !is_string($value['mac'] ?? null)) {
+            throw new LogicException('authorization_changed');
+        }
+        $record = $value['record'];
+        if (count($record) !== 4 || array_diff(array_keys($record), ['actorId', 'organizationId', 'originIp', 'expiresAt']) !== []
+            || !is_int($record['actorId'] ?? null) || $record['actorId'] <= 0
+            || !is_int($record['organizationId'] ?? null) || $record['organizationId'] <= 0
+            || !is_string($record['originIp'] ?? null) || filter_var($record['originIp'], FILTER_VALIDATE_IP) === false
+            || !is_int($record['expiresAt'] ?? null) || $record['expiresAt'] <= time()) {
+            throw new LogicException('authorization_changed');
+        }
+        if (!hash_equals($this->ticketMac($reference, $record), $value['mac'])) {
+            throw new LogicException('authorization_changed');
+        }
+
+        return $record;
+    }
+
+    private function assertTicketStore(): void
+    {
+        if ($this->tickets === null || $this->ticketKey === null || strlen($this->ticketKey) < 32) {
+            throw new LogicException('authorization_changed');
+        }
+    }
+
+    private function ticketMac(string $reference, array $record): string
+    {
+        $this->assertTicketStore();
+
+        return hash_hmac('sha256', json_encode([$reference, $record], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE), $this->ownedTicketKey());
+    }
+
+    private function ownedTicketKey(): string
+    {
+        $this->assertTicketStore();
+
+        return $this->ticketKey ?? throw new LogicException('authorization_changed');
+    }
+
     public function inspectSourceCandidate(User $actor, int $organizationId, Request $origin, Closure $inspect): mixed
+    {
+        $scope = $this->startSourceScope($actor, $organizationId, $origin);
+        try {
+            $result = $inspect($scope['snapshot']);
+            $this->assertSourceScopeCurrent($scope);
+
+            return $result;
+        } catch (Throwable $error) {
+            throw new LogicException('authorization_changed', 0, $error);
+        } finally {
+            $this->connection->rollBack();
+        }
+    }
+
+    private function startSourceScope(User $actor, int $organizationId, Request $origin): array
     {
         if ($this->connection === null || $this->logging === null || $organizationId <= 0
             || $actor->id <= 0 || filter_var($origin->ip(), FILTER_VALIDATE_IP) === false) {
@@ -92,19 +220,167 @@ class PublicCoreBackendAuthorityFence
                 || hrtime(true) >= $guardDeadline || microtime(true) >= $wallExpiry) {
                 throw new LogicException('authorization_changed');
             }
-            $result = $inspect(['actorId' => $freshActor->id, 'organizationId' => $organizationId,
-                'policyGeneration' => $generation, 'remainingMs' => min($this->remainingMs($guardDeadline, hrtime(true)),
-                    (int) floor(($wallExpiry - microtime(true)) * 1000)), 'runtimeQualified' => false]);
-            if ($generation !== $this->policyGeneration() || hrtime(true) >= $guardDeadline
-                || microtime(true) >= $wallExpiry) {
+            $snapshot = ['actorId' => $freshActor->id, 'organizationId' => $organizationId,
+                'policyGeneration' => $generation,
+                'authorizationRevision' => hash('sha256', json_encode([$state, $origin->ip()], JSON_THROW_ON_ERROR)),
+                'remainingMs' => min($this->remainingMs($guardDeadline, hrtime(true)),
+                    (int) floor(($wallExpiry - microtime(true)) * 1000)), 'runtimeQualified' => false];
+
+            return ['snapshot' => $snapshot, 'guardDeadline' => $guardDeadline, 'wallExpiry' => $wallExpiry];
+        } catch (Throwable $error) {
+            $connection->rollBack();
+            throw new LogicException('authorization_changed', 0, $error);
+        }
+    }
+
+    public function registerSourceAttempt(array $binding, int $expiresAt): void
+    {
+        $this->assertSourceTuple($binding);
+        $ticket = $this->ownedViewerTicket($binding['viewerTicketRef']);
+        if ($expiresAt <= time() || $expiresAt > $ticket['expiresAt']) { throw new LogicException('expired'); }
+        $record = ['binding' => $binding, 'expiresAt' => $expiresAt];
+        $key = 'ai-public-core:source-attempt:'.hash('sha256', $binding['requestRef'].':'.$binding['attemptRef']);
+        if (!$this->tickets->add($key, ['record' => $record, 'mac' => $this->sourceAttemptMac($record)], $expiresAt - time())) {
+            throw new LogicException('authorization_changed');
+        }
+    }
+
+    public function acquireSourceGuard(array $frame, PublicCoreContextBindings $port): array
+    {
+        if ($this->sourceHeld !== null || !$port->sourceOnly()) { throw new LogicException('authorization_changed'); }
+        $binding = $frame['payload']['binding'] ?? null;
+        if (!is_array($binding)) { throw new LogicException('authorization_changed'); }
+        $attempt = $this->ownedSourceAttempt($binding);
+        $payload = $port->consumeSourceFrame($frame, 'authorize_write', $binding, $attempt['expiresAt']);
+        if (count($payload) !== 2 || array_diff(array_keys($payload), ['schemaVersion', 'binding']) !== []
+            || ($payload['schemaVersion'] ?? null) !== 'public-core-app-upload-acquire/1' || $payload['binding'] !== $binding) {
+            throw new LogicException('authorization_changed');
+        }
+        $ticket = $this->ownedViewerTicket($binding['viewerTicketRef']);
+        $actor = User::query()->find($ticket['actorId']);
+        if (!$actor instanceof User) { throw new LogicException('authorization_changed'); }
+        $origin = Request::create('/public-core/source-held', 'GET', [], [], [], ['REMOTE_ADDR' => $ticket['originIp']]);
+        $scope = $this->startSourceScope($actor, $ticket['organizationId'], $origin);
+        try {
+            $this->assertSourceScopeCurrent($scope);
+            $guard = 'guard_'.bin2hex(random_bytes(24));
+            $coverage = 'coverage_'.hash_hmac('sha256', json_encode([$binding, $guard, $scope['snapshot']], JSON_THROW_ON_ERROR),
+                $this->ownedTicketKey());
+            $viewer = $this->sourceCurrentViewer($scope['snapshot']);
+            $remaining = min($this->remainingMs($scope['guardDeadline'], hrtime(true)),
+                (int) floor(($scope['wallExpiry'] - microtime(true)) * 1000), max(0, ($attempt['expiresAt'] - time()) * 1000));
+            if ($remaining <= 0) { throw new LogicException('expired'); }
+            $consumedKey = 'ai-public-core:source-consumed:'.hash('sha256', $binding['requestRef'].':'.$binding['attemptRef']);
+            if (!$this->tickets->add($consumedKey, $guard, $attempt['expiresAt'] - time())) {
                 throw new LogicException('authorization_changed');
             }
+            $remaining = min($remaining, $this->remainingMs($scope['guardDeadline'], hrtime(true)),
+                (int) floor(($scope['wallExpiry'] - microtime(true)) * 1000));
+            if ($remaining <= 0) { throw new LogicException('expired'); }
+            $this->sourceHeld = ['scope' => $scope, 'binding' => $binding, 'guardRef' => $guard,
+                'expiresAt' => $attempt['expiresAt'], 'port' => $port];
 
-            return $result;
+            return ['schemaVersion' => 'public-core-app-upload-grant/1', 'binding' => $binding,
+                'currentViewer' => $viewer, 'guardRef' => $guard, 'coverageEvidenceRef' => $coverage,
+                'uploadTimeoutMs' => $remaining];
         } catch (Throwable $error) {
+            $this->connection->rollBack();
             throw new LogicException('authorization_changed', 0, $error);
-        } finally {
-            $connection->rollBack();
+        }
+    }
+
+    public function cancelSourceGuard(string $reasonCode): array
+    {
+        if ($this->sourceHeld === null || $reasonCode === 'none'
+            || !in_array($reasonCode, \App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource::REASONS, true)) {
+            throw new LogicException('authorization_changed');
+        }
+
+        return ['schemaVersion' => 'public-core-app-upload-cancel-request/1', 'binding' => $this->sourceHeld['binding'],
+            'guardRef' => $this->sourceHeld['guardRef'], 'reasonCode' => $reasonCode];
+    }
+
+    public function releaseSourceGuard(array $frame, PublicCoreContextBindings $port): array
+    {
+        $held = $this->sourceHeld;
+        if ($held === null || $held['port'] !== $port || !$port->sourceOnly()) {
+            throw new LogicException('authorization_changed');
+        }
+        $payload = $port->consumeSourceFrame($frame, 'upload_complete', $held['binding'], $held['expiresAt']);
+        if (count($payload) !== 4 || array_diff(array_keys($payload), ['schemaVersion', 'binding', 'guardRef', 'completionRef']) !== []
+            || ($payload['schemaVersion'] ?? null) !== 'public-core-app-upload-release/1'
+            || ($payload['binding'] ?? null) !== $held['binding'] || ($payload['guardRef'] ?? null) !== $held['guardRef']
+            || !\App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource::opaqueRef($payload['completionRef'] ?? null)) {
+            throw new LogicException('receipt_unavailable');
+        }
+        $proof = $port->sourceCompletion($payload['completionRef']);
+        if ($proof === null || count($proof) !== 4 || array_diff(array_keys($proof), ['binding', 'guardRef', 'completionRef', 'terminal']) !== []
+            || ($proof['binding'] ?? null) !== $held['binding'] || ($proof['guardRef'] ?? null) !== $held['guardRef']
+            || ($proof['completionRef'] ?? null) !== $payload['completionRef']
+            || !in_array($proof['terminal'] ?? null, ['uploaded', 'stopped'], true)) {
+            throw new LogicException('receipt_unavailable');
+        }
+        $this->connection->rollBack();
+        $this->sourceHeld = null;
+
+        return ['schemaVersion' => 'public-core-app-upload-released/1', 'binding' => $held['binding'], 'guardRef' => $held['guardRef']];
+    }
+
+    private function sourceCurrentViewer(array $candidate): array
+    {
+        return ['authorized' => true, 'viewerRef' => 'actor_'.hash_hmac('sha256', (string) $candidate['actorId'], $this->ownedTicketKey()),
+            'organizationRef' => 'organization_'.hash_hmac('sha256', (string) $candidate['organizationId'], $this->ownedTicketKey()),
+            'authorizationRevision' => $candidate['authorizationRevision'], 'policyRevision' => $candidate['policyGeneration']];
+    }
+
+    private function assertSourceScopeCurrent(array $scope): void
+    {
+        if ($scope['snapshot']['policyGeneration'] !== $this->policyGeneration() || hrtime(true) >= $scope['guardDeadline']
+            || microtime(true) >= $scope['wallExpiry']) {
+            throw new LogicException('authorization_changed');
+        }
+    }
+
+    private function ownedSourceAttempt(array $binding): array
+    {
+        $this->assertSourceTuple($binding);
+        $this->assertTicketStore();
+        $value = $this->tickets->get('ai-public-core:source-attempt:'.hash('sha256', $binding['requestRef'].':'.$binding['attemptRef']));
+        if (!is_array($value) || count($value) !== 2 || !is_array($value['record'] ?? null) || !is_string($value['mac'] ?? null)) {
+            throw new LogicException('authorization_changed');
+        }
+        $record = $value['record'];
+        if (count($record) !== 2 || ($record['binding'] ?? null) !== $binding || !is_int($record['expiresAt'] ?? null)
+            || $record['expiresAt'] <= time() || !hash_equals($this->sourceAttemptMac($record), $value['mac'])) {
+            throw new LogicException('authorization_changed');
+        }
+
+        return $record;
+    }
+
+    private function sourceAttemptMac(array $record): string
+    {
+        return hash_hmac('sha256', json_encode(['ai-public-core-source-attempt', $record], JSON_THROW_ON_ERROR), $this->ownedTicketKey());
+    }
+
+    private function assertSourceTuple(array $binding): void
+    {
+        if (count($binding) !== 7 || array_diff(array_keys($binding), self::TUPLE_KEYS) !== []) {
+            throw new LogicException('authorization_changed');
+        }
+        foreach (['viewerTicketRef', 'requestRef', 'attemptRef'] as $key) {
+            if (!\App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource::opaqueRef($binding[$key])) {
+                throw new LogicException('authorization_changed');
+            }
+        }
+        foreach (['projectionDigest', 'profileFingerprint', 'registryDigest'] as $key) {
+            if (!is_string($binding[$key]) || preg_match('/\A[a-f0-9]{64}\z/D', $binding[$key]) !== 1) {
+                throw new LogicException('authorization_changed');
+            }
+        }
+        if (!is_string($binding['manifestGenerationRef']) || strlen($binding['manifestGenerationRef']) > 160
+            || preg_match('/\A[A-Za-z0-9._\/:\-]+\z/D', $binding['manifestGenerationRef']) !== 1) {
+            throw new LogicException('authorization_changed');
         }
     }
 
@@ -161,7 +437,10 @@ class PublicCoreBackendAuthorityFence
             JOIN pg_class parent ON parent.oid = c.confrelid
             JOIN pg_namespace ns ON ns.oid = child.relnamespace
             JOIN pg_namespace pns ON pns.oid = parent.relnamespace
-            WHERE c.contype = 'f' AND ns.nspname = 'public' AND pns.nspname = 'public'", [], false);
+            WHERE c.contype = 'f' AND ns.nspname = 'public' AND pns.nspname = 'public'
+                AND child.relname IN ('organization_user', 'user_role_assignments', 'role_conditions',
+                    'organization_custom_roles', 'project_user', 'organization_commercial_accounts',
+                    'organization_package_subscriptions')", [], false);
         $required = [
             ['organization_user', ['user_id'], 'users', ['id']],
             ['organization_user', ['organization_id'], 'organizations', ['id']],
@@ -191,7 +470,9 @@ class PublicCoreBackendAuthorityFence
                 WHERE k.n <= i.indnkeyatts ORDER BY k.n))::text AS columns
             FROM pg_index i JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace ns ON ns.oid = t.relnamespace
             WHERE ns.nspname = 'public' AND i.indisunique AND i.indisvalid AND i.indisready
-                AND i.indpred IS NULL AND i.indexprs IS NULL AND i.indimmediate", [], false);
+                AND i.indpred IS NULL AND i.indexprs IS NULL AND i.indimmediate
+                AND t.relname IN ('users', 'organizations', 'modules', 'organization_user', 'organization_custom_roles',
+                    'user_role_assignments', 'project_user', 'organization_commercial_accounts', 'organization_package_subscriptions')", [], false);
         foreach (['users' => ['id'], 'organizations' => ['id'], 'modules' => ['slug'],
             'organization_user' => ['user_id', 'organization_id'],
             'organization_custom_roles' => ['organization_id', 'slug'],
@@ -228,7 +509,7 @@ class PublicCoreBackendAuthorityFence
             throw new LogicException('authorization_changed');
         }
         $this->setAcquireBudget($connection, $deadline);
-        $connection->table('organization_user')->where('user_id', $actorId)->orderBy('organization_id')->lockForUpdate()->get();
+        $memberships = $connection->table('organization_user')->where('user_id', $actorId)->orderBy('organization_id')->lockForUpdate()->get();
         $this->setAcquireBudget($connection, $deadline);
         $assignments = $connection->table('user_role_assignments')->where('user_id', $actorId)->orderBy('id')->lockForUpdate()->get();
         $contexts = $connection->table('authorization_contexts')->whereIn('id', $assignments->pluck('context_id'))
@@ -271,7 +552,7 @@ class PublicCoreBackendAuthorityFence
             throw new LogicException('authorization_changed');
         }
         $this->setAcquireBudget($connection, $deadline);
-        $connection->table('organization_custom_roles')->whereIn('organization_id', $organizationIds)->orderBy('id')->lockForUpdate()->get();
+        $customRoles = $connection->table('organization_custom_roles')->whereIn('organization_id', $organizationIds)->orderBy('id')->lockForUpdate()->get();
         $this->setAcquireBudget($connection, $deadline);
         $module = $connection->table('modules')->where('slug', 'ai-assistant')->lockForUpdate()->get();
         if ($module->count() !== 1) { throw new LogicException('authorization_changed'); }
@@ -281,14 +562,19 @@ class PublicCoreBackendAuthorityFence
         $this->setAcquireBudget($connection, $deadline);
         $accounts = $connection->table('organization_commercial_accounts')->whereIn('organization_id', $organizationIds)
             ->orderBy('id')->lockForUpdate()->get();
+        $links = collect();
+        $projects = collect();
         if ($conditions->where('is_active', true)->contains('condition_type', 'project_count')) {
             $this->setAcquireBudget($connection, $deadline);
             $links = $connection->table('project_user')->where('user_id', $actorId)->orderBy('project_id')->lockForUpdate()->get();
             $this->setAcquireBudget($connection, $deadline);
-            $connection->table('projects')->whereIn('id', $links->pluck('project_id'))->orderBy('id')->lockForUpdate()->get();
+            $projects = $connection->table('projects')->whereIn('id', $links->pluck('project_id'))->orderBy('id')->lockForUpdate()->get();
         }
 
-        return compact('assignments', 'conditions', 'subscriptions', 'accounts');
+        $contexts = $contexts->sortKeys();
+
+        return compact('users', 'organizations', 'memberships', 'contexts', 'assignments', 'conditions',
+            'customRoles', 'module', 'subscriptions', 'accounts', 'links', 'projects');
     }
 
     private function predicateExpiry(array $state): float
@@ -331,6 +617,19 @@ class PublicCoreBackendAuthorityFence
     {
         $files = array_merge(glob(config_path('RoleDefinitions/*/*.json')) ?: [],
             glob(config_path('Packages/*.json')) ?: [], glob(config_path('ModuleList/*.json')) ?: []);
+        foreach ([self::class, AssistantDataAccessPolicy::class, AuthorizationService::class, PermissionResolver::class,
+            RoleScanner::class, RoleCondition::class, UserRoleAssignment::class, AuthorizationContext::class,
+            OrganizationCustomRole::class, OrganizationEntitlementService::class, PackageCatalogService::class,
+            \App\Domain\Authorization\Services\RolePermissionNormalizer::class,
+            \App\Domain\Authorization\ValueObjects\ModulePermissionAliases::class,
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::class,
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry::class,
+            User::class, Organization::class, OrganizationPackageSubscription::class, OrganizationCommercialAccount::class,
+            Module::class, Project::class] as $class) {
+            $file = (new \ReflectionClass($class))->getFileName();
+            if ($file === false) { throw new LogicException('authorization_changed'); }
+            $files[] = $file;
+        }
         sort($files);
         $hashes = [];
         foreach ($files as $file) {

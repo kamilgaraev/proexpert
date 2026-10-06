@@ -42,7 +42,9 @@ final class PublicCoreTestController extends Controller
         $this->assertEmptyInput($request);
         [$viewer, $organizationId] = $this->viewer($request);
 
-        return AdminResponse::success(new PublicCoreRuntimeResource($this->requests->poll($viewer, $organizationId, $request_ref)));
+        $result = $this->requests->poll($viewer, $organizationId, $request_ref);
+
+        return $result instanceof JsonResponse ? $result : AdminResponse::success(new PublicCoreRuntimeResource($result));
     }
 
     private function viewer(Request $request): array

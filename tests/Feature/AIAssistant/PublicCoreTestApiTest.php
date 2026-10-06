@@ -6,6 +6,7 @@ namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\PublicCoreTestController;
 use App\BusinessModules\Features\AIAssistant\Http\Requests\PublicCoreTestRequest;
+use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime;
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRequestService;
@@ -79,6 +80,23 @@ final class PublicCoreTestApiTest extends TestCase
         self::assertNull($body['data']['actual_model']);
         self::assertCount(2, $body['data']['fixtures']);
         self::assertSame(7, array_sum(array_map(static fn (array $fixture): int => count($fixture['inputs']), $body['data']['fixtures'])));
+    }
+
+    public function testCompletedSourceCustodyControllerDeliversExactCommittedBodyWithoutSecondWrapper(): void
+    {
+        $stage = PublicCoreRuntimeResource::stageCompletedEnvelope(PublicCoreRuntimeBindingsTest::completed());
+        $runtime = Mockery::mock(PublicCoreAssistantRuntime::class);
+        $runtime->shouldReceive('poll')->once()->with($this->viewer, 37, 'request_'.str_repeat('a', 32))
+            ->andReturn(PublicCoreRuntimeResource::committedEnvelopeResponse($stage['envelopeBytes'], $stage['envelopeDigest']));
+        $permissions = Mockery::mock(AIPermissionChecker::class);
+        $permissions->shouldReceive('canUseAssistant')->with($this->viewer, 37, true)->andReturnUsing(fn (): bool => $this->allowed);
+        $this->application->instance(PublicCoreRequestService::class, new PublicCoreRequestService($permissions, $runtime));
+        $response = $this->send('GET', '/api/v1/admin/ai-assistant/public-core/requests/request_'.str_repeat('a', 32));
+        self::assertSame($stage['envelopeBytes'], $response->getContent());
+        self::assertSame($stage['envelopeDigest'], hash('sha256', $response->getContent()));
+        $this->allowed = false;
+        $this->expectException(AuthorizationException::class);
+        $this->send('GET', '/api/v1/admin/ai-assistant/public-core/requests/request_'.str_repeat('a', 32));
     }
 
     #[DataProvider('forbiddenFields')]

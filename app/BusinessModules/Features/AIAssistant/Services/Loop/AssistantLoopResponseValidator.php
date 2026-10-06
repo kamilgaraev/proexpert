@@ -11,7 +11,7 @@ use LogicException;
 
 final readonly class AssistantLoopResponseValidator
 {
-    public function __construct(private ?Closure $trustedValidator = null)
+    public function __construct(private ?Closure $trustedValidator = null, private ?Closure $trustedDerivedCurrency = null)
     {
     }
 
@@ -68,7 +68,17 @@ final readonly class AssistantLoopResponseValidator
                     }
                 }
                 if (!$found) {
-                    return ['status' => 'repair', 'reason' => 'claims_invalid'];
+                    if ($this->trustedDerivedCurrency === null) {
+                        return ['status' => 'repair', 'reason' => 'claims_invalid'];
+                    }
+                    $fresh(false);
+                    try {
+                        $derived = ($this->trustedDerivedCurrency)($claim, $action, $receipt, $latest) === true;
+                    } catch (\Throwable) {
+                        $derived = false;
+                    }
+                    $fresh(false);
+                    if (!$derived) { return ['status' => 'repair', 'reason' => 'claims_invalid']; }
                 }
             }
         }

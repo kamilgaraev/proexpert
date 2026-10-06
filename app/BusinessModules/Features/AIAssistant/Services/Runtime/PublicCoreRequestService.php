@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeRes
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 
 final class PublicCoreRequestService
@@ -48,7 +49,7 @@ final class PublicCoreRequestService
         return $this->runtime->submit($viewer, $organizationId, $command);
     }
 
-    public function poll(User $viewer, int $organizationId, string $requestRef): array
+    public function poll(User $viewer, int $organizationId, string $requestRef): array|JsonResponse
     {
         $this->assertViewer($viewer, $organizationId);
         if (!PublicCoreRuntimeResource::opaqueRef($requestRef)) {

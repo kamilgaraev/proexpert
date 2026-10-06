@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Http\Resources;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Http\Responses\AdminResponse;
 use LogicException;
 
 final class PublicCoreRuntimeResource extends JsonResource
@@ -36,6 +38,70 @@ final class PublicCoreRuntimeResource extends JsonResource
             'status' => 'blocked', 'reason_code' => $reason, 'request_ref' => null,
             'public_session_ref' => null, 'reply' => null, 'sources' => [], 'trace' => [],
         ];
+    }
+
+    public static function stageCompletedEnvelope(array $dto): array
+    {
+        $keys = ['schema_version', 'mode', 'data_scope', 'status', 'reason_code', 'request_ref',
+            'public_session_ref', 'reply', 'sources', 'trace'];
+        if (count($dto) !== 10 || array_diff(array_keys($dto), $keys) !== [] || ($dto['status'] ?? null) !== 'completed') {
+            throw new LogicException('public_core_response_invalid');
+        }
+        $resource = new self($dto);
+        $validated = $resource->resolve();
+        if ($validated != $dto) { throw new LogicException('public_core_response_invalid'); }
+        $bytes = AdminResponse::success($validated)->getContent();
+        if (!is_string($bytes) || $bytes === '' || strlen($bytes) > 262144) {
+            throw new LogicException('public_core_response_invalid');
+        }
+
+        return ['envelopeBytes' => $bytes, 'envelopeDigest' => hash('sha256', $bytes)];
+    }
+
+    public static function stageCoreCompletedEnvelope(string $resultBytes, array $binding): array
+    {
+        $bindingKeys = ['schemaVersion', 'requestRef', 'sessionRef', 'processRef', 'ownerDigest', 'profileFingerprint',
+            'registryDigest', 'manifestGenerationRef', 'runtimeGenerationRef', 'runtimeInstanceRef', 'resultDigest'];
+        if (count($binding) !== 11 || array_diff(array_keys($binding), $bindingKeys) !== []
+            || ($binding['schemaVersion'] ?? null) !== 'public-core-result-binding/1'
+            || !self::opaqueRef($binding['requestRef'] ?? null) || !self::opaqueRef($binding['sessionRef'] ?? null)
+            || !is_string($binding['resultDigest'] ?? null) || !hash_equals($binding['resultDigest'], hash('sha256', $resultBytes))
+            || $resultBytes === '' || strlen($resultBytes) > 131072) {
+            throw new LogicException('public_core_response_invalid');
+        }
+        $core = json_decode($resultBytes, true, 64, JSON_THROW_ON_ERROR);
+        if (!is_array($core) || array_keys($core) !== ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed']
+            || $core['status'] !== 'completed' || $core['reasonCode'] !== 'none' || $core['request_ref'] !== $binding['requestRef']
+            || $core['transportAllowed'] !== false || !self::text($core['reply'], 32768) || trim($core['reply']) === ''
+            || strlen($core['reply']) > 32768 || !is_array($core['trace']) || !array_is_list($core['trace']) || count($core['trace']) > 64
+            || json_encode($core, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) !== $resultBytes) {
+            throw new LogicException('public_core_response_invalid');
+        }
+        foreach ($core['trace'] as $event) {
+            if (!is_array($event) || count($event) !== 4 || array_diff(array_keys($event), ['action', 'step', 'tokens', 'callRef']) !== []
+                || !in_array($event['action'] ?? null, ['plan', 'tool', 'refine', 'summary', 'final', 'repair', 'ready', 'blocked'], true)
+                || !is_int($event['step'] ?? null) || $event['step'] < 0 || !is_int($event['tokens'] ?? null) || $event['tokens'] < 0
+                || !array_key_exists('callRef', $event) || ($event['callRef'] !== null
+                    && (!is_string($event['callRef']) || preg_match('/\Aref_[a-f0-9]{32}\z/D', $event['callRef']) !== 1))) {
+                throw new LogicException('public_core_response_invalid');
+            }
+        }
+        $dto = self::common() + ['status' => 'completed', 'reason_code' => 'none', 'request_ref' => $binding['requestRef'],
+            'public_session_ref' => $binding['sessionRef'], 'reply' => $core['reply'], 'sources' => [], 'trace' => $core['trace']];
+        $envelope = self::stageCompletedEnvelope($dto);
+
+        return ['binding' => $binding, 'resultDigest' => $binding['resultDigest'],
+            'envelopeDigest' => $envelope['envelopeDigest'], 'bodyBytes' => $envelope['envelopeBytes']];
+    }
+
+    public static function committedEnvelopeResponse(string $bytes, string $expectedDigest): JsonResponse
+    {
+        if ($bytes === '' || strlen($bytes) > 262144 || preg_match('/\A[a-f0-9]{64}\z/D', $expectedDigest) !== 1
+            || !hash_equals($expectedDigest, hash('sha256', $bytes))) {
+            throw new LogicException('public_core_response_invalid');
+        }
+
+        return JsonResponse::fromJsonString($bytes, 200);
     }
 
     public function toArray(Request $request): array

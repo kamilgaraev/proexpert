@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeRes
 use App\BusinessModules\Features\AIAssistant\Jobs\ExecutePublicCoreTestJob;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreBackendAuthorityFence;
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRequestService;
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreContextBindings;
 use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreGatewayModelDriver;
@@ -36,6 +37,7 @@ use LogicException;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Tests\Unit\AIAssistant\Loop\OfflineLoopFixtures;
 
 final class PublicCoreRuntimeBindingsTest extends TestCase
 {
@@ -69,6 +71,190 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         Facade::setFacadeApplication($app);
 
         return $app;
+    }
+
+    public function testAppViewerBootstrapFrameRequiresOwnedChannelSequencePhaseAndRole(): void
+    {
+        $reference = 'viewer_'.str_repeat('a', 48);
+        $channel = 'channel_'.str_repeat('b', 32);
+        $expiry = time() + 60;
+        $frame = ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $channel, 'sequence' => 2,
+            'command' => 'check_binding', 'requestRef' => null, 'attemptRef' => null, 'expiresAt' => $expiry,
+            'payload' => ['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => $reference]];
+        self::assertSame($frame['payload'], PublicCoreContextBindings::appViewerBootstrapPayload($frame, $channel, 2, $expiry, 'Processor'));
+        $invalid = [
+            [$frame, $channel, 2, $expiry, 'Gateway'],
+            [$frame, 'channel_'.str_repeat('c', 32), 2, $expiry, 'Processor'],
+            [$frame, $channel, 3, $expiry, 'Processor'],
+            [$frame, $channel, 2, $expiry + 1, 'Processor'],
+            [array_replace($frame, ['command' => 'authorize_write']), $channel, 2, $expiry, 'Processor'],
+            [array_replace($frame, ['requestRef' => 'request_'.str_repeat('d', 32)]), $channel, 2, $expiry, 'Processor'],
+            [array_replace($frame, ['attemptRef' => 'attempt_'.str_repeat('e', 32)]), $channel, 2, $expiry, 'Processor'],
+            [array_replace($frame, ['sequence' => 1]), $channel, 1, $expiry, 'Processor'],
+            [array_replace($frame, ['payload' => ['schemaVersion' => 'public-core-app-upload-acquire/1', 'viewerTicketRef' => $reference]]),
+                $channel, 2, $expiry, 'Processor'],
+            [$frame + ['authorized' => true], $channel, 2, $expiry, 'Processor'],
+        ];
+        foreach ($invalid as [$value, $expectedChannel, $expectedSequence, $expectedExpiry, $role]) {
+            try {
+                PublicCoreContextBindings::appViewerBootstrapPayload($value, $expectedChannel, $expectedSequence, $expectedExpiry, $role);
+                self::fail('Bootstrap cannot accept wrong channel, role, sequence or upload phase');
+            } catch (LogicException $error) {
+                self::assertSame('authorization_changed', $error->getMessage());
+            }
+        }
+    }
+
+    public function testProcessorFactoryComposesNativeContextLoopAndMaterialPortsWithoutQualifyingTransport(): void
+    {
+        $fixture = new OfflineLoopFixtures();
+        $tokenizer = static fn (string $json, array $identity): array => $identity + ['tokens' => strlen($json)];
+        $context = $fixture->context->service();
+        $loop = PublicCoreContextBindings::processorLoop($context,
+            static fn (?string $ref): array => $fixture->authority($ref), $tokenizer,
+            static function (array $input) use ($fixture): array {
+                return $fixture->driverCalls++ === 0 ? OfflineLoopFixtures::searchAction() : OfflineLoopFixtures::priceAnswer($input);
+            }, $fixture->adapter(), $fixture->validator(), static fn (): int => $fixture->now,
+            static function (array $binding, array $conditions, array $evidence) use ($fixture): ?array {
+                if (!$fixture->gateAllowed || $fixture->corpus->guard($fixture->corpus->context()) !== null) { return null; }
+
+                return ['authority' => $fixture->authority($binding['receipt']['contextRef']),
+                    'now' => $fixture->now, 'privateContext' => $fixture->corpus->context()];
+            });
+        $result = $loop->run('offline', $fixture->context->request());
+        self::assertSame('READY', $result['status'], json_encode($result, JSON_THROW_ON_ERROR));
+        self::assertSame('Бетон В25 стоит 7800.00 RUB за м³.', $result['reply']);
+        self::assertFalse($result['transportAllowed']);
+        self::assertSame('offline-synthetic', $fixture->context->profile['qualification']);
+        self::assertSame(2, $fixture->driverCalls);
+    }
+
+    public function testFrozenLoopRejectsCalculatedQuoteClaimBeforePermissiveSemanticCallback(): void
+    {
+        $fixture = new OfflineLoopFixtures();
+        $text = 'Расчёт для 12 м³: 93600.00 RUB.';
+        $fixture->acceptedTexts[] = $text;
+        $fixture->actions = [OfflineLoopFixtures::searchAction(), static function (array $input) use ($text): array {
+            $answer = OfflineLoopFixtures::priceAnswer($input);
+            $answer['text'] = $text;
+            $answer['claims'][0]['value'] = '93600.00';
+
+            return $answer;
+        }];
+        $result = $fixture->loop()->run('offline', $fixture->context->request());
+        self::assertNotSame('READY', $result['status']);
+        self::assertSame([], $fixture->validatedActions);
+        self::assertSame('7800.00', $fixture->corpus->records()[0]->decimal);
+    }
+
+    public function testCompletedEnvelopeStagingAndCommittedResponsePreserveExactWholeBodyBytes(): void
+    {
+        $dto = self::completed();
+        $dto['reply'] = 'Проверка «МОСТ»: /тест и emoji 🔎.';
+        $stage = PublicCoreRuntimeResource::stageCompletedEnvelope($dto);
+        $response = PublicCoreRuntimeResource::committedEnvelopeResponse($stage['envelopeBytes'], $stage['envelopeDigest']);
+        self::assertSame($stage['envelopeBytes'], $response->getContent());
+        self::assertSame($stage['envelopeDigest'], hash('sha256', $response->getContent()));
+        self::assertSame(['success' => true, 'message' => null, 'data' => $dto], $response->getData(true));
+        $this->expectExceptionMessage('public_core_response_invalid');
+        PublicCoreRuntimeResource::committedEnvelopeResponse($stage['envelopeBytes'].' ', $stage['envelopeDigest']);
+    }
+
+    public function testCompletedEnvelopeRejectsPrivateOrUnknownFieldsBeforeStaging(): void
+    {
+        $this->expectExceptionMessage('public_core_response_invalid');
+        PublicCoreRuntimeResource::stageCompletedEnvelope(self::completed() + ['publicationRef' => 'publication_'.str_repeat('a', 32)]);
+    }
+
+    public function testSourcePublicationReturnsPrivateReceiptAndResolvesWholeBodyOnlyForCurrentInflightDelivery(): void
+    {
+        [$runtime, $delivery, $context, $input, $retained, $port, $candidate] = self::sourcePublicationFixture();
+        $calls = (object) ['prepare' => 0];
+        $publish = $runtime->sourcePublicationCallback($delivery, $port);
+        $receipt = $publish($input, $retained, static function () use ($calls, $candidate): array { $calls->prepare++; return $candidate; });
+        self::assertIsArray($receipt);
+        self::assertSame(['schemaVersion', 'binding', 'publicationRef'], array_keys($receipt));
+        self::assertSame(1, $calls->prepare);
+        $stage = PublicCoreRuntimeResource::stageCoreCompletedEnvelope($candidate['resultBytes'], $candidate['binding']);
+        self::assertNotSame($stage['resultDigest'], $stage['envelopeDigest']);
+        $wrongFrame = array_replace($context, ['sequence' => $context['sequence'] + 1]);
+        self::assertNull($runtime->resolveSourcePublication($delivery, $receipt, $wrongFrame));
+        $response = $runtime->resolveSourcePublication($delivery, $receipt, $context);
+        self::assertNotNull($response);
+        self::assertSame($stage['bodyBytes'], $response->getContent());
+        self::assertSame([], $response->getData(true)['data']['sources']);
+        self::assertArrayNotHasKey('publicationRef', $response->getData(true)['data']);
+        self::assertNull($runtime->resolveSourcePublication($delivery, $receipt, $context));
+        self::assertNull($publish($input, $retained, static fn (): array => $candidate));
+    }
+
+    public function testSourcePublicationDeniesLastPrepareMutationReentryMissingPortAndAlteredDigest(): void
+    {
+        foreach (['source', 'owner', 'reentry', 'digest', 'missing'] as $failure) {
+            [$runtime, $delivery, $context, $input, $retained, $port, $candidate, $live, $owner] = self::sourcePublicationFixture();
+            $publish = $runtime->sourcePublicationCallback($delivery, $failure === 'missing' ? null : $port);
+            $receipt = $publish($input, $retained, static function () use ($failure, $live, $owner, $publish, $input, $retained, $candidate): array {
+                if ($failure === 'source') { $live->guardInput['resultBinding']['registryDigest'] = str_repeat('f', 64); }
+                if ($failure === 'owner') { $owner->viewer['authorized'] = false; }
+                if ($failure === 'reentry') { $publish($input, $retained, static fn (): array => $candidate); }
+                if ($failure === 'digest') { $candidate['resultBytes'] .= ' '; }
+
+                return $candidate;
+            });
+            self::assertNull($receipt);
+            self::assertNull($runtime->resolveSourcePublication($delivery,
+                ['schemaVersion' => 'public-core-result-publication/1', 'binding' => $input['resultBinding'],
+                    'publicationRef' => 'publication_'.str_repeat('a', 48)], $context));
+        }
+    }
+
+    public function testMalformedCoreTraceCannotBePublishedAsUiTrace(): void
+    {
+        [, , , , , , $candidate] = self::sourcePublicationFixture();
+        $core = json_decode($candidate['resultBytes'], true, 64, JSON_THROW_ON_ERROR);
+        $core['trace'][0]['privatePlan'] = 'PRIVATE';
+        $bytes = json_encode($core, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $binding = array_replace($candidate['binding'], ['resultDigest' => hash('sha256', $bytes)]);
+        $this->expectExceptionMessage('public_core_response_invalid');
+        PublicCoreRuntimeResource::stageCoreCompletedEnvelope($bytes, $binding);
+    }
+
+    private static function sourcePublicationFixture(): array
+    {
+        $owner = (object) ['viewer' => ['authorized' => true, 'viewerRef' => 'actor_'.str_repeat('a', 64),
+            'organizationRef' => 'organization_'.str_repeat('b', 64), 'authorizationRevision' => str_repeat('c', 64),
+            'policyRevision' => str_repeat('d', 64)]];
+        $fence = new class($owner) extends PublicCoreBackendAuthorityFence {
+            public function __construct(private readonly object $sourceTcbOwner) { parent::__construct(); }
+            public function viewerTicketBinding(array $payload, int $frameExpiresAt): array
+            {
+                return ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1',
+                    'viewerTicketRef' => $payload['viewerTicketRef'], 'currentViewer' => $this->sourceTcbOwner->viewer];
+            }
+        };
+        $runtime = new PublicCoreAssistantRuntime($fence);
+        $context = ['viewerTicketRef' => 'viewer_'.str_repeat('a', 48), 'requestRef' => 'request_'.str_repeat('b', 48),
+            'sessionRef' => 'session_'.str_repeat('c', 48), 'channelRef' => 'channel_'.str_repeat('d', 48),
+            'sequence' => 2, 'genuineExpiresAt' => time() + 60];
+        $core = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $context['requestRef'],
+            'reply' => 'Проверенный ответ МОСТ / пример.', 'trace' => [['action' => 'ready', 'step' => 2, 'tokens' => 30, 'callRef' => null]],
+            'transportAllowed' => false];
+        $bytes = json_encode($core, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $binding = ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $context['requestRef'],
+            'sessionRef' => $context['sessionRef'], 'processRef' => 'process_'.str_repeat('e', 48), 'ownerDigest' => str_repeat('a', 64),
+            'profileFingerprint' => str_repeat('b', 64), 'registryDigest' => str_repeat('c', 64),
+            'manifestGenerationRef' => 'source-manifest/1', 'runtimeGenerationRef' => 'source-runtime/1',
+            'runtimeInstanceRef' => 'instance_'.str_repeat('f', 48), 'resultDigest' => hash('sha256', $bytes)];
+        $input = ['schemaVersion' => 'public-core-publication-operation/1', 'operationRef' => 'operation_'.bin2hex(random_bytes(24)),
+            'viewerBinding' => ['viewerTicketRef' => $context['viewerTicketRef']], 'resultBinding' => $binding,
+            'genuineExpiresAt' => $context['genuineExpiresAt'], 'maxDurationMs' => 250];
+        $retained = new \stdClass();
+        $live = (object) ['guardInput' => $input, 'retainedRuntime' => $retained];
+        $port = PublicCoreContextBindings::sourcePublicationPort($context['channelRef'], $live);
+        $delivery = $runtime->openSourceDelivery($context);
+
+        return [$runtime, $delivery, $context, $input, $retained, $port,
+            ['binding' => $binding, 'resultBytes' => $bytes, 'resultDigest' => $binding['resultDigest']], $live, $owner];
     }
 
     public function testAcceptedCatalogDoesNotMakeDefaultRuntimeOrModelAvailable(): void
