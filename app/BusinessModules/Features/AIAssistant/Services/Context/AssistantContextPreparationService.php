@@ -15,12 +15,13 @@ final class AssistantContextPreparationService
         private readonly ?Closure $trustedProjector = null,
         private readonly ?Closure $trustedProfileSource = null,
         private readonly ?Closure $trustedTokenizer = null,
+        private readonly ?Closure $trustedReceiptPublisher = null,
     ) {
     }
 
     public function prepare(string $profileRef, array $request): array
     {
-        if ($this->trustedSnapshot === null || $this->trustedProjector === null || $this->trustedProfileSource === null || $this->trustedTokenizer === null) {
+        if ($this->trustedSnapshot === null || $this->trustedProjector === null || $this->trustedProfileSource === null || $this->trustedTokenizer === null || $this->trustedReceiptPublisher === null) {
             return ['status' => 'BLOCKED', 'reason' => 'required_stage_unavailable'];
         }
         try {
@@ -101,6 +102,143 @@ final class AssistantContextPreparationService
         return $profile;
     }
 
+    private function freshProfile(string $profileRef, AssistantModelContextProfile $profile, array $baseline): void
+    {
+        $current = $this->profile($profileRef, $baseline);
+        if (!hash_equals($profile->fingerprint(), $current->fingerprint())) {
+            throw new LogicException('model_profile_changed');
+        }
+    }
+
+    private function publicationEvent(string $event, array $data, array $expected, string $profileRef, AssistantModelContextProfile $profile, array $baseline): mixed
+    {
+        if ($this->trustedReceiptPublisher === null) {
+            throw new LogicException('context_receipt_publisher_unavailable');
+        }
+        $this->freshProfile($profileRef, $profile, $baseline);
+        $this->fresh($baseline);
+        try {
+            return $this->invoke($this->trustedReceiptPublisher, $event, AssistantContextSourceBinding::detached($data), AssistantContextSourceBinding::detached($expected));
+        } finally {
+            $this->freshProfile($profileRef, $profile, $baseline);
+            $this->fresh($baseline);
+        }
+    }
+
+    private function lineage(string $profileRef, AssistantModelContextProfile $profile, array $baseline, ?array $previous): array
+    {
+        $value = $this->publicationEvent('lineage', ['scope' => $baseline['scope'], 'conversationRef' => $baseline['conversation']['ref']], [], $profileRef, $profile, $baseline);
+        if (!is_array($value) || !AssistantModelContextProfile::hasExactKeys($value, ['requestRef', 'requestRevision', 'conversationRef', 'issuedAt', 'expiresAt', 'now'])) {
+            throw new LogicException('context_lineage_unavailable');
+        }
+        foreach (['requestRef', 'requestRevision', 'conversationRef'] as $key) {
+            AssistantContextSourceBinding::references([$value[$key]]);
+        }
+        foreach (['issuedAt', 'expiresAt', 'now'] as $key) {
+            if (!is_int($value[$key]) || $value[$key] < 1) {
+                throw new LogicException('context_lineage_lifetime_invalid');
+            }
+        }
+        if ($value['conversationRef'] !== $baseline['conversation']['ref'] || $value['issuedAt'] >= $value['expiresAt'] || $value['now'] < $value['issuedAt'] || $value['now'] >= $value['expiresAt']) {
+            throw new LogicException('context_lineage_invalid');
+        }
+        $value = AssistantContextSourceBinding::detached($value);
+        if ($previous !== null && ($value['now'] < $previous['now'] || array_diff_key($value, ['now' => true]) !== array_diff_key($previous, ['now' => true]))) {
+            throw new LogicException('context_lineage_changed');
+        }
+
+        return $value;
+    }
+
+    private function acknowledge(mixed $ack, string $status, array $expected): void
+    {
+        if (!is_array($ack) || !AssistantModelContextProfile::hasExactKeys($ack, ['schemaVersion', 'status', 'contextRef', 'payloadDigest', 'receiptDigest']) || $ack['schemaVersion'] !== 'assistant-context-receipt-ack/1' || $ack['status'] !== $status) {
+            throw new LogicException('context_receipt_ack_invalid');
+        }
+        foreach ($expected as $key => $value) {
+            if (!is_string($ack[$key]) || !hash_equals($value, $ack[$key])) {
+                throw new LogicException('context_receipt_ack_mismatch');
+            }
+        }
+    }
+
+    private function abortReceipt(array $receipt, array $expected, string $profileRef, AssistantModelContextProfile $profile, array $baseline, array $lineage): void
+    {
+        try {
+            $this->freshProfile($profileRef, $profile, $baseline);
+            $this->fresh($baseline);
+            $lineage = $this->lineage($profileRef, $profile, $baseline, $lineage);
+        } catch (Throwable) {
+        }
+        try {
+            if ($this->trustedReceiptPublisher !== null) {
+                $this->invoke($this->trustedReceiptPublisher, 'abort', AssistantContextSourceBinding::detached($receipt), AssistantContextSourceBinding::detached($expected));
+            }
+        } catch (Throwable) {
+        }
+        try {
+            $this->freshProfile($profileRef, $profile, $baseline);
+            $this->fresh($baseline);
+            $this->lineage($profileRef, $profile, $baseline, $lineage);
+        } catch (Throwable) {
+        }
+    }
+
+    private function publishCandidate(array $candidate, array $payload, string $profileRef, AssistantModelContextProfile $profile, array $baseline, array $lineage): void
+    {
+        if (!AssistantModelContextProfile::hasExactKeys($candidate, ['contextRef', 'currentRef', 'payloadDigest', 'scopeHash', 'scope', 'conversationRef', 'profileFingerprint', 'modelProfile', 'aliases', 'sources']) || $candidate['contextRef'] !== $payload['contextRef'] || $candidate['currentRef'] !== $payload['currentRef'] || $candidate['payloadDigest'] !== hash('sha256', AssistantContextSourceBinding::canonical($payload)) || $candidate['scope'] !== $baseline['scope'] || $candidate['scopeHash'] !== hash('sha256', AssistantContextSourceBinding::canonical($baseline['scope'])) || $candidate['conversationRef'] !== $baseline['conversation']['ref'] || $candidate['profileFingerprint'] !== $profile->fingerprint() || $candidate['modelProfile'] !== $profile->modelPayload()) {
+            throw new LogicException('context_candidate_mismatch');
+        }
+        if (($candidate['aliases'][$payload['currentRef']]['artifactRef'] ?? null) !== $baseline['conversation']['currentRef']) {
+            throw new LogicException('context_candidate_current_mismatch');
+        }
+        foreach ($candidate['sources'] as $source) {
+            if (!is_array($source) || !AssistantModelContextProfile::hasExactKeys($source, ['sourceRef', 'source']) || !isset($baseline['sources'][$source['sourceRef']]) || $source['source'] !== $baseline['sources'][$source['sourceRef']]) {
+                throw new LogicException('context_candidate_source_mismatch');
+            }
+        }
+        $receipt = AssistantContextSourceBinding::detached([
+            'schemaVersion' => 'assistant-context-receipt/1',
+            'contextRef' => $candidate['contextRef'],
+            'currentRef' => $candidate['currentRef'],
+            'payloadDigest' => $candidate['payloadDigest'],
+            'scopeHash' => $candidate['scopeHash'],
+            'scope' => $candidate['scope'],
+            'conversationRef' => $candidate['conversationRef'],
+            'profileRef' => $profileRef,
+            'profileFingerprint' => $candidate['profileFingerprint'],
+            'modelProfile' => $candidate['modelProfile'],
+            'aliases' => $candidate['aliases'],
+            'sources' => $candidate['sources'],
+            'lineage' => array_diff_key($lineage, ['now' => true]),
+        ]);
+        $expected = AssistantContextSourceBinding::detached([
+            'contextRef' => $receipt['contextRef'],
+            'payloadDigest' => $receipt['payloadDigest'],
+            'receiptDigest' => hash('sha256', AssistantContextSourceBinding::canonical($receipt)),
+        ]);
+        $stageAttempted = false;
+        try {
+            $lineage = $this->lineage($profileRef, $profile, $baseline, $lineage);
+            $stageAttempted = true;
+            $ack = $this->publicationEvent('stage', $receipt, $expected, $profileRef, $profile, $baseline);
+            $this->acknowledge($ack, 'staged', $expected);
+            $lineage = $this->lineage($profileRef, $profile, $baseline, $lineage);
+            $this->freshProfile($profileRef, $profile, $baseline);
+            $lineage = $this->lineage($profileRef, $profile, $baseline, $lineage);
+            $ack = $this->publicationEvent('commit', $receipt, $expected, $profileRef, $profile, $baseline);
+            $this->acknowledge($ack, 'committed', $expected);
+            $lineage = $this->lineage($profileRef, $profile, $baseline, $lineage);
+            $this->freshProfile($profileRef, $profile, $baseline);
+            $this->fresh($baseline);
+        } catch (Throwable $error) {
+            if ($stageAttempted) {
+                $this->abortReceipt($receipt, $expected, $profileRef, $profile, $baseline, $lineage);
+            }
+            throw $error;
+        }
+    }
+
     private function requireKind(AssistantSafeContextSegment $segment, array $kinds): void
     {
         if (!in_array($segment->kind(), $kinds, true)) {
@@ -134,6 +272,7 @@ final class AssistantContextPreparationService
         AssistantContextSourceBinding::references([...$authoritativeRefs, ...$optionalRefs]);
         $request = AssistantContextSourceBinding::detached($request);
         $profile = $this->profile($profileRef, $baseline);
+        $lineage = $this->lineage($profileRef, $profile, $baseline, null);
         $segments = [];
         foreach ($conversation['systemRefs'] as $ref) {
             $segments[$ref] = $this->project($ref, $baseline);
@@ -193,7 +332,13 @@ final class AssistantContextPreparationService
                 throw new LogicException('context_summary_binding_mismatch');
             }
         }
-        $assembler = new AssistantSafeContextAssembler(fn (): array => $this->fresh($baseline));
+        $candidate = null;
+        $assembler = new AssistantSafeContextAssembler(
+            fn (): array => $this->fresh($baseline),
+            static function (array $value) use (&$candidate): void {
+                $candidate = AssistantContextSourceBinding::detached($value);
+            },
+        );
         $tokenizer = $this->trustedTokenizer;
         if ($tokenizer === null) {
             throw new LogicException('tokenizer_unavailable');
@@ -217,11 +362,10 @@ final class AssistantContextPreparationService
                 throw new LogicException('context_input_budget_exceeded');
             }
         }
-        $freshProfile = $this->profile($profileRef, $baseline);
-        if (!hash_equals($profile->fingerprint(), $freshProfile->fingerprint())) {
-            throw new LogicException('model_profile_changed');
+        if (!is_array($candidate)) {
+            throw new LogicException('context_candidate_unavailable');
         }
-        $this->fresh($baseline);
+        $this->publishCandidate($candidate, $payload, $profileRef, $profile, $baseline, $lineage);
 
         return [
             'status' => 'READY',

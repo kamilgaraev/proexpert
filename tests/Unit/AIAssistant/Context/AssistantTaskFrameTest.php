@@ -90,4 +90,72 @@ final class AssistantTaskFrameTest extends TestCase
         ]);
         self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $fixture->request())['status']);
     }
+
+    public function testCurrentAndContextRefsAreMandatoryWithoutATaskFrameAndCountedInTheExactPayload(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('READY', $result['status']);
+        $payload = $result['payload'];
+        self::assertSame('assistant-context/2', $payload['schemaVersion']);
+        self::assertNull($payload['taskFrame']);
+        foreach (['currentRef', 'contextRef'] as $key) {
+            self::assertMatchesRegularExpression('/^ref_[a-f0-9]{32}$/', $payload[$key]);
+        }
+        self::assertSame(strlen(OfflineContextFixtures::json($payload)), $result['tokenCount']);
+        $receipt = $fixture->receipts[$payload['contextRef']]['receipt'];
+        self::assertSame('current', $receipt['aliases'][$payload['currentRef']]['artifactRef']);
+        self::assertSame(hash('sha256', OfflineContextFixtures::json($payload)), $receipt['payloadDigest']);
+        self::assertSame('PRIVATE_REQUEST/1', $receipt['lineage']['requestRef']);
+        self::assertStringNotContainsString('PRIVATE', OfflineContextFixtures::json($result));
+        self::assertArrayNotHasKey('aliases', $payload);
+        self::assertArrayNotHasKey('scopeHash', $payload);
+    }
+
+    public function testIdenticalTextsResolveByActualIssuedAliasesInsteadOfPositionOrText(): void
+    {
+        $fixture = new OfflineContextFixtures(2);
+        $fixture->addArtifact('history-1', 'user', 'Одинаковый синтетический текст.');
+        $fixture->addArtifact('current', 'user', 'Одинаковый синтетический текст.');
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('READY', $result['status']);
+        $payload = $result['payload'];
+        $refs = [];
+        foreach ($payload['messages'] as $message) {
+            if ($message['content'] === 'Одинаковый синтетический текст.') {
+                $refs[] = $fixture->resolve($payload['contextRef'], $message['ref'], producerResult: $result)['artifactRef'];
+            }
+        }
+        self::assertEqualsCanonicalizing(['history-1', 'current'], $refs);
+        self::assertSame('current', $fixture->resolve($payload['contextRef'], $payload['currentRef'], producerResult: $result)['artifactRef']);
+        foreach ($payload['messages'] as $message) {
+            $private = $fixture->resolve($payload['contextRef'], $message['ref'], producerResult: $result);
+            $receipt = $fixture->receipts[$payload['contextRef']]['receipt'];
+            foreach ($message['sourceRefs'] as $sourceAlias) {
+                self::assertArrayHasKey($receipt['sources'][$sourceAlias]['sourceRef'], $private['fields']);
+            }
+        }
+    }
+
+    public function testBudgetRejectionIncludesNewMetadataAndPreventsPublication(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $countedBodies = [];
+        $fixture->onCount = static function (OfflineContextFixtures $fixture, string $payload, array $count) use (&$countedBodies): array {
+            $body = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+            $countedBodies[] = $body;
+            $reserve = $fixture->profile['answerReserve'] + $fixture->profile['toolReserve'];
+            $count['tokens'] = $fixture->profile['contextWindow'] - $reserve + 1;
+
+            return $count;
+        };
+        self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $fixture->request())['status']);
+        self::assertNotEmpty($countedBodies);
+        foreach ($countedBodies as $body) {
+            self::assertArrayHasKey('currentRef', $body);
+            self::assertArrayHasKey('contextRef', $body);
+        }
+        self::assertSame([], $fixture->receipts);
+        self::assertNotContains('stage', $fixture->publicationEvents);
+    }
 }

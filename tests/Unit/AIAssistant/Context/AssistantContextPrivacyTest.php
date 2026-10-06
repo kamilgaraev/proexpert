@@ -146,4 +146,164 @@ final class AssistantContextPrivacyTest extends TestCase
         $fieldRef = 'unbound-field';
         self::assertSame(['field-current'], $segment->fields()['source-current']);
     }
+
+    public function testMissingPublisherBlocksEvenWhenOtherDependenciesAreAvailable(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $fixture->publisherAvailable = false;
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertArrayNotHasKey('payload', $result);
+        self::assertSame([], $fixture->receipts);
+    }
+
+    public function testPublisherCannotMutateAReceiptAndKeepTheProducerDigest(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event, array &$receipt): void {
+            if ($event === 'stage') {
+                $receipt['aliases'][$receipt['currentRef']]['artifactRef'] = 'history-1';
+            }
+        };
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertContains('abort', $fixture->publicationEvents);
+        self::assertSame([], $fixture->receipts);
+    }
+
+    public function testMutableStoredMapFailsResolverIntegrityCheck(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('READY', $result['status']);
+        $contextRef = $result['payload']['contextRef'];
+        $currentRef = $result['payload']['currentRef'];
+        self::assertSame('current', $fixture->resolve($contextRef, $currentRef, producerResult: $result)['artifactRef']);
+        $fixture->receipts[$contextRef]['receipt']['aliases'][$currentRef]['artifactRef'] = 'history-1';
+        self::assertNull($fixture->resolve($contextRef, $currentRef, producerResult: $result));
+    }
+
+    public function testRequestReplayExpiryAndSourceRevokeMakePublishedAliasesUnresolvable(): void
+    {
+        foreach (['request', 'expiry', 'source', 'profile', 'auth'] as $case) {
+            $fixture = new OfflineContextFixtures();
+            $result = $fixture->service()->prepare('offline', $fixture->request());
+            self::assertSame('READY', $result['status']);
+            $contextRef = $result['payload']['contextRef'];
+            $currentRef = $result['payload']['currentRef'];
+            self::assertNull($fixture->resolve($contextRef, $currentRef, 'PRIVATE_OTHER_REQUEST', $result));
+            match ($case) {
+                'request' => $fixture->lineage['requestRevision'] = 'request/2',
+                'expiry' => $fixture->lineage['now'] = $fixture->lineage['expiresAt'],
+                'source' => $fixture->snapshot['sources']['source-current']['version'] = 'source/2',
+                'profile' => $fixture->profile['modelRevision'] = '2',
+                'auth' => $fixture->snapshot['authorized'] = false,
+            };
+            self::assertNull($fixture->resolve($contextRef, $currentRef, producerResult: $result));
+        }
+    }
+
+    public function testRevocationAroundStageAndCommitAbortsEveryPublication(): void
+    {
+        foreach (['stage', 'commit'] as $phase) {
+            $fixture = new OfflineContextFixtures();
+            $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event) use ($phase): void {
+                if ($event === $phase) {
+                    $fixture->snapshot['scope']['consent'] = 'consent/revoked';
+                }
+            };
+            $result = $fixture->service()->prepare('offline', $fixture->request());
+            self::assertSame('BLOCKED', $result['status']);
+            self::assertArrayNotHasKey('payload', $result);
+            self::assertContains('abort', $fixture->publicationEvents);
+            self::assertSame([], $fixture->receipts);
+        }
+    }
+
+    public function testChangingLineageDuringCountingOrPublicationNeverBindsAnOldContextToANewRequest(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $fixture->onCount = static function (OfflineContextFixtures $fixture, string $payload, array $count): array {
+            $fixture->lineage['requestRevision'] = 'request/2';
+
+            return $count;
+        };
+        self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $fixture->request())['status']);
+        self::assertSame([], $fixture->receipts);
+
+        $fixture = new OfflineContextFixtures();
+        $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event): void {
+            if ($event === 'commit') {
+                $fixture->lineage['now'] = $fixture->lineage['expiresAt'];
+            }
+        };
+        self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $fixture->request())['status']);
+        self::assertSame([], $fixture->receipts);
+    }
+
+    public function testPublisherFailureAfterStagingPersistsNothingConsumable(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event, array $receipt): void {
+            if ($event === 'stage') {
+                $fixture->receipts[$receipt['contextRef']] = [
+                    'status' => 'staged', 'receipt' => $receipt, 'digest' => hash('sha256', OfflineContextFixtures::json($receipt)),
+                ];
+                throw new RuntimeException('PRIVATE publisher failure after persistence');
+            }
+        };
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertSame([], $fixture->receipts);
+        self::assertStringNotContainsString('PRIVATE', OfflineContextFixtures::json($result));
+    }
+
+    public function testModelJSONCannotRegisterAReceiptOrChooseIssuerAliases(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        foreach (['contextRef', 'aliases', 'receipt', 'publisher'] as $field) {
+            $request = $fixture->request();
+            $request[$field] = ['authorized' => true, 'contextRef' => 'ref_'.str_repeat('a', 32)];
+            self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $request)['status']);
+        }
+        self::assertSame([], $fixture->receipts);
+    }
+
+    public function testReferencedPublisherArgumentsCannotMutateThePrivateProducerCandidate(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event, array &$receipt, array &$expected): void {
+            if ($event === 'stage') {
+                $wrong = 'history-1';
+                $receipt['aliases'][$receipt['currentRef']]['artifactRef'] = &$wrong;
+                $expected['payloadDigest'] = str_repeat('0', 64);
+            }
+        };
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertSame([], $fixture->receipts);
+        self::assertContains('abort', $fixture->publicationEvents);
+    }
+
+    public function testUnknownCommitOutcomeAndFailedAbortCannotBeConsumedWithoutSuccessfulProducerReturn(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event, array $receipt): void {
+            if ($event === 'commit') {
+                $fixture->receipts[$receipt['contextRef']]['status'] = 'committed';
+                throw new RuntimeException('PRIVATE unknown commit outcome');
+            }
+            if ($event === 'abort') {
+                throw new RuntimeException('PRIVATE revoke dependency unavailable');
+            }
+        };
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertArrayNotHasKey('payload', $result);
+        self::assertNotEmpty($fixture->receipts);
+        foreach ($fixture->receipts as $contextRef => $stored) {
+            self::assertNull($fixture->resolve($contextRef, $stored['receipt']['currentRef'], producerResult: $result));
+            self::assertNull($fixture->resolve($contextRef, $stored['receipt']['currentRef']));
+        }
+    }
 }

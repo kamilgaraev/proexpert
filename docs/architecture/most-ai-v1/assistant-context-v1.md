@@ -1,6 +1,6 @@
 # МОСТ: локальный контекст помощника
 
-Версия артефакта: `most-ai-assistant-context/0.1-local`. Задача MOSTAI-49, пакет03. Формат результата: `assistant-context/1`. Это изолированный локальный артефакт перед Gateway. Он не разрешает передачу данных провайдеру и не подключён к действующим endpoint, очередям или DI приложения.
+Версия артефакта: `most-ai-assistant-context/0.2-local`. Задача MOSTAI-49, пакет03. Формат результата: `assistant-context/2`. Это изолированный локальный артефакт перед Gateway. Он не разрешает передачу данных провайдеру и не подключён к действующим endpoint, очередям или DI приложения.
 
 ## Владение и входы
 
@@ -51,3 +51,23 @@ Topic proposal ссылается на уже разрешённый topic artif
 KNOW-38 возвращает локальный unsealed `MaterialSearchResult`; его поля не считаются готовым model input. Этот модуль не создаёт вторую реализацию общего `ToolResult`. Если такой executable adapter понадобится MOSTAI-50, Lead назначает один owner и exact path отдельно.
 
 Lead принимает точную версию и committed SHA локального контекстного артефакта как вход MOSTAI-50. Это не `Done` MOSTAI-49 и не независимый PASS всего пакета. Полная группа из трёх batch-reviewers запускается Root после готовности всего пакета. Общие existing service/UI/config/provider изменения и живая интеграция остаются за отдельным assignment/lease.
+
+## CTX_HANDOFF_01: приватный consumer receipt
+
+Amendment `batch03-MOSTAI49-context-handoff/2` изменяет только PreparationService, Assembler, PrivacyTest, TaskFrameTest, OfflineContextFixtures и этот документ. Старый артефакт `0.1-local` / commit `e3be2938b91ae5f583355d927d7c7122a9a8b911` остаётся в истории. Его supporting QA не переносится на новую версию без проверки нового SHA. Общие SourceBinding/Profile/Segment/Frame, PRIV17/G0 и действующие сервисы не изменяются.
+
+Публичный `assistant-context/2` всегда содержит `contextRef` и `currentRef`, даже без task frame. `currentRef` — alias конкретного current artifact из авторизованного server snapshot. Assembler формирует alias map в момент фактической выдачи segment/source refs. Ни текст сообщения, ни его позиция, ни JSON от модели не используются для восстановления этой карты. Все публичные поля уже присутствуют в финальном payload, который перед публикацией целиком считает закреплённый counter.
+
+В PreparationService добавлен optional constructor dependency `trustedReceiptPublisher`; отсутствие publisher даёт `BLOCKED` даже при наличии остальных четырёх зависимостей. Assembler требует private candidate sink. Эти callbacks задаются сервером и входят в TCB. Протокол не доказывает их доверенность криптографической подписью и не превращает локальный receipt в Gateway envelope, Vault или durable registry. В приложении новые DI bindings не регистрируются; положительная реализация publisher/resolver существует только в тестах.
+
+Publisher имеет сигнатуру `(event, data, expectedDigests)`. Событие `lineage` получает приватные scope/conversation и возвращает закрытые `requestRef`, `requestRevision`, `conversationRef`, `issuedAt`, `expiresAt`, `now`. Lineage захватывается до projection/counter; origin identity и lifetime затем неизменны, clock не идёт назад и остаётся внутри lifetime. Истёкший request или смена lineage не может привязать уже собранный старый контекст к новому запросу.
+
+Приватный `assistant-context-receipt/1` содержит actual context/current refs, payload digest, scope/hash, conversation, profile/fingerprint, фактические artifact/source/field/metadata связи и request lineage без текущего clock. Карта sources индексируется реальными выданными source aliases и хранит исходный source record. Этот объект передаётся только backend publisher; его поля и scope hashes не добавляются в model payload или trace. Payload/context/receipt digests связывают ровно эту публикацию; scopeHash относится только к scope, поэтому consumer обязан отдельно проверять source/field records.
+
+Публикация двухфазная: `stage` сохраняет pending receipt, `commit` подтверждает точные context/payload/receipt digests после повторных snapshot/profile/lineage checks. Закрытый ack содержит `schemaVersion=assistant-context-receipt-ack/1`, `status`, `contextRef`, `payloadDigest`, `receiptDigest`. Неверный ack, исключение, отзыв scope/consent/source/profile или изменение lineage вызывает `BLOCKED` и best-effort `abort` того же context/digest tuple. Проверки выполняются до и после callbacks; publication errors не возвращают приватные исключения.
+
+Consumer/resolver входит в backend TCB и не должен разрешать refs по одному JSON ack либо status. Он проверяет committed state, integrity реального stored receipt, ожидаемые context/payload/receipt digests, originating request/conversation/current artifact, текущие auth/ACL/consent/policy/profile, все source/field/provenance версии и lifetime при каждом разрешении. Только caller, получивший успешный producer result, может потреблять соответствующий receipt. При abort failure, unknown outcome или ошибке resolver guard потребление запрещается; publisher обязан обеспечивать pending isolation и idempotent revoke. Callback не становится authority только потому, что умеет вернуть совпадающие строки.
+
+Все входы/карты/ack metadata отделяются от PHP references. Публикуется только последний действительно измеренный payload после budget compaction; не прошедший бюджет candidate остаётся локальным и не получает stage/commit. Rollback не переводит consumer на guessed map или raw history.
+
+Проверки amendment дополнительно охватывают missing publisher, currentRef без frame, одинаковый текст при разных actual aliases, source alias mapping, callback/stored-map mutation, request replay, expiry, auth/source/profile revoke, смену lineage во время счёта, revoke вокруг stage/commit, exception после pending persistence и отказ бюджета с новой публичной metadata. Тестовый resolver иллюстрирует обязательный контракт, но не является production binding.
