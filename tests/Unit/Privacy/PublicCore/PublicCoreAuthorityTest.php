@@ -8,7 +8,16 @@ use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextPr
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextSourceBinding;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelContextProfile;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantSafeContextSegment;
+use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantContextReceipt;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\MaterialSearch\SyntheticMaterialSearchCorpus;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
+use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
+use App\Services\Privacy\PublicCore\PublicCoreProcessor;
 use App\Services\Privacy\PublicCore\PublicCoreReceiptStore;
+use App\Services\Privacy\PublicCore\PublicCoreRuntimeReadiness;
 use App\Services\Privacy\PublicCore\PublicCoreSessionAuthority;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -25,6 +34,8 @@ final class PublicCoreAuthorityTest extends TestCase
     private PublicCoreSessionAuthority $sessions;
     private array $viewer;
     private int $now;
+    private array $runtimeSource = [];
+    private array $runtimeProof = [];
 
     protected function setUp(): void
     {
@@ -35,7 +46,8 @@ final class PublicCoreAuthorityTest extends TestCase
         $this->viewer = ['authorized' => true, 'viewerRef' => 'real-backend-viewer-A', 'organizationRef' => 'real-backend-organization-A',
             'authorizationRevision' => 'authorization/1', 'policyRevision' => 'public-policy/1'];
         $this->sessions = new PublicCoreSessionAuthority($this->registry, $this->store,
-            fn (array $binding): ?array => $binding === ['credential' => 'server-ticket'] ? $this->viewer : null,
+            fn (array $binding): ?array => in_array($binding, [['credential' => 'server-ticket'], ['viewerTicketRef' => 'ref_server_viewer_ticket']], true)
+                ? $this->viewer : null,
             fn (): int => $this->now);
     }
 
@@ -360,5 +372,241 @@ final class PublicCoreAuthorityTest extends TestCase
         $missing = $this->sessions->publisher(['credential' => 'server-ticket'], $opened['request_ref'], fn (array $request): array => $binding);
         self::assertSame([], $missing->publish('stage', $receipt, $expected));
         self::assertNull($missing->authority($receipt['contextRef']));
+    }
+
+    private function qualifiedReadiness(): PublicCoreRuntimeReadiness
+    {
+        $profile = GatewayModelProfile::fromArray([
+            'profileRef' => 'ref_source_test_profile', 'qualification' => 'local-stub', 'adapterRevision' => 'fixture-adapter/1',
+            'apiMethod' => 'local_action', 'endpoint' => 'local://public-core-stub', 'modelId' => 'local-action-stub',
+            'modelRevision' => 'source/1', 'tokenizerId' => 'local-byte-counter', 'tokenizerRevision' => 'source/1',
+            'mappingEvidenceRef' => 'ref_source_mapping_evidence', 'capabilityEvidenceRef' => 'ref_source_capability_evidence',
+            'capacityEvidenceRef' => 'ref_source_capacity_evidence', 'contextWindow' => 100000,
+            'maxOutputTokens' => 1024, 'answerReserve' => 1024, 'toolReserve' => 2048,
+        ]);
+        $this->runtimeProof = ['schemaVersion' => 'public-core-runtime-proof/1', 'qualification' => 'local-source-test',
+            'profileFingerprint' => $profile->fingerprint(), 'registryDigest' => $this->registry->manifestDigest(),
+            'authorizationFenceEvidenceRef' => 'ref_simulated_fence_evidence', 'identityEvidenceRef' => 'ref_simulated_identity_evidence',
+            'channelEvidenceRef' => 'ref_simulated_channel_evidence', 'egressEvidenceRef' => 'ref_simulated_egress_evidence',
+            'secretEvidenceRef' => 'ref_simulated_secret_evidence', 'activationRef' => 'ref_simulated_activation_evidence'];
+        return new PublicCoreRuntimeReadiness($this->registry, static fn (): GatewayModelProfile => $profile,
+            fn (): array => $this->runtimeProof,
+            static fn (string $bytes, GatewayModelProfile $current): array => ['inputTokens' => strlen($bytes),
+                'tokenizerId' => $current->values()['tokenizerId'], 'tokenizerRevision' => $current->values()['tokenizerRevision'],
+                'mappingEvidenceRef' => $current->values()['mappingEvidenceRef']]);
+    }
+
+    private function dispatchPreparation(): array
+    {
+        $readiness = $this->qualifiedReadiness();
+        $profile = $readiness->qualifiedProfile();
+        $opened = $this->open();
+        $request = $this->sessions->lookup(['credential' => 'server-ticket'], $opened['request_ref']);
+        $corpus = SyntheticMaterialSearchCorpus::named('material-search-v1');
+        $this->runtimeSource = ['registryDigest' => $this->registry->manifestDigest(),
+            'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+            'runtimeGenerationRef' => $corpus->records()[0]->generationRef];
+        $this->store->transaction(function (array &$state) use ($request): array {
+            $state['requests'][$request['requestRef']]['runtimeGenerationRef'] = $this->runtimeSource['runtimeGenerationRef'];
+            return ['bound' => true];
+        });
+        $fixture = new OfflineContextFixtures(0);
+        $fixture->profile = $readiness->coreProfile();
+        $fixture->snapshot['conversation']['ref'] = $request['conversationRef'];
+        $fixture->snapshot['sources'] = [];
+        $fixture->artifacts = [];
+        $fixture->addArtifact('system', 'system', 'Answer using only registered public facts.');
+        $fixture->addArtifact('current', 'user', $request['registered']['display_text']);
+        $aliases = [];
+        $sources = [];
+        $publisher = $this->sessions->publisher(['credential' => 'server-ticket'], $request['requestRef'],
+            function () use ($fixture, $readiness, &$aliases, &$sources): array {
+                $trusted = $readiness->coreProfile();
+                $nativeProfile = AssistantModelContextProfile::resolve($trusted['profileRef'], fn (): array => $trusted);
+                return ['scope' => $fixture->snapshot['scope'], 'snapshotHash' => AssistantContextSourceBinding::snapshotHash($fixture->snapshot),
+                    'profileFingerprint' => $nativeProfile->fingerprint(), 'registryDigest' => $this->registry->manifestDigest(),
+                    'aliases' => $aliases, 'sources' => $sources, 'trustedModelProfile' => $trusted];
+            });
+        $service = new AssistantContextPreparationService(fn (): array => $fixture->snapshot,
+            fn (string $ref): ?array => $fixture->artifacts[$ref] ?? null, fn (): array => $readiness->coreProfile(),
+            fn (string $bytes, array $identity): array => $readiness->count($bytes, $identity),
+            function (string $event, array $data, array $expected = []) use ($fixture, $publisher, &$aliases, &$sources): array {
+                if ($event === 'stage') {
+                    foreach ($data['aliases'] as $alias) {
+                        $segment = AssistantSafeContextSegment::project($alias['artifactRef'], $fixture->snapshot,
+                            fn (string $ref): ?array => $fixture->artifacts[$ref] ?? null);
+                        self::assertSame($segment->fields(), $alias['fields']);
+                    }
+                    foreach ($data['sources'] as $source) {
+                        self::assertSame($fixture->snapshot['sources'][$source['sourceRef']], $source['source']);
+                    }
+                    $aliases = $data['aliases'];
+                    $sources = $data['sources'];
+                }
+                return $publisher->publish($event, $data, $expected);
+            });
+        $prepared = $service->prepare($fixture->profile['profileRef'], $fixture->request());
+        self::assertSame('READY', $prepared['status']);
+        $saved = $publisher->authority($prepared['payload']['contextRef']);
+        $authority = ['snapshot' => $fixture->snapshot, 'profile' => $fixture->profile, 'lineage' => $saved['binding']['lineage'],
+            'stored' => ['status' => 'committed', 'receipt' => $saved['receipt'], 'digest' => $saved['expected']['receiptDigest']],
+            'artifacts' => $fixture->artifacts];
+        $native = AssistantContextReceipt::consume($prepared, $authority, $fixture->profile['profileRef']);
+        $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => $native->payload(), 'contextScope' => $native->contextScope(),
+            'tools' => [], 'toolReferences' => null, 'repair' => null];
+        $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, ['credential' => 'server-ticket'],
+            $request['requestRef'], fn (): array => $this->runtimeSource,
+            static fn (array $viewer, array $binding, \Closure $operation): GatewayModelResponse => $operation(), fn (): int => $this->now);
+        $packet = $dispatch->projectForDispatch($input, $native->privateBinding(), $profile);
+        self::assertInstanceOf(GatewayModelRequest::class, $packet);
+        return [$dispatch, $packet, $readiness, $publisher, $input, $native->privateBinding()];
+    }
+
+    private function localGateway(PublicCoreDispatchAuthority $dispatch, PublicCoreRuntimeReadiness $readiness, \Closure $sender): GatewayPublicCoreTransport
+    {
+        $profile = $readiness->qualifiedProfile();
+        return new GatewayPublicCoreTransport($profile, fn (): string => $readiness->qualifiedProfile() === null ? 'runtime_not_activated' : 'none',
+            static fn (): string => 'ref_simulated_processor_peer', 'ref_simulated_processor_peer', $dispatch->currentBinding(...),
+            $dispatch->withGatewayFence(...), static fn (string $bytes): array => ['inputTokens' => strlen($bytes),
+                'tokenizerId' => $profile->values()['tokenizerId'], 'tokenizerRevision' => $profile->values()['tokenizerRevision'],
+                'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']], $sender, fn (): int => $this->now);
+    }
+
+    public function testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt(): void
+    {
+        [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
+        self::assertFalse($readiness->resolve()['model_enabled']);
+        self::assertNull($readiness->resolve()['actual_model']);
+        self::assertNotSame($packet->profileFingerprint, $packet->corePayloadDigest);
+        $writes = 0;
+        $gateway = $this->localGateway($dispatch, $readiness, function (GatewayModelProfile $profile, string $bytes) use ($packet, &$writes): array {
+            $writes++;
+            self::assertSame($packet->bodyBytes, $bytes);
+            $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame('consumed', $disk['state']['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['status']);
+            return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Find the public price using material.search.']), 'usage' => null];
+        });
+        self::assertSame('completed', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
+        self::assertSame('blocked', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
+        self::assertSame(1, $writes);
+    }
+
+    #[DataProvider('dispatchDenials')]
+    public function testCurrentDispatchDenialsCauseZeroProviderWrites(string $change): void
+    {
+        [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
+        match ($change) {
+            'authorization' => $this->viewer['authorized'] = false,
+            'policy' => $this->viewer['policyRevision'] = 'public-policy/2',
+            'source' => $this->runtimeSource['runtimeGenerationRef'] = 'ref_lost_runtime_generation',
+            'manifest' => $this->runtimeSource['manifestGenerationRef'] = 'ref_other_manifest_generation',
+            'profile' => $this->runtimeProof['profileFingerprint'] = str_repeat('0', 64),
+            'expiry' => $this->now += 30,
+        };
+        $writes = 0;
+        $gateway = $this->localGateway($dispatch, $readiness, static function () use (&$writes): array {
+            $writes++;
+            return [];
+        });
+        self::assertNotSame('completed', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
+        self::assertSame(0, $writes);
+    }
+
+    public static function dispatchDenials(): array
+    {
+        return [['authorization'], ['policy'], ['source'], ['manifest'], ['profile'], ['expiry']];
+    }
+
+    public function testUncertainSendConsumesAttemptAndBlocksNewProjection(): void
+    {
+        [$dispatch, $packet, $readiness, , $input, $binding] = $this->dispatchPreparation();
+        $preparedBeforeSend = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile());
+        self::assertInstanceOf(GatewayModelRequest::class, $preparedBeforeSend);
+        $writes = 0;
+        $gateway = $this->localGateway($dispatch, $readiness, static function () use (&$writes): never {
+            $writes++;
+            throw new \RuntimeException('uncertain_send');
+        });
+        self::assertSame('gateway_unavailable', $dispatch->withDispatchFence($packet, $gateway->send(...))->reasonCode);
+        self::assertSame('blocked', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
+        self::assertSame('blocked', $dispatch->withDispatchFence($preparedBeforeSend, $gateway->send(...))->status);
+        self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
+        self::assertSame(1, $writes);
+    }
+
+    public function testTamperedNativePayloadAndInScopeProfileCannotMintAnotherProjection(): void
+    {
+        [$dispatch, , $readiness, , $input, $binding] = $this->dispatchPreparation();
+        $input['context']['messages'][0]['content'] = 'arbitrary replacement';
+        self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
+        self::assertSame('receipt_changed', $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile())['reasonCode']);
+    }
+
+    private function processor(?\Closure $composition = null): PublicCoreProcessor
+    {
+        return new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $this->qualifiedReadiness(),
+            static fn (array $peer): ?array => $peer === ['pid' => 111, 'uid' => 1001, 'gid' => 1001]
+                ? ['role' => 'app', 'identityRef' => 'ref_simulated_app_identity', 'kernelPeer' => $peer] : null,
+            static fn (string $ticket): ?array => $ticket === 'ref_server_viewer_ticket' ? ['viewerTicketRef' => $ticket] : null, $composition);
+    }
+
+    public function testProcessorCommandsRequireProtectedPeerAndServerOwnedViewerTicket(): void
+    {
+        $processor = $this->processor();
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $payload = $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'];
+        self::assertSame('blocked', $processor->handle('open_or_resume', $payload, ['role' => 'processor', 'authorized' => true])['status']);
+        self::assertSame('blocked', $processor->handle('open_or_resume', $payload + ['message' => 'PRIVATE arbitrary input'], $peer)['status']);
+        $opened = $processor->handle('open_or_resume', $payload, $peer);
+        self::assertSame('accepted', $opened['status']);
+        self::assertSame($opened, $processor->handle('open_or_resume', $payload, $peer));
+        $lookup = ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']];
+        self::assertSame('accepted', $processor->handle('lookup_owned', $lookup, $peer)['status']);
+        self::assertSame('runtime_not_activated', $processor->handle('execute_owned', $lookup, $peer)['reasonCode']);
+        self::assertFalse($processor->handle('readiness', [], $peer)['model_enabled']);
+        $this->viewer['authorizationRevision'] = 'authorization/2';
+        self::assertSame('authorization_changed', $processor->handle('lookup_owned', $lookup, $peer)['reasonCode']);
+    }
+
+    public function testFailedCompositionIsTerminalAndCannotBeRetriedByCommandReplay(): void
+    {
+        $compositions = 0;
+        $processor = $this->processor(static function () use (&$compositions): array {
+            $compositions++;
+            return ['loop' => (object) ['status' => 'READY']];
+        });
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $payload = ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']];
+        $first = $processor->handle('execute_owned', $payload, $peer);
+        self::assertSame('blocked', $first['status']);
+        self::assertSame($first, $processor->handle('execute_owned', $payload, $peer));
+        self::assertSame($first, $processor->handle('lookup_owned', $payload, $peer));
+        self::assertSame(1, $compositions);
+    }
+
+    public function testLostRuntimeGenerationOrRunningClaimDoesNotResumeAfterRestart(): void
+    {
+        $compositions = 0;
+        $factory = static function () use (&$compositions): array {
+            $compositions++;
+            return [];
+        };
+        $processor = $this->processor($factory);
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $this->store->transaction(static function (array &$state) use ($opened): array {
+            $sessionRef = $state['requests'][$opened['request_ref']]['sessionRef'];
+            $state['sessions'][$sessionRef]['runtimeGenerationRef'] = 'ref_previous_process_generation';
+            return ['lost' => true];
+        });
+        $restarted = $this->processor($factory);
+        self::assertSame('source_changed', $restarted->executeOwned($opened['request_ref'])['reasonCode']);
+        $this->store->transaction(static function (array &$state) use ($opened): array {
+            $state['requests'][$opened['request_ref']]['execution'] = ['status' => 'running', 'processRef' => 'ref_previous_process'];
+            return ['claimed' => true];
+        });
+        self::assertSame('receipt_changed', $restarted->executeOwned($opened['request_ref'])['reasonCode']);
+        self::assertSame(0, $compositions);
     }
 }

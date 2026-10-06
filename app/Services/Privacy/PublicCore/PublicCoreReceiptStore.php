@@ -11,6 +11,8 @@ use Throwable;
 
 final class PublicCoreReceiptStore
 {
+    private static array $heldLocks = [];
+    private ?string $lockedStatePath = null;
     private ?Closure $publicationBinding = null;
 
     public function __construct(private readonly ?string $directory = null, private readonly ?string $controlKey = null)
@@ -34,19 +36,28 @@ final class PublicCoreReceiptStore
             return null;
         }
         $lock = null;
+        $acquired = false;
+        $lockPath = null;
         try {
             if (is_link($this->directory) || (!is_dir($this->directory) && !@mkdir($this->directory, 0700, true))) {
                 return null;
             }
-            $lockPath = $this->directory . '/authority.lock';
-            $statePath = $this->directory . '/authority.json';
+            $directory = realpath($this->directory);
+            if ($directory === false) {
+                return null;
+            }
+            $lockPath = $directory . '/authority.lock';
+            $statePath = $directory . '/authority.json';
             if (is_link($lockPath) || is_link($statePath)) {
                 return null;
             }
             $lock = @fopen($lockPath, 'c+b');
-            if ($lock === false || !@chmod($lockPath, 0600) || !@flock($lock, LOCK_EX)) {
+            if ($lock === false || isset(self::$heldLocks[$lockPath]) || !@chmod($lockPath, 0600) || !@flock($lock, LOCK_EX)) {
                 return null;
             }
+            self::$heldLocks[$lockPath] = true;
+            $acquired = true;
+            $this->lockedStatePath = $statePath;
             $state = ['schemaVersion' => 'public-core-ledger/1', 'sessions' => [], 'requests' => [], 'receipts' => []];
             if (is_file($statePath)) {
                 $bytes = @file_get_contents($statePath);
@@ -72,10 +83,34 @@ final class PublicCoreReceiptStore
         } catch (Throwable) {
             return null;
         } finally {
+            if ($acquired) {
+                unset(self::$heldLocks[$lockPath]);
+                $this->lockedStatePath = null;
+            }
             if (is_resource($lock)) {
-                flock($lock, LOCK_UN);
+                if ($acquired) {
+                    flock($lock, LOCK_UN);
+                }
                 fclose($lock);
             }
+        }
+    }
+
+    public function withLockedState(Closure $operation): ?array
+    {
+        return $this->transaction($operation);
+    }
+
+    public function checkpointLockedState(array $state): bool
+    {
+        if ($this->lockedStatePath === null) {
+            return false;
+        }
+        try {
+            $this->persist($this->lockedStatePath, $state);
+            return true;
+        } catch (Throwable) {
+            return false;
         }
     }
 
@@ -179,16 +214,22 @@ final class PublicCoreReceiptStore
         if ($contextRef === null || $this->publicationBinding === null) {
             return null;
         }
-        return $this->transaction(function (array &$state) use ($contextRef): ?array {
-            $saved = $state['receipts'][$contextRef] ?? null;
-            $binding = ($this->publicationBinding)($state);
-            if ($saved === null || $saved['status'] !== 'committed' || !is_array($binding)
-                || !$this->validBinding($binding) || !$this->validReceipt($saved['receipt'], $saved['expected'], $binding)
-                || $saved['snapshotHash'] !== $binding['snapshotHash'] || $saved['registryDigest'] !== $binding['registryDigest']) {
-                return null;
-            }
-            return ['receipt' => $saved['receipt'], 'expected' => $saved['expected'], 'binding' => $binding];
-        });
+        return $this->transaction(fn (array &$state): ?array => $this->authorityFromLockedState($state, $contextRef));
+    }
+
+    public function authorityFromLockedState(array $state, string $contextRef): ?array
+    {
+        if ($this->publicationBinding === null || $this->lockedStatePath === null) {
+            return null;
+        }
+        $saved = $state['receipts'][$contextRef] ?? null;
+        $binding = ($this->publicationBinding)($state);
+        if ($saved === null || $saved['status'] !== 'committed' || !is_array($binding)
+            || !$this->validBinding($binding) || !$this->validReceipt($saved['receipt'], $saved['expected'], $binding)
+            || $saved['snapshotHash'] !== $binding['snapshotHash'] || $saved['registryDigest'] !== $binding['registryDigest']) {
+            return null;
+        }
+        return self::owned(['receipt' => $saved['receipt'], 'expected' => $saved['expected'], 'binding' => $binding]);
     }
 
     private function validBinding(array $binding): bool

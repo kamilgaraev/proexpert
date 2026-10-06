@@ -119,4 +119,22 @@ final class PublicCoreIsolationTest extends TestCase
         });
         self::assertSame(['fenced' => true], $result);
     }
+
+    public function testNestedStoreAttemptCannotReleaseOrReenterOuterFence(): void
+    {
+        $store = new PublicCoreReceiptStore($this->directory, str_repeat('s', 32));
+        $result = $store->withLockedState(function (array &$state) use ($store): array {
+            self::assertNull($store->transaction(static fn (): array => ['nested' => true]));
+            $other = new PublicCoreReceiptStore($this->directory . '/.', str_repeat('s', 32));
+            self::assertNull($other->transaction(static fn (): array => ['nested' => true]));
+            $state['requests']['checkpoint'] = ['consumed' => true];
+            self::assertTrue($store->checkpointLockedState($state));
+            $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
+            self::assertTrue($disk['state']['requests']['checkpoint']['consumed']);
+            return ['held' => true];
+        });
+        self::assertSame(['held' => true], $result);
+        self::assertFalse($store->checkpointLockedState([]));
+        self::assertNotNull($store->transaction(static fn (): array => ['released' => true]));
+    }
 }
