@@ -53,7 +53,7 @@ final class DesignCompositionController extends Controller
 
     public function show(Request $request, int $packageId): JsonResponse
     {
-        $package = $this->packages->findPackage($this->organizationId($request), $packageId);
+        $package = $this->packages->findPackageForComposition($this->organizationId($request), $packageId);
         if ($package === null) {
             return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
         }

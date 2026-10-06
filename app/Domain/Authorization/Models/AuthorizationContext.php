@@ -3,6 +3,7 @@
 namespace App\Domain\Authorization\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
@@ -87,6 +88,11 @@ class AuthorizationContext extends Model
      */
     public static function getOrganizationContext(int $organizationId): self
     {
+        $context = static::findOrganizationContext($organizationId);
+        if ($context instanceof self) {
+            return $context;
+        }
+
         return static::firstOrCreate([
             'type' => self::TYPE_ORGANIZATION,
             'resource_id' => $organizationId,
@@ -99,6 +105,11 @@ class AuthorizationContext extends Model
      */
     public static function getProjectContext(int $projectId, int $organizationId): self
     {
+        $context = static::findProjectContext($projectId, $organizationId);
+        if ($context instanceof self) {
+            return $context;
+        }
+
         $orgContext = self::getOrganizationContext($organizationId);
 
         return static::firstOrCreate([
@@ -119,30 +130,29 @@ class AuthorizationContext extends Model
 
     public static function findOrganizationContext(int $organizationId): ?self
     {
-        $systemContext = static::findSystemContext();
-        if (! $systemContext instanceof self) {
-            return null;
-        }
-
-        return static::query()
-            ->where('type', self::TYPE_ORGANIZATION)
-            ->where('resource_id', $organizationId)
-            ->where('parent_context_id', $systemContext->id)
-            ->first();
+        return static::organizationContextQuery($organizationId)->first();
     }
 
     public static function findProjectContext(int $projectId, int $organizationId): ?self
     {
-        $organizationContext = static::findOrganizationContext($organizationId);
-        if (! $organizationContext instanceof self) {
-            return null;
-        }
-
         return static::query()
             ->where('type', self::TYPE_PROJECT)
             ->where('resource_id', $projectId)
-            ->where('parent_context_id', $organizationContext->id)
+            ->where('parent_context_id', static::organizationContextQuery($organizationId)->select('id')->limit(1))
             ->first();
+    }
+
+    private static function organizationContextQuery(int $organizationId): Builder
+    {
+        return static::query()
+            ->where('type', self::TYPE_ORGANIZATION)
+            ->where('resource_id', $organizationId)
+            ->where('parent_context_id', static::query()
+                ->select('id')
+                ->where('type', self::TYPE_SYSTEM)
+                ->whereNull('resource_id')
+                ->whereNull('parent_context_id')
+                ->limit(1));
     }
 
     /**

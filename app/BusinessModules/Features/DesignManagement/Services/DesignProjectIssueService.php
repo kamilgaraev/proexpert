@@ -36,7 +36,6 @@ final class DesignProjectIssueService
             ->where('project_id', $projectId)
             ->when(isset($filters['status']), static fn ($query) => $query->where('status', $filters['status']))
             ->when(isset($filters['version_id']), static fn ($query) => $query->whereJsonContains('metadata->design_issue_context->version_id', (int) $filters['version_id']))
-            ->with(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy'])
             ->latest('id')
             ->get();
     }
