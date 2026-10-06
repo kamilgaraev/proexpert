@@ -217,8 +217,14 @@ final readonly class AssistantContextReceipt
     public function contextScope(): array
     {
         $refs = [$this->receipt['currentRef']];
-        foreach ($this->receipt['aliases'] as $ref => $alias) {
-            if (in_array($alias['kind'], ['media', 'transcript', 'entity', 'topic', 'filter'], true)) {
+        $history = $this->authority['snapshot']['conversation']['historyRefs'];
+        foreach ($this->prepared['payload']['messages'] as $message) {
+            $ref = $message['ref'];
+            $alias = $this->receipt['aliases'][$ref];
+            $eligibleHistory = in_array($alias['kind'], ['user', 'assistant'], true) && in_array($alias['artifactRef'], $history, true);
+            $covered = $alias['kind'] === 'summary' ? $alias['metadata']['coveredArtifactRefs'] : [];
+            $eligibleSummary = $alias['kind'] === 'summary' && $covered !== [] && $covered === array_slice($history, 0, count($covered));
+            if (in_array($alias['kind'], ['media', 'transcript', 'entity', 'topic', 'filter'], true) || $eligibleHistory || $eligibleSummary) {
                 $refs[] = $ref;
             }
         }

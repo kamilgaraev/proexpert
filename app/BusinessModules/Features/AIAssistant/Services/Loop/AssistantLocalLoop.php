@@ -152,10 +152,11 @@ final readonly class AssistantLocalLoop
             $checkTime();
             $fresh(false);
             $output = ($this->modelDriver)(AssistantContextSourceBinding::detached($input));
-            $fresh(false);
             if (!is_array($output) && !is_string($output)) {
                 throw new LogicException('model_output_invalid');
             }
+            $output = is_array($output) ? AssistantContextSourceBinding::detached($output) : $output;
+            $fresh(false);
             $outputTokens = $counter->count(['output' => $output]);
             $fresh(false);
             $tokens += $outputTokens;

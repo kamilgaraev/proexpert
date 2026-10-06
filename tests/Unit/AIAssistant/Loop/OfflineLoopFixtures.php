@@ -26,6 +26,7 @@ final class OfflineLoopFixtures
     public array $executed = [];
     public array $evidence = [];
     public array $countedPayloads = [];
+    public array $validatedActions = [];
     public int $driverCalls = 0;
     public int $projected = 0;
     public int $now = 1000;
@@ -133,6 +134,7 @@ final class OfflineLoopFixtures
     {
         return new AssistantLoopResponseValidator($this->validatorAvailable
             ? function (array $action, array $context, array $evidence): array {
+                $this->validatedActions[] = $action;
                 if ($this->onValidate !== null) {
                     return ($this->onValidate)($this, $action, $context, $evidence);
                 }

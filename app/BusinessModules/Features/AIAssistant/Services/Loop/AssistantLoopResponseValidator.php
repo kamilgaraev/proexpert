@@ -25,6 +25,7 @@ final readonly class AssistantLoopResponseValidator
         if ($action->type() !== 'final' || !$this->available()) {
             throw new LogicException('reply_validator_unavailable');
         }
+        $fresh(false);
         $value = $action->values();
         if ($value['claimScope'] === $receipt->contextScope()) {
             if ($value['claims'] !== [] || $value['sourceRefs'] === [] || array_diff($value['sourceRefs'], $receipt->contextSourceRefs()) !== []) {

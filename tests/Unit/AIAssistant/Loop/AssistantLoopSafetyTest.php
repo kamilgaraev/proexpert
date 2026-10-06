@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant\Loop;
 use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantLocalLoop;
 use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantLoopLimits;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 final class AssistantLoopSafetyTest extends TestCase
 {
@@ -134,5 +135,63 @@ final class AssistantLoopSafetyTest extends TestCase
         self::assertCount(1, $fixture->executed);
         self::assertSame(0, $fixture->projected);
         self::assertStringNotContainsString('PRIVATE', json_encode($result, JSON_THROW_ON_ERROR));
+    }
+
+    #[DataProvider('outputMutationSchedules')]
+    public function testDriverReferenceOutputIsFrozenBeforeCountingAndEveryLaterCallback(string $type, string $stage): void
+    {
+        $fixture = new OfflineLoopFixtures();
+        $original = $type === 'plan' ? 'tiny' : 'По выбранной фотографии поясняю второй пункт.';
+        $text = $original;
+        $replacement = str_repeat('X', 6000).($type === 'plan' ? "\0" : '');
+        $hit = false;
+        if ($type === 'plan') {
+            $fixture->actions = [static function () use (&$text): array {
+                return ['type' => 'plan', 'plan' => &$text];
+            }, static fn (array $input): array => OfflineLoopFixtures::contextAnswer($input,
+                'По выбранной фотографии поясняю второй пункт.')];
+        } else {
+            $fixture->actions = [static function (array $input) use (&$text): array {
+                $action = OfflineLoopFixtures::contextAnswer($input, $text);
+                $action['text'] = &$text;
+
+                return $action;
+            }];
+        }
+        $fixture->onValidate = static fn (): array => ['status' => 'valid', 'reason' => 'none'];
+        if ($stage === 'tokenizer') {
+            $fixture->onTokenize = static function (OfflineLoopFixtures $fixture, string $json, array $count) use (&$hit, &$text, $replacement): array {
+                if (!$hit && str_starts_with($json, '{"output":')) {
+                    $hit = true;
+                    $text = $replacement;
+                }
+
+                return $count;
+            };
+        } else {
+            $fixture->onAuthority = static function (OfflineLoopFixtures $fixture, ?string $ref) use (&$hit, &$text, $replacement): void {
+                if (!$hit && $fixture->driverCalls === 1) {
+                    $hit = true;
+                    $text = $replacement;
+                }
+            };
+        }
+        $result = $fixture->loop()->run('offline', $fixture->context->request());
+        self::assertTrue($hit);
+        self::assertSame('READY', $result['status']);
+        self::assertSame('По выбранной фотографии поясняю второй пункт.', $result['reply']);
+        $outputs = array_values(array_filter($fixture->countedPayloads, static fn (string $json): bool => str_starts_with($json, '{"output":')));
+        $counted = json_decode($outputs[0], true, 512, JSON_THROW_ON_ERROR)['output'];
+        self::assertSame($original, $counted[$type === 'plan' ? 'plan' : 'text']);
+        self::assertLessThanOrEqual($fixture->context->profile['maxOutputTokens'], strlen($outputs[0]));
+        if ($type === 'final') {
+            self::assertSame($original, $fixture->validatedActions[0]['text']);
+        }
+        self::assertStringNotContainsString(str_repeat('X', 6000), json_encode($result, JSON_THROW_ON_ERROR));
+    }
+
+    public static function outputMutationSchedules(): array
+    {
+        return [['plan', 'tokenizer'], ['final', 'tokenizer'], ['plan', 'authority'], ['final', 'authority']];
     }
 }

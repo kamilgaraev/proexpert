@@ -1,6 +1,6 @@
 # МОСТ: локальный самостоятельный loop помощника
 
-Версия: `most-ai-assistant-loop/0.1-local`. MOSTAI-50, пакет03. Lease `batch03-MOSTAI50-local-loop/1` разрешает восемь новых PHP-классов Loop, пять тестовых файлов и этот документ. Это dormant local artifact: без production DI, endpoint, provider SDK, private calls или effect execution. Production default constructor возвращает BLOCKED.
+Версия: `most-ai-assistant-loop/0.1.1-local`. MOSTAI-50, пакет03. Исходный lease `batch03-MOSTAI50-local-loop/1` разрешает восемь новых PHP-классов Loop, пять тестовых файлов и этот документ. Исправления B03-SEC-01 и QA03-HISTORY-01 выполняются по lease `batch03-MOSTAI50-review-r1-fixes/2` в семи существующих файлах поверх candidate `c2c1cb16aa754947ae60422674e56f9e28ec2686`. Это dormant local artifact: без production DI, endpoint, provider SDK, private calls или effect execution. Production default constructor возвращает BLOCKED.
 
 ## Входы и границы изменений
 
@@ -24,6 +24,8 @@ Loop вызывает реальный accepted49 producer и принимает
 
 Current photo/transcript/topic/entity/filter context может дать ответ без forced material search. Его selected-context ClaimScope выдаётся loop из проверенного текущего receipt; это не whole-corpus proof. Model refine/summary указывает только известный текущий issuer alias. Frame/summary re-projection, bindings и summary prefix остаются проверками49.
 
+Ответ по предыдущему обсуждению может ссылаться на реально включённые и посчитанные user/assistant history messages либо attested summary текущего receipt. Summary покрывает проверенный непустой prefix authoritative history и сохраняет исходные issuer source-field bindings. Текущий вопрос не подменяет источник истории. System/frame/tool aliases, raw или foreign refs и aliases выпавших сообщений из прошлого receipt не расширяют context ClaimScope. Перед проверкой provenance повторно проверяются actual store, источники и поля, ACL и lifetime; stale evidence не доходит до semantic validator. Числовые claims по-прежнему требуют отдельного canonical material proof.
+
 ## Tool result и разные namespaces
 
 KNOW38 MaterialSearchResult/localEnvelope остаётся UNSEALED. Один adapter принимает actual backend result под trusted native AuthenticatedPrivateContext и свежим private gate; модель не выбирает контекст авторизации. Текущие scope/source/record/price права повторно проверяются для всех накопленных результатов, в том числе перед финальным ответом.
@@ -38,6 +40,8 @@ Coverage complete у selected_entity/search_subset означает полнот
 
 Используется pinned49 model/tokenizer identity и reserve. Полный driver input включает tool definitions, context/receipt metadata и projected tool outputs; output каждого attempt также считается trusted counter, а model usage fields не являются accounting authority. Дополнительно ограничены steps/tool calls/repairs, elapsed time и cumulative tokens. Guard работает вокруг driver/tokenizer/gate/execute/project; новые действия не начинаются после deadline.
 
+Array output модели глубоко копируется сразу после возвращения driver, до следующих authority/tokenizer/clock callbacks. Accounting и parsing используют эту же отделённую копию. Последующая мутация PHP references исходного output не меняет принятую action или ответ. READY допустим для исходного валидного значения в пределах лимита; неподсчитанное позднее значение не используется.
+
 Отдельный terminal callback существующего backend TCB возвращает coherent authority, clock и native privateContext. Они проверяются без последующих callbacks перед выдачей READY, чтобы не повторять49 tail-lineage race. Consumer guards всё равно обязательны позже. Unknown/missing callback/profile/tokenizer/validator/registry либо incoherent result дают BLOCKED; реальные model context/tool/vision capabilities не объявлены подтверждёнными.
 
 Ответ полностью буферизуется до проверки. Trace содержит только конечные action/status/counters и opaque call refs; prompt, raw tool result, private map, plan text/CoT и секреты не логируются.
@@ -48,6 +52,6 @@ Composed tests используют фактические accepted49 producer/r
 
 Локальный tokenizer — byte-based synthetic oracle49, не BPE фактической модели. Driver — конечный scripted model double. Semantic validator проверяет finite заранее утверждённые ответы и canonical claims; это механика loop/dataflow, не оценка качества живой модели.
 
-Проверки: composed search→read/refine→natural answer, фото и два follow-up без forced tool, новый topic, partial против whole corpus, price/unit/currency errors, issuer/store/ref replay, revoke между callback, missing projection/validator/default constructor, elapsed/steps/tool calls/repairs/cumulative tokens, output counting, PII buffering/effects denial и trace privacy. PHPUnit/PHPStan/lint/UTF-8/diff запускаются на собственных standalone tools/TEMP bootstrap без app autoload.files/Laravel/DB/provider или чужого vendor.
+Проверки: composed search→read/refine→natural answer, фото и два follow-up без forced tool, новый topic, partial против whole corpus, price/unit/currency errors, issuer/store/ref replay, revoke между callback, missing projection/validator/default constructor, elapsed/steps/tool calls/repairs/cumulative tokens, output counting, PII buffering/effects denial и trace privacy. R1 regression schedules проверяют plan/final reference mutation в authority/tokenizer callbacks с честным подсчётом и точным сохранением исходного final reply; history/summary recall с исходной provenance; исключение system/raw/foreign/dropped refs и revocation source/field/ACL/lifetime до semantic stage. PHPUnit/PHPStan/lint/UTF-8/diff запускаются на собственных standalone tools/TEMP bootstrap без app autoload.files/Laravel/DB/provider или чужого vendor.
 
 Не подтверждены actual-model quality/capacity/vision, production history/DI/privacy/wire/OCR/RAG/effects и PG/G1–G4. Root организует три independent batch reviewers после готовности всех задач. Author tests не являются независимым PASS; branch/worktree сохраняются до разрешённого whole-batch release/cleanup.
