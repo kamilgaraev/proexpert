@@ -10,7 +10,7 @@ final readonly class GatewayModelRequest
 {
     public const SCHEMA_VERSION = 'public-core-model-request/1';
 
-    public const CONTRACT_VERSION = 'public-core-gateway/0.1-candidate';
+    public const CONTRACT_VERSION = 'public-core-gateway/0.2-candidate';
 
     public const PURPOSE = 'assistant_public_core_test';
 

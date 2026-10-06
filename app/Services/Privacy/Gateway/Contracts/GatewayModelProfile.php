@@ -46,8 +46,9 @@ final readonly class GatewayModelProfile
                 throw new LogicException('model_profile_unqualified');
             }
         }
-        if ($value['maxOutputTokens'] < $value['answerReserve'] + $value['toolReserve']
-            || $value['maxOutputTokens'] >= $value['contextWindow']) {
+        if ($value['answerReserve'] < $value['maxOutputTokens']
+            || $value['answerReserve'] >= $value['contextWindow']
+            || $value['toolReserve'] >= $value['contextWindow'] - $value['answerReserve']) {
             throw new LogicException('model_profile_unqualified');
         }
         if ($value['qualification'] === 'actual') {
@@ -76,5 +77,17 @@ final readonly class GatewayModelProfile
     public function isQualified(): bool
     {
         return in_array($this->value['qualification'], ['local-stub', 'actual'], true);
+    }
+
+    public function isActualProfile(): bool
+    {
+        return $this->value['qualification'] === 'actual';
+    }
+
+    public function inputBudget(): ?int
+    {
+        return $this->isQualified()
+            ? $this->value['contextWindow'] - $this->value['answerReserve'] - $this->value['toolReserve']
+            : null;
     }
 }

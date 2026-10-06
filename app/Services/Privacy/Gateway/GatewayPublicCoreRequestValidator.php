@@ -81,6 +81,9 @@ final class GatewayPublicCoreRequestValidator
 
     public function validateTokenCount(GatewayModelProfile $profile, mixed $count): ?string
     {
+        if (! $profile->isQualified()) {
+            return 'model_profile_unqualified';
+        }
         $settings = $profile->values();
         if (! GatewayModelRequest::hasExactKeys($count, ['inputTokens', 'tokenizerId', 'tokenizerRevision', 'mappingEvidenceRef'])
             || ! is_int($count['inputTokens']) || $count['inputTokens'] < 0
@@ -89,7 +92,30 @@ final class GatewayPublicCoreRequestValidator
             || $count['mappingEvidenceRef'] !== $settings['mappingEvidenceRef']) {
             return 'tokenizer_unqualified';
         }
-        if ($count['inputTokens'] > $settings['contextWindow'] - $settings['maxOutputTokens']) {
+        if ($count['inputTokens'] > $profile->inputBudget()) {
+            return 'budget_exceeded';
+        }
+
+        return null;
+    }
+
+    public function validateUsage(GatewayModelProfile $profile, ?array $usage): ?string
+    {
+        if (! $profile->isQualified()) {
+            return 'model_profile_unqualified';
+        }
+        if ($usage === null) {
+            return null;
+        }
+        if (! GatewayModelRequest::hasExactKeys($usage, ['inputTokens', 'outputTokens', 'totalTokens'])
+            || ! is_int($usage['inputTokens']) || $usage['inputTokens'] < 0
+            || ! is_int($usage['outputTokens']) || $usage['outputTokens'] < 0
+            || ! is_int($usage['totalTokens'])
+            || $usage['totalTokens'] !== $usage['inputTokens'] + $usage['outputTokens']) {
+            return 'invalid_model_output';
+        }
+        if ($usage['inputTokens'] > $profile->inputBudget()
+            || $usage['outputTokens'] > $profile->values()['maxOutputTokens']) {
             return 'budget_exceeded';
         }
 

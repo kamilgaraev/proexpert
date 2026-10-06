@@ -97,7 +97,11 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                             return $response = GatewayModelResponse::blocked($request, 'invalid_model_output');
                         }
 
-                        return $response = GatewayModelResponse::completed($request, $provider['actionBytes'], $provider['usage']);
+                        $completed = GatewayModelResponse::completed($request, $provider['actionBytes'], $provider['usage']);
+                        $reason = $this->validator->validateUsage($this->profile, $completed->usage);
+
+                        return $response = $reason === null
+                            ? $completed : GatewayModelResponse::blocked($request, $reason);
                     } catch (Throwable) {
                         return $response = GatewayModelResponse::blocked($request, 'invalid_model_output');
                     }

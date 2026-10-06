@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Privacy\Gateway;
 
+use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelContextProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
@@ -46,7 +47,7 @@ final class PublicCoreGatewayTest extends TestCase
             'capacityEvidenceRef' => 'evidence:local-budget-stub-01',
             'contextWindow' => 4096,
             'maxOutputTokens' => 512,
-            'answerReserve' => 384,
+            'answerReserve' => 768,
             'toolReserve' => 128,
         ]);
     }
@@ -148,6 +149,94 @@ final class PublicCoreGatewayTest extends TestCase
         $settings['modelId'] = 'changed';
         self::assertSame('local-action-stub', $profile->values()['modelId']);
         self::assertFalse(GatewayModelProfile::unqualified()->isQualified());
+        self::assertFalse(GatewayModelProfile::unqualified()->isActualProfile());
+        self::assertNull(GatewayModelProfile::unqualified()->inputBudget());
+    }
+
+    public function test_gateway_profile_budgets_match_the_frozen_core_and_count_the_full_body(): void
+    {
+        $gateway = $this->profile();
+        $settings = $gateway->values();
+        $coreValues = array_intersect_key($settings, array_flip([
+            'profileRef', 'qualification', 'adapterRevision', 'modelId', 'modelRevision',
+            'tokenizerId', 'tokenizerRevision', 'contextWindow', 'maxOutputTokens',
+            'answerReserve', 'toolReserve',
+        ]));
+        $coreValues['qualification'] = 'offline-synthetic';
+        $core = AssistantModelContextProfile::resolve($settings['profileRef'], static function (string $ref) use ($coreValues): array {
+            self::assertSame($coreValues['profileRef'], $ref);
+
+            return $coreValues;
+        });
+        self::assertCount(16, $settings);
+        self::assertCount(11, $coreValues);
+        self::assertSame('offline-synthetic', $coreValues['qualification']);
+        self::assertSame($core->modelPayload(), array_intersect_key($settings, $core->modelPayload()));
+        self::assertNotSame($core->fingerprint(), $gateway->fingerprint());
+        self::assertSame($core->inputBudget(), $gateway->inputBudget());
+        self::assertTrue($gateway->isQualified());
+        self::assertFalse($gateway->isActualProfile());
+        $request = $this->request($gateway);
+        $body = json_decode($request->bodyBytes, true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame($core->modelPayload()['maxOutputTokens'], $body['max_completion_tokens']);
+        $countedBodies = [];
+        $atBoundary = $this->transport(['tokenCounter' => function (string $bytes, GatewayModelProfile $profile) use ($core, &$countedBodies): array {
+            $countedBodies[] = $bytes;
+
+            return $this->tokenCount($profile, $core->inputBudget());
+        }])->send($request);
+        self::assertSame('completed', $atBoundary->status);
+        self::assertSame([$request->bodyBytes], $countedBodies);
+        self::assertSame(1, $this->writes);
+        $overflow = $this->transport(['tokenCounter' => fn (string $bytes, GatewayModelProfile $profile): array => $this->tokenCount($profile, $core->inputBudget() + 1)])->send($request);
+        self::assertSame('budget_exceeded', $overflow->reasonCode);
+        self::assertSame(1, $this->writes);
+        $body['max_completion_tokens']++;
+        $bytes = GatewayModelRequest::canonicalJson($body);
+        $outputOverflow = $this->request($gateway, ['bodyBytes' => $bytes, 'projectionDigest' => hash('sha256', $bytes)]);
+        self::assertSame('source_changed', $this->transport()->send($outputOverflow)->reasonCode);
+        self::assertSame(1, $this->writes);
+    }
+
+    #[DataProvider('profileBudgetBoundaries')]
+    public function test_profile_capacity_boundaries_use_the_frozen_core(array $changes, ?int $expectedBudget): void
+    {
+        $settings = array_replace($this->profile()->values(), $changes);
+        $coreValues = array_intersect_key($settings, array_flip([
+            'profileRef', 'qualification', 'adapterRevision', 'modelId', 'modelRevision',
+            'tokenizerId', 'tokenizerRevision', 'contextWindow', 'maxOutputTokens',
+            'answerReserve', 'toolReserve',
+        ]));
+        $coreValues['qualification'] = 'offline-synthetic';
+        if ($expectedBudget !== null) {
+            $gateway = GatewayModelProfile::fromArray($settings);
+            $core = AssistantModelContextProfile::resolve($settings['profileRef'], static fn (): array => $coreValues);
+            self::assertSame($expectedBudget, $core->inputBudget());
+            self::assertSame($core->inputBudget(), $gateway->inputBudget());
+            self::assertSame($settings['maxOutputTokens'], $core->modelPayload()['maxOutputTokens']);
+        } else {
+            try {
+                AssistantModelContextProfile::resolve($settings['profileRef'], static fn (): array => $coreValues);
+                self::fail('Frozen core accepted invalid capacity');
+            } catch (LogicException $exception) {
+                self::assertSame('model_profile_invalid_capacity', $exception->getMessage());
+            }
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('model_profile_unqualified');
+            GatewayModelProfile::fromArray($settings);
+        }
+    }
+
+    public static function profileBudgetBoundaries(): array
+    {
+        return [
+            'output exactly fits answer reserve' => [['answerReserve' => 512], 3456],
+            'conservative answer reserve' => [[], 3200],
+            'one token remains for full input' => [['answerReserve' => 512, 'contextWindow' => 641], 1],
+            'output exceeds answer reserve' => [['maxOutputTokens' => 769], null],
+            'answer exhausts context' => [['answerReserve' => 4096], null],
+            'tool reserve exhausts remaining context' => [['toolReserve' => 3328], null],
+        ];
     }
 
     #[DataProvider('invalidPackets')]
@@ -314,7 +403,7 @@ final class PublicCoreGatewayTest extends TestCase
         $cases = [
             [50, 'tokenizer_unqualified'],
             [['inputTokens' => 50], 'tokenizer_unqualified'],
-            [$this->tokenCount($this->profile(), 3585), 'budget_exceeded'],
+            [$this->tokenCount($this->profile(), 3201), 'budget_exceeded'],
             [array_replace($this->tokenCount($this->profile()), ['tokenizerId' => 'unproven-o200k_base']), 'tokenizer_unqualified'],
         ];
         foreach ($cases as [$count, $reason]) {
@@ -399,10 +488,38 @@ final class PublicCoreGatewayTest extends TestCase
         self::assertSame($usage, $response->usage);
     }
 
+    public function test_provider_usage_cannot_exceed_input_or_output_budget(): void
+    {
+        $profile = $this->profile();
+        $boundary = ['inputTokens' => $profile->inputBudget(), 'outputTokens' => $profile->values()['maxOutputTokens']];
+        $boundary['totalTokens'] = $boundary['inputTokens'] + $boundary['outputTokens'];
+        $completed = $this->transport(['sender' => fn (): array => ['actionBytes' => $this->actionBytes(), 'usage' => $boundary]])->send($this->request());
+        self::assertSame('completed', $completed->status);
+        self::assertSame($boundary, $completed->usage);
+        $overflows = [
+            ['inputTokens' => $profile->inputBudget() + 1, 'outputTokens' => 0],
+            ['inputTokens' => 0, 'outputTokens' => $profile->values()['maxOutputTokens'] + 1],
+            ['inputTokens' => PHP_INT_MAX, 'outputTokens' => 0],
+        ];
+        foreach ($overflows as $usage) {
+            $usage['totalTokens'] = $usage['inputTokens'] + $usage['outputTokens'];
+            $writes = 0;
+            $response = $this->transport(['sender' => function () use ($usage, &$writes): array {
+                $writes++;
+
+                return ['actionBytes' => $this->actionBytes(), 'usage' => $usage];
+            }])->send($this->request());
+            self::assertSame('budget_exceeded', $response->reasonCode);
+            self::assertSame(1, $writes);
+            self::assertNull($response->actionBytes);
+            self::assertNull($response->usage);
+        }
+    }
+
     public function test_actual_profile_requires_independent_evidence_and_fixed_destination(): void
     {
         $base = $this->profile()->values();
-        foreach ([['qualification' => 'actual'], ['endpoint' => 'https://example.com'], ['tokenizerRevision' => ''], ['capacityEvidenceRef' => null], ['contextWindow' => null], ['maxOutputTokens' => 4096]] as $change) {
+        foreach ([['qualification' => 'actual'], ['endpoint' => 'https://example.com'], ['tokenizerRevision' => ''], ['capacityEvidenceRef' => null], ['contextWindow' => null], ['maxOutputTokens' => 4096], ['contextWindow' => PHP_INT_MAX], ['maxOutputTokens' => PHP_INT_MAX], ['answerReserve' => PHP_INT_MAX], ['toolReserve' => PHP_INT_MAX]] as $change) {
             try {
                 GatewayModelProfile::fromArray(array_replace($base, $change));
                 self::fail('Unqualified profile accepted');
