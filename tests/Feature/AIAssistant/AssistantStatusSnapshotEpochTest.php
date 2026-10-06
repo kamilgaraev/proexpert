@@ -153,6 +153,49 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertSame(1, $newState['gc_generation']);
     }
 
+    public function test_gc_drains_oldest_events_in_bounded_batches_and_preserves_recent_events(): void
+    {
+        DB::insert('INSERT INTO public.'.AssistantStatusSnapshotEpoch::CHANGE_TABLE.' (xid, relation_oid, created_at) '
+            .'SELECT pg_current_xact_id(), n::oid, statement_timestamp() - make_interval(secs => CASE '
+            .'WHEN n <= 10000 THEN 3600 WHEN n <= 10003 THEN 1800 ELSE 0 END) FROM generate_series(1, 10004) n');
+        $before = $this->capture();
+        self::assertTrue($this->valid($before));
+
+        self::assertSame(10000, $this->epoch->purge());
+        self::assertSame([10001, 10002, 10003, 10004], array_map('intval', DB::table(AssistantStatusSnapshotEpoch::CHANGE_TABLE)
+            ->orderBy('relation_oid')->pluck('relation_oid')->all()));
+        self::assertFalse($this->valid($before));
+        $afterFirst = $this->capture();
+        self::assertSame(1, $afterFirst['gc_generation']);
+        self::assertTrue($this->valid($afterFirst));
+
+        self::assertSame(3, $this->epoch->purge());
+        self::assertSame([10004], array_map('intval', DB::table(AssistantStatusSnapshotEpoch::CHANGE_TABLE)->pluck('relation_oid')->all()));
+        self::assertFalse($this->valid($afterFirst));
+        $afterSecond = $this->capture();
+        self::assertSame(2, $afterSecond['gc_generation']);
+        self::assertTrue($this->valid($afterSecond));
+        self::assertSame(0, $this->epoch->purge());
+        self::assertTrue($this->valid($afterSecond));
+        self::assertSame(2, $this->capture()['gc_generation']);
+    }
+
+    public function test_gc_rolls_back_deleted_events_when_generation_cannot_be_updated(): void
+    {
+        DB::statement("UPDATE public.assistant_snapshot_epoch_row_test SET payload = 'expired'");
+        DB::update('UPDATE public.'.AssistantStatusSnapshotEpoch::CHANGE_TABLE." SET created_at = clock_timestamp() - interval '1 hour'");
+        DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->delete();
+
+        try {
+            $this->epoch->purge();
+            self::fail('Missing control must prevent garbage collection');
+        } catch (\LogicException $exception) {
+            self::assertSame('assistant_snapshot_control_missing', $exception->getMessage());
+        }
+
+        self::assertSame(1, DB::table(AssistantStatusSnapshotEpoch::CHANGE_TABLE)->count());
+    }
+
     public function test_ttl_starts_at_capture_and_unsafe_transaction_or_malformed_state_fails_closed(): void
     {
         self::assertFalse($this->epoch->capture()['cacheable']);
