@@ -36,6 +36,20 @@ final class PublicCoreAuthorityTest extends TestCase
     private int $now;
     private array $runtimeSource = [];
     private array $runtimeProof = [];
+    private int $monoMs = 1000;
+    private int $appSequence = 1;
+    private int $rpcDelayMs = 0;
+    private mixed $grantBudget = 2000;
+    private int $predicateBudget = 2000;
+    private int $loopBudget = 2000;
+    private string $nativeEvent = 'pending';
+    private string $nativeQualification = 'local-source-test';
+    private bool $cancelAllowed = true;
+    private bool $appHeld = false;
+    private ?\Closure $controlMutator = null;
+    private array $controlCalls = [];
+    private ?\Throwable $callbackFailure = null;
+    private array $nativeOverrides = [];
 
     protected function setUp(): void
     {
@@ -60,6 +74,9 @@ final class PublicCoreAuthorityTest extends TestCase
         }
         if (is_dir($this->directory)) {
             rmdir($this->directory);
+        }
+        if ($this->callbackFailure !== null) {
+            throw $this->callbackFailure;
         }
     }
 
@@ -454,12 +471,74 @@ final class PublicCoreAuthorityTest extends TestCase
         $native = AssistantContextReceipt::consume($prepared, $authority, $fixture->profile['profileRef']);
         $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => $native->payload(), 'contextScope' => $native->contextScope(),
             'tools' => [], 'toolReferences' => null, 'repair' => null];
-        $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, ['credential' => 'server-ticket'],
+        $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, ['viewerTicketRef' => 'ref_server_viewer_ticket'],
             $request['requestRef'], fn (): array => $this->runtimeSource,
-            static fn (array $viewer, array $binding, \Closure $operation): GatewayModelResponse => $operation(), fn (): int => $this->now);
+            $this->appControlSource(), fn (): int => $this->now, fn (): int => $this->monoMs, $this->nativeSource(),
+            fn (): array => ['predicateRemainingMs' => $this->predicateBudget, 'loopRemainingMs' => $this->loopBudget], $this->controlPins(),
+            fn (): int => 1700000120);
         $packet = $dispatch->projectForDispatch($input, $native->privateBinding(), $profile);
         self::assertInstanceOf(GatewayModelRequest::class, $packet);
         return [$dispatch, $packet, $readiness, $publisher, $input, $native->privateBinding()];
+    }
+
+    private function controlPins(): array
+    {
+        return ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
+            'gatewayPeer' => ['pid' => 222, 'uid' => 1002, 'gid' => 1002], 'gatewayChannelRef' => 'channel_gateway_source_test'];
+    }
+
+    private function appControlSource(): \Closure
+    {
+        return $this->withAssertions(function (string $command, array $payload, ?GatewayModelRequest $packet, int $expiresAt): array {
+            $this->controlCalls[] = $command;
+            $tuple = $payload['binding'] ?? null;
+            if ($command === 'authorize_write') {
+                $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
+                self::assertSame('consumed', $disk['state']['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['status']);
+                $this->appHeld = true;
+                $reply = ['schemaVersion' => 'public-core-app-upload-grant/1', 'binding' => $tuple, 'currentViewer' => $this->viewer,
+                    'guardRef' => 'ref_simulated_upload_guard', 'coverageEvidenceRef' => 'ref_simulated_guard_coverage', 'uploadTimeoutMs' => $this->grantBudget];
+                $replyCommand = 'write_authorized';
+            } elseif ($command === 'upload_complete') {
+                self::assertContains($this->nativeEvent, ['uploaded', 'stopped']);
+                self::assertTrue(GatewayModelRequest::isReference($payload['completionRef']));
+                self::assertNotNull($this->store->transaction(static fn (): array => ['ledgerReleased' => true]));
+                $this->appHeld = false;
+                $reply = ['schemaVersion' => 'public-core-app-upload-released/1', 'binding' => $tuple, 'guardRef' => $payload['guardRef']];
+                $replyCommand = 'uploaded';
+            } elseif ($payload['schemaVersion'] === 'public-core-app-viewer-ticket-check/1') {
+                self::assertNull($packet);
+                self::assertSame(['schemaVersion', 'viewerTicketRef'], array_keys($payload));
+                $reply = ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $payload['viewerTicketRef'], 'currentViewer' => $this->viewer];
+                $replyCommand = 'binding';
+            } else {
+                $reply = ['schemaVersion' => 'public-core-app-viewer-binding/1', 'binding' => $tuple, 'currentViewer' => $this->viewer];
+                $replyCommand = 'binding';
+            }
+            $this->monoMs += $this->rpcDelayMs;
+            $result = ['frame' => ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['appChannelRef'],
+                'sequence' => ++$this->appSequence, 'command' => $replyCommand, 'requestRef' => $packet?->requestRef,
+                'attemptRef' => $packet?->attemptRef, 'expiresAt' => $expiresAt, 'payload' => $reply], 'peer' => $this->controlPins()['appPeer']];
+            return $this->controlMutator === null ? $result : ($this->controlMutator)($command, $result);
+        });
+    }
+
+    private function nativeSource(): \Closure
+    {
+        return $this->withAssertions(function (string $operation, GatewayModelRequest $packet, ?array $cancelRequest = null): ?array {
+            if ($operation === 'cancel') {
+                self::assertSame(['schemaVersion', 'binding', 'reasonCode'], array_keys($cancelRequest));
+                self::assertSame('public-core-gateway-upload-cancel/1', $cancelRequest['schemaVersion']);
+                self::assertSame($packet->binding(), $cancelRequest['binding']);
+                if (!$this->cancelAllowed) {
+                    return null;
+                }
+                $this->nativeEvent = 'stopped';
+            }
+            return array_replace(['qualification' => $this->nativeQualification, 'channelRef' => $this->controlPins()['gatewayChannelRef'],
+                'transferRef' => 'ref_simulated_transfer_instance', 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                'projectionDigest' => $packet->projectionDigest, 'event' => $this->nativeEvent], $this->nativeOverrides);
+        });
     }
 
     private function localGateway(PublicCoreDispatchAuthority $dispatch, PublicCoreRuntimeReadiness $readiness, \Closure $sender): GatewayPublicCoreTransport
@@ -469,7 +548,24 @@ final class PublicCoreAuthorityTest extends TestCase
             static fn (): string => 'ref_simulated_processor_peer', 'ref_simulated_processor_peer', $dispatch->currentBinding(...),
             $dispatch->withGatewayFence(...), static fn (string $bytes): array => ['inputTokens' => strlen($bytes),
                 'tokenizerId' => $profile->values()['tokenizerId'], 'tokenizerRevision' => $profile->values()['tokenizerRevision'],
-                'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']], $sender, fn (): int => $this->now);
+                'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']], $this->withAssertions($sender), fn (): int => $this->now);
+    }
+
+    private function withAssertions(\Closure $operation): \Closure
+    {
+        return function (...$arguments) use ($operation): mixed {
+            try {
+                return $operation(...$arguments);
+            } catch (\PHPUnit\Framework\AssertionFailedError $failure) {
+                $this->callbackFailure ??= $failure;
+                throw $failure;
+            }
+        };
+    }
+
+    private function runDispatch(PublicCoreDispatchAuthority $dispatch, GatewayModelRequest $packet, \Closure $operation): GatewayModelResponse
+    {
+        return $dispatch->withDispatchFence($packet, $this->withAssertions($operation));
     }
 
     public function testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt(): void
@@ -479,15 +575,23 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertNull($readiness->resolve()['actual_model']);
         self::assertNotSame($packet->profileFingerprint, $packet->corePayloadDigest);
         $writes = 0;
-        $gateway = $this->localGateway($dispatch, $readiness, function (GatewayModelProfile $profile, string $bytes) use ($packet, &$writes): array {
+        $gateway = $this->localGateway($dispatch, $readiness, function (GatewayModelProfile $profile, string $bytes) use ($dispatch, $packet, &$writes): array {
             $writes++;
             self::assertSame($packet->bodyBytes, $bytes);
             $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
             self::assertSame('consumed', $disk['state']['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['status']);
+            self::assertTrue($this->appHeld);
+            self::assertNull($this->store->transaction(static fn (): array => ['held' => true]));
+            $this->nativeEvent = 'uploaded';
+            self::assertSame(['projectionDigest' => $packet->projectionDigest, 'bodyLength' => strlen($packet->bodyBytes)], $dispatch->uploadComplete($packet));
+            self::assertFalse($this->appHeld);
+            self::assertNotNull($this->store->transaction(static fn (): array => ['released' => true]));
+            $this->monoMs += 3000;
+            $this->now += 3;
             return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Find the public price using material.search.']), 'usage' => null];
         });
-        self::assertSame('completed', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
-        self::assertSame('blocked', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
+        self::assertSame('completed', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
+        self::assertSame('blocked', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
         self::assertSame(1, $writes);
     }
 
@@ -508,7 +612,7 @@ final class PublicCoreAuthorityTest extends TestCase
             $writes++;
             return [];
         });
-        self::assertNotSame('completed', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
+        self::assertNotSame('completed', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
         self::assertSame(0, $writes);
     }
 
@@ -527,9 +631,9 @@ final class PublicCoreAuthorityTest extends TestCase
             $writes++;
             throw new \RuntimeException('uncertain_send');
         });
-        self::assertSame('gateway_unavailable', $dispatch->withDispatchFence($packet, $gateway->send(...))->reasonCode);
-        self::assertSame('blocked', $dispatch->withDispatchFence($packet, $gateway->send(...))->status);
-        self::assertSame('blocked', $dispatch->withDispatchFence($preparedBeforeSend, $gateway->send(...))->status);
+        self::assertSame('gateway_unavailable', $this->runDispatch($dispatch, $packet, $gateway->send(...))->reasonCode);
+        self::assertSame('blocked', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
+        self::assertSame('blocked', $this->runDispatch($dispatch, $preparedBeforeSend, $gateway->send(...))->status);
         self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
         self::assertSame(1, $writes);
     }
@@ -540,6 +644,336 @@ final class PublicCoreAuthorityTest extends TestCase
         $input['context']['messages'][0]['content'] = 'arbitrary replacement';
         self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
         self::assertSame('receipt_changed', $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile())['reasonCode']);
+    }
+
+    private function gatewayFrame(GatewayModelRequest $packet, int $sequence, string $command, array $payload): array
+    {
+        return ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['gatewayChannelRef'],
+            'sequence' => $sequence, 'command' => $command, 'requestRef' => $packet->requestRef,
+            'attemptRef' => $packet->attemptRef, 'expiresAt' => $packet->expiresAt, 'payload' => $payload];
+    }
+
+    private function planResponse(GatewayModelRequest $packet): GatewayModelResponse
+    {
+        return GatewayModelResponse::completed($packet, GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Read public facts.']), null);
+    }
+
+    public function testGrantSubtractsFullRpcAndProcessingWithoutShorteningGenuineResponseExpiry(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->rpcDelayMs = 250;
+        $this->grantBudget = 1000;
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['schemaVersion', 'binding', 'uploadTimeoutMs'], array_keys($grant));
+            self::assertSame('public-core-gateway-upload-grant/1', $grant['schemaVersion']);
+            self::assertSame($packet->binding(), $grant['binding']);
+            self::assertSame(750, $grant['uploadTimeoutMs']);
+            $this->monoMs += 100;
+            self::assertSame(650, $dispatch->remainingUploadMs());
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            $this->monoMs += 3000;
+            $this->now += 3;
+            self::assertSame(1700000030, $packet->expiresAt);
+            self::assertFalse($this->appHeld);
+            return $this->planResponse($packet);
+        });
+        self::assertSame('completed', $response->status);
+    }
+
+    #[DataProvider('invalidUploadBudgets')]
+    public function testUnknownNonpositiveMalformedOrOverflowBudgetHasNoWriteAllowance(mixed $budget): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->grantBudget = $budget;
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['reasonCode'], array_keys($grant));
+            self::assertFalse($this->appHeld);
+            return GatewayModelResponse::blocked($packet, $grant['reasonCode']);
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertNotNull($this->store->transaction(static fn (): array => ['notHeld' => true]));
+    }
+
+    public static function invalidUploadBudgets(): array
+    {
+        return [[null], [0], [-1], ['2000'], [2000.0], [PHP_INT_MAX], [[]]];
+    }
+
+    public function testNearExpiryGrantCannotResetBudget(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->grantBudget = 100;
+        $this->rpcDelayMs = 101;
+        self::assertNotSame('completed', $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('expired', $dispatch->authorizeWrite($packet)['reasonCode']);
+            return GatewayModelResponse::blocked($packet, 'expired');
+        })->status);
+        self::assertFalse($this->appHeld);
+    }
+
+    private function bootstrapAuthority(): PublicCoreDispatchAuthority
+    {
+        return new PublicCoreDispatchAuthority($this->store, $this->qualifiedReadiness(), appControl: $this->appControlSource(),
+            clock: fn (): int => $this->now, controlPins: $this->controlPins(), bootstrapExpiry: static fn (): int => 1700000120);
+    }
+
+    public function testTicketBootstrapAuthenticatesBeforeOwnedTupleAndNeverGrantsUpload(): void
+    {
+        $authority = $this->bootstrapAuthority();
+        self::assertSame($this->viewer, $authority->bootstrapViewer('ref_server_viewer_ticket'));
+        self::assertSame(['check_binding'], $this->controlCalls);
+        self::assertFalse($this->appHeld);
+        $this->viewer['authorized'] = false;
+        self::assertNull($authority->bootstrapViewer('ref_server_viewer_ticket'));
+    }
+
+    #[DataProvider('invalidBootstrapControls')]
+    public function testBootstrapRolePhaseSchemaAndReplayConfusionIsDenied(string $change): void
+    {
+        $authority = $this->bootstrapAuthority();
+        $this->controlMutator = function (string $command, array $result) use ($change): array {
+            switch ($change) {
+                case 'role': $result['peer'] = $this->controlPins()['gatewayPeer']; break;
+                case 'channel': $result['frame']['channelRef'] = $this->controlPins()['gatewayChannelRef']; break;
+                case 'sequence': $result['frame']['sequence'] = 1; break;
+                case 'expiry': $result['frame']['expiresAt'] = $this->now; break;
+                case 'owned_ref': $result['frame']['requestRef'] = 'ref_unowned_request'; break;
+                case 'grant': $result['frame']['payload'] = ['schemaVersion' => 'public-core-app-upload-grant/1', 'binding' => [],
+                    'currentViewer' => $this->viewer, 'guardRef' => 'ref_manual_guard', 'coverageEvidenceRef' => 'ref_manual_coverage', 'uploadTimeoutMs' => 2000]; break;
+                case 'native12': $result['frame']['payload'] = array_fill_keys(['requestRef', 'attemptRef', 'publicAdmissionRef', 'contextReceiptRef',
+                    'corePayloadDigest', 'coreReceiptDigest', 'projectionRef', 'projectionDigest', 'profileRef', 'profileFingerprint', 'purpose', 'expiresAt'], null); break;
+            }
+            return $result;
+        };
+        self::assertNull($authority->bootstrapViewer('ref_server_viewer_ticket'));
+        self::assertNotContains('authorize_write', $this->controlCalls);
+    }
+
+    public static function invalidBootstrapControls(): array
+    {
+        return [['role'], ['channel'], ['sequence'], ['expiry'], ['owned_ref'], ['grant'], ['native12']];
+    }
+
+    public function testManualUploadAndStoppedAckCannotCreatePrivateCompletionReference(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $peer = $this->controlPins()['gatewayPeer'];
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet, $peer): GatewayModelResponse {
+            $payload = ['projectionDigest' => $packet->projectionDigest, 'profileFingerprint' => $packet->profileFingerprint];
+            self::assertSame($packet->binding(), $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 2, 'check_binding', $payload), $peer, $packet));
+            $grant = $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 3, 'authorize_write', $payload), $peer, $packet);
+            self::assertSame('public-core-gateway-upload-grant/1', $grant['schemaVersion']);
+            self::assertSame('gateway_channel_unavailable', $dispatch->authorizeWrite($packet)['reasonCode']);
+            $manual = $this->gatewayFrame($packet, 4, 'upload_complete', ['projectionDigest' => $packet->projectionDigest, 'bodyLength' => strlen($packet->bodyBytes)]);
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($manual, $peer, $packet));
+            self::assertTrue($this->appHeld);
+            self::assertNotContains('upload_complete', $this->controlCalls);
+            $cancel = $dispatch->gatewayCancelRequest($packet, 'expired');
+            $ack = ['schemaVersion' => 'public-core-gateway-upload-stopped/1', 'binding' => $cancel['binding'], 'reasonCode' => 'expired'];
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 5, 'abort', $ack), $peer, $packet));
+            self::assertTrue($this->appHeld);
+            $this->nativeEvent = 'stopped';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 6, 'abort', $ack), $peer, $packet));
+            self::assertFalse($this->appHeld);
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($this->gatewayFrame($packet, 6, 'abort', $ack), $peer, $packet));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+    }
+
+    public function testEofAndUnknownStopKeepScopeUntilVerifiedSameTransferStop(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->cancelAllowed = false;
+        try {
+            $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+                self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+                throw new \RuntimeException('EOF is not stopped');
+            });
+            self::assertNotSame('completed', $response->status);
+            self::assertTrue($this->appHeld);
+            self::assertNull($this->store->transaction(static fn (): array => ['held' => true]));
+            self::assertNotContains('upload_complete', $this->controlCalls);
+        } finally {
+            $this->cancelAllowed = true;
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet));
+        }
+        self::assertFalse($this->appHeld);
+        self::assertNotNull($this->store->transaction(static fn (): array => ['released' => true]));
+    }
+
+    public function testMissingReleaseAckDoesNotWaitForModelOrResendRelease(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->controlMutator = static function (string $command, array $result): array {
+            if ($command === 'upload_complete') {
+                $result['frame']['payload'] = [];
+            }
+            return $result;
+        };
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            throw new \RuntimeException('release not acknowledged');
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertSame(1, count(array_filter($this->controlCalls, static fn (string $command): bool => $command === 'upload_complete')));
+        self::assertNotNull($this->store->transaction(static fn (): array => ['ledgerReleased' => true]));
+    }
+
+    public function testBackwardClockDuringGrantDeniesAndCancelsWithoutWriteAllowance(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->controlMutator = function (string $command, array $result): array {
+            if ($command === 'authorize_write') {
+                $this->monoMs--;
+            }
+            return $result;
+        };
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['reasonCode'], array_keys($grant));
+            return GatewayModelResponse::blocked($packet, $grant['reasonCode']);
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertFalse($this->appHeld);
+    }
+
+    #[DataProvider('invalidNativeEvents')]
+    public function testUnknownNativeQualificationOrWrongTransferTupleGrantsNothing(string $field, mixed $value): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->nativeOverrides[$field] = $value;
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $grant = $dispatch->authorizeWrite($packet);
+            self::assertSame(['reasonCode'], array_keys($grant));
+            return GatewayModelResponse::blocked($packet, $grant['reasonCode']);
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertNotContains('authorize_write', $this->controlCalls);
+    }
+
+    public static function invalidNativeEvents(): array
+    {
+        return [['qualification', 'actual-native'], ['channelRef', 'channel_other_source'], ['requestRef', 'ref_other_request'],
+            ['attemptRef', 'ref_other_attempt'], ['projectionDigest', str_repeat('0', 64)], ['event', 'manual_uploaded']];
+    }
+
+    public function testExpiredGrantAndSameAttemptRevocationDenyBeforeFollowingWrite(): void
+    {
+        [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet, $readiness): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->monoMs += 2000;
+            self::assertSame('expired', $dispatch->currentBinding($packet, $readiness->qualifiedProfile())['reasonCode']);
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet, 'expired'));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertFalse($this->appHeld);
+    }
+
+    public function testFreshFinalAuthorizationSuppressesReplyAfterReleasedUpload(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            $this->viewer['authorized'] = false;
+            return $this->planResponse($packet);
+        });
+        self::assertSame('authorization_changed', $response->reasonCode);
+        self::assertNull($response->actionBytes);
+    }
+
+    public function testExpiredStoppedControlDoesNotEnterUndeclaredCleanupFallback(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $cancel = $dispatch->gatewayCancelRequest($packet, 'expired');
+            $frame = $this->gatewayFrame($packet, 2, 'abort', ['schemaVersion' => 'public-core-gateway-upload-stopped/1',
+                'binding' => $cancel['binding'], 'reasonCode' => 'expired']);
+            $frame['expiresAt'] = $this->now;
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($frame, $this->controlPins()['gatewayPeer'], $packet));
+            self::assertTrue($this->appHeld);
+            self::assertNotContains('upload_complete', $this->controlCalls);
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+    }
+
+    public function testOwnedDenialRemainsBoundedDenialAndNeverBecomesGrant(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->controlMutator = function (string $command, array $result): array {
+            if ($command === 'authorize_write') {
+                $this->appHeld = false;
+                $result['frame']['payload'] = ['schemaVersion' => 'public-core-app-control-denial/1',
+                    'binding' => $result['frame']['payload']['binding'], 'reasonCode' => 'source_changed'];
+            }
+            return $result;
+        };
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame(['reasonCode' => 'source_changed'], $dispatch->authorizeWrite($packet));
+            return GatewayModelResponse::blocked($packet, 'source_changed');
+        });
+        self::assertNotSame('completed', $response->status);
+        self::assertNotContains('upload_complete', $this->controlCalls);
+    }
+
+    public function testAppAbortRequestsStopWithoutReleasingFromManualFlag(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $this->cancelAllowed = false;
+        try {
+            $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+                self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+                $tuple = ['viewerTicketRef' => 'ref_server_viewer_ticket', 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                    'projectionDigest' => $packet->projectionDigest, 'profileFingerprint' => $packet->profileFingerprint,
+                    'registryDigest' => $this->runtimeSource['registryDigest'], 'manifestGenerationRef' => $this->runtimeSource['manifestGenerationRef']];
+                $frame = ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['appChannelRef'],
+                    'sequence' => ++$this->appSequence, 'command' => 'abort', 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                    'expiresAt' => $packet->expiresAt, 'payload' => ['schemaVersion' => 'public-core-app-upload-cancel-request/1', 'binding' => $tuple,
+                        'guardRef' => 'ref_simulated_upload_guard', 'reasonCode' => 'authorization_changed']];
+                self::assertArrayHasKey('reasonCode', $dispatch->handleAppCancelFrame($frame, $this->controlPins()['appPeer'], $packet));
+                self::assertTrue($this->appHeld);
+                self::assertNotContains('upload_complete', $this->controlCalls);
+                return GatewayModelResponse::blocked($packet, 'authorization_changed');
+            });
+            self::assertNotSame('completed', $response->status);
+            self::assertTrue($this->appHeld);
+        } finally {
+            $this->cancelAllowed = true;
+            self::assertArrayNotHasKey('reasonCode', $dispatch->cancelUpload($packet));
+        }
+    }
+
+    public function testCompletedTransferCannotBeReusedForAnotherAttempt(): void
+    {
+        [$dispatch, $packet, $readiness, , $input, $binding] = $this->dispatchPreparation();
+        self::assertSame('completed', $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded';
+            self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            return $this->planResponse($packet);
+        })->status);
+        $next = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile());
+        self::assertInstanceOf(GatewayModelRequest::class, $next);
+        $this->nativeEvent = 'pending';
+        $this->controlCalls = [];
+        $result = $this->runDispatch($dispatch, $next, function () use ($dispatch, $next): GatewayModelResponse {
+            self::assertSame(['reasonCode' => 'receipt_changed'], $dispatch->authorizeWrite($next));
+            return GatewayModelResponse::blocked($next, 'receipt_changed');
+        });
+        self::assertNotSame('completed', $result->status);
+        self::assertNotContains('authorize_write', $this->controlCalls);
     }
 
     private function processor(?\Closure $composition = null): PublicCoreProcessor
