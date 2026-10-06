@@ -16,6 +16,8 @@ return [
 
     'default' => env('MAIL_MAILER', 'resend'),
 
+    'support_address' => env('MAIL_SUPPORT_ADDRESS', 'request@xn--1-xtbgmf.xn--p1ai'),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations
