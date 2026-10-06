@@ -100,7 +100,7 @@ final readonly class PublicCoreRuntimeReadiness
             'data_scope' => 'registered_public_fixture',
             'status' => $live ? 'ready' : 'unavailable',
             'reason_code' => $live ? 'none' : 'runtime_not_activated',
-            'source_contract_version' => 'public-core-authority/0.4-candidate',
+            'source_contract_version' => 'public-core-authority/0.5-candidate',
             'actual_model' => $live ? $profile->values()['modelId'] : null,
             'model_enabled' => $live,
             'capabilities' => ['text' => $live, 'tools' => $live, 'vision' => false],

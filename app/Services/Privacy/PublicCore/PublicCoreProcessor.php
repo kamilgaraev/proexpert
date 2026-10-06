@@ -6,6 +6,7 @@ namespace App\Services\Privacy\PublicCore;
 
 use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantLocalLoop;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use Closure;
 use Throwable;
 
@@ -13,6 +14,7 @@ final class PublicCoreProcessor
 {
     private readonly string $processRef;
     private array $runtimes = [];
+    private array $runtimeInstances = [];
 
     public function __construct(
         private readonly RegisteredPublicFixtureRegistry $registry,
@@ -22,6 +24,7 @@ final class PublicCoreProcessor
         private readonly ?Closure $peerSource = null,
         private readonly ?Closure $viewerBindingSource = null,
         private readonly ?Closure $nativeComposition = null,
+        private readonly ?Closure $currentRuntimeSource = null,
     ) {
         $this->processRef = 'ref_' . bin2hex(random_bytes(16));
     }
@@ -88,7 +91,7 @@ final class PublicCoreProcessor
     public function executeOwned(string $requestRef): array
     {
         $profile = $this->readiness->qualifiedProfile();
-        if ($this->nativeComposition === null || $profile === null) {
+        if ($this->nativeComposition === null || $profile === null || $this->currentRuntimeSource === null) {
             return self::blocked('runtime_not_activated');
         }
         $claim = $this->store->transaction(function (array &$state) use ($requestRef): array {
@@ -153,7 +156,19 @@ final class PublicCoreProcessor
             if ($bound !== ['bound' => true]) {
                 throw new \LogicException('source_changed');
             }
+            $instance = $this->runtimeInstances[$request['sessionRef']] ?? null;
+            if ($instance !== null && $instance['runtime'] !== $composition['runtime']) {
+                throw new \LogicException('source_changed');
+            }
             $this->runtimes[$request['sessionRef']] = $composition['runtime'];
+            $this->runtimeInstances[$request['sessionRef']] = $instance ?? [
+                'runtime' => $composition['runtime'], 'instanceRef' => 'ref_' . bin2hex(random_bytes(16)),
+            ];
+            $currentRequest = $this->sessions->lookup($viewer, $requestRef);
+            if ($currentRequest === null || ($this->currentRuntimeSource)($composition['runtime'], $currentRequest, $profile) !== $source
+                || $this->readiness->currentProfileFingerprint() !== $profile->fingerprint()) {
+                throw new \LogicException('source_changed');
+            }
             $native = $composition['loop']->run($composition['profileRef'], $composition['refs']);
             $freshSource = ($composition['sourceState'])();
             if ($freshSource !== $source || $this->readiness->currentProfileFingerprint() !== $profile->fingerprint()
@@ -179,6 +194,16 @@ final class PublicCoreProcessor
                 $state['requests'][$requestRef]['execution']['result'] = self::blocked('profile_changed');
                 return self::blocked('profile_changed');
             }
+            if ($result['status'] === 'completed') {
+                $binding = $this->completedBinding($request, $state['sessions'][$request['sessionRef']], $result);
+                $fresh = $this->sessions->currentRequest($state, $viewer, $requestRef);
+                if ($binding === null || $fresh === null || $fresh !== $request
+                    || $this->completedBinding($fresh, $state['sessions'][$request['sessionRef']], $result) !== $binding) {
+                    $result = self::blocked('source_changed') + ['request_ref' => $requestRef];
+                } else {
+                    $state['requests'][$requestRef]['execution']['resultBinding'] = $binding;
+                }
+            }
             $state['requests'][$requestRef]['execution']['status'] = $result['status'];
             $state['requests'][$requestRef]['execution']['result'] = PublicCoreReceiptStore::owned($result);
             return $result;
@@ -187,24 +212,79 @@ final class PublicCoreProcessor
 
     private function lookupOwned(array $viewer, string $requestRef): array
     {
-        $request = $this->sessions->lookup($viewer, $requestRef);
-        if ($request === null || ($request['processorViewerBinding'] ?? null) !== $viewer) {
-            return self::blocked('authorization_changed');
+        return $this->store->transaction(function (array &$state) use ($viewer, $requestRef): array {
+            $request = $this->sessions->currentRequest($state, $viewer, $requestRef);
+            if ($request === null || ($request['processorViewerBinding'] ?? null) !== $viewer) {
+                return self::blocked('authorization_changed');
+            }
+            $execution = $request['execution'] ?? null;
+            if ($execution === null) {
+                return ['status' => 'accepted', 'reasonCode' => 'none', 'request_ref' => $requestRef, 'transportAllowed' => false];
+            }
+            if ($execution['status'] === 'running') {
+                return self::blocked('receipt_changed') + ['request_ref' => $requestRef];
+            }
+            $result = $execution['result'] ?? null;
+            if ($execution['status'] !== 'completed') {
+                $reason = is_array($result) ? ($result['reasonCode'] ?? null) : null;
+                return self::blocked(is_string($reason) && $reason !== 'none' && in_array($reason, GatewayModelResponse::REASON_CODES, true)
+                    ? $reason : 'receipt_unavailable') + ['request_ref' => $requestRef];
+            }
+            $saved = $execution['resultBinding'] ?? null;
+            $session = $state['sessions'][$request['sessionRef']];
+            $current = is_array($result) ? $this->completedBinding($request, $session, $result) : null;
+            if ($current === null || $current !== $saved) {
+                return self::blocked('source_changed');
+            }
+            $fresh = $this->sessions->currentRequest($state, $viewer, $requestRef);
+            if ($fresh === null || $fresh !== $request || $this->completedBinding($fresh, $session, $result) !== $saved) {
+                return self::blocked('source_changed');
+            }
+            return PublicCoreReceiptStore::owned($result);
+        }) ?? self::blocked('receipt_unavailable');
+    }
+
+    private function completedBinding(array $request, array $session, array $result): ?array
+    {
+        $profile = $this->readiness->qualifiedProfile();
+        $runtime = $this->runtimes[$request['sessionRef']] ?? null;
+        $instance = $this->runtimeInstances[$request['sessionRef']] ?? null;
+        if ($profile === null || $this->currentRuntimeSource === null || !is_object($runtime) || !is_array($instance)
+            || array_keys($instance) !== ['runtime', 'instanceRef'] || $instance['runtime'] !== $runtime
+            || !GatewayModelRequest::isReference($instance['instanceRef'])
+            || ($request['execution']['processRef'] ?? null) !== $this->processRef
+            || !GatewayModelRequest::hasExactKeys($result, ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed'])
+            || $result['status'] !== 'completed' || $result['reasonCode'] !== 'none' || $result['request_ref'] !== $request['requestRef']
+            || $result['transportAllowed'] !== false || !is_array($result['trace']) || !is_string($result['reply'])
+            || trim($result['reply']) === '' || strlen($result['reply']) > 32768 || preg_match('//u', $result['reply']) !== 1
+            || str_contains($result['reply'], "\0")) {
+            return null;
         }
-        $execution = $request['execution'] ?? null;
-        if ($execution === null) {
-            return ['status' => 'accepted', 'reasonCode' => 'none', 'request_ref' => $requestRef, 'transportAllowed' => false];
+        try {
+            $source = ($this->currentRuntimeSource)($runtime, PublicCoreReceiptStore::owned($request), $profile);
+            if (!GatewayModelRequest::hasExactKeys($source, ['registryDigest', 'manifestGenerationRef', 'runtimeGenerationRef'])
+                || $source['registryDigest'] !== $this->registry->manifestDigest()
+                || $source['manifestGenerationRef'] !== $request['registered']['source_generation_ref']
+                || !GatewayModelRequest::isReference($source['runtimeGenerationRef'])
+                || $source['runtimeGenerationRef'] !== ($request['runtimeGenerationRef'] ?? null)
+                || $source['runtimeGenerationRef'] !== ($session['runtimeGenerationRef'] ?? null)
+                || $this->readiness->currentProfileFingerprint() !== $profile->fingerprint()) {
+                return null;
+            }
+            return ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $request['requestRef'],
+                'sessionRef' => $request['sessionRef'], 'processRef' => $this->processRef, 'ownerDigest' => $session['ownerDigest'],
+                'profileFingerprint' => $profile->fingerprint(), 'registryDigest' => $source['registryDigest'],
+                'manifestGenerationRef' => $source['manifestGenerationRef'], 'runtimeGenerationRef' => $source['runtimeGenerationRef'],
+                'runtimeInstanceRef' => $instance['instanceRef'], 'resultDigest' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($result))];
+        } catch (Throwable) {
+            return null;
         }
-        if ($execution['status'] === 'running') {
-            return self::blocked('receipt_changed') + ['request_ref' => $requestRef];
-        }
-        return $execution['result'] ?? self::blocked('receipt_unavailable');
     }
 
     private function readinessDto(): array
     {
         $dto = $this->readiness->resolve();
-        if ($this->viewerBindingSource === null || $this->nativeComposition === null || !$this->store->available()) {
+        if ($this->viewerBindingSource === null || $this->nativeComposition === null || $this->currentRuntimeSource === null || !$this->store->available()) {
             $dto['status'] = 'unavailable';
             $dto['reason_code'] = 'runtime_not_activated';
             $dto['actual_model'] = null;

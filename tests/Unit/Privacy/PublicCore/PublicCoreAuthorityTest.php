@@ -50,6 +50,11 @@ final class PublicCoreAuthorityTest extends TestCase
     private array $controlCalls = [];
     private ?\Throwable $callbackFailure = null;
     private array $nativeOverrides = [];
+    private ?GatewayModelProfile $currentGatewayProfile = null;
+    private bool $runtimeReaderAvailable = true;
+    private int $cachedFactoryCalls = 0;
+    private int $currentRuntimeChecks = 0;
+    private ?\Closure $onRuntimeRead = null;
 
     protected function setUp(): void
     {
@@ -406,7 +411,8 @@ final class PublicCoreAuthorityTest extends TestCase
             'authorizationFenceEvidenceRef' => 'ref_simulated_fence_evidence', 'identityEvidenceRef' => 'ref_simulated_identity_evidence',
             'channelEvidenceRef' => 'ref_simulated_channel_evidence', 'egressEvidenceRef' => 'ref_simulated_egress_evidence',
             'secretEvidenceRef' => 'ref_simulated_secret_evidence', 'activationRef' => 'ref_simulated_activation_evidence'];
-        return new PublicCoreRuntimeReadiness($this->registry, static fn (): GatewayModelProfile => $profile,
+        $this->currentGatewayProfile = $profile;
+        return new PublicCoreRuntimeReadiness($this->registry, fn (): ?GatewayModelProfile => $this->currentGatewayProfile,
             fn (): array => $this->runtimeProof,
             static fn (string $bytes, GatewayModelProfile $current): array => ['inputTokens' => strlen($bytes),
                 'tokenizerId' => $current->values()['tokenizerId'], 'tokenizerRevision' => $current->values()['tokenizerRevision'],
@@ -976,12 +982,191 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertNotContains('authorize_write', $this->controlCalls);
     }
 
-    private function processor(?\Closure $composition = null): PublicCoreProcessor
+    private function processor(?\Closure $composition = null, ?\Closure $currentRuntimeSource = null, bool $withRuntimeReader = true): PublicCoreProcessor
     {
+        $reader = $withRuntimeReader ? ($currentRuntimeSource ?? function (object $runtime, array $request): ?array {
+            return $runtime instanceof SyntheticMaterialSearchCorpus && $runtime->guard($runtime->context()) === null
+                ? ['registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+                    'runtimeGenerationRef' => $runtime->records()[0]->generationRef] : null;
+        }) : null;
         return new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $this->qualifiedReadiness(),
             static fn (array $peer): ?array => $peer === ['pid' => 111, 'uid' => 1001, 'gid' => 1001]
                 ? ['role' => 'app', 'identityRef' => 'ref_simulated_app_identity', 'kernelPeer' => $peer] : null,
-            static fn (string $ticket): ?array => $ticket === 'ref_server_viewer_ticket' ? ['viewerTicketRef' => $ticket] : null, $composition);
+            static fn (string $ticket): ?array => $ticket === 'ref_server_viewer_ticket' ? ['viewerTicketRef' => $ticket] : null,
+            $composition, $reader);
+    }
+
+    private function completedProcessor(bool $withReader = true): array
+    {
+        $factory = function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        };
+        $reader = function (object $runtime, array $request, GatewayModelProfile $profile): ?array {
+            $this->currentRuntimeChecks++;
+            if (!$this->runtimeReaderAvailable || !$runtime instanceof SyntheticMaterialSearchCorpus || $runtime->guard($runtime->context()) !== null) {
+                return null;
+            }
+            $source = ['registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+                'runtimeGenerationRef' => $runtime->records()[0]->generationRef];
+            if ($this->onRuntimeRead !== null) {
+                ($this->onRuntimeRead)($runtime);
+            }
+            return $source;
+        };
+        $processor = $this->processor($factory, $reader, $withReader);
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        self::assertSame('accepted', $opened['status']);
+        $request = $this->sessions->lookup(['viewerTicketRef' => 'ref_server_viewer_ticket'], $opened['request_ref']);
+        $corpus = SyntheticMaterialSearchCorpus::named('material-search-v1');
+        $reflection = new \ReflectionClass($processor);
+        $processRef = $reflection->getProperty('processRef')->getValue($processor);
+        $instanceRef = 'ref_seeded_retained_source_instance';
+        $reflection->getProperty('runtimes')->setValue($processor, [$request['sessionRef'] => $corpus]);
+        $reflection->getProperty('runtimeInstances')->setValue($processor, [$request['sessionRef'] => ['runtime' => $corpus, 'instanceRef' => $instanceRef]]);
+        $result = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $request['requestRef'],
+            'reply' => 'PUBLIC PRIOR COMPLETED RESULT', 'trace' => [], 'transportAllowed' => false];
+        $generation = $corpus->records()[0]->generationRef;
+        $fingerprint = $this->currentGatewayProfile->fingerprint();
+        $this->store->transaction(function (array &$state) use ($request, $result, $generation, $fingerprint, $processRef, $instanceRef): array {
+            $sessionRef = $request['sessionRef'];
+            $state['sessions'][$sessionRef]['runtimeGenerationRef'] = $generation;
+            $state['requests'][$request['requestRef']]['runtimeGenerationRef'] = $generation;
+            $binding = ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $request['requestRef'], 'sessionRef' => $sessionRef,
+                'processRef' => $processRef, 'ownerDigest' => $state['sessions'][$sessionRef]['ownerDigest'], 'profileFingerprint' => $fingerprint,
+                'registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],
+                'runtimeGenerationRef' => $generation, 'runtimeInstanceRef' => $instanceRef,
+                'resultDigest' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($result))];
+            $state['requests'][$request['requestRef']]['execution'] = ['status' => 'completed', 'processRef' => $processRef,
+                'result' => $result, 'resultBinding' => $binding];
+            return ['seeded' => true];
+        });
+        return [$processor, ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $request['requestRef']], $peer, $corpus, $result, $request];
+    }
+
+    #[DataProvider('cachedReadPaths')]
+    public function testCompletedReadRequiresExactRetainedCurrentBindingWithoutFactoryOrWrites(string $command): void
+    {
+        [$processor, $payload, $peer, , $expected] = $this->completedProcessor();
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        self::assertSame($expected, $processor->handle($command, $payload, $peer));
+        self::assertSame($expected, $processor->handle($command, $payload, $peer));
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertGreaterThanOrEqual(4, $this->currentRuntimeChecks);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    public static function cachedReadPaths(): array
+    {
+        return [['lookup_owned'], ['execute_owned']];
+    }
+
+    #[DataProvider('cachedReadFailures')]
+    public function testCachedReadAndExistingExecuteRejectLostChangedOrUnprovedCurrentProof(string $command, string $change): void
+    {
+        [$processor, $payload, $peer, $corpus, , $request] = $this->completedProcessor($change !== 'missing_reader');
+        $reflection = new \ReflectionClass($processor);
+        switch ($change) {
+            case 'profile_revoked': $this->runtimeProof['profileFingerprint'] = str_repeat('0', 64); break;
+            case 'profile_missing': $this->currentGatewayProfile = null; break;
+            case 'profile_changed':
+                $values = $this->currentGatewayProfile->values();
+                $values['modelRevision'] = 'source/2';
+                $this->currentGatewayProfile = GatewayModelProfile::fromArray($values);
+                $this->runtimeProof['profileFingerprint'] = $this->currentGatewayProfile->fingerprint();
+                break;
+            case 'lost_runtime': $reflection->getProperty('runtimes')->setValue($processor, []); break;
+            case 'lost_instance': $reflection->getProperty('runtimeInstances')->setValue($processor, []); break;
+            case 'changed_object': $reflection->getProperty('runtimes')->setValue($processor, [$request['sessionRef'] => SyntheticMaterialSearchCorpus::named('material-search-v1')]); break;
+            case 'source_revoked': $corpus->invalidateSource(); break;
+            case 'source_scope_revoked': $corpus->revokeScope(); break;
+            case 'unproved_source': $this->runtimeReaderAvailable = false; break;
+            case 'missing_reader': break;
+            case 'lost_binding': $this->store->transaction(static function (array &$state) use ($request): array {
+                unset($state['requests'][$request['requestRef']]['execution']['resultBinding']);
+                return ['changed' => true];
+            }); break;
+            case 'changed_generation': $this->store->transaction(static function (array &$state) use ($request): array {
+                $state['requests'][$request['requestRef']]['runtimeGenerationRef'] = 'ref_changed_runtime_generation';
+                return ['changed' => true];
+            }); break;
+            case 'changed_result': $this->store->transaction(static function (array &$state) use ($request): array {
+                $state['requests'][$request['requestRef']]['execution']['result']['reply'] = 'REPLACED REPLY';
+                return ['changed' => true];
+            }); break;
+        }
+        $before = hash_file('sha256', $this->directory . '/authority.json');
+        $result = $processor->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertArrayNotHasKey('trace', $result);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertSame($before, hash_file('sha256', $this->directory . '/authority.json'));
+    }
+
+    public static function cachedReadFailures(): array
+    {
+        $cases = [];
+        foreach (['lookup_owned', 'execute_owned'] as $command) {
+            foreach (['profile_revoked', 'profile_missing', 'profile_changed', 'lost_runtime', 'lost_instance', 'changed_object',
+                'source_revoked', 'source_scope_revoked', 'unproved_source', 'missing_reader', 'lost_binding', 'changed_generation', 'changed_result'] as $change) {
+                $cases[] = [$command, $change];
+            }
+        }
+        return $cases;
+    }
+
+    #[DataProvider('cachedReadPaths')]
+    public function testRestartCannotRebuildCachedResultProofWithFactory(string $command): void
+    {
+        [, $payload, $peer] = $this->completedProcessor();
+        $restarted = $this->processor(function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        });
+        $result = $restarted->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertSame(0, $this->cachedFactoryCalls);
+    }
+
+    #[DataProvider('cachedReadDuringProofFailures')]
+    public function testChangesDuringCachedProofCheckSuppressBytes(string $command, string $change): void
+    {
+        [$processor, $payload, $peer] = $this->completedProcessor();
+        $this->onRuntimeRead = function (SyntheticMaterialSearchCorpus $runtime) use ($change): void {
+            if ($this->currentRuntimeChecks === 1) {
+                if ($change === 'owner') {
+                    $this->viewer['authorized'] = false;
+                } else {
+                    $runtime->invalidateSource();
+                }
+            }
+        };
+        $result = $processor->handle($command, $payload, $peer);
+        self::assertSame('blocked', $result['status']);
+        self::assertArrayNotHasKey('reply', $result);
+        self::assertSame(0, $this->cachedFactoryCalls);
+    }
+
+    public static function cachedReadDuringProofFailures(): array
+    {
+        return [['lookup_owned', 'owner'], ['execute_owned', 'owner'], ['lookup_owned', 'source'], ['execute_owned', 'source']];
+    }
+
+    public function testMissingRuntimeReaderCannotCreateFreshExecutionOrFactoryWrites(): void
+    {
+        $processor = $this->processor(function (): array {
+            $this->cachedFactoryCalls++;
+            return [];
+        }, withRuntimeReader: false);
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $opened = $processor->handle('open_or_resume', $this->selection() + ['viewer_ticket_ref' => 'ref_server_viewer_ticket'], $peer);
+        $result = $processor->handle('execute_owned', ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']], $peer);
+        self::assertSame('runtime_not_activated', $result['reasonCode']);
+        self::assertSame(0, $this->cachedFactoryCalls);
+        self::assertArrayNotHasKey('reply', $result);
     }
 
     public function testProcessorCommandsRequireProtectedPeerAndServerOwnedViewerTicket(): void
