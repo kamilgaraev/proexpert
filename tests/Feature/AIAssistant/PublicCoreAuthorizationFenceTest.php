@@ -366,6 +366,47 @@ final class PublicCoreAuthorizationFenceTest extends TestCase
         self::assertSame(0, DB::connection()->transactionLevel());
     }
 
+    public function testSourceOwnedBindingChecksFreshViewerBeforeAndDuringHeldScopeWithoutNestedTransaction(): void
+    {
+        $proofs = (object) ['records' => []];
+        [$binding, $expiry, $port] = $this->sourceAttempt($proofs);
+        $check = ['schemaVersion' => 'public-core-app-viewer-check/1', 'binding' => $binding];
+        $before = $this->fence->checkSourceBinding(self::sourceFrame($binding, $expiry, $port, 2, 'check_binding', $check), $port);
+        self::assertSame(['schemaVersion', 'binding', 'currentViewer'], array_keys($before));
+        self::assertSame('public-core-app-viewer-binding/1', $before['schemaVersion']);
+        self::assertSame($binding, $before['binding']);
+        self::assertTrue($before['currentViewer']['authorized']);
+        self::assertSame(0, DB::connection()->transactionLevel());
+        $grant = $this->fence->acquireSourceGuard(self::sourceFrame($binding, $expiry, $port, 3, 'authorize_write',
+            ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]), $port);
+        $during = $this->fence->checkSourceBinding(self::sourceFrame($binding, $expiry, $port, 4, 'check_binding', $check), $port);
+        self::assertSame($before, $during);
+        self::assertSame($grant['currentViewer'], $during['currentViewer']);
+        self::assertSame(1, DB::connection()->transactionLevel());
+        $completion = 'completion_'.bin2hex(random_bytes(24));
+        $proofs->records[$completion] = ['binding' => $binding, 'guardRef' => $grant['guardRef'],
+            'completionRef' => $completion, 'terminal' => 'uploaded'];
+        $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, 5, 'upload_complete',
+            self::sourceRelease($binding, $grant['guardRef'], $completion)), $port);
+        self::assertSame(0, DB::connection()->transactionLevel());
+    }
+
+    public function testSourceOwnedBindingCannotReuseAuthorizationAfterRealAssignmentRevocation(): void
+    {
+        $proofs = (object) ['records' => []];
+        [$binding, $expiry, $port] = $this->sourceAttempt($proofs);
+        $check = ['schemaVersion' => 'public-core-app-viewer-check/1', 'binding' => $binding];
+        $this->fence->checkSourceBinding(self::sourceFrame($binding, $expiry, $port, 2, 'check_binding', $check), $port);
+        $this->writer->table('user_role_assignments')->where('id', $this->fixture->ownerAssignment->id)->update(['is_active' => false]);
+        try {
+            $this->fence->checkSourceBinding(self::sourceFrame($binding, $expiry, $port, 3, 'check_binding', $check), $port);
+            self::fail('Revoked real assignment cannot retain owned viewer binding');
+        } catch (LogicException $error) {
+            self::assertSame('authorization_changed', $error->getMessage());
+        }
+        self::assertSame(0, DB::connection()->transactionLevel());
+    }
+
     private function sourceAttempt(object $proofs): array
     {
         $expiry = time() + 60;

@@ -289,6 +289,34 @@ class PublicCoreBackendAuthorityFence
         }
     }
 
+    public function checkSourceBinding(array $frame, PublicCoreContextBindings $port): array
+    {
+        $binding = $frame['payload']['binding'] ?? null;
+        if (!is_array($binding) || !$port->sourceOnly()) { throw new LogicException('authorization_changed'); }
+        $attempt = $this->ownedSourceAttempt($binding);
+        $payload = $port->consumeSourceFrame($frame, 'check_binding', $binding, $attempt['expiresAt']);
+        if (count($payload) !== 2 || array_diff(array_keys($payload), ['schemaVersion', 'binding']) !== []
+            || ($payload['schemaVersion'] ?? null) !== 'public-core-app-viewer-check/1' || $payload['binding'] !== $binding) {
+            throw new LogicException('authorization_changed');
+        }
+        $ticket = $this->ownedViewerTicket($binding['viewerTicketRef']);
+        if ($this->sourceHeld !== null) {
+            if ($this->sourceHeld['port'] !== $port || $this->sourceHeld['binding'] !== $binding
+                || $this->sourceHeld['expiresAt'] !== $attempt['expiresAt']
+                || $this->sourceHeld['scope']['snapshot']['actorId'] !== $ticket['actorId']
+                || $this->sourceHeld['scope']['snapshot']['organizationId'] !== $ticket['organizationId']) {
+                throw new LogicException('authorization_changed');
+            }
+            $this->assertSourceScopeCurrent($this->sourceHeld['scope']);
+            $viewer = $this->sourceCurrentViewer($this->sourceHeld['scope']['snapshot']);
+        } else {
+            $viewer = $this->viewerTicketBinding(['schemaVersion' => 'public-core-app-viewer-ticket-check/1',
+                'viewerTicketRef' => $binding['viewerTicketRef']], $attempt['expiresAt'])['currentViewer'];
+        }
+
+        return ['schemaVersion' => 'public-core-app-viewer-binding/1', 'binding' => $binding, 'currentViewer' => $viewer];
+    }
+
     public function cancelSourceGuard(string $reasonCode): array
     {
         if ($this->sourceHeld === null || $reasonCode === 'none'
