@@ -1,6 +1,6 @@
 # МОСТ: локальный контекст помощника
 
-Версия артефакта: `most-ai-assistant-context/0.2-local`. Задача MOSTAI-49, пакет03. Формат результата: `assistant-context/2`. Это изолированный локальный артефакт перед Gateway. Он не разрешает передачу данных провайдеру и не подключён к действующим endpoint, очередям или DI приложения.
+Версия артефакта: `most-ai-assistant-context/0.2.1-local`. Задача MOSTAI-49, пакет03. Формат результата: `assistant-context/2`. Это изолированный локальный артефакт перед Gateway. Он не разрешает передачу данных провайдеру и не подключён к действующим endpoint, очередям или DI приложения.
 
 ## Владение и входы
 
@@ -71,3 +71,16 @@ Consumer/resolver входит в backend TCB и не должен разреш�
 Все входы/карты/ack metadata отделяются от PHP references. Публикуется только последний действительно измеренный payload после budget compaction; не прошедший бюджет candidate остаётся локальным и не получает stage/commit. Rollback не переводит consumer на guessed map или raw history.
 
 Проверки amendment дополнительно охватывают missing publisher, currentRef без frame, одинаковый текст при разных actual aliases, source alias mapping, callback/stored-map mutation, request replay, expiry, auth/source/profile revoke, смену lineage во время счёта, revoke вокруг stage/commit, exception после pending persistence и отказ бюджета с новой публичной metadata. Тестовый resolver иллюстрирует обязательный контракт, но не является production binding.
+## QA49-HANDOFF-01: последняя граница lineage
+
+Fix lease `batch03-MOSTAI49-final-lineage/3` разрешает только PreparationService, PrivacyTest, OfflineContextFixtures и этот документ. Version `0.2.1-local` сохраняет public `assistant-context/2`. Commit `506a5f2b577f486c7fdd134fed0eccec3b2ae416` и его QA NEEDS_FIX остаются историей; новая версия требует отдельной проверки exact SHA.
+
+QA воспроизвёл expiry и смену request revision в profile getter после того, как post-commit `lineage` уже вернул старое значение. Его finally guards вызывали другие callbacks, поэтому простая перестановка последнего lineage read не закрывала окно. Resolver правильно отказывал; production/private/provider leak не установлен.
+
+Существующий publisher получает terminal event `final_guard`. Он возвращает закрытый `assistant-context-final-guard/1`: committed status, context/payload/receipt digests, полный snapshotHash, profileFingerprint и актуальный six-field lineage с clock. Backend TCB обязан получать этот tuple согласованно из текущего authorisation/source/profile/request/publication состояния на одной границе. Это не новая Authority, signature или утверждение wire safety. Missing/unknown/incoherent/malformed tuple означает отказ.
+
+Producer выполняет обычные profile/snapshot callbacks до terminal call. Затем проверяет возвращённые digests, immutable baseline snapshot/profile и текущий request identity/lifetime/monotonic clock без новых authority callbacks. Последний successful tuple задаёт точку линеаризации handoff; после него до READY не вызываются другие зависимости. Любая terminal ошибка проходит через тот же best-effort abort exact context/digest tuple. Текущий resolver всё равно перепроверяет auth/sources/profile/lineage/lifetime при потреблении: изменение после terminal point не становится разрешением.
+
+Тестовый publisher собирает tuple напрямую из своей согласованной fixture state. Callback presence, поле status или digest echo не доказывают реальную серверную доверенность. Живой binding/coherent state mechanism остаётся отдельной задачей и acceptance; неизвестный production backend не активируется.
+
+Регрессии сохраняют исходный QA trigger и проверяют оба расписания BLOCKED+abort, а также неправильные terminal digests/schema, policy/profile evolution на final boundary и terminal event последним перед успешным return. Предыдущие41 тест и consumer/store-integrity/producer-success guards сохраняются.

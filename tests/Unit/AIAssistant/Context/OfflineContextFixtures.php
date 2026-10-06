@@ -19,6 +19,7 @@ final class OfflineContextFixtures
     public ?\Closure $onSnapshot = null;
     public ?\Closure $onProjection = null;
     public ?\Closure $onCount = null;
+    public ?\Closure $onProfile = null;
     public bool $profileAvailable = true;
     public bool $projectorAvailable = true;
     public bool $publisherAvailable = true;
@@ -26,6 +27,7 @@ final class OfflineContextFixtures
     public array $receipts = [];
     public array $publicationEvents = [];
     public ?\Closure $onPublish = null;
+    public ?\Closure $onFinalGuard = null;
 
     public function __construct(int $historyCount = 10)
     {
@@ -167,7 +169,13 @@ final class OfflineContextFixtures
 
                 return $this->projectorAvailable ? ($this->artifacts[$artifactRef] ?? null) : null;
             },
-            fn (string $profileRef): ?array => $this->profileAvailable && $profileRef === 'offline' ? $this->profile : null,
+            function (string $profileRef): ?array {
+                if ($this->onProfile !== null) {
+                    ($this->onProfile)($this, $profileRef);
+                }
+
+                return $this->profileAvailable && $profileRef === 'offline' ? $this->profile : null;
+            },
             function (string $payload, array $identity): array {
                 $this->counterCalls++;
                 $result = $identity + ['tokens' => strlen($payload)];
@@ -193,6 +201,25 @@ final class OfflineContextFixtures
             return $this->lineage;
         }
         $contextRef = $receipt['contextRef'];
+        if ($event === 'final_guard') {
+            $stored = $this->receipts[$contextRef] ?? null;
+            if ($stored === null || $stored['status'] !== 'committed'
+                || $stored['digest'] !== hash('sha256', self::json($stored['receipt']))) {
+                return [];
+            }
+            $profile = AssistantModelContextProfile::resolve('offline', fn (string $ref): array => $this->profile);
+
+            $tuple = [
+                'schemaVersion' => 'assistant-context-final-guard/1', 'status' => 'committed',
+                'contextRef' => $contextRef, 'payloadDigest' => $stored['receipt']['payloadDigest'],
+                'receiptDigest' => $stored['digest'],
+                'snapshotHash' => AssistantContextSourceBinding::snapshotHash($this->snapshot),
+                'profileFingerprint' => $profile->fingerprint(),
+                'lineage' => AssistantContextSourceBinding::detached($this->lineage),
+            ];
+
+            return $this->onFinalGuard !== null ? ($this->onFinalGuard)($this, $tuple) : $tuple;
+        }
         if ($event === 'abort') {
             unset($this->receipts[$contextRef]);
 

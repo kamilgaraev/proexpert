@@ -128,6 +128,12 @@ final class AssistantContextPreparationService
     private function lineage(string $profileRef, AssistantModelContextProfile $profile, array $baseline, ?array $previous): array
     {
         $value = $this->publicationEvent('lineage', ['scope' => $baseline['scope'], 'conversationRef' => $baseline['conversation']['ref']], [], $profileRef, $profile, $baseline);
+
+        return $this->validateLineage($value, $baseline, $previous);
+    }
+
+    private function validateLineage(mixed $value, array $baseline, ?array $previous): array
+    {
         if (!is_array($value) || !AssistantModelContextProfile::hasExactKeys($value, ['requestRef', 'requestRevision', 'conversationRef', 'issuedAt', 'expiresAt', 'now'])) {
             throw new LogicException('context_lineage_unavailable');
         }
@@ -148,6 +154,27 @@ final class AssistantContextPreparationService
         }
 
         return $value;
+    }
+
+    private function finalGuard(array $receipt, array $expected, string $profileRef, AssistantModelContextProfile $profile, array $baseline, array $lineage): void
+    {
+        if ($this->trustedReceiptPublisher === null) {
+            throw new LogicException('context_receipt_publisher_unavailable');
+        }
+        $snapshotHash = AssistantContextSourceBinding::snapshotHash($baseline);
+        $profileFingerprint = $profile->fingerprint();
+        $this->freshProfile($profileRef, $profile, $baseline);
+        $this->fresh($baseline);
+        $guard = $this->invoke($this->trustedReceiptPublisher, 'final_guard', AssistantContextSourceBinding::detached($receipt), AssistantContextSourceBinding::detached($expected));
+        if (!is_array($guard) || !AssistantModelContextProfile::hasExactKeys($guard, ['schemaVersion', 'status', 'contextRef', 'payloadDigest', 'receiptDigest', 'snapshotHash', 'profileFingerprint', 'lineage']) || $guard['schemaVersion'] !== 'assistant-context-final-guard/1' || $guard['status'] !== 'committed') {
+            throw new LogicException('context_final_guard_invalid');
+        }
+        foreach ($expected + ['snapshotHash' => $snapshotHash, 'profileFingerprint' => $profileFingerprint] as $key => $value) {
+            if (!is_string($guard[$key]) || !hash_equals($value, $guard[$key])) {
+                throw new LogicException('context_final_guard_mismatch');
+            }
+        }
+        $this->validateLineage($guard['lineage'], $baseline, $lineage);
     }
 
     private function acknowledge(mixed $ack, string $status, array $expected): void
@@ -229,8 +256,7 @@ final class AssistantContextPreparationService
             $ack = $this->publicationEvent('commit', $receipt, $expected, $profileRef, $profile, $baseline);
             $this->acknowledge($ack, 'committed', $expected);
             $lineage = $this->lineage($profileRef, $profile, $baseline, $lineage);
-            $this->freshProfile($profileRef, $profile, $baseline);
-            $this->fresh($baseline);
+            $this->finalGuard($receipt, $expected, $profileRef, $profile, $baseline, $lineage);
         } catch (Throwable $error) {
             if ($stageAttempted) {
                 $this->abortReceipt($receipt, $expected, $profileRef, $profile, $baseline, $lineage);

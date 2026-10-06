@@ -7,6 +7,7 @@ namespace Tests\Unit\AIAssistant\Context;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextPreparationService;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantSafeContextSegment;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 
 final class AssistantContextPrivacyTest extends TestCase
@@ -305,5 +306,78 @@ final class AssistantContextPrivacyTest extends TestCase
             self::assertNull($fixture->resolve($contextRef, $stored['receipt']['currentRef'], producerResult: $result));
             self::assertNull($fixture->resolve($contextRef, $stored['receipt']['currentRef']));
         }
+    }
+
+    #[DataProvider('tailLineageVariants')]
+    public function testFinalProfileCallbackCannotExpireOrReplaceTheAlreadyReadRequestLineage(string $variant): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $hit = false;
+        $fixture->onProfile = static function (OfflineContextFixtures $fixture, string $ref) use (&$hit, $variant): void {
+            $last = $fixture->publicationEvents[array_key_last($fixture->publicationEvents)] ?? null;
+            $committed = count(array_filter($fixture->receipts, static fn (array $row): bool => $row['status'] === 'committed')) > 0;
+            if (!$hit && $last === 'lineage' && $committed) {
+                if ($variant === 'expiry') {
+                    $fixture->lineage['now'] = $fixture->lineage['expiresAt'];
+                } else {
+                    $fixture->lineage['requestRevision'] = 'request/2';
+                }
+                $hit = true;
+            }
+        };
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertTrue($hit);
+        self::assertSame('BLOCKED', $result['status']);
+        self::assertContains('abort', $fixture->publicationEvents);
+        self::assertSame([], $fixture->receipts);
+    }
+
+    public static function tailLineageVariants(): array
+    {
+        return [['expiry'], ['request_revision']];
+    }
+
+    public function testMalformedOrMismatchedFinalTuplesAbortTheCommittedCandidate(): void
+    {
+        foreach ([['snapshotHash' => str_repeat('0', 64)], ['profileFingerprint' => str_repeat('0', 64)],
+            ['receiptDigest' => str_repeat('0', 64)], ['unknownApproval' => true]] as $invalid) {
+            $fixture = new OfflineContextFixtures();
+            $fixture->onFinalGuard = static fn (OfflineContextFixtures $fixture, array $tuple): array => array_replace($tuple, $invalid);
+            self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $fixture->request())['status']);
+            self::assertContains('abort', $fixture->publicationEvents);
+            self::assertSame([], $fixture->receipts);
+        }
+    }
+
+    public function testFinalTupleObservesAValidGraphPolicyOrProfileChangeAtTheTerminalBoundary(): void
+    {
+        foreach (['policy', 'profile'] as $change) {
+            $fixture = new OfflineContextFixtures();
+            $fixture->onPublish = static function (OfflineContextFixtures $fixture, string $event) use ($change): void {
+                if ($event !== 'final_guard') {
+                    return;
+                }
+                if ($change === 'profile') {
+                    $fixture->profile['modelRevision'] = '2';
+                } else {
+                    $fixture->snapshot['scope']['policy'] = 'policy/2';
+                    foreach ($fixture->snapshot['sources'] as &$source) {
+                        $source['scope']['policy'] = 'policy/2';
+                    }
+                    unset($source);
+                }
+            };
+            self::assertSame('BLOCKED', $fixture->service()->prepare('offline', $fixture->request())['status']);
+            self::assertSame([], $fixture->receipts);
+        }
+    }
+
+    public function testSuccessfulTerminalGuardIsTheLastAuthorityCallbackBeforeProducerReturn(): void
+    {
+        $fixture = new OfflineContextFixtures();
+        $result = $fixture->service()->prepare('offline', $fixture->request());
+        self::assertSame('READY', $result['status']);
+        self::assertSame('final_guard', $fixture->publicationEvents[array_key_last($fixture->publicationEvents)]);
+        self::assertSame('current', $fixture->resolve($result['payload']['contextRef'], $result['payload']['currentRef'], producerResult: $result)['artifactRef']);
     }
 }
