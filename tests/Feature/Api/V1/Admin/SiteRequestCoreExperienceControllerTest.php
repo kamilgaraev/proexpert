@@ -417,7 +417,13 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
             ]);
         }
 
-        $this->allowAdminAccess();
+        $checkedPermissions = [];
+        $approvalChecks = 0;
+        $this->allowAdminAccess(function (string $permission) use (&$checkedPermissions, &$approvalChecks): bool {
+            $checkedPermissions[] = $permission;
+
+            return $permission !== 'procurement.purchase_requests.approve' || ++$approvalChecks % 2 === 1;
+        });
         $this->allowModuleAccess();
         DB::enableQueryLog();
         DB::flushQueryLog();
@@ -434,13 +440,19 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertEqualsCanonicalizing($ids, $returnedIds);
         $this->assertNotContains($foreignRequest->id, $returnedIds);
         $this->assertNotContains($otherDraft->id, $returnedIds);
+        $this->assertNotContains('procurement.supplier_proposals.accept', $checkedPermissions);
 
         foreach ($response->json('data.data') as $payload) {
             $this->assertFalse($payload['has_payment']);
             $this->assertTrue($payload['can_create_payment']);
             $this->assertIsArray($payload['action_summary']);
             $this->assertIsArray($payload['procurement_chain_summary']);
+            $this->assertArrayNotHasKey('permissions', $payload['procurement_chain_summary']);
+            $this->assertSame('approve_purchase_request', $payload['action_summary']['primary_action']['key']);
+            $this->assertFalse($payload['action_summary']['primary_action']['is_enabled']);
         }
+
+        $this->assertSame(16, $approvalChecks);
 
         $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "purchase_requests"')));
         $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "payment_documents"')));
@@ -495,11 +507,13 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         });
     }
 
-    private function allowAdminAccess(): void
+    private function allowAdminAccess(?callable $permissionCheck = null): void
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissionCheck): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission): bool => $permissionCheck === null || $permissionCheck($permission)
+            );
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
