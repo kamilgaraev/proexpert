@@ -47,6 +47,7 @@ class IndexRagSourceJob implements ShouldQueue
 
     public function handle(RagIndexer $indexer, ?RagIndexingCoordinator $coordinator = null): void
     {
+        $coverageVersion = $indexer->coverageMutationVersion();
         $run = null;
 
         if ($this->runId !== null) {
@@ -138,7 +139,7 @@ class IndexRagSourceJob implements ShouldQueue
 
         if ($this->runId !== null) {
             $coordinator ??= app(RagIndexingCoordinator::class);
-            $coordinator->markSucceeded($this->runId, $indexed, $run?->lease_token);
+            $coordinator->markSucceeded($this->runId, $indexed, $run?->lease_token, $indexer->coverageMutationVersion() !== $coverageVersion);
         }
     }
 

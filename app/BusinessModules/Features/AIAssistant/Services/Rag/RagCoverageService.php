@@ -105,7 +105,7 @@ final class RagCoverageService
             'lag_seconds' => null, 'lag_goal_seconds' => 300, 'lag_exceeded' => false, 'snapshot_at' => null,
             'latest_run' => null, 'last_successful_run' => null, 'last_failed_run' => null, 'source_catalog' => $catalog];
         $key = $this->key($organizationId, null, null);
-        $snapshot = Cache::get($key);
+        $snapshot = $this->snapshot($organizationId, null, null, $key);
         if ((! is_array($snapshot) || ! $this->usableProjection($snapshot, $enabledTypes))
             && $enabled && $allowedTypes !== []) {
             $this->queueRefresh($organizationId, null, null, $key);
@@ -143,7 +143,7 @@ final class RagCoverageService
                 $status['eligible_count_known'] = true;
                 $status['coverage_complete'] = $pendingCount === 0 && $stored === $matched;
                 $status['ready'] = $enabled && $matched > 0;
-                $status['snapshot_at'] = $snapshot['snapshot_at'];
+                $status['snapshot_at'] = now()->toISOString();
                 $status['lag_seconds'] = $oldest === null ? ($status['stale_source_count'] === 0 ? 0 : null) : max(0, now()->getTimestamp() - $oldest);
                 $status['lag_exceeded'] = $status['lag_seconds'] !== null && $status['lag_seconds'] > 300;
                 return $status;
@@ -181,7 +181,7 @@ final class RagCoverageService
         }
         try {
             $timestamp = Carbon::parse($snapshot['snapshot_at']);
-            return ! $timestamp->isFuture() && $timestamp->gte(now()->subMinutes(5));
+            return ! $timestamp->isFuture() && $timestamp->gte(now()->subDay());
         } catch (Throwable) {
             return false;
         }
@@ -218,20 +218,20 @@ final class RagCoverageService
 
     public static function invalidate(int $organizationId): void
     {
-        Cache::add('ai-rag-coverage-revision:'.$organizationId, 0, 86400);
-        Cache::increment('ai-rag-coverage-revision:'.$organizationId);
+        $revision = app(RagCoverageStateStore::class)->invalidate($organizationId);
+        Cache::forever('ai-rag-coverage-revision:'.$organizationId, $revision);
         Cache::add('ai-rag-coverage-dirty-since:'.$organizationId, now()->getTimestamp(), 86400);
     }
 
     public function coverage(int $organizationId, ?int $projectId = null, ?string $sourceType = null): array
     {
         $key = $this->key($organizationId, $projectId, $sourceType);
-        $snapshot = Cache::get($key);
+        $snapshot = $this->snapshot($organizationId, $projectId, $sourceType, $key);
         $processing = RagIndexRun::query()->where('organization_id', $organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->when($sourceType !== null, static fn ($query) => $query->where('source_type', $sourceType))
             ->whereIn('status', [RagIndexRun::STATUS_QUEUED, RagIndexRun::STATUS_RUNNING])->exists();
-        if (! is_array($snapshot)) {
+        if (! is_array($snapshot) || ($projectId === null && $sourceType === null && ! $this->usableProjection($snapshot, $this->registry->enabledSourceTypes()))) {
             $this->queueRefresh($organizationId, $projectId, $sourceType, $key);
             $snapshot = [
                 'expected_source_count' => null, 'indexed_source_count' => null, 'eligible_count_known' => false,
@@ -249,8 +249,23 @@ final class RagCoverageService
 
     private function key(int $organizationId, ?int $projectId, ?string $sourceType): string
     {
-        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
+        $revision = app(RagCoverageStateStore::class)->revision($organizationId);
         return 'ai-rag-coverage:'.$organizationId.':'.($projectId ?? 0).':'.($sourceType ?? '*').':'.$revision;
+    }
+
+    private function snapshot(int $organizationId, ?int $projectId, ?string $sourceType, string $key): mixed
+    {
+        if ($projectId === null && $sourceType === null) {
+            return app(RagCoverageStateStore::class)->snapshot($organizationId, (int) substr($key, strrpos($key, ':') + 1));
+        }
+
+        return Cache::get($key);
+    }
+
+    private function currentSnapshot(mixed $snapshot, ?int $projectId, ?string $sourceType): bool
+    {
+        return is_array($snapshot) && ($snapshot['eligible_count_known'] ?? false) === true
+            && ($projectId !== null || $sourceType !== null || $this->usableProjection($snapshot, $this->registry->enabledSourceTypes()));
     }
 
     private function queueRefresh(int $organizationId, ?int $projectId, ?string $sourceType, string $key): void
@@ -269,8 +284,8 @@ final class RagCoverageService
     public function refreshCoverage(int $organizationId, ?int $projectId = null, ?string $sourceType = null, ?string $expectedCacheKey = null): array
     {
         $cacheKey = $this->key($organizationId, $projectId, $sourceType);
-        $snapshot = $expectedCacheKey === null ? null : Cache::get($cacheKey);
-        if ($expectedCacheKey !== null && ($expectedCacheKey !== $cacheKey || (is_array($snapshot) && ($snapshot['eligible_count_known'] ?? false) === true))) {
+        $snapshot = $expectedCacheKey === null ? null : $this->snapshot($organizationId, $projectId, $sourceType, $cacheKey);
+        if ($expectedCacheKey !== null && ($expectedCacheKey !== $cacheKey || $this->currentSnapshot($snapshot, $projectId, $sourceType))) {
             return $this->coverage($organizationId, $projectId, $sourceType);
         }
         $scope = $projectId === null && $sourceType === null ? '' : ':'.($projectId ?? 0).':'.($sourceType ?? '*');
@@ -286,9 +301,9 @@ final class RagCoverageService
         };
         $generation = null;
         try {
-            $snapshot = $expectedCacheKey === null ? null : Cache::get($cacheKey);
+            $snapshot = $expectedCacheKey === null ? null : $this->snapshot($organizationId, $projectId, $sourceType, $cacheKey);
             if ($expectedCacheKey !== null && ($cacheKey !== $this->key($organizationId, $projectId, $sourceType)
-                || (is_array($snapshot) && ($snapshot['eligible_count_known'] ?? false) === true))) {
+                || $this->currentSnapshot($snapshot, $projectId, $sourceType))) {
                 return $this->coverage($organizationId, $projectId, $sourceType);
             }
             if ($projectId === null && $sourceType === null) {
@@ -296,8 +311,9 @@ final class RagCoverageService
                 $guard();
             }
             $generation = $projectId === null && $sourceType === null ? (string) Str::uuid() : null;
+            $indexVersion = $generation === null ? null : app(RagCoverageStateStore::class)->indexVersion($organizationId);
 
-            return $this->buildCoverageSnapshot($organizationId, $projectId, $sourceType, $generation, $guard);
+            return $this->buildCoverageSnapshot($organizationId, $projectId, $sourceType, $generation, $guard, $indexVersion);
         } catch (RuntimeException $exception) {
             if ($exception->getMessage() !== 'rag_coverage_projection_expired') {
                 throw $exception;
@@ -322,7 +338,7 @@ final class RagCoverageService
         }
     }
 
-    private function buildCoverageSnapshot(int $organizationId, ?int $projectId, ?string $sourceType, ?string $generation = null, ?callable $guard = null): array
+    private function buildCoverageSnapshot(int $organizationId, ?int $projectId, ?string $sourceType, ?string $generation = null, ?callable $guard = null, ?int $indexVersion = null): array
     {
         $cacheKey = $this->key($organizationId, $projectId, $sourceType);
         $catalog = [];
@@ -415,6 +431,9 @@ final class RagCoverageService
             }
         }
         unset($snapshot['processing'], $snapshot['lag_seconds'], $snapshot['lag_exceeded']);
+        if (isset($snapshot['projection_generation'])) {
+            app(RagCoverageStateStore::class)->publish($organizationId, (int) substr($cacheKey, strrpos($cacheKey, ':') + 1), $snapshot, $indexVersion);
+        }
         Cache::put($cacheKey, $snapshot, 300);
         if (isset($snapshot['projection_generation']) && $cacheKey === $this->key($organizationId, $projectId, $sourceType)) {
             ($this->projection ?? new RagExpectedSourceProjection($this->indexer))->prune($organizationId, $snapshot['projection_generation']);

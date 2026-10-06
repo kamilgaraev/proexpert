@@ -16,7 +16,7 @@ final class AssistantStatusSnapshotEpoch
     public const CONTROL_TABLE = 'ai_assistant_status_snapshot_control';
     public const FUNCTION_NAME = 'track_assistant_status_snapshot_mutation';
     public const TRIGGER_NAME = 'assistant_status_snapshot_mutation';
-    public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', self::CHANGE_TABLE, self::CONTROL_TABLE];
+    public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', 'ai_rag_embedding_checkpoints', self::CHANGE_TABLE, self::CONTROL_TABLE];
     public const FUNCTION_BODY = "\nBEGIN\n    INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    RETURN NULL;\nEND;\n";
 
     private const PURGE_BATCH_SIZE = 10000;

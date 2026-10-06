@@ -239,6 +239,10 @@ final class RagExpectedSourceProjection
 
     private function activeGeneration(int $organizationId): ?string
     {
+        $generation = app(RagCoverageStateStore::class)->activeGeneration($organizationId);
+        if ($generation !== null) {
+            return $generation;
+        }
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
         $snapshot = Cache::get('ai-rag-coverage:'.$organizationId.':0:*:'.$revision);
 
