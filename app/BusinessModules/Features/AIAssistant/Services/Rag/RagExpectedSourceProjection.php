@@ -16,9 +16,11 @@ use RuntimeException;
 
 final class RagExpectedSourceProjection
 {
+    public const MAX_PRUNE_ROWS = 1000000;
+
     private const DELETE_BATCH_SIZE = 1000;
 
-    private const ORPHAN_GRACE_HOURS = 24;
+    private const ORPHAN_GRACE_HOURS = 3;
 
     public function __construct(private readonly RagIndexer $indexer) {}
 
@@ -125,7 +127,15 @@ final class RagExpectedSourceProjection
 
     public function prune(int $organizationId, string $generation): void
     {
-        $this->deleteOldGenerations($organizationId, $generation, 100000, microtime(true) + 5);
+        $lease = Cache::lock('ai-rag-projection-retention:'.$organizationId, 120);
+        if (! $lease->get()) {
+            return;
+        }
+        try {
+            $this->deleteOldGenerations($organizationId, $generation, 100000, microtime(true) + 5);
+        } finally {
+            $lease->release();
+        }
     }
 
     public function discard(int $organizationId, string $generation, int $maxRows = PHP_INT_MAX, ?float $deadline = null): int
@@ -158,9 +168,9 @@ final class RagExpectedSourceProjection
     }
 
     /** @return array{deleted: int, locked: bool} */
-    public function pruneOrganization(int $organizationId, int $maxRows = 100000, ?float $deadline = null): array
+    public function pruneOrganization(int $organizationId, int $maxRows = 500000, ?float $deadline = null): array
     {
-        $lease = Cache::lock('ai-rag-coverage-projection:'.$organizationId, 7500);
+        $lease = Cache::lock('ai-rag-projection-retention:'.$organizationId, 120);
         if (! $lease->get()) {
             return ['deleted' => 0, 'locked' => true];
         }
@@ -171,10 +181,10 @@ final class RagExpectedSourceProjection
         }
     }
 
-    public function pruneWhileLocked(int $organizationId, int $maxRows = 100000, ?float $deadline = null): int
+    public function pruneWhileLocked(int $organizationId, int $maxRows = 500000, ?float $deadline = null): int
     {
         $deadline ??= microtime(true) + 50;
-        $maxRows = max(0, min(100000, $maxRows));
+        $maxRows = max(0, min(self::MAX_PRUNE_ROWS, $maxRows));
         $deleted = 0;
         $active = $this->activeGeneration($organizationId);
         foreach (array_keys((array) Cache::get($this->discardKey($organizationId), [])) as $generation) {
