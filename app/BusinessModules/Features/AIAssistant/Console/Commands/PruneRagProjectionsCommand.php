@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Console\Commands;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagExpectedSourceProjection;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingCheckpointStore;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +28,8 @@ final class PruneRagProjectionsCommand extends Command
         }
 
         $deadline = microtime(true) + 50;
+        $checkpoints = app(RagEmbeddingCheckpointStore::class)->prune($organizationId, min(10000, $maxRows), min($deadline, microtime(true) + 5));
+        $maxRows -= $checkpoints;
         $deleted = 0;
         $skipped = 0;
         $processed = 0;
@@ -66,7 +69,7 @@ final class PruneRagProjectionsCommand extends Command
                 }
             }
         }
-        $this->line(json_encode(['deleted' => $deleted, 'skipped_locked' => $skipped, 'processed_organizations' => $processed], JSON_THROW_ON_ERROR));
+        $this->line(json_encode(['deleted' => $deleted, 'deleted_embedding_checkpoints' => $checkpoints, 'skipped_locked' => $skipped, 'processed_organizations' => $processed], JSON_THROW_ON_ERROR));
 
         return self::SUCCESS;
     }

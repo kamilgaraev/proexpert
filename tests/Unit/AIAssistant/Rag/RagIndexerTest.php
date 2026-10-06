@@ -149,29 +149,81 @@ class RagIndexerTest extends TestCase
         config()->set('ai-assistant.rag.chunk_chars', 100);
         $indexer->indexChunk($chunk);
 
-        $this->assertSame(6, $provider->calls);
+        $this->assertSame(4, $provider->calls);
         $this->assertSame(3, RagChunk::query()->count());
         $this->assertSame([100, 100, 1], RagChunk::query()->orderBy('chunk_index')->pluck('content')
             ->map(static fn (string $content): int => mb_strlen($content))->all());
     }
 
-    public function test_reembeds_and_repairs_all_chunks_when_one_vector_is_missing(): void
+    public function test_repairs_only_the_missing_vector_and_reuses_valid_fragments(): void
     {
         config()->set('ai-assistant.rag.chunk_chars', 80);
         [$organizationId, $projectId] = $this->seedScope();
         $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
         $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
-        $chunk = $this->chunk($organizationId, $projectId, str_repeat('a', 201));
+        $chunk = $this->chunk($organizationId, $projectId, str_repeat('a', 80).str_repeat('b', 80).str_repeat('c', 41));
         $indexer->indexChunk($chunk);
         $missingVectorChunkId = (int) RagChunk::query()->where('chunk_index', 1)->value('id');
 
         DB::table('ai_rag_chunks')->where('id', $missingVectorChunkId)->update(['embedding' => null]);
         $indexer->indexChunk($chunk);
 
-        $this->assertSame(6, $provider->calls);
+        $this->assertSame(4, $provider->calls);
         $this->assertSame(3, RagChunk::query()->count());
         $this->assertSame(0, RagChunk::query()->whereNull('embedding')->count());
         $this->assertNotSame($missingVectorChunkId, RagChunk::query()->where('chunk_index', 1)->value('id'));
+    }
+
+    public function test_partial_text_change_embeds_only_the_changed_fragment(): void
+    {
+        config()->set('ai-assistant.rag.chunk_chars', 80);
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $original = str_repeat('a', 80).str_repeat('b', 80).str_repeat('c', 41);
+        $updated = str_repeat('a', 80).str_repeat('d', 80).str_repeat('c', 41);
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, $original));
+        $indexer->indexChunk($this->chunk($organizationId, $projectId, $updated));
+
+        $this->assertSame(4, $provider->calls);
+        $this->assertSame([str_repeat('a', 80), str_repeat('d', 80), str_repeat('c', 41)], RagChunk::query()->orderBy('chunk_index')->pluck('content')->all());
+    }
+
+    public function test_retry_reuses_successful_fragments_after_a_later_embedding_failure(): void
+    {
+        config()->set('ai-assistant.rag.chunk_chars', 80);
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new class implements RagEmbeddingProviderInterface {
+            public int $calls = 0;
+            public bool $fail = true;
+            public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
+            {
+                $this->calls++;
+                if ($this->calls === 2 && $this->fail) {
+                    throw new RuntimeException('embedding_interrupted');
+                }
+                return RagTestEmbedding::fromLeadingValues([0.1, 0.2, 0.3]);
+            }
+            public function provider(): string { return 'fake'; }
+            public function model(): string { return 'fake-model'; }
+            public function dimensions(): int { return RagTestEmbedding::DIMENSIONS; }
+        };
+        $chunk = $this->chunk($organizationId, $projectId, str_repeat('a', 80).str_repeat('b', 80).str_repeat('c', 41));
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        try {
+            $indexer->indexChunk($chunk);
+            $this->fail('Embedding failure must interrupt publication.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('embedding_interrupted', $exception->getMessage());
+        }
+        $this->assertSame(0, RagSource::query()->count());
+        $this->assertSame(1, DB::table('ai_rag_embedding_checkpoints')->count());
+        $provider->fail = false;
+        $indexer->indexChunk($chunk);
+
+        $this->assertSame(4, $provider->calls);
+        $this->assertSame(3, RagChunk::query()->count());
+        $this->assertSame(0, DB::table('ai_rag_embedding_checkpoints')->count());
     }
 
     public function test_cancelled_metadata_refresh_preserves_existing_source_and_chunk_metadata(): void
@@ -237,7 +289,7 @@ class RagIndexerTest extends TestCase
         try {
             $indexer->indexChunk($updated, guard: static function () use (&$guardCalls): void {
                 $guardCalls++;
-                if ($guardCalls === 2) {
+                if ($guardCalls === 3) {
                     throw new RuntimeException('indexing_cancelled');
                 }
             });
@@ -254,6 +306,10 @@ class RagIndexerTest extends TestCase
         $this->assertSame('Проект Литер А', $source->title);
         $this->assertSame(['status' => 'active'], $source->metadata);
         $this->assertNotNull($storedChunk->getRawOriginal('embedding'));
+        $indexer->indexChunk($updated);
+        $this->assertSame(2, $provider->calls);
+        $this->assertSame('Новый текст', RagChunk::query()->firstOrFail()->content);
+        $this->assertSame(0, DB::table('ai_rag_embedding_checkpoints')->count());
     }
 
     public function test_vector_is_stored_with_bound_parameters(): void
