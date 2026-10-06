@@ -922,7 +922,7 @@ final class AssistantDataAccessPolicy
             if (in_array('organization_id', $columns, true)) { $internal[] = 'organization_id'; }
 
             return $this->aclCompiler->register($type, $query, array_values(array_intersect(array_unique($internal), $columns)), $this->entityQueryPath,
-                materialize: ! in_array($type, ['approved_estimate_norm', 'approved_construction_resource', 'design_ifc_model_element'], true));
+                materialize: ! in_array($type, ['approved_estimate_norm', 'approved_construction_resource', 'core_normative_resource', 'design_ifc_model_element'], true));
         } finally {
             array_pop($this->entityQueryPath);
         }
