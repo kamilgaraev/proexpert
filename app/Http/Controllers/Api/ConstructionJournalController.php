@@ -126,19 +126,9 @@ class ConstructionJournalController extends Controller
                 'contract',
                 'createdBy',
                 'entries' => function ($query): void {
-                    $query->with([
-                        'journal',
-                        'scheduleTask',
-                        'estimate',
-                        'createdBy',
-                        'approvedBy',
-                        'workVolumes.estimateItem',
-                        'workVolumes.workType',
-                        'workVolumes.measurementUnit',
-                        'workers',
-                        'equipment',
-                        'materials.material',
-                    ])->orderByDesc('entry_date')
+                    $query->with(ConstructionJournalPayloadService::ENTRY_RELATIONS)
+                        ->withCount('completedWorks')
+                        ->orderByDesc('entry_date')
                         ->orderByDesc('entry_number')
                         ->limit(10);
                 },
@@ -261,19 +251,8 @@ class ConstructionJournalController extends Controller
             $this->authorize('view', $journal);
 
             $query = $journal->entries()
-                ->with([
-                    'journal',
-                    'createdBy',
-                    'approvedBy',
-                    'scheduleTask',
-                    'estimate',
-                    'workVolumes.estimateItem',
-                    'workVolumes.workType',
-                    'workVolumes.measurementUnit',
-                    'workers',
-                    'equipment',
-                    'materials.material',
-                ]);
+                ->with(ConstructionJournalPayloadService::ENTRY_RELATIONS)
+                ->withCount('completedWorks');
 
             if ($request->filled('status')) {
                 $query->where('status', $request->input('status'));

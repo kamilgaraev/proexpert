@@ -10,11 +10,24 @@ use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\CompletedWork;
+use App\Models\Contract;
+use App\Models\ContractEstimateItem;
+use App\Models\Contractor;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\JournalEquipment;
+use App\Models\JournalEntryApprovalEvent;
+use App\Models\JournalMaterial;
+use App\Models\JournalWorker;
 use App\Models\JournalWorkVolume;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
 use Mockery\MockInterface;
@@ -33,6 +46,29 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
         $context = AdminApiTestContext::create();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $anotherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        [, $contract, $estimate, $item] = $this->createCoverageFixture($context->organization, $project);
+        $schedule = ProjectSchedule::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'created_by_user_id' => $context->user->id,
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-12-31',
+            'name' => 'Core experience schedule',
+            'status' => 'active',
+        ]);
+        $task = ScheduleTask::query()->create([
+            'organization_id' => $context->organization->id,
+            'schedule_id' => $schedule->id,
+            'created_by_user_id' => $context->user->id,
+            'estimate_item_id' => $item->id,
+            'name' => $item->name,
+            'task_type' => 'task',
+            'quantity' => 100,
+            'planned_start_date' => '2026-06-01',
+            'planned_end_date' => '2026-12-31',
+            'status' => 'not_started',
+            'planned_duration_days' => 213,
+        ]);
         $anotherProjectJournal = $this->createJournal($context->organization, $anotherProject, $context->user, [
             'name' => 'Another project journal',
             'journal_number' => 'J-OTHER',
@@ -43,8 +79,8 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             ->postJson("/api/v1/admin/projects/{$project->id}/construction-journals", [
                 'name' => 'Main construction journal',
                 'journal_number' => 'J-001',
+                'contract_id' => $contract->id,
                 'start_date' => '2026-06-01',
-                'status' => 'active',
             ]);
 
         $createJournalResponse->assertCreated();
@@ -66,6 +102,9 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
 
         $entryResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/construction-journals/{$journal->id}/entries", [
+                'idempotency_key' => 'journal-core-experience-1',
+                'estimate_id' => $estimate->id,
+                'schedule_task_id' => $task->id,
                 'entry_date' => '2026-06-03',
                 'work_description' => 'Foundation preparation',
                 'weather_conditions' => [
@@ -75,6 +114,7 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
                 ],
                 'work_volumes' => [
                     [
+                        'estimate_item_id' => $item->id,
                         'quantity' => 12.5,
                         'notes' => 'Axis A-B',
                     ],
@@ -101,8 +141,9 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             'journal_entry_id' => $entry->id,
             'quantity' => '12.500',
         ]);
-        $this->assertDatabaseMissing('completed_works', [
+        $this->assertDatabaseHas('completed_works', [
             'journal_entry_id' => $entry->id,
+            'status' => 'draft',
         ]);
 
         $submitResponse = $this->withHeaders($context->authHeaders())
@@ -136,6 +177,7 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
                 'work_volumes' => [
                     [
                         'id' => JournalWorkVolume::query()->where('journal_entry_id', $entry->id)->value('id'),
+                        'estimate_item_id' => $item->id,
                         'quantity' => 14,
                         'notes' => 'Adjusted after measurement',
                     ],
@@ -190,6 +232,143 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             'project_id' => $project->id,
             'name' => 'Journal with invalid contract',
         ]);
+    }
+
+    public function test_journal_pages_batch_entry_history_and_completed_work_counts(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        [$contractor, $contract, $estimate, $item] = $this->createCoverageFixture($context->organization, $project);
+        $journal = $this->createJournal($context->organization, $project, $context->user, ['contract_id' => $contract->id]);
+        $this->allowAdminAccess();
+
+        for ($number = 1; $number <= 8; $number++) {
+            $entry = $this->createEntry($journal, $context->user, ['entry_number' => $number]);
+            JournalWorkVolume::query()->create([
+                'journal_entry_id' => $entry->id,
+                'estimate_item_id' => $item->id,
+                'quantity' => 1,
+            ]);
+            JournalMaterial::query()->create([
+                'journal_entry_id' => $entry->id,
+                'estimate_item_id' => $item->id,
+                'material_name' => 'Page material',
+                'quantity' => 1,
+                'measurement_unit' => 'шт',
+            ]);
+            JournalEquipment::query()->create([
+                'journal_entry_id' => $entry->id,
+                'estimate_item_id' => $item->id,
+                'equipment_name' => 'Page equipment',
+                'quantity' => 1,
+            ]);
+            JournalWorker::query()->create([
+                'journal_entry_id' => $entry->id,
+                'estimate_item_id' => $item->id,
+                'specialty' => 'Page worker',
+                'workers_count' => 1,
+            ]);
+            JournalEntryApprovalEvent::query()->create([
+                'journal_entry_id' => $entry->id,
+                'organization_id' => $context->organization->id,
+                'project_id' => $project->id,
+                'actor_user_id' => $context->user->id,
+                'event' => 'created',
+                'from_status' => 'draft',
+                'to_status' => 'draft',
+                'occurred_at' => now(),
+            ]);
+
+            for ($workNumber = 0; $workNumber < $number % 3; $workNumber++) {
+                CompletedWork::query()->create([
+                    'organization_id' => $context->organization->id,
+                    'project_id' => $project->id,
+                    'journal_entry_id' => $entry->id,
+                    'quantity' => 1,
+                    'completion_date' => '2026-06-03',
+                    'status' => 'confirmed',
+                ]);
+            }
+        }
+
+        foreach (['/entries?per_page=20' => 'data', '' => 'data.entries'] as $suffix => $entriesPath) {
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+
+            try {
+                $response = $this->withHeaders($context->authHeaders())
+                    ->getJson("/api/v1/admin/construction-journals/{$journal->id}{$suffix}");
+                $queries = collect(DB::getQueryLog())->pluck('query');
+            } finally {
+                DB::disableQueryLog();
+            }
+
+            $response->assertOk()->assertJsonCount(8, $entriesPath);
+            foreach ($response->json($entriesPath) as $payload) {
+                $this->assertSame($payload['entry_number'] % 3, $payload['completed_works_count']);
+                $this->assertSame([], $payload['completed_works']);
+                $this->assertSame('created', $payload['approval_history'][0]['event']);
+                $this->assertSame($context->user->id, $payload['approval_history'][0]['actor']['id']);
+                $this->assertContains('update', $payload['available_actions']);
+                $this->assertContains('submit', $payload['available_actions']);
+                $this->assertSame('covered', $payload['workVolumes'][0]['contract_coverage_status']);
+                $this->assertSame($contract->id, $payload['workVolumes'][0]['contract_id']);
+                $this->assertSame($contractor->name, $payload['workVolumes'][0]['contractor_name']);
+                foreach (['workVolumes', 'materials', 'equipment', 'workers'] as $relation) {
+                    $this->assertSame($item->id, $payload[$relation][0]['estimateItem']['id']);
+                }
+            }
+
+            $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "journal_entry_approval_events"')));
+            $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "completed_works"')));
+            $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "contract_estimate_items"')));
+            $this->assertCount(4, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "estimate_items"')));
+        }
+    }
+
+    private function createCoverageFixture(Organization $organization, Project $project): array
+    {
+        $contractor = Contractor::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Page contractor',
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'PAGE-CONTRACT',
+            'date' => '2026-06-01',
+            'subject' => 'Page works',
+            'total_amount' => 100,
+            'status' => 'active',
+        ]);
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'name' => 'Page estimate',
+            'number' => 'PAGE-ESTIMATE',
+            'estimate_date' => '2026-06-01',
+            'status' => 'approved',
+        ]);
+        $item = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'position_number' => '1',
+            'item_type' => 'work',
+            'name' => 'Page item',
+            'quantity' => 100,
+            'quantity_total' => 100,
+            'unit_price' => 1,
+            'total_amount' => 100,
+        ]);
+        ContractEstimateItem::query()->create([
+            'contract_id' => $contract->id,
+            'estimate_id' => $estimate->id,
+            'estimate_item_id' => $item->id,
+            'quantity' => 100,
+            'amount' => 100,
+        ]);
+        return [$contractor, $contract, $estimate, $item];
     }
 
     private function createJournal(

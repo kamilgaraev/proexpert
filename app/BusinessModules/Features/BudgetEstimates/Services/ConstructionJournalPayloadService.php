@@ -14,6 +14,22 @@ use Illuminate\Support\Facades\Gate;
 
 class ConstructionJournalPayloadService
 {
+    public const ENTRY_RELATIONS = [
+        'journal.contract.contractor',
+        'scheduleTask',
+        'estimate',
+        'createdBy',
+        'approvedBy',
+        'workVolumes.estimateItem.contractLinks.contract.contractor',
+        'workVolumes.workType',
+        'workVolumes.measurementUnit',
+        'materials.material',
+        'materials.estimateItem',
+        'equipment.estimateItem',
+        'workers.estimateItem',
+        'approvalEvents.actor',
+    ];
+
     public function __construct(
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly WorkflowGuardService $workflowGuardService,
@@ -224,9 +240,11 @@ class ConstructionJournalPayloadService
                         : null,
                 ])->values()->all()
                 : [],
-            'completed_works_count' => $entry->relationLoaded('completedWorks')
-                ? $entry->completedWorks->count()
-                : $entry->completedWorks()->count(),
+            'completed_works_count' => $entry->getAttribute('completed_works_count') !== null
+                ? (int) $entry->getAttribute('completed_works_count')
+                : ($entry->relationLoaded('completedWorks')
+                    ? $entry->completedWorks->count()
+                    : $entry->completedWorks()->count()),
             'completed_works' => $entry->relationLoaded('completedWorks')
                 ? $entry->completedWorks->map(fn ($work): array => [
                     'id' => $work->id,
