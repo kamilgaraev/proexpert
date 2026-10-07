@@ -210,24 +210,44 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
     {
         $this->actor->assignedProjects()->attach($this->hidden->id, ['is_active' => true, 'role' => 'member']);
         $resource = DB::table('normative_resources')->insertGetId(['code' => 'batch-resource', 'name' => 'Resource', 'type' => 'material']);
+        DB::statement("INSERT INTO normative_resources (code, name, type) SELECT 'unused-plan-resource-' || n, 'Unused resource', 'material' FROM generate_series(1, 5000) n");
         $balance = DB::table('organization_balances')->insertGetId(['organization_id' => $this->organization->id]);
         DB::statement("INSERT INTO ai_rag_expected_sources (organization_id, project_id, identity_project_id, generation, source_type, entity_type, entity_id, identity_part_key, checksum, pending_since) "
             ."SELECT ?, ?, ?, '00000000-0000-4000-8000-000000000001'::uuid, 'core_business_money', 'core_normative_resource', ?::text, n::text, md5('resource'), NOW() FROM generate_series(1, 10001) n",
             [$this->organization->id, $this->visible->id, $this->visible->id, $resource]);
         $row = $this->expected($this->organization->id, $this->visible->id, 'core_business_money', 'core_organization_balance', $balance);
         $row->replicate()->forceFill(['entity_id' => '0'.$balance])->save();
-        $read = function (): array {
+        $read = function (bool $checkNativePlan = false): array {
             $batches = $this->policy->aggregateExpectedSourceIdentityBatches(
                 RagExpectedSource::query()->where('generation', '00000000-0000-4000-8000-000000000001'),
                 $this->actor, $this->organization->id, ['ai_rag_expected_sources.id'],
                 static fn ($visible) => DB::query()->fromSub($visible, 'visible')->selectRaw('COUNT(*) AS total'),
             );
+            if ($checkNativePlan) {
+                $nativeScans = [];
+                $collectScans = static function (array $node) use (&$collectScans, &$nativeScans): void {
+                    if (($node['Relation Name'] ?? null) === 'normative_resources') {
+                        $nativeScans[] = $node;
+                    }
+                    foreach ($node as $value) {
+                        if (is_array($value)) { $collectScans($value); }
+                    }
+                };
+                foreach ($batches as $batch) {
+                    $result = DB::selectOne('EXPLAIN (ANALYZE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
+                    $collectScans(json_decode(((array) $result)['QUERY PLAN'], true, 512, JSON_THROW_ON_ERROR));
+                }
+                $this->assertNotEmpty($nativeScans);
+                foreach ($nativeScans as $scan) {
+                    $this->assertLessThanOrEqual(1, $scan['Actual Rows'], 'A sparse native identity batch must not read the entire normative catalog.');
+                }
+            }
             $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
             sort($counts);
 
             return $counts;
         };
-        $this->assertSame([1, 10001], $read());
+        $this->assertSame([1, 10001], $read(true));
         $this->deniedModules = ['budget-estimates'];
         $this->assertSame([0, 1], $read());
         $this->deniedModules = [];

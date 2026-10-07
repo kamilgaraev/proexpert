@@ -8,16 +8,50 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Workflow\JournalScheduleTaskResolver;
 use App\Services\Workflow\WorkflowGuardService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Gate;
 
 class ConstructionJournalPayloadService
 {
+    public const ENTRY_RELATIONS = [
+        'journal.contract.contractor',
+        'scheduleTask',
+        'estimate',
+        'createdBy',
+        'approvedBy',
+        'workVolumes.estimateItem.contractLinks.contract.contractor',
+        'workVolumes.workType',
+        'workVolumes.measurementUnit',
+        'materials.material',
+        'materials.estimateItem',
+        'equipment.estimateItem',
+        'workers.estimateItem',
+        'approvalEvents.actor',
+    ];
+
     public function __construct(
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly WorkflowGuardService $workflowGuardService,
+        private readonly JournalScheduleTaskResolver $journalScheduleTaskResolver,
     ) {}
+
+    public static function journalCountRelations(): array
+    {
+        return [
+            'entries',
+            'entries as approved_entries_count' => fn ($query) => $query->approved(),
+            'entries as submitted_entries_count' => fn ($query) => $query->submitted(),
+            'entries as rejected_entries_count' => fn ($query) => $query->rejected(),
+        ];
+    }
+
+    public function prepareEntryPage(Collection $entries): void
+    {
+        $this->journalScheduleTaskResolver->loadForEntryPage($entries);
+    }
 
     public function mapJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
     {
@@ -224,9 +258,11 @@ class ConstructionJournalPayloadService
                         : null,
                 ])->values()->all()
                 : [],
-            'completed_works_count' => $entry->relationLoaded('completedWorks')
-                ? $entry->completedWorks->count()
-                : $entry->completedWorks()->count(),
+            'completed_works_count' => $entry->getAttribute('completed_works_count') !== null
+                ? (int) $entry->getAttribute('completed_works_count')
+                : ($entry->relationLoaded('completedWorks')
+                    ? $entry->completedWorks->count()
+                    : $entry->completedWorks()->count()),
             'completed_works' => $entry->relationLoaded('completedWorks')
                 ? $entry->completedWorks->map(fn ($work): array => [
                     'id' => $work->id,

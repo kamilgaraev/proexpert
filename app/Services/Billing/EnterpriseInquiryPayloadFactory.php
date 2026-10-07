@@ -66,7 +66,7 @@ final class EnterpriseInquiryPayloadFactory
             'subject' => 'Корпоративное подключение МОСТ',
             'message' => implode("\n", $message),
             'consent_to_personal_data' => true,
-            'consent_version' => 'lk-enterprise-v1',
+            'consent_version' => config('legal.version'),
             'page_source' => 'lk-enterprise-inquiry',
             'status' => ContactForm::STATUS_NEW,
             'priority' => ContactForm::PRIORITY_HIGH,

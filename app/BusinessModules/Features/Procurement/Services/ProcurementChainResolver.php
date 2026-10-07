@@ -17,6 +17,16 @@ use Illuminate\Support\Collection;
 
 final class ProcurementChainResolver
 {
+    public const SITE_REQUEST_RELATIONS = [
+        'purchaseRequests.lines',
+        'purchaseRequests.supplierRequests.proposals',
+        'purchaseRequests.supplierRequests.proposalDecision.winningProposal',
+        'purchaseRequests.purchaseOrders.items',
+        'purchaseRequests.purchaseOrders.receipts.lines',
+        'purchaseRequests.purchaseOrders.acceptedSupplierProposal',
+        'materialDeliveries.latestEvent',
+    ];
+
     public function __construct(
         private readonly PurchaseOrderPaymentGateService $paymentGateService
     ) {
@@ -27,15 +37,7 @@ final class ProcurementChainResolver
      */
     public function fromSiteRequest(SiteRequest $siteRequest): array
     {
-        $siteRequest->loadMissing([
-            'purchaseRequests.lines',
-            'purchaseRequests.supplierRequests.proposals',
-            'purchaseRequests.supplierRequests.proposalDecision.winningProposal',
-            'purchaseRequests.purchaseOrders.items',
-            'purchaseRequests.purchaseOrders.receipts.lines',
-            'purchaseRequests.purchaseOrders.acceptedSupplierProposal',
-            'materialDeliveries.latestEvent',
-        ]);
+        $siteRequest->loadMissing(self::SITE_REQUEST_RELATIONS);
 
         $purchaseRequest = $siteRequest->purchaseRequests
             ->sortByDesc('id')

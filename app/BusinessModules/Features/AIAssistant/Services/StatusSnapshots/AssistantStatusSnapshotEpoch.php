@@ -16,7 +16,7 @@ final class AssistantStatusSnapshotEpoch
     public const CONTROL_TABLE = 'ai_assistant_status_snapshot_control';
     public const FUNCTION_NAME = 'track_assistant_status_snapshot_mutation';
     public const TRIGGER_NAME = 'assistant_status_snapshot_mutation';
-    public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', self::CHANGE_TABLE, self::CONTROL_TABLE];
+    public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', 'ai_rag_embedding_checkpoints', self::CHANGE_TABLE, self::CONTROL_TABLE];
     public const FUNCTION_BODY = "\nBEGIN\n    INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    RETURN NULL;\nEND;\n";
 
     private const PURGE_BATCH_SIZE = 10000;
@@ -141,9 +141,9 @@ final class AssistantStatusSnapshotEpoch
 WITH RECURSIVE relations AS (
     SELECT c.oid, c.relname, c.relkind,
         concat_ws(':', c.oid, c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity,
-            (SELECT jsonb_agg(jsonb_build_array(a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attisdropped, a.attgenerated, a.attidentity, a.attcollation) ORDER BY a.attnum)::text FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0),
+            (SELECT array_agg(ROW(a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attisdropped, a.attgenerated, a.attidentity, a.attcollation) ORDER BY a.attnum)::text FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0),
             CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) ELSE '' END, pg_get_expr(c.relpartbound, c.oid),
-            (SELECT jsonb_agg(jsonb_build_array(p.polname, p.polcmd, p.polpermissive, p.polroles, pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)) ORDER BY p.oid)::text FROM pg_policy p WHERE p.polrelid = c.oid)) AS definition
+            (SELECT array_agg(ROW(p.polname, p.polcmd, p.polpermissive, p.polroles, pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)) ORDER BY p.oid)::text FROM pg_policy p WHERE p.polrelid = c.oid)) AS definition
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND c.relname NOT IN (__EXCLUDED__)
 ), roots AS (SELECT oid FROM relations WHERE __ROOTS__), dependency_edges AS (

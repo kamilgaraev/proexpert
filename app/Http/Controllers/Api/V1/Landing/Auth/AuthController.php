@@ -19,11 +19,9 @@ use App\Jobs\Auth\CompleteRegistrationSideEffects;
 use App\Models\User;
 use App\Services\Auth\JwtAuthService;
 use App\Services\Auth\RegistrationIdempotencyService;
-use App\Services\Auth\UserConsentService;
 use App\Services\Auth\WebAuthenticationService;
 use App\Services\Auth\WebRefreshCookieService;
 use App\Services\PerformanceMonitor;
-use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -44,7 +42,6 @@ class AuthController extends Controller
         private readonly WebAuthenticationService $webAuthentication,
         private readonly WebRefreshCookieService $refreshCookies,
         private readonly RegistrationIdempotencyService $registrationIdempotency,
-        private readonly UserConsentService $userConsents,
     ) {
         $this->authService = $authService;
     }
@@ -64,26 +61,22 @@ class AuthController extends Controller
                     'lk',
                     (string) $request->input('idempotency_key'),
                     $registrationData,
-                    function () use ($registrationData): array {
+                    function () use ($registrationData, $request): array {
+                        app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($registrationData, ['offer', 'processing', 'privacy']);
                         $result = $this->authService->register(RegisterDTO::fromRequest($registrationData));
 
                         if (($result['success'] ?? false) !== true || ! isset($result['user'])) {
                             return $result;
                         }
 
-                        $acceptedAt = CarbonImmutable::now();
-                        $this->userConsents->record(
-                            $result['user'],
-                            'terms',
-                            (string) config('web_auth.registration.terms_version'),
-                            $acceptedAt,
-                        );
-                        $this->userConsents->record(
-                            $result['user'],
-                            'privacy',
-                            (string) config('web_auth.registration.privacy_version'),
-                            $acceptedAt,
-                        );
+                        foreach (['offer', 'processing', 'privacy'] as $documentKey) {
+                            app(\App\Services\Legal\LegalAcceptanceService::class)->record(
+                                $documentKey, 'landing_registration', (string) $request->input('idempotency_key'),
+                                $request, $result['user'], $result['organization'],
+                                ['representative_authority' => true, 'organization_name' => $result['organization']->name],
+                                $documentKey === 'privacy' ? 'acknowledged' : 'accepted',
+                            );
+                        }
 
                         return $result;
                     },

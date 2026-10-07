@@ -223,6 +223,13 @@ class UserInvitationService
                     $user = $this->createNewUserFromInvitation($invitation, $userData);
                 }
 
+                app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($userData, ['accountRules', 'privacy']);
+                if (! filter_var($userData['account_rules_accepted'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    throw \Illuminate\Validation\ValidationException::withMessages(['account_rules_accepted' => trans_message('legal.confirmation')]);
+                }
+                foreach (['accountRules', 'privacy'] as $key) {
+                    app(\App\Services\Legal\LegalAcceptanceService::class)->record($key, 'user_invitation', (string) $invitation->id, request(), $user, $invitation->organization, action: $key === 'privacy' ? 'acknowledged' : 'accepted');
+                }
                 $this->assignRolesToUser($user, $invitation);
                 $invitation->markAsAccepted($user);
 

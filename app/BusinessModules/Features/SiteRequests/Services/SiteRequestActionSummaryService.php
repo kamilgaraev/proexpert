@@ -28,7 +28,7 @@ class SiteRequestActionSummaryService
     public function summary(SiteRequest $siteRequest, ?User $actor): array
     {
         $organizationId = (int) $siteRequest->organization_id;
-        $chain = $this->chainService->forSiteRequest($siteRequest, $actor);
+        $chain = $this->chainService->forSiteRequest($siteRequest, $actor, includePermissions: false);
 
         return [
             'primary_action' => $this->primaryAction($siteRequest, $chain, $actor, $organizationId)?->toArray(),

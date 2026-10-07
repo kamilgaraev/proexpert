@@ -50,7 +50,7 @@ $assistantRoutes = static function (): void {
     Route::get('usage', [AIAssistantController::class, 'usage'])->name('usage');
 };
 
-Route::middleware(['auth:api', 'organization.context', SubstituteBindings::class])
+Route::middleware(['auth.web:lk', 'auth:api_landing', 'auth.jwt:api_landing', 'organization.context', SubstituteBindings::class])
     ->prefix('api/v1/ai-assistant')->name('lk.ai-assistant.')->group($assistantRoutes);
 
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))

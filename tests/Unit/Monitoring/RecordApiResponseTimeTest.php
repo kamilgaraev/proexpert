@@ -73,9 +73,37 @@ final class RecordApiResponseTimeTest extends TestCase
         self::assertSame(8, $summary['sql_count']);
         self::assertSame(20.0, $summary['sql_total_ms']);
         self::assertSame(array_keys($queries), array_keys($summary['sql_groups']));
-        foreach ($summary['sql_groups'] as $group) { self::assertSame(['count' => 1, 'total_ms' => 2.5], $group); }
+        foreach ($summary['sql_groups'] as $group) {
+            self::assertSame(['count' => 1, 'total_ms' => 2.5], $group);
+        }
         self::assertStringNotContainsString('private', json_encode($summary, JSON_THROW_ON_ERROR));
         self::assertStringNotContainsString('secret_table', json_encode($summary, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_source_diagnostics_are_limited_to_selected_assistant_get_routes(): void
+    {
+        foreach ([['GET', '/api/v1/admin/ai-assistant/conversations', true], ['POST', '/api/v1/admin/ai-assistant/conversations', false],
+            ['GET', '/api/v1/admin/ai-assistant/rag/status', true], ['POST', '/api/v1/admin/ai-assistant/rag/status', false],
+            ['GET', '/api/v1/admin/ai-assistant/rag/status/detail', false],
+            ['GET', '/api/v1/admin/projects/17/contracts', true], ['POST', '/api/v1/admin/projects/17/contracts', false],
+            ['GET', '/api/v1/admin/projects/17/contracts/1', false],
+            ['GET', '/api/v1/admin/ai-assistant/conversations/1', false], ['GET', '/api/v1/mobile/ai-assistant/conversations', false]] as [$method, $path, $expected]) {
+            Facade::clearResolvedInstances();
+            $captured = null;
+            $this->expectLog(static function (array $context) use (&$captured): bool {
+                $captured = $context;
+
+                return true;
+            });
+            $request = Request::create($path.'?token=private', $method);
+            (new RecordApiResponseTime)->handle($request, static function () use ($request): Response {
+                ApiQueryMetrics::record($request, 2.5);
+
+                return new Response('ok');
+            });
+            self::assertSame($expected, array_key_exists('sql_sources', $captured));
+            self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+        }
     }
 
     protected function tearDown(): void
@@ -99,7 +127,7 @@ final class RecordApiResponseTimeTest extends TestCase
             return true;
         });
 
-        $response = (new RecordApiResponseTime())->handle($request, static function () use ($traceId): Response {
+        $response = (new RecordApiResponseTime)->handle($request, static function () use ($traceId): Response {
             $response = new Response('ok');
             $response->headers->set('X-Trace-ID', $traceId);
 
@@ -127,7 +155,7 @@ final class RecordApiResponseTimeTest extends TestCase
         });
 
         try {
-            (new RecordApiResponseTime())->handle($request, static function (): never {
+            (new RecordApiResponseTime)->handle($request, static function (): never {
                 throw new NotFoundHttpException('private');
             });
             self::fail('Expected an HTTP exception.');
@@ -158,7 +186,7 @@ final class RecordApiResponseTimeTest extends TestCase
             return true;
         });
 
-        $response = (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+        $response = (new RecordApiResponseTime)->handle($request, static fn (): JsonResponse => new JsonResponse([
             'success' => true,
             'data' => ['request_id' => $responseRequestId],
         ], 202));
@@ -185,7 +213,7 @@ final class RecordApiResponseTimeTest extends TestCase
             return true;
         });
 
-        (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+        (new RecordApiResponseTime)->handle($request, static fn (): JsonResponse => new JsonResponse([
             'success' => true,
             'data' => ['request_id' => $requestId],
         ], 200));
@@ -212,7 +240,7 @@ final class RecordApiResponseTimeTest extends TestCase
             return true;
         });
 
-        (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+        (new RecordApiResponseTime)->handle($request, static fn (): JsonResponse => new JsonResponse([
             'success' => true,
             'data' => ['request_id' => 'invalid-uuid'],
         ], 202));
@@ -238,7 +266,7 @@ final class RecordApiResponseTimeTest extends TestCase
             return true;
         });
 
-        (new RecordApiResponseTime())->handle($request, static fn (): JsonResponse => new JsonResponse([
+        (new RecordApiResponseTime)->handle($request, static fn (): JsonResponse => new JsonResponse([
             'success' => true,
             'data' => ['request_id' => $requestId],
         ], 202));
@@ -252,11 +280,11 @@ final class RecordApiResponseTimeTest extends TestCase
     {
         $logManager = Mockery::mock();
         $logManager->shouldNotReceive('channel');
-        $container = new Container();
+        $container = new Container;
         $container->instance('log', $logManager);
         Facade::setFacadeApplication($container);
 
-        $response = (new RecordApiResponseTime())->handle(
+        $response = (new RecordApiResponseTime)->handle(
             Request::create('/api/v1/admin/projects', 'OPTIONS'),
             static fn (): Response => new Response('', 204),
         );
@@ -268,11 +296,11 @@ final class RecordApiResponseTimeTest extends TestCase
     {
         $logManager = Mockery::mock();
         $logManager->shouldReceive('channel')->once()->with('api_latency')->andThrow(new RuntimeException('log unavailable'));
-        $container = new Container();
+        $container = new Container;
         $container->instance('log', $logManager);
         Facade::setFacadeApplication($container);
 
-        $response = (new RecordApiResponseTime())->handle(
+        $response = (new RecordApiResponseTime)->handle(
             Request::create('/api/v1/admin/projects', 'GET'),
             static fn (): Response => new Response('ok'),
         );
@@ -286,7 +314,7 @@ final class RecordApiResponseTimeTest extends TestCase
         $logger->shouldReceive('info')->once()->with('api_response_timing', Mockery::on($check));
         $logManager = Mockery::mock();
         $logManager->shouldReceive('channel')->once()->with('api_latency')->andReturn($logger);
-        $container = new Container();
+        $container = new Container;
         $container->instance('log', $logManager);
         Facade::setFacadeApplication($container);
     }

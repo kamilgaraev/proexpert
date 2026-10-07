@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
@@ -66,8 +67,11 @@ final class AssistantStatusSnapshotTest extends TestCase
             'identity_part_key' => $source->identity_part_key, 'source_type' => 'project', 'entity_type' => 'project',
             'entity_id' => (string) $project->id, 'generation' => $generation, 'checksum' => $source->checksum, 'pending_since' => now()]);
         $coverageKey = 'ai-rag-coverage:'.$organization->id.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
-        Cache::put($coverageKey, ['projection_generation' => $generation, 'eligible_count_known' => true,
-            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project']]], 300);
+        $projection = ['projection_generation' => $generation, 'eligible_count_known' => true,
+            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project']]];
+        $stateStore = app(RagCoverageStateStore::class);
+        $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id), $projection);
+        Cache::put($coverageKey, $projection, 300);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
@@ -101,7 +105,10 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         $job->handle($service, $policy);
         self::assertSame(0, $service->status($organization->id, $actor, 'sources')['source_count']);
-        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0), ['projection_generation' => 'changed'], 60);
+        $changedGeneration = '6f207c85-81bb-4c2b-8991-9e1fe6e7eb94';
+        $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id),
+            array_replace($projection, ['projection_generation' => $changedGeneration]));
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0), ['projection_generation' => $changedGeneration], 60);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         $actor->organizations()->updateExistingPivot($organization->id, ['is_active' => false]);
         $this->expectException(AuthorizationException::class);

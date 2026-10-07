@@ -209,7 +209,7 @@ final class TestRagIndexingCoordinator extends RagIndexingCoordinator
         return 1;
     }
 
-    public function markSucceeded(int $runId, int $indexedChunks, ?string $leaseToken = null): ?RagIndexRun
+    public function markSucceeded(int $runId, int $indexedChunks, ?string $leaseToken = null, bool $coverageChanged = true): ?RagIndexRun
     {
         $this->markSucceededCalls[] = [$runId, $indexedChunks];
 

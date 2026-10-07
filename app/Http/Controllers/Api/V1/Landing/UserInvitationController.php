@@ -163,16 +163,12 @@ class UserInvitationController extends Controller
         ]);
     }
 
-    public function accept(Request $request, string $token): JsonResponse
+    public function accept(\App\Http\Requests\Api\V1\Landing\Auth\AcceptUserInvitationRequest $request, string $token): JsonResponse
     {
-        $data = $request->validate([
-            'password' => 'required|string|min:8|confirmed',
-        ]);
+        $data = $request->validated();
 
         try {
-            $user = $this->invitationService->acceptInvitation($token, [
-                'password' => $data['password'],
-            ]);
+            $user = $this->invitationService->acceptInvitation($token, $data);
 
             return LandingResponse::success([
                 'user_id' => $user->id,

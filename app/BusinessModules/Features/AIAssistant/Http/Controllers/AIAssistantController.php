@@ -94,8 +94,9 @@ final class AIAssistantController extends AbstractAssistantApiController
     public function conversation(AssistantPaginationRequest $request, int $conversation): JsonResponse
     {
         return $this->respond($request, function () use ($request, $conversation): JsonResponse {
-            $model = $this->accessibleConversation($request, $conversation);
-            $page = $this->conversations->getHistoryPage($model, $this->actor($request), $request->integer('per_page', 30), $request->integer('page', 1));
+            $result = $this->accessibleConversationPage($request, $conversation);
+            $model = $result['conversation'];
+            $page = $result['page'];
             return $this->success($request, [
                 'conversation' => new ConversationResource($model),
                 'messages' => MessageResource::collection($page->getCollection()),
@@ -106,7 +107,7 @@ final class AIAssistantController extends AbstractAssistantApiController
     public function history(AssistantPaginationRequest $request, int $conversation): JsonResponse
     {
         return $this->respond($request, function () use ($request, $conversation): JsonResponse {
-            $page = $this->conversations->getHistoryPage($this->accessibleConversation($request, $conversation), $this->actor($request), $request->integer('per_page', 30), $request->integer('page', 1));
+            $page = $this->accessibleConversationPage($request, $conversation)['page'];
             return $this->success($request, MessageResource::collection($page->getCollection()), 200, $this->pagination($page));
         });
     }
@@ -155,6 +156,16 @@ final class AIAssistantController extends AbstractAssistantApiController
         return $this->respond($request, function () use ($request): JsonResponse {
             return $this->success($request, $this->usage->getUsageStats($this->organizationId($request)));
         });
+    }
+
+    private function accessibleConversationPage(Request $request, int $id): array
+    {
+        $result = $this->conversations->findAccessibleConversationPage($id, $this->actor($request), $this->organizationId($request), $request->integer('per_page', 30), $request->integer('page', 1));
+        if ($result === null) {
+            throw new AuthorizationException(trans_message('ai_assistant.conversation_not_found'));
+        }
+
+        return $result;
     }
 
     private function accessibleConversation(Request $request, int $id, bool $write = false): Conversation

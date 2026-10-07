@@ -191,7 +191,9 @@ class RagIndexingCoordinator
             'last_error' => RagDispatchIntent::pending(),
         ]);
 
-        $this->invalidateCoverageAfterCommit($organizationId);
+        if ($mode !== RagIndexRun::MODE_SCHEDULED) {
+            $this->invalidateCoverageAfterCommit($organizationId);
+        }
         $this->dispatchRunAfterCommit($run);
 
         return $run;
@@ -448,9 +450,10 @@ class RagIndexingCoordinator
         };
 
         try {
+            $coverageVersion = $this->indexer->coverageMutationVersion();
             $indexed = $this->indexer->indexOrganization($organizationId, $projectId, $sourceType, $progress);
 
-            return $this->markSucceeded($run->id, $indexed, $leaseToken) ?? $run->refresh();
+            return $this->markSucceeded($run->id, $indexed, $leaseToken, $this->indexer->coverageMutationVersion() !== $coverageVersion) ?? $run->refresh();
         } catch (Throwable $throwable) {
             $this->markFailed($run->id, $throwable, $leaseToken);
 
@@ -499,7 +502,7 @@ class RagIndexingCoordinator
         return $run->refresh();
     }
 
-    public function markSucceeded(int $runId, int $indexedChunks, ?string $leaseToken = null): ?RagIndexRun
+    public function markSucceeded(int $runId, int $indexedChunks, ?string $leaseToken = null, bool $coverageChanged = true): ?RagIndexRun
     {
         $run = $this->findRun($runId);
         if (! $run instanceof RagIndexRun) {
@@ -536,7 +539,9 @@ class RagIndexingCoordinator
             return null;
         }
 
-        $this->invalidateCoverageAfterCommit($run->organization_id);
+        if ($coverageChanged || app(RagCoverageStateStore::class)->hasPendingIndexChanges($run->organization_id)) {
+            $this->invalidateCoverageAfterCommit($run->organization_id);
+        }
         return $run->refresh();
     }
 

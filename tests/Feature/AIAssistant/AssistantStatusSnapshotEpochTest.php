@@ -12,8 +12,14 @@ use Tests\TestCase;
 final class AssistantStatusSnapshotEpochTest extends TestCase
 {
     private Migration $migration;
+
     private AssistantStatusSnapshotEpoch $epoch;
+
     private bool $restoreEpoch = false;
+
+    private bool $createdLegalEpochFixture = false;
+
+    private bool $renamedLegalEpochTable = false;
 
     public function beginDatabaseTransaction(): void
     {
@@ -26,10 +32,14 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         parent::setUp();
         self::assertSame('pgsql', DB::connection()->getDriverName());
         self::assertMatchesRegularExpression('/^most_phpunit_[a-z0-9]+_testing$/i', DB::connection()->getDatabaseName());
-        while (DB::connection()->transactionLevel() > 0) { DB::rollBack(); }
+        while (DB::connection()->transactionLevel() > 0) {
+            DB::rollBack();
+        }
         $this->migration = require base_path('database/migrations/2026_10_05_010000_create_assistant_status_snapshot_epoch.php');
         $this->restoreEpoch = DB::selectOne('SELECT to_regclass(?) AS table_name', ['public.'.AssistantStatusSnapshotEpoch::CONTROL_TABLE])->table_name !== null;
-        if ($this->restoreEpoch) { $this->migration->down(); }
+        if ($this->restoreEpoch) {
+            $this->migration->down();
+        }
         DB::statement('CREATE TABLE public.assistant_snapshot_epoch_parent_test (id bigint PRIMARY KEY, organization_id bigint NOT NULL, hidden boolean NOT NULL)');
         DB::statement('CREATE TABLE public.assistant_snapshot_epoch_auth_test (id bigint PRIMARY KEY, actor_id bigint NOT NULL, permission text NOT NULL, is_active boolean NOT NULL)');
         DB::statement('CREATE TABLE public.assistant_snapshot_epoch_row_test (id bigint PRIMARY KEY, parent_id bigint REFERENCES public.assistant_snapshot_epoch_parent_test(id), payload text NULL)');
@@ -44,7 +54,9 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     protected function tearDown(): void
     {
-        while (DB::connection()->transactionLevel() > 0) { DB::rollBack(); }
+        while (DB::connection()->transactionLevel() > 0) {
+            DB::rollBack();
+        }
         if (isset($this->migration)) {
             $this->migration->down();
             DB::statement('DROP VIEW IF EXISTS public.assistant_snapshot_epoch_view_test');
@@ -55,7 +67,16 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
             DB::statement('DROP TABLE IF EXISTS public.assistant_snapshot_epoch_unrelated_test');
             DB::statement('DROP TABLE IF EXISTS public.assistant_snapshot_epoch_auth_test');
             DB::statement('DROP TABLE IF EXISTS public.assistant_snapshot_epoch_parent_test');
-            if ($this->restoreEpoch) { $this->migration->up(); }
+            if ($this->createdLegalEpochFixture) {
+                DB::statement('DROP TABLE public.legal_acceptance_events');
+                DB::statement('DROP FUNCTION IF EXISTS public.assistant_snapshot_legal_guard_test()');
+            }
+            if ($this->renamedLegalEpochTable) {
+                DB::statement('ALTER TABLE public.assistant_snapshot_legal_original_test RENAME TO legal_acceptance_events');
+            }
+            if ($this->restoreEpoch) {
+                $this->migration->up();
+            }
         }
         parent::tearDown();
     }
@@ -134,7 +155,9 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
             self::assertFalse($this->valid($beforeLate));
             self::assertTrue($this->valid($this->capture()));
         } finally {
-            if ($writer->transactionLevel() > 0) { $writer->rollBack(); }
+            if ($writer->transactionLevel() > 0) {
+                $writer->rollBack();
+            }
             DB::purge('assistant_snapshot_epoch_writer');
         }
     }
@@ -207,8 +230,11 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertFalse($this->valid(array_replace($state, ['snapshot' => 'broken'])));
         self::assertFalse($this->valid(array_replace($state, ['captured_at' => 'not-a-date'])));
         DB::beginTransaction();
-        try { self::assertFalse($this->epoch->capture()['cacheable']); }
-        finally { DB::rollBack(); }
+        try {
+            self::assertFalse($this->epoch->capture()['cacheable']);
+        } finally {
+            DB::rollBack();
+        }
     }
 
     public function test_schema_views_trigger_coverage_and_epoch_recreation_fail_closed(): void
@@ -256,6 +282,39 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertTrue($this->capture()['cacheable']);
     }
 
+    public function test_schema_fingerprint_preserves_escaped_identifiers_and_policy_changes(): void
+    {
+        $table = 'public.assistant_snapshot_epoch_unrelated_test';
+        $names = ['codec,(a)', 'codec"a', 'codec\\a', 'codec{a}', 'codec NULL', 'кодек'];
+        $quote = static fn (string $name): string => '"'.str_replace('"', '""', $name).'"';
+        DB::statement('ALTER TABLE '.$table.' ADD COLUMN '.$quote($names[0]).' text');
+        foreach (array_slice($names, 1) as $index => $name) {
+            $state = $this->capture();
+            self::assertTrue($state['cacheable']);
+            self::assertTrue($this->valid($state));
+            DB::statement('ALTER TABLE '.$table.' RENAME COLUMN '.$quote($names[$index]).' TO '.$quote($name));
+            self::assertFalse($this->valid($state));
+        }
+        DB::statement('CREATE POLICY "codec,(policy)" ON '.$table.' USING (payload IS NULL)');
+        $state = $this->capture();
+        self::assertTrue($state['cacheable']);
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' USING (payload IS NOT NULL)');
+        self::assertFalse($this->valid($state));
+        $state = $this->capture();
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' TO CURRENT_USER');
+        self::assertFalse($this->valid($state));
+        $state = $this->capture();
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' WITH CHECK (payload IS NULL)');
+        self::assertFalse($this->valid($state));
+        $state = $this->capture();
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' RENAME TO "codec""policy"');
+        self::assertFalse($this->valid($state));
+    }
+
     public function test_semantic_session_settings_invalidate_while_budget_settings_preserve_proof(): void
     {
         $state = $this->capture();
@@ -280,6 +339,67 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
             return $this->epoch->isValid($state);
         }));
+    }
+
+    public function test_late_legal_table_guard_restores_proof_and_preserves_existing_write_protection(): void
+    {
+        $this->isolateOptionalLegalTable();
+        self::assertNull(DB::selectOne("SELECT to_regclass('public.legal_acceptance_events') AS relation")->relation);
+        DB::statement('CREATE TABLE public.legal_acceptance_events (id bigint PRIMARY KEY)');
+        $this->createdLegalEpochFixture = true;
+        DB::unprepared("CREATE FUNCTION public.assistant_snapshot_legal_guard_test() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RAISE EXCEPTION 'immutable_test'; END; \$\$");
+        DB::statement('CREATE TRIGGER assistant_snapshot_legal_existing_test BEFORE UPDATE OR DELETE ON public.legal_acceptance_events FOR EACH ROW EXECUTE FUNCTION public.assistant_snapshot_legal_guard_test()');
+        $existing = DB::selectOne("SELECT pg_get_triggerdef(oid) AS definition,tgenabled FROM pg_trigger WHERE tgrelid='public.legal_acceptance_events'::regclass AND tgname='assistant_snapshot_legal_existing_test'");
+        self::assertFalse($this->capture()['cacheable']);
+        $repair = require base_path('database/migrations/2026_10_07_021000_track_legal_acceptance_events_for_assistant_snapshots.php');
+        $repair->up();
+        $repair->up();
+        self::assertTrue($this->capture()['cacheable']);
+        self::assertEquals($existing, DB::selectOne("SELECT pg_get_triggerdef(oid) AS definition,tgenabled FROM pg_trigger WHERE tgrelid='public.legal_acceptance_events'::regclass AND tgname='assistant_snapshot_legal_existing_test'"));
+        $state = $this->readOnly(fn (): array => $this->epoch->capture(['public.legal_acceptance_events']));
+        self::assertTrue($this->valid($state));
+        DB::statement('INSERT INTO public.legal_acceptance_events VALUES (1)');
+        self::assertFalse($this->valid($state));
+        self::assertSame(1, DB::table(AssistantStatusSnapshotEpoch::CHANGE_TABLE)->whereRaw("relation_oid='public.legal_acceptance_events'::regclass::oid")->count());
+        try {
+            DB::statement('UPDATE public.legal_acceptance_events SET id=2 WHERE id=1');
+            self::fail('Existing legal write protection must remain active');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('immutable_test', $exception->getMessage());
+        }
+        self::assertSame([1], DB::table('legal_acceptance_events')->pluck('id')->all());
+        DB::statement('ALTER TABLE public.legal_acceptance_events DISABLE TRIGGER '.AssistantStatusSnapshotEpoch::TRIGGER_NAME);
+        self::assertFalse($this->capture()['cacheable']);
+        $repair->up();
+        self::assertTrue($this->capture()['cacheable']);
+        $repair->down();
+        self::assertTrue($this->capture()['cacheable']);
+    }
+
+    public function test_legal_epoch_repair_tolerates_absent_optional_table_and_epoch(): void
+    {
+        $this->isolateOptionalLegalTable();
+        self::assertNull(DB::selectOne("SELECT to_regclass('public.legal_acceptance_events') AS relation")->relation);
+        $repair = require base_path('database/migrations/2026_10_07_021000_track_legal_acceptance_events_for_assistant_snapshots.php');
+        $repair->up();
+        self::assertTrue($this->capture()['cacheable']);
+        DB::statement('CREATE TABLE public.legal_acceptance_events (id bigint PRIMARY KEY)');
+        $this->createdLegalEpochFixture = true;
+        $this->migration->down();
+        $repair->up();
+        self::assertFalse(DB::selectOne("SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgrelid='public.legal_acceptance_events'::regclass AND tgname=?) AS installed", [AssistantStatusSnapshotEpoch::TRIGGER_NAME])->installed);
+        DB::statement('INSERT INTO public.legal_acceptance_events VALUES (1)');
+        self::assertSame([1], DB::table('legal_acceptance_events')->pluck('id')->all());
+        $this->migration->up();
+        self::assertTrue($this->capture()['cacheable']);
+    }
+
+    private function isolateOptionalLegalTable(): void
+    {
+        if (DB::selectOne("SELECT to_regclass('public.legal_acceptance_events') AS relation")->relation !== null) {
+            DB::statement('ALTER TABLE public.legal_acceptance_events RENAME TO assistant_snapshot_legal_original_test');
+            $this->renamedLegalEpochTable = true;
+        }
     }
 
     private function capture(): array

@@ -37,6 +37,7 @@ class UseJwtCookieForAuthorization
     {
         return $request->is('api/v1/admin/*')
             || $request->is('api/v1/landing/*')
+            || $request->is('api/v1/ai-assistant/*')
             || $request->is('api/lk/*');
     }
 }
