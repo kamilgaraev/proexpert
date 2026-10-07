@@ -29,6 +29,8 @@ final class ApiQueryMetrics
 
     private ?array $assistantSnapshot = null;
 
+    private ?array $assistantSnapshotEpoch = null;
+
     public function __construct(private readonly bool $captureSources = false) {}
 
     public static function recordQuery(Request $request, QueryExecuted $query): void
@@ -99,6 +101,9 @@ final class ApiQueryMetrics
         if ($this->assistantSnapshot !== null) {
             $summary['assistant_snapshot'] = $this->assistantSnapshot;
         }
+        if ($this->assistantSnapshotEpoch !== null) {
+            $summary['assistant_snapshot_epoch'] = $this->assistantSnapshotEpoch;
+        }
 
         return $summary;
     }
@@ -119,6 +124,17 @@ final class ApiQueryMetrics
         $queued = $context['refresh_queued'] ?? null;
         $snapshot['refresh_queued'] = is_bool($queued) ? $queued : null;
         $this->assistantSnapshot = $snapshot;
+    }
+
+    public function recordAssistantSnapshotEpoch(string $phase, ?string $relation): void
+    {
+        if (! in_array($phase, ['state_rejected', 'transaction_rejected', 'schema_rejected', 'valid', 'relation_mutation_present', 'epoch_guard_rejected'], true)) {
+            return;
+        }
+        $this->assistantSnapshotEpoch = [
+            'phase' => $phase,
+            'relation' => $relation !== null && strlen($relation) <= 63 && preg_match('/^[a-z_][a-z0-9_]*$/D', $relation) === 1 ? $relation : null,
+        ];
     }
 
     private function recordSource(QueryExecuted $query, string $group): void
