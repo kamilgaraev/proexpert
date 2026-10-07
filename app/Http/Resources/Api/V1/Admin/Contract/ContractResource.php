@@ -48,7 +48,9 @@ class ContractResource extends JsonResource
         if ($loadedEvents !== null ? $loadedEvents->isNotEmpty() : $this->usesEventSourcing()) {
             try {
                 $stateEventService = app(\App\Services\Contract\ContractStateEventService::class);
-                $currentState = $stateEventService->getCurrentState($this->resource);
+                $currentState = $loadedEvents !== null
+                    ? $stateEventService->getCurrentStateFromLoadedEvents($this->resource, $loadedEvents)
+                    : $stateEventService->getCurrentState($this->resource);
                 $calculatedTotalAmount = $currentState['total_amount'] ?? 0;
 
                 // Получаем все события и фильтруем только активные
