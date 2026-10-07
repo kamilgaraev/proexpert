@@ -1105,6 +1105,89 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertNotSame('completed', $response->status);
     }
 
+    public function testCanonicalStoppedBindingReleasesOnlyAfterMatchingPrivateEvent(): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'stopped';
+            $frame = $this->gatewayFrame($packet, 2, 'abort', ['schemaVersion' => 'public-core-gateway-upload-stopped/1',
+                'binding' => $packet->binding(), 'reasonCode' => 'expired']);
+            $wire = json_decode(GatewayModelRequest::canonicalJson($frame), true, flags: JSON_THROW_ON_ERROR);
+            self::assertNotSame($packet->binding(), $wire['payload']['binding']);
+            self::assertSame(GatewayModelRequest::canonicalJson($packet->binding()), GatewayModelRequest::canonicalJson($wire['payload']['binding']));
+            self::assertSame(['projectionDigest' => $packet->projectionDigest, 'bodyLength' => strlen($packet->bodyBytes)],
+                $dispatch->handleGatewayFrame($wire, $this->controlPins()['gatewayPeer'], $packet));
+            self::assertFalse($this->appHeld);
+            self::assertFalse($dispatch->uploadPending());
+            self::assertNotNull($this->store->transaction(static fn (): array => ['released' => true]));
+            self::assertSame(1, count(array_filter($this->controlCalls, static fn (string $command): bool => $command === 'upload_complete')));
+            $wire['sequence']++;
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($wire, $this->controlPins()['gatewayPeer'], $packet));
+            self::assertSame(1, count(array_filter($this->controlCalls, static fn (string $command): bool => $command === 'upload_complete')));
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+    }
+
+    #[DataProvider('canonicalStoppedDenials')]
+    public function testCanonicalStoppedBindingCannotReleaseForInvalidTupleOrProof(string $change): void
+    {
+        [$dispatch, $packet] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet, $change): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'stopped';
+            $frame = $this->gatewayFrame($packet, 2, 'abort', ['schemaVersion' => 'public-core-gateway-upload-stopped/1',
+                'binding' => $packet->binding(), 'reasonCode' => 'expired']);
+            $peer = $this->controlPins()['gatewayPeer'];
+            if (str_starts_with($change, 'binding:')) {
+                $key = substr($change, strlen('binding:'));
+                $frame['payload']['binding'][$key] = $key === 'expiresAt' ? $packet->expiresAt - 1 : 'ref_foreign_binding_value';
+            } elseif (str_starts_with($change, 'native:')) {
+                $key = substr($change, strlen('native:'));
+                $this->nativeOverrides[$key] = $key === 'qualification' ? 'actual-native' : 'ref_foreign_native_tuple';
+            } else {
+                switch ($change) {
+                    case 'missing': unset($frame['payload']['binding']['profileRef']); break;
+                    case 'extra': $frame['payload']['binding']['callerProof'] = true; break;
+                    case 'integer-string': $frame['payload']['binding']['expiresAt'] = (string) $packet->expiresAt; break;
+                    case 'string-integer': $frame['payload']['binding']['profileRef'] = 1; break;
+                    case 'null': $frame['payload']['binding'] = null; break;
+                    case 'denial': $frame['payload']['binding'] = ['reasonCode' => 'expired']; break;
+                    case 'pending': $this->nativeEvent = 'pending'; break;
+                    case 'uncertain': $this->nativeEvent = 'uncertain'; break;
+                    case 'peer': $peer['pid']++; break;
+                    case 'channel': $frame['channelRef'] = 'channel_foreign_transfer'; break;
+                    case 'sequence': $frame['sequence'] = 1; break;
+                    case 'outer-expiry': $frame['expiresAt']--; break;
+                }
+            }
+            $wire = json_decode(GatewayModelRequest::canonicalJson($frame), true, flags: JSON_THROW_ON_ERROR);
+            self::assertArrayHasKey('reasonCode', $dispatch->handleGatewayFrame($wire, $peer, $packet));
+            self::assertTrue($this->appHeld);
+            self::assertTrue($dispatch->uploadPending());
+            self::assertNotContains('upload_complete', $this->controlCalls);
+            $this->nativeOverrides = [];
+            $this->nativeEvent = 'pending';
+            return GatewayModelResponse::blocked($packet, 'expired');
+        });
+        self::assertNotSame('completed', $response->status);
+    }
+
+    public static function canonicalStoppedDenials(): array
+    {
+        $cases = ['missing', 'extra', 'integer-string', 'string-integer', 'null', 'denial', 'pending', 'uncertain',
+            'peer', 'channel', 'sequence', 'outer-expiry'];
+        foreach (['requestRef', 'attemptRef', 'publicAdmissionRef', 'contextReceiptRef', 'corePayloadDigest', 'coreReceiptDigest',
+            'projectionRef', 'projectionDigest', 'profileRef', 'profileFingerprint', 'purpose', 'expiresAt'] as $field) {
+            $cases[] = 'binding:' . $field;
+        }
+        foreach (['qualification', 'channelRef', 'transferRef', 'requestRef', 'attemptRef', 'projectionDigest'] as $field) {
+            $cases[] = 'native:' . $field;
+        }
+        return array_map(static fn (string $case): array => [$case], $cases);
+    }
+
     public function testEofAndUnknownStopKeepScopeUntilVerifiedSameTransferStop(): void
     {
         [$dispatch, $packet] = $this->dispatchPreparation();

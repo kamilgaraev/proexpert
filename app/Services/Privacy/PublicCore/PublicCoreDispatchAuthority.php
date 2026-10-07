@@ -479,7 +479,8 @@ final class PublicCoreDispatchAuthority
         $payload = $frame['payload'];
         if ($frame['command'] === 'abort'
             && GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'reasonCode'])
-            && $payload['schemaVersion'] === 'public-core-gateway-upload-stopped/1' && $payload['binding'] === $packet->binding()
+            && $payload['schemaVersion'] === 'public-core-gateway-upload-stopped/1'
+            && (new GatewayPublicCoreRequestValidator())->validateBinding($packet, $payload['binding']) === null
             && in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true) && $payload['reasonCode'] !== 'none'
             && ($this->cancelRequest === null || $payload['reasonCode'] === $this->cancelRequest['reasonCode'])) {
             $event = $this->nativeState('read', $packet);
