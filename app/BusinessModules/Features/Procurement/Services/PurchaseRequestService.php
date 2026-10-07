@@ -77,7 +77,10 @@ class PurchaseRequestService
         $sortDir = $filters['sort_dir'] ?? 'desc';
         $query->orderBy($sortBy, $sortDir);
 
-        return $query->paginate($perPage);
+        return $query->with([
+            ...ProcurementChainResolver::PURCHASE_REQUEST_RELATIONS,
+            'supplierRequests.purchaseRequest',
+        ])->paginate($perPage);
     }
 
     public function createFromSiteRequest(

@@ -17,6 +17,17 @@ use Illuminate\Support\Collection;
 
 final class ProcurementChainResolver
 {
+    public const PURCHASE_REQUEST_RELATIONS = [
+        'siteRequest',
+        'lines',
+        'supplierRequests.proposals',
+        'supplierRequests.proposalDecision.winningProposal',
+        'purchaseOrders.items',
+        'purchaseOrders.receipts.lines',
+        'purchaseOrders.acceptedSupplierProposal',
+        'siteRequest.materialDeliveries.latestEvent',
+    ];
+
     public const SITE_REQUEST_RELATIONS = [
         'purchaseRequests.lines',
         'purchaseRequests.supplierRequests.proposals',
@@ -51,16 +62,7 @@ final class ProcurementChainResolver
      */
     public function fromPurchaseRequest(PurchaseRequest $purchaseRequest): array
     {
-        $purchaseRequest->loadMissing([
-            'siteRequest',
-            'lines',
-            'supplierRequests.proposals',
-            'supplierRequests.proposalDecision.winningProposal',
-            'purchaseOrders.items',
-            'purchaseOrders.receipts.lines',
-            'purchaseOrders.acceptedSupplierProposal',
-            'siteRequest.materialDeliveries.latestEvent',
-        ]);
+        $purchaseRequest->loadMissing(self::PURCHASE_REQUEST_RELATIONS);
 
         return $this->graph($purchaseRequest->siteRequest, $purchaseRequest);
     }
