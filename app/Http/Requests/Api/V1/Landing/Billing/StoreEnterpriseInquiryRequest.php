@@ -17,6 +17,9 @@ class StoreEnterpriseInquiryRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'consent_to_personal_data' => ['required', 'accepted'],
+            'legal_documents' => ['required', 'array:contactConsent'],
+            'legal_documents.contactConsent' => ['required', new \App\Rules\CurrentLegalDocument('contactConsent')],
             'client_request_id' => ['required', 'uuid'],
             'contact_phone' => ['required', 'string', 'max:50'],
             'company_size' => ['required', Rule::in(['up_to_50', '51_200', '201_500', '501_1000', '1000_plus'])],

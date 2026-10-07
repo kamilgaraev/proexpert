@@ -12,6 +12,12 @@ use Tests\TestCase;
 
 final class LandingRegistrationVerificationTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Tests\Support\LegalAcceptanceFixture::enable();
+    }
+
     use RefreshDatabase;
 
     public function test_landing_registration_endpoint_requires_email_verification_without_token_or_cookie(): void
@@ -72,6 +78,7 @@ final class LandingRegistrationVerificationTest extends TestCase
             'password' => 'Password1',
             'password_confirmation' => 'Password1',
             'organization_name' => 'Registration Contract Organization',
+            ...\Tests\Support\LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']),
             'terms_accepted' => true,
             'privacy_accepted' => true,
         ];

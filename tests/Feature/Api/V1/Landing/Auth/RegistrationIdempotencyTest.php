@@ -10,6 +10,12 @@ use Tests\TestCase;
 
 final class RegistrationIdempotencyTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Tests\Support\LegalAcceptanceFixture::enable();
+    }
+
     use RefreshDatabase;
 
     public function test_same_key_and_payload_replays_the_completed_registration(): void
@@ -103,6 +109,7 @@ final class RegistrationIdempotencyTest extends TestCase
             'password' => 'Password1',
             'password_confirmation' => 'Password1',
             'organization_name' => 'Registration Organization',
+            ...\Tests\Support\LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']),
             'terms_accepted' => true,
             'privacy_accepted' => true,
         ];
