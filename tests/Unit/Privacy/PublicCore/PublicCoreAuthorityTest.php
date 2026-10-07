@@ -1026,6 +1026,284 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertFalse($this->appHeld);
     }
 
+    #[DataProvider('normalChannelCases')]
+    public function testNormalChannelKeepsClosedCorrelationFreshBootstrapAndOriginalRequest(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork')) {
+            self::markTestSkipped('Normal source Channel requires isolated Linux SCM credentials.');
+        }
+        mkdir($this->directory, 0700);
+        $this->now = time() - ($mode === 'original-cap' ? 110 : 0);
+        $path = $this->directory . '/normal.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $parent = getmypid();
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $ticket = 'viewer_' . str_repeat('a', 48);
+        $viewer = $this->viewer;
+        $child = pcntl_fork();
+        if ($child === 0) {
+            try {
+                $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
+                $expiry = min(time() + 20, $channel->deadlineExpiresAt());
+                $checks = 0;
+                $calls = 0;
+                $policyChanged = false;
+                $invoke = static function (string $command, array $input, ?string $operation = null) use ($channel, $expiry, $ticket, $viewer, $mode, &$checks, &$calls, &$policyChanged): array {
+                    $operation ??= 'ref_' . str_pad((string) ++$calls, 32, '0', STR_PAD_LEFT);
+                    $channel->send($command, in_array($command, ['readiness', 'open_or_resume'], true) ? $operation : $input['request_ref'],
+                        $operation, ['schemaVersion' => 'public-core-processor-operation/1-proposal', 'operationRef' => $operation, 'input' => $input], $expiry);
+                    while (true) {
+                        $frame = $channel->receive();
+                        self::assertSame($expiry, $frame['expiresAt']);
+                        if ($frame['command'] === 'check_binding') {
+                            $checks++;
+                            self::assertNull($frame['requestRef']);
+                            self::assertNull($frame['attemptRef']);
+                            self::assertSame(['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => $ticket], $frame['payload']);
+                            $current = $viewer;
+                            if ($policyChanged) {
+                                $current['policyRevision'] = 'public-policy/2';
+                            }
+                            if ($mode === 'revoked' && $checks >= 2) {
+                                $channel->send('binding', null, null, ['schemaVersion' => 'public-core-app-viewer-ticket-denial/1',
+                                    'viewerTicketRef' => $ticket, 'reasonCode' => 'authorization_changed'], $expiry);
+                            } else {
+                                $channel->send('binding', null, null, ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1',
+                                    'viewerTicketRef' => $ticket, 'currentViewer' => $current], $expiry);
+                            }
+                            continue;
+                        }
+                        self::assertSame('result', $frame['command']);
+                        self::assertSame($operation, $frame['attemptRef']);
+                        self::assertSame($operation, $frame['payload']['operationRef']);
+                        self::assertSame('public-core-processor-operation-result/1-proposal', $frame['payload']['schemaVersion']);
+                        self::assertTrue(GatewayModelRequest::hasExactKeys($frame['payload'], ['schemaVersion', 'operationRef', 'output']));
+                        return $frame['payload']['output'];
+                    }
+                };
+                $ready = $invoke('readiness', []);
+                self::assertSame('unavailable', $ready['status']);
+                self::assertFalse($ready['model_enabled']);
+                self::assertNull($ready['actual_model']);
+                $input = ['viewer_ticket_ref' => $ticket, 'fixture_id' => 'material-search-v1', 'fixture_version' => 'public-material/1',
+                    'input_id' => 'price-b25', 'request_id' => 'cc5b0d36-5c63-4a8c-bcfa-53c41e43ed0c', 'public_session_ref' => null];
+                $opened = $invoke('open_or_resume', $input);
+                if (in_array($mode, ['revoked', 'original-cap'], true)) {
+                    self::assertSame('blocked', $opened['status']);
+                    self::assertGreaterThanOrEqual(2, $checks);
+                } else {
+                    self::assertTrue(GatewayModelRequest::hasExactKeys($opened, ['status', 'reasonCode', 'request_ref', 'public_session_ref',
+                        'transportAllowed', 'process_ref', 'original_expires_at']));
+                    self::assertSame('accepted', $opened['status']);
+                    self::assertGreaterThan($expiry, $opened['original_expires_at']);
+                    if (in_array($mode, ['stale-process', 'cached-raw'], true)) {
+                        file_put_contents($this->directory . '/normal-tamper', $mode);
+                        $denied = $mode === 'stale-process' ? $invoke('open_or_resume', $input)
+                            : $invoke('lookup_owned', ['viewer_ticket_ref' => $ticket, 'request_ref' => $opened['request_ref']]);
+                        self::assertSame('blocked', $denied['status']);
+                        self::assertArrayNotHasKey('reply', $denied);
+                        self::assertArrayNotHasKey('trace', $denied);
+                        self::assertArrayNotHasKey('publicationRef', $denied);
+                        file_put_contents($this->directory . '/normal-checks', (string) $checks);
+                        $channel->close();
+                        exit(0);
+                    }
+                    if ($mode === 'policy-change') {
+                        $policyChanged = true;
+                        self::assertSame('blocked', $invoke('open_or_resume', $input)['status']);
+                        file_put_contents($this->directory . '/normal-checks', (string) $checks);
+                        $channel->close();
+                        exit(0);
+                    }
+                    self::assertSame($opened, $invoke('open_or_resume', $input));
+                    $owned = ['viewer_ticket_ref' => $ticket, 'request_ref' => $opened['request_ref']];
+                    $pending = $invoke('lookup_owned', $owned);
+                    self::assertSame(['reasonCode' => 'none', 'request_ref' => $opened['request_ref'], 'status' => 'accepted', 'transportAllowed' => false], $pending);
+                    $blocked = $invoke('execute_owned', $owned);
+                    self::assertSame('blocked', $blocked['status']);
+                    self::assertSame('runtime_not_activated', $blocked['reasonCode']);
+                    self::assertArrayNotHasKey('reply', $blocked);
+                    self::assertArrayNotHasKey('publicationRef', $blocked);
+                    self::assertGreaterThan(8, $checks);
+                    if ($mode === 'duplicate') {
+                        try {
+                            $invoke('readiness', [], 'ref_' . str_pad('1', 32, '0', STR_PAD_LEFT));
+                            throw new \RuntimeException('Duplicate operation accepted');
+                        } catch (\LogicException) {
+                        }
+                    }
+                }
+                file_put_contents($this->directory . '/normal-checks', (string) $checks);
+                $channel->close();
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($this->directory . '/normal-error', $failure->getMessage());
+                exit(77);
+            }
+        }
+        self::assertGreaterThan(0, $child);
+        $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 30000);
+        $processor = null;
+        $reader = static function (array $binding) use (&$processor): ?array {
+            return $processor?->currentNormalViewer($binding);
+        };
+        $sessions = new PublicCoreSessionAuthority($this->registry, $this->store, $reader, fn (): int => $this->now);
+        $factoryCalls = 0;
+        $readiness = $this->qualifiedReadiness();
+        $peer = $channel->peer();
+        $processor = new PublicCoreProcessor($this->registry, $this->store, $sessions, $readiness,
+            function (array $kernel) use ($peer, $mode): ?array {
+                if (is_file($this->directory . '/normal-tamper')) {
+                    $this->store->transaction(static function (array &$state) use ($mode): array {
+                        foreach ($state['requests'] as &$request) {
+                            if ($mode === 'stale-process') {
+                                $request['normalProcessRef'] = 'ref_' . str_repeat('f', 32);
+                            } else {
+                                $request['execution'] = ['status' => 'completed', 'result' => ['reply' => 'private cached bytes']];
+                            }
+                        }
+                        return ['sourceFixtureTamper' => true];
+                    });
+                }
+                return $kernel === $peer ? ['role' => 'app', 'identityRef' => 'ref_source_only_app_role', 'kernelPeer' => $kernel] : null;
+            },
+            static fn (string $ticket): array => ['viewerTicketRef' => $ticket],
+            static function () use (&$factoryCalls): array { $factoryCalls++; return []; });
+        try {
+            $processor->serveAppChannel($channel);
+        } finally {
+            $channel->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+        }
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status), is_file($this->directory . '/normal-error') ? file_get_contents($this->directory . '/normal-error') : '');
+        self::assertSame(0, $factoryCalls);
+        self::assertGreaterThanOrEqual(2, (int) file_get_contents($this->directory . '/normal-checks'));
+        $snapshot = $this->store->transaction(static fn (array &$state): array => $state['requests']);
+        self::assertIsArray($snapshot);
+        if (in_array($mode, ['valid', 'duplicate'], true)) {
+            self::assertCount(1, $snapshot);
+            $stored = array_values($snapshot)[0];
+            self::assertSame($this->now + 120, $stored['expiresAt']);
+            self::assertMatchesRegularExpression('/^ref_[a-f0-9]{32}$/D', $stored['normalProcessRef']);
+            self::assertArrayNotHasKey('execution', $stored);
+        }
+    }
+
+    public static function normalChannelCases(): array
+    {
+        return [['valid'], ['duplicate'], ['revoked'], ['original-cap'], ['policy-change'], ['stale-process'], ['cached-raw']];
+    }
+
+    #[DataProvider('normalProtocolDenials')]
+    public function testNormalProtocolDeniesMalformedRolePhaseAndReentry(string $change): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork')) {
+            self::markTestSkipped('Normal protocol denial requires native isolated Linux.');
+        }
+        mkdir($this->directory, 0700);
+        $this->now = time();
+        $path = $this->directory . '/normal-deny.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $parent = getmypid();
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $child = pcntl_fork();
+        if ($child === 0) {
+            try {
+                $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
+                $op = 'ref_' . str_repeat('c', 32);
+                $command = 'readiness';
+                $request = $attempt = $op;
+                $payload = ['schemaVersion' => 'public-core-processor-operation/1-proposal', 'operationRef' => $op, 'input' => []];
+                switch ($change) {
+                    case 'missing': unset($payload['operationRef']); break;
+                    case 'extra': $payload['callerProof'] = true; break;
+                    case 'schema': $payload['schemaVersion'] = 'public-core-processor-operation/2'; break;
+                    case 'operation-type': $payload['operationRef'] = 5; break;
+                    case 'operation-ref': $payload['operationRef'] = 'ref_source_foreign'; break;
+                    case 'input-type': $payload['input'] = 'ready'; break;
+                    case 'readiness-input': $payload['input'] = ['role' => 'app']; break;
+                    case 'request-ref': $request = 'ref_' . str_repeat('d', 32); break;
+                    case 'attempt-ref': $attempt = 'ref_' . str_repeat('d', 32); break;
+                    case 'native-command': $command = 'authorize_write'; break;
+                    case 'publication-output': $command = 'result'; break;
+                    case 'ticket-type':
+                        $command = 'lookup_owned';
+                        $request = 'ref_' . str_repeat('d', 32);
+                        $payload['input'] = ['viewer_ticket_ref' => 'ref_manual_ticket', 'request_ref' => $request];
+                        break;
+                    case 'bootstrap-expiry':
+                    case 'bootstrap-phase':
+                    case 'open-extra':
+                        $command = 'open_or_resume';
+                        $payload['input'] = ['viewer_ticket_ref' => 'viewer_' . str_repeat('a', 48), 'fixture_id' => 'material-search-v1',
+                            'fixture_version' => 'public-material/1', 'input_id' => 'price-b25', 'request_id' => 'cc5b0d36-5c63-4a8c-bcfa-53c41e43ed0c',
+                            'public_session_ref' => null];
+                        if ($change === 'open-extra') {
+                            $payload['input']['original_expires_at'] = time() + 120;
+                        }
+                        break;
+                }
+                $channel->send($command, $request, $attempt, $payload, min(time() + 20, $channel->deadlineExpiresAt()));
+                if (in_array($change, ['bootstrap-expiry', 'bootstrap-phase'], true)) {
+                    $check = $channel->receive();
+                    self::assertSame('check_binding', $check['command']);
+                    if ($change === 'bootstrap-expiry') {
+                        $channel->send('binding', null, null, ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1',
+                            'viewerTicketRef' => $check['payload']['viewerTicketRef'], 'currentViewer' => [
+                                'authorized' => true, 'viewerRef' => 'source-viewer', 'organizationRef' => 'source-org',
+                                'authorizationRevision' => 'source-auth1', 'policyRevision' => 'source-policy1']], $check['expiresAt'] - 1);
+                    } else {
+                        $channel->send('readiness', $op, $op, $payload, $check['expiresAt']);
+                    }
+                }
+                try {
+                    $channel->receive();
+                    throw new \RuntimeException('Invalid normal operation got a result');
+                } catch (\LogicException) {
+                }
+                $channel->close();
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($this->directory . '/normal-deny-error', $failure->getMessage());
+                exit(78);
+            }
+        }
+        self::assertGreaterThan(0, $child);
+        $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 30000);
+        $peer = $channel->peer();
+        $processor = null;
+        $identity = function (array $kernel) use (&$processor, $peer, $change): ?array {
+            if ($change === 'reentry') {
+                self::assertSame('blocked', $processor->handle('readiness', [], $kernel)['status']);
+            }
+            return ['role' => $change === 'role' ? 'gateway' : 'app', 'identityRef' => 'ref_source_normal_role',
+                'kernelPeer' => $change === 'peer' ? ['pid' => $peer['pid'] + 1, 'uid' => $peer['uid'], 'gid' => $peer['gid']] : $kernel];
+        };
+        $processor = new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $this->qualifiedReadiness(),
+            $change === 'missing-factory' ? null : $identity);
+        try {
+            $processor->serveAppChannel($channel);
+        } finally {
+            $channel->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+        }
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status), is_file($this->directory . '/normal-deny-error') ? file_get_contents($this->directory . '/normal-deny-error') : '');
+        self::assertSame([], $this->store->transaction(static fn (array &$state): array => $state['requests']));
+    }
+
+    public static function normalProtocolDenials(): array
+    {
+        return array_map(static fn (string $mode): array => [$mode], ['missing', 'extra', 'schema', 'operation-type', 'operation-ref',
+            'input-type', 'readiness-input', 'request-ref', 'attempt-ref', 'native-command', 'publication-output', 'ticket-type',
+            'open-extra', 'role', 'peer', 'reentry', 'missing-factory', 'bootstrap-expiry', 'bootstrap-phase']);
+    }
+
     private function gatewayFrame(GatewayModelRequest $packet, int $sequence, string $command, array $payload): array
     {
         return ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['gatewayChannelRef'],
