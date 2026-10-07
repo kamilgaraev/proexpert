@@ -14,12 +14,14 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
+use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
 use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
 use App\Services\Privacy\PublicCore\PublicCoreProcessor;
 use App\Services\Privacy\PublicCore\PublicCoreReceiptStore;
 use App\Services\Privacy\PublicCore\PublicCoreRuntimeReadiness;
 use App\Services\Privacy\PublicCore\PublicCoreSessionAuthority;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Tests\Unit\AIAssistant\Context\OfflineContextFixtures;
@@ -59,6 +61,7 @@ final class PublicCoreAuthorityTest extends TestCase
     private bool $publicationMutex = false;
     private bool $publicationQualified = true;
     private ?string $publicationFault = null;
+    private ?array $nativePins = null;
 
     protected function setUp(): void
     {
@@ -77,7 +80,7 @@ final class PublicCoreAuthorityTest extends TestCase
     protected function tearDown(): void
     {
         foreach (glob($this->directory . '/*') ?: [] as $path) {
-            if (is_file($path) || is_link($path)) {
+            if (is_file($path) || is_link($path) || filetype($path) === 'socket') {
                 unlink($path);
             }
         }
@@ -400,9 +403,9 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertNull($missing->authority($receipt['contextRef']));
     }
 
-    private function qualifiedReadiness(): PublicCoreRuntimeReadiness
+    private function qualifiedReadiness(?GatewayModelProfile $selected = null): PublicCoreRuntimeReadiness
     {
-        $profile = GatewayModelProfile::fromArray([
+        $profile = $selected ?? GatewayModelProfile::fromArray([
             'profileRef' => 'ref_source_test_profile', 'qualification' => 'local-stub', 'adapterRevision' => 'fixture-adapter/1',
             'apiMethod' => 'local_action', 'endpoint' => 'local://public-core-stub', 'modelId' => 'local-action-stub',
             'modelRevision' => 'source/1', 'tokenizerId' => 'local-byte-counter', 'tokenizerRevision' => 'source/1',
@@ -410,7 +413,7 @@ final class PublicCoreAuthorityTest extends TestCase
             'capacityEvidenceRef' => 'ref_source_capacity_evidence', 'contextWindow' => 100000,
             'maxOutputTokens' => 1024, 'answerReserve' => 1024, 'toolReserve' => 2048,
         ]);
-        $this->runtimeProof = ['schemaVersion' => 'public-core-runtime-proof/1', 'qualification' => 'local-source-test',
+        $this->runtimeProof = ['schemaVersion' => 'public-core-runtime-proof/1', 'qualification' => $profile->isActualProfile() ? 'actual' : 'local-source-test',
             'profileFingerprint' => $profile->fingerprint(), 'registryDigest' => $this->registry->manifestDigest(),
             'authorizationFenceEvidenceRef' => 'ref_simulated_fence_evidence', 'identityEvidenceRef' => 'ref_simulated_identity_evidence',
             'channelEvidenceRef' => 'ref_simulated_channel_evidence', 'egressEvidenceRef' => 'ref_simulated_egress_evidence',
@@ -423,9 +426,9 @@ final class PublicCoreAuthorityTest extends TestCase
                 'mappingEvidenceRef' => $current->values()['mappingEvidenceRef']]);
     }
 
-    private function dispatchPreparation(): array
+    private function dispatchPreparation(?GatewayModelProfile $selected = null): array
     {
-        $readiness = $this->qualifiedReadiness();
+        $readiness = $this->qualifiedReadiness($selected);
         $profile = $readiness->qualifiedProfile();
         $opened = $this->open();
         $request = $this->sessions->lookup(['credential' => 'server-ticket'], $opened['request_ref']);
@@ -483,7 +486,8 @@ final class PublicCoreAuthorityTest extends TestCase
             'tools' => [], 'toolReferences' => null, 'repair' => null];
         $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, ['viewerTicketRef' => 'ref_server_viewer_ticket'],
             $request['requestRef'], fn (): array => $this->runtimeSource,
-            $this->appControlSource(), fn (): int => $this->now, fn (): int => $this->monoMs, $this->nativeSource(),
+            $this->appControlSource(), fn (): int => $this->now, fn (): int => $this->nativePins === null ? $this->monoMs : intdiv(hrtime(true), 1000000),
+            $this->nativePins === null ? $this->nativeSource() : null,
             fn (): array => ['predicateRemainingMs' => $this->predicateBudget, 'loopRemainingMs' => $this->loopBudget], $this->controlPins(),
             fn (): int => 1700000120);
         $packet = $dispatch->projectForDispatch($input, $native->privateBinding(), $profile);
@@ -493,7 +497,7 @@ final class PublicCoreAuthorityTest extends TestCase
 
     private function controlPins(): array
     {
-        return ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
+        return $this->nativePins ?? ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
             'gatewayPeer' => ['pid' => 222, 'uid' => 1002, 'gid' => 1002], 'gatewayChannelRef' => 'channel_gateway_source_test'];
     }
 
@@ -510,7 +514,13 @@ final class PublicCoreAuthorityTest extends TestCase
                     'guardRef' => 'ref_simulated_upload_guard', 'coverageEvidenceRef' => 'ref_simulated_guard_coverage', 'uploadTimeoutMs' => $this->grantBudget];
                 $replyCommand = 'write_authorized';
             } elseif ($command === 'upload_complete') {
-                self::assertContains($this->nativeEvent, ['uploaded', 'stopped']);
+                if ($this->nativePins === null) {
+                    self::assertContains($this->nativeEvent, ['uploaded', 'stopped']);
+                } else {
+                    $event = $this->store->transaction(static fn (array &$state): array => $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['uploadEvent']);
+                    self::assertContains($event['event'], ['uploaded', 'stopped']);
+                    self::assertSame($event['completionRef'], $payload['completionRef']);
+                }
                 self::assertTrue(GatewayModelRequest::isReference($payload['completionRef']));
                 self::assertNotNull($this->store->transaction(static fn (): array => ['ledgerReleased' => true]));
                 $this->appHeld = false;
@@ -526,6 +536,9 @@ final class PublicCoreAuthorityTest extends TestCase
                 $replyCommand = 'binding';
             }
             $this->monoMs += $this->rpcDelayMs;
+            if ($this->nativePins !== null && $this->rpcDelayMs > 0) {
+                usleep($this->rpcDelayMs * 1000);
+            }
             $result = ['frame' => ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $this->controlPins()['appChannelRef'],
                 'sequence' => ++$this->appSequence, 'command' => $replyCommand, 'requestRef' => $packet?->requestRef,
                 'attemptRef' => $packet?->attemptRef, 'expiresAt' => $expiresAt, 'payload' => $reply], 'peer' => $this->controlPins()['appPeer']];
@@ -654,6 +667,304 @@ final class PublicCoreAuthorityTest extends TestCase
         $input['context']['messages'][0]['content'] = 'arbitrary replacement';
         self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
         self::assertSame('receipt_changed', $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile())['reasonCode']);
+    }
+
+    private function nativeFixtureProfile(): GatewayModelProfile
+    {
+        return GatewayModelProfile::fromArray(array_replace($this->qualifiedReadiness()->qualifiedProfile()->values(), [
+            'qualification' => 'actual', 'apiMethod' => 'chat_completions', 'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
+            'modelId' => 'source-fixture-model', 'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
+        ]));
+    }
+
+    #[DataProvider('nativeProcessorCases')]
+    public function testProcessorComposesActualReceivedLifecycleWithoutManualProof(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork') || !extension_loaded('curl')) {
+            self::markTestSkipped('Native composition requires isolated Linux SCM credentials and cURL; Windows is not proof.');
+        }
+        mkdir($this->directory, 0700);
+        $this->now = time();
+        $profile = $this->nativeFixtureProfile();
+        $configuration = $this->directory . '/openssl.cnf';
+        file_put_contents($configuration, "[req]\ndistinguished_name=dn\n[dn]\n[v3]\nsubjectAltName=DNS:api.timeweb.ai\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\n");
+        $key = openssl_pkey_new(['private_key_bits' => 2048]);
+        $csr = openssl_csr_new(['commonName' => 'api.timeweb.ai'], $key, ['config' => $configuration, 'digest_alg' => 'sha256']);
+        $certificate = openssl_csr_sign($csr, null, $key, 1, ['config' => $configuration, 'x509_extensions' => 'v3', 'digest_alg' => 'sha256']);
+        openssl_pkey_export($key, $privateKey);
+        openssl_x509_export($certificate, $publicCertificate);
+        $pem = $this->directory . '/server.pem';
+        $ca = $this->directory . '/ca.pem';
+        file_put_contents($pem, $privateKey . $publicCertificate);
+        file_put_contents($ca, $publicCertificate);
+        $server = stream_socket_server('tcp://127.0.0.1:0', $error, $message, STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+            stream_context_create(['ssl' => ['local_cert' => $pem, 'verify_peer' => false]]));
+        self::assertIsResource($server);
+        $address = stream_socket_get_name($server, false);
+        $port = (int) substr($address, strrpos($address, ':') + 1);
+        $tls = pcntl_fork();
+        if ($tls === 0) {
+            try {
+                $connection = @stream_socket_accept($server, 4);
+                if ($connection === false) {
+                    file_put_contents($this->directory . '/received', '0');
+                    exit(0);
+                }
+                stream_set_timeout($connection, 5);
+                if (!stream_socket_enable_crypto($connection, true, STREAM_CRYPTO_METHOD_TLS_SERVER)) {
+                    exit(61);
+                }
+                $headers = '';
+                while (!str_ends_with($headers, "\r\n\r\n") && strlen($headers) < 16384) {
+                    $headers .= fread($connection, 1);
+                }
+                if (preg_match('/Content-Length: (\d+)/i', $headers, $match) !== 1) {
+                    exit(62);
+                }
+                $received = '';
+                while (strlen($received) < (int) $match[1] && !feof($connection)) {
+                    $part = fread($connection, min(4096, (int) $match[1] - strlen($received)));
+                    if ($part === false || $part === '') {
+                        break;
+                    }
+                    $received .= $part;
+                }
+                file_put_contents($this->directory . '/received', (string) strlen($received));
+                if ($mode === 'full') {
+                    file_put_contents($this->directory . '/body', $received);
+                    usleep(2300000);
+                    $payload = GatewayModelRequest::canonicalJson(['id' => 'source-fixture-completion', 'object' => 'chat.completion',
+                        'created' => time(), 'model' => 'source-fixture-model', 'choices' => [['index' => 0,
+                            'message' => ['role' => 'assistant', 'content' => '{"type":"plan","plan":"Read public facts."}'], 'finish_reason' => 'stop']]]);
+                    fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " . strlen($payload) . "\r\nConnection: close\r\n\r\n" . $payload);
+                }
+                fclose($connection);
+                fclose($server);
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($this->directory . '/tls-error', $failure->getMessage());
+                exit(63);
+            }
+        }
+        self::assertGreaterThan(0, $tls);
+        fclose($server);
+        $path = $this->directory . '/native.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $parent = getmypid();
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $gateway = pcntl_fork();
+        if ($gateway === 0) {
+            $retained = null;
+            try {
+                $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
+                $sender = new GatewayPublicCoreHttpSender(static fn (): string => 'source-fixture-no-provider-credential', null,
+                    static function ($handle) use ($port, $ca, $mode, &$retained): void {
+                        curl_setopt($handle, CURLOPT_CONNECT_TO, ['api.timeweb.ai:443:127.0.0.1:' . $port]);
+                        curl_setopt($handle, CURLOPT_CAINFO, $ca);
+                        if ($mode !== 'full') {
+                            curl_setopt($handle, CURLOPT_MAX_SEND_SPEED_LARGE, 512);
+                        }
+                        if ($mode === 'uncertain') {
+                            $retained = $handle;
+                        }
+                    }, $mode === 'late' ? static function ($multi, $handle): int {
+                        usleep(350000);
+                        return curl_multi_remove_handle($multi, $handle);
+                    } : null);
+                $response = GatewayPublicCoreTransport::handleAuthenticatedChannel($channel, $profile, $sender,
+                    static fn (): array => ['inputTokens' => 42, 'tokenizerId' => $profile->values()['tokenizerId'],
+                        'tokenizerRevision' => $profile->values()['tokenizerRevision'], 'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']],
+                    static fn (): string => 'none');
+                file_put_contents($this->directory . '/gateway-status', $response->status);
+                $retained = null;
+                $channel->close();
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($this->directory . '/gateway-error', $failure->getMessage());
+                exit(64);
+            }
+        }
+        self::assertGreaterThan(0, $gateway);
+        $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $gateway], 30000);
+        $this->nativePins = ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
+            'gatewayPeer' => $channel->peer(), 'gatewayChannelRef' => $channel->channelRef()];
+        if ($mode !== 'full') {
+            $this->grantBudget = 200;
+        }
+        if ($mode === 'aged') {
+            $this->rpcDelayMs = 120;
+        }
+        [$authority, $packet, $readiness] = $this->dispatchPreparation($profile);
+        $processor = new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $readiness);
+        $started = hrtime(true);
+        try {
+            $response = $processor->dispatchGateway($authority, $channel, $packet);
+        } finally {
+            $channel->close();
+            socket_close($listener);
+            pcntl_waitpid($gateway, $gatewayStatus);
+            pcntl_waitpid($tls, $tlsStatus);
+        }
+        self::assertTrue(pcntl_wifexited($gatewayStatus));
+        self::assertSame(0, pcntl_wexitstatus($gatewayStatus), is_file($this->directory . '/gateway-error') ? file_get_contents($this->directory . '/gateway-error') : '');
+        self::assertTrue(pcntl_wifexited($tlsStatus));
+        self::assertSame(0, pcntl_wexitstatus($tlsStatus), is_file($this->directory . '/tls-error') ? file_get_contents($this->directory . '/tls-error') : '');
+        $state = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR)['state'];
+        $attempt = $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef];
+        self::assertSame('consumed', $attempt['status']);
+        self::assertNull($processor->nativeGatewayTransfer($authority, 'read', $packet));
+        self::assertNull($processor->gatewayCompletionRef($authority, $packet, ['event' => 'uploaded']));
+        self::assertNotSame('completed', $processor->dispatchGateway($authority, $channel, $packet)->status);
+        if ($mode === 'full') {
+            self::assertSame('completed', $response->status);
+            self::assertGreaterThan(2000000000, hrtime(true) - $started);
+            self::assertSame($packet->bodyBytes, file_get_contents($this->directory . '/body'));
+        } else {
+            self::assertNotSame('completed', $response->status);
+            self::assertLessThan(strlen($packet->bodyBytes), (int) file_get_contents($this->directory . '/received'));
+        }
+        if (in_array($mode, ['uncertain', 'late', 'aged'], true)) {
+            self::assertArrayNotHasKey('uploadEvent', $attempt);
+            self::assertTrue($this->appHeld);
+            self::assertTrue($authority->uploadPending());
+            self::assertNotContains('upload_complete', $this->controlCalls);
+        } else {
+            self::assertSame($mode === 'full' ? 'uploaded' : 'stopped', $attempt['uploadEvent']['event']);
+            self::assertTrue(GatewayModelRequest::isReference($attempt['uploadEvent']['completionRef']));
+            self::assertFalse($this->appHeld);
+            self::assertFalse($authority->uploadPending());
+            self::assertSame(1, count(array_filter($this->controlCalls, static fn (string $command): bool => $command === 'upload_complete')));
+        }
+    }
+
+    public static function nativeProcessorCases(): array
+    {
+        return [['full'], ['stop'], ['uncertain'], ['late'], ['aged']];
+    }
+
+    #[DataProvider('nativeProcessorDenials')]
+    public function testProcessorRejectsInvalidSameTransferFramesAndEof(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork')) {
+            self::markTestSkipped('Native peer/frame denial requires isolated Linux SCM credentials.');
+        }
+        mkdir($this->directory, 0700);
+        $this->now = time();
+        $path = $this->directory . '/denial.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $parent = getmypid();
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $child = pcntl_fork();
+        if ($child === 0) {
+            try {
+                $stream = stream_socket_client('unix://' . $path, $error, $message, 3);
+                stream_set_timeout($stream, 3);
+                $hello = self::readNativeTestFrame($stream);
+                fwrite($stream, self::nativeTestWire($hello));
+                $dispatch = self::readNativeTestFrame($stream);
+                $request = GatewayModelRequest::fromArray($dispatch['payload']);
+                $frame = ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $hello['channelRef'], 'sequence' => 2,
+                    'command' => 'authorize_write', 'requestRef' => $request->requestRef, 'attemptRef' => $request->attemptRef,
+                    'expiresAt' => $request->expiresAt, 'payload' => ['projectionDigest' => $request->projectionDigest, 'profileFingerprint' => $request->profileFingerprint]];
+                if (in_array($mode, ['eof', 'body', 'binding', 'replay'], true)) {
+                    fwrite($stream, self::nativeTestWire($frame));
+                    self::readNativeTestFrame($stream);
+                    $frame['sequence'] = 3;
+                    $frame['command'] = 'upload_complete';
+                    $frame['payload'] = ['projectionDigest' => $request->projectionDigest, 'bodyLength' => strlen($request->bodyBytes)];
+                }
+                match ($mode) {
+                    'channel' => $frame['channelRef'] = 'channel_other_transfer',
+                    'attempt' => $frame['attemptRef'] = 'ref_other_attempt',
+                    'sequence' => $frame['sequence'] = 99,
+                    'expiry' => $frame['expiresAt'] = $request->expiresAt - 1,
+                    'body' => $frame['payload']['bodyLength']++,
+                    'binding' => $frame['payload']['projectionDigest'] = str_repeat('0', 64),
+                    'replay' => $frame['sequence'] = 2,
+                    'early' => [$frame['command'] = 'upload_complete', $frame['payload'] = ['projectionDigest' => $request->projectionDigest, 'bodyLength' => strlen($request->bodyBytes)]],
+                    default => null,
+                };
+                if ($mode !== 'eof') {
+                    fwrite($stream, self::nativeTestWire($frame));
+                }
+                fclose($stream);
+                exit(0);
+            } catch (\Throwable $failure) {
+                if ($mode === 'role') {
+                    exit(0);
+                }
+                file_put_contents($this->directory . '/denial-error', $failure->getMessage());
+                exit(65);
+            }
+        }
+        self::assertGreaterThan(0, $child);
+        $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 30000);
+        $this->nativePins = ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
+            'gatewayPeer' => $channel->peer(), 'gatewayChannelRef' => $channel->channelRef()];
+        if ($mode === 'role') {
+            $this->nativePins['gatewayPeer']['pid']++;
+        }
+        [$authority, $packet, $readiness] = $this->dispatchPreparation();
+        $processor = new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $readiness);
+        try {
+            $response = $processor->dispatchGateway($authority, $channel, $packet);
+        } finally {
+            $channel->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+        }
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status), is_file($this->directory . '/denial-error') ? file_get_contents($this->directory . '/denial-error') : '');
+        self::assertNotSame('completed', $response->status);
+        self::assertNotContains('upload_complete', $this->controlCalls);
+        $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR)['state'];
+        $attempt = $disk['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef];
+        self::assertArrayNotHasKey('uploadEvent', $attempt);
+        self::assertSame($mode === 'role' ? 'prepared' : 'consumed', $attempt['status']);
+        self::assertSame(in_array($mode, ['eof', 'body', 'binding', 'replay'], true), $authority->uploadPending());
+        self::assertNull($processor->nativeGatewayTransfer($authority, 'read', $packet));
+    }
+
+    public static function nativeProcessorDenials(): array
+    {
+        return array_map(static fn (string $mode): array => [$mode], ['channel', 'attempt', 'sequence', 'expiry', 'early', 'role', 'body', 'binding', 'replay', 'eof']);
+    }
+
+    private static function readNativeTestFrame($stream): array
+    {
+        $read = static function (int $length) use ($stream): string {
+            $bytes = '';
+            while (strlen($bytes) < $length) {
+                $part = fread($stream, $length - strlen($bytes));
+                if ($part === false || $part === '') {
+                    throw new \LogicException('closed native fixture');
+                }
+                $bytes .= $part;
+            }
+            return $bytes;
+        };
+        $length = unpack('Nlength', $read(4))['length'];
+        return json_decode($read($length), true, flags: JSON_THROW_ON_ERROR);
+    }
+
+    private static function nativeTestWire(array $frame): string
+    {
+        $bytes = GatewayModelRequest::canonicalJson($frame);
+        return pack('N', strlen($bytes)) . $bytes;
+    }
+
+    public function testActualProfileCannotUseCallerProvidedNativeReaderAsProof(): void
+    {
+        [$authority, $packet] = $this->dispatchPreparation($this->nativeFixtureProfile());
+        $this->nativeQualification = 'actual-native';
+        self::assertNotSame('completed', $this->runDispatch($authority, $packet, function () use ($authority, $packet): GatewayModelResponse {
+            self::assertSame(['reasonCode' => 'gateway_channel_unavailable'], $authority->authorizeWrite($packet));
+            self::assertSame([], $this->controlCalls);
+            return $this->planResponse($packet);
+        })->status);
+        self::assertFalse($this->appHeld);
     }
 
     private function gatewayFrame(GatewayModelRequest $packet, int $sequence, string $command, array $payload): array
