@@ -91,11 +91,18 @@ final class AssistantStatusSnapshotBuilder
 
             return array_merge($observed['value'], ['epoch' => $epoch]);
         }, 1);
+        $phase = $snapshot === null ? 'snapshot_unproven' : 'snapshot_expired_or_changed';
+        $expectedKey = null;
         if ($snapshot !== null && $this->inputs->isUnexpired($snapshot['valid_until'])
             && $snapshot['projection_generation'] === $this->generation($organizationId)) {
             $expectedKey = 'ai-rag-status:'.$organizationId.':'.$actorId.':'.$surface->value.':'.$section.':'.$snapshot['fingerprint'];
-            if ($expectedKey === $cacheKey) { Cache::put($cacheKey, $snapshot, 60); }
+            $phase = 'cache_key_mismatch';
+            if ($expectedKey === $cacheKey) {
+                Cache::put($cacheKey, $snapshot, 60);
+                $phase = 'written';
+            }
         }
+        AssistantStatusSnapshotDiagnostics::refresh($phase, $section, $cacheKey, $expectedKey);
     }
 
     private function generation(int $organizationId): ?string

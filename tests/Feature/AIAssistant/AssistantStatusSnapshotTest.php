@@ -29,6 +29,7 @@ use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\UserProjectAccessService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -72,27 +73,50 @@ final class AssistantStatusSnapshotTest extends TestCase
         $stateStore = app(RagCoverageStateStore::class);
         $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id), $projection);
         Cache::put($coverageKey, $projection, 300);
+        $metrics = new ApiQueryMetrics;
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('snapshot_missing', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertTrue($metrics->summary()['assistant_snapshot']['refresh_queued']);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertFalse($metrics->summary()['assistant_snapshot']['refresh_queued']);
         Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
         $job = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
         $warnings = [];
+        $refreshEvents = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->with('assistant_status_snapshot_refresh', Mockery::on(static function (array $context) use (&$refreshEvents): bool {
+            $refreshEvents[] = $context;
+
+            return true;
+        }));
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
         \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('warning')->andReturnUsing(static function (string $message, array $context = []) use (&$warnings): void {
             $warnings[] = [$message, $context];
         });
         $job->handle($service, $policy);
         self::assertNotNull(Cache::get($job->cacheKey), json_encode($warnings, JSON_THROW_ON_ERROR));
+        self::assertSame(['started', 'written'], array_column($refreshEvents, 'phase'));
+        $mismatched = clone $job;
+        $mismatched->cacheKey .= ':mismatch';
+        $mismatched->handle($service, $policy);
+        self::assertSame('cache_key_mismatch', $refreshEvents[3]['phase']);
+        self::assertNotSame($refreshEvents[3]['key_hash'], $refreshEvents[3]['expected_key_hash']);
+        self::assertNull(Cache::get($mismatched->cacheKey));
+        self::assertStringNotContainsString($job->cacheKey, json_encode($refreshEvents, JSON_THROW_ON_ERROR));
         DB::enableQueryLog();
         DB::flushQueryLog();
         $status = $service->status($organization->id, $actor, 'sources');
         $queries = array_column(DB::getQueryLog(), 'query');
         DB::disableQueryLog();
         self::assertTrue($status['status_available']);
+        self::assertSame('ready', $metrics->summary()['assistant_snapshot']['phase']);
         self::assertSame(1, $status['source_count']);
         self::assertSame(1, $status['expected_source_count']);
         self::assertFalse((bool) preg_grep('/COUNT\(\*\) AS stored_count/i', $queries));
         $permissions->denied = ['projects.view'];
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('snapshot_rejected', $metrics->summary()['assistant_snapshot']['phase']);
         $permissions->denied = [];
         DB::table('projects')->where('id', $project->id)->update(['is_archived' => true]);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
@@ -153,6 +177,19 @@ final class AssistantStatusSnapshotTest extends TestCase
             });
             self::assertNull($result['relations']);
         } finally { DB::purge('assistant_snapshot_foreign'); }
+    }
+
+    public function test_invalid_release_is_diagnosed_without_dispatching_or_returning_a_snapshot(): void
+    {
+        [$organization, $actor, , $service] = $this->scope();
+        config(['ai-assistant.status_snapshot_release' => 'invalid-release']);
+        $metrics = new ApiQueryMetrics;
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+
+        self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('missing_release', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertNull($metrics->summary()['assistant_snapshot']['release_sha']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
     public function test_snapshot_controller_keeps_its_service_gate_on_all_surfaces(): void

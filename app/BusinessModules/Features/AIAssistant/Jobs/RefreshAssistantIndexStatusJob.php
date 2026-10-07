@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -35,6 +36,7 @@ final class RefreshAssistantIndexStatusJob implements ShouldQueue
     {
         $previousSurface = $policy->trustedSurface();
         try {
+            AssistantStatusSnapshotDiagnostics::refresh('started', $this->section, $this->cacheKey);
             $policy->setTrustedSurface($this->surface);
             if (config('ai-assistant.status_snapshots', app()->environment('production'))) {
                 app(\App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotBuilder::class)
@@ -42,6 +44,10 @@ final class RefreshAssistantIndexStatusJob implements ShouldQueue
             } else {
                 $status->refreshSnapshot($this->organizationId, $this->actorId, $this->surface, $this->cacheKey);
             }
+        } catch (Throwable $exception) {
+            AssistantStatusSnapshotDiagnostics::refresh('failed', $this->section, $this->cacheKey);
+
+            throw $exception;
         } finally {
             $policy->setTrustedSurface($previousSurface);
             Cache::forget($this->cacheKey.':queued');
