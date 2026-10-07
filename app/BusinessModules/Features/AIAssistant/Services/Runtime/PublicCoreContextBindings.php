@@ -147,6 +147,18 @@ final readonly class PublicCoreContextBindings
 
     public function consumeSourceFrame(array $frame, string $command, array $binding, int $expiresAt): array
     {
+        if ($expiresAt <= time()) { throw new LogicException('authorization_changed'); }
+
+        return $this->consumeSourceBoundFrame($frame, $command, $binding, $expiresAt);
+    }
+
+    public function consumeSourceReleaseFrame(array $frame, array $binding, int $originalExpiresAt): array
+    {
+        return $this->consumeSourceBoundFrame($frame, 'upload_complete', $binding, $originalExpiresAt);
+    }
+
+    private function consumeSourceBoundFrame(array $frame, string $command, array $binding, int $expiresAt): array
+    {
         $keys = ['schemaVersion', 'channelRef', 'sequence', 'command', 'requestRef', 'attemptRef', 'expiresAt', 'payload'];
         if ($this->nativeChannel !== null || $this->sourcePeerRole !== 'Processor' || count($frame) !== 8 || array_diff(array_keys($frame), $keys) !== []
             || ($frame['schemaVersion'] ?? null) !== 'public-core-channel/1'
@@ -154,7 +166,7 @@ final readonly class PublicCoreContextBindings
             || ($frame['sequence'] ?? null) !== $this->sourceSequence->next || ($frame['command'] ?? null) !== $command
             || ($frame['requestRef'] ?? null) !== ($binding['requestRef'] ?? null)
             || ($frame['attemptRef'] ?? null) !== ($binding['attemptRef'] ?? null)
-            || $expiresAt <= time() || ($frame['expiresAt'] ?? null) !== $expiresAt
+            || ($frame['expiresAt'] ?? null) !== $expiresAt
             || !is_array($frame['payload'] ?? null)) {
             throw new LogicException('authorization_changed');
         }

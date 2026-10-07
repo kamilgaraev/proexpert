@@ -334,7 +334,7 @@ class PublicCoreBackendAuthorityFence
         if ($held === null || $held['port'] !== $port || !$port->sourceOnly()) {
             throw new LogicException('authorization_changed');
         }
-        $payload = $port->consumeSourceFrame($frame, 'upload_complete', $held['binding'], $held['expiresAt']);
+        $payload = $port->consumeSourceReleaseFrame($frame, $held['binding'], $held['expiresAt']);
         if (count($payload) !== 4 || array_diff(array_keys($payload), ['schemaVersion', 'binding', 'guardRef', 'completionRef']) !== []
             || ($payload['schemaVersion'] ?? null) !== 'public-core-app-upload-release/1'
             || ($payload['binding'] ?? null) !== $held['binding'] || ($payload['guardRef'] ?? null) !== $held['guardRef']

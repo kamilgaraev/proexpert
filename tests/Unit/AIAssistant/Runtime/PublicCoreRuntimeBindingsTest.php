@@ -124,6 +124,25 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         $logger->warning('Public Core isolated fixture logging probe.');
     }
 
+    public function testSourceTerminalFramePreservesOriginalLifetimeAndCannotRenewOrdinaryWrite(): void
+    {
+        $expiry = time() - 1;
+        $binding = ['requestRef' => 'request_'.str_repeat('a', 32), 'attemptRef' => 'attempt_'.str_repeat('b', 32)];
+        $port = PublicCoreContextBindings::sourceAppControlPort('channel_'.str_repeat('c', 32), 'Processor', static fn (): null => null);
+        $frame = ['schemaVersion' => 'public-core-channel/1', 'channelRef' => $port->sourceChannel(), 'sequence' => 2,
+            'command' => 'upload_complete', 'requestRef' => $binding['requestRef'], 'attemptRef' => $binding['attemptRef'],
+            'expiresAt' => $expiry, 'payload' => ['completionRef' => 'completion_'.str_repeat('d', 48)]];
+        foreach ([array_replace($frame, ['expiresAt' => time() + 60]), array_replace($frame, ['command' => 'authorize_write']),
+            array_replace($frame, ['attemptRef' => 'attempt_'.str_repeat('e', 32)]), array_replace($frame, ['sequence' => 3])] as $invalid) {
+            try { $port->consumeSourceReleaseFrame($invalid, $binding, $expiry); self::fail('Cleanup must retain original frame correlation'); }
+            catch (LogicException $error) { self::assertSame('authorization_changed', $error->getMessage()); }
+        }
+        try { $port->consumeSourceFrame($frame, 'upload_complete', $binding, $expiry); self::fail('Ordinary lifetime remains expired'); }
+        catch (LogicException $error) { self::assertSame('authorization_changed', $error->getMessage()); }
+        self::assertSame($frame['payload'], $port->consumeSourceReleaseFrame($frame, $binding, $expiry));
+        self::assertNull($port->sourceCompletion($frame['payload']['completionRef']));
+    }
+
     #[DataProvider('nativeAppBootstrapCases')]
     public function testNativeAppProcessorBootstrapUsesActualPeerAndFailsClosed(string $mode): void
     {

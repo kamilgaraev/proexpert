@@ -329,6 +329,70 @@ final class PublicCoreAuthorizationFenceTest extends TestCase
         self::assertSame(0, DB::connection()->transactionLevel());
     }
 
+    public function testSourceExpiredLeaseReleasesOnlyAfterMatchingPrivateTerminalRecord(): void
+    {
+        foreach (['uploaded', 'stopped'] as $terminal) {
+            $proofs = (object) ['records' => []];
+            [$binding, $expiry, $port] = $this->sourceAttempt($proofs, time() + 2);
+            $grant = $this->fence->acquireSourceGuard(self::sourceFrame($binding, $expiry, $port, 2, 'authorize_write',
+                ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]), $port);
+            try {
+                while (time() < $expiry) { usleep(20000); }
+                self::assertSame(1, DB::connection()->transactionLevel());
+                $write = fn (): int => $this->writer->table('user_role_assignments')->where('id', $this->fixture->ownerAssignment->id)
+                    ->update(['is_active' => true]);
+                $this->assertWriterBlocked($write);
+                $unknown = 'completion_'.bin2hex(random_bytes(24));
+                try {
+                    $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, 3, 'upload_complete',
+                        self::sourceRelease($binding, $grant['guardRef'], $unknown)), $port);
+                    self::fail('Expiry without private terminal proof cannot release the writer guard');
+                } catch (LogicException $error) {
+                    self::assertSame('receipt_unavailable', $error->getMessage());
+                }
+                self::assertSame(1, DB::connection()->transactionLevel());
+                $this->assertWriterBlocked($write);
+                $invalid = 'completion_'.bin2hex(random_bytes(24));
+                $proofs->records[$invalid] = ['binding' => $binding, 'guardRef' => $grant['guardRef'],
+                    'completionRef' => $invalid, 'terminal' => 'uncertain'];
+                foreach ([4 => 'uncertain', 5 => 'wrong-binding'] as $sequence => $failure) {
+                    if ($failure === 'wrong-binding') {
+                        $proofs->records[$invalid]['terminal'] = $terminal;
+                        $proofs->records[$invalid]['binding']['attemptRef'] = 'attempt_'.str_repeat('f', 48);
+                    }
+                    try {
+                        $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, $sequence, 'upload_complete',
+                            self::sourceRelease($binding, $grant['guardRef'], $invalid)), $port);
+                        self::fail('Uncertain or foreign terminal record cannot release expired guard');
+                    } catch (LogicException $error) {
+                        self::assertSame('receipt_unavailable', $error->getMessage());
+                    }
+                    self::assertSame(1, DB::connection()->transactionLevel());
+                }
+                $completion = 'completion_'.bin2hex(random_bytes(24));
+                $proofs->records[$completion] = ['binding' => $binding, 'guardRef' => $grant['guardRef'],
+                    'completionRef' => $completion, 'terminal' => $terminal];
+                $release = $this->fence->releaseSourceGuard(self::sourceFrame($binding, $expiry, $port, 6, 'upload_complete',
+                    self::sourceRelease($binding, $grant['guardRef'], $completion)), $port);
+                self::assertSame(['schemaVersion' => 'public-core-app-upload-released/1', 'binding' => $binding,
+                    'guardRef' => $grant['guardRef']], $release);
+                self::assertSame(0, DB::connection()->transactionLevel());
+                self::assertSame(1, $write());
+                self::assertFalse($this->fence->available());
+                try {
+                    $this->fence->acquireSourceGuard(self::sourceFrame($binding, $expiry, $port, 7, 'authorize_write',
+                        ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding]), $port);
+                    self::fail('Cleanup cannot refresh the expired original grant');
+                } catch (LogicException $error) {
+                    self::assertContains($error->getMessage(), ['authorization_changed', 'expired']);
+                }
+                self::assertSame(0, DB::connection()->transactionLevel());
+            } finally {
+                while (DB::connection()->transactionLevel() > 0) { DB::connection()->rollBack(); }
+            }
+        }
+    }
+
     public function testSourceHeldProtocolRejectsWrongPeerAndReplayedConsumedAttempt(): void
     {
         $proofs = (object) ['records' => []];
@@ -407,9 +471,9 @@ final class PublicCoreAuthorizationFenceTest extends TestCase
         self::assertSame(0, DB::connection()->transactionLevel());
     }
 
-    private function sourceAttempt(object $proofs): array
+    private function sourceAttempt(object $proofs, ?int $originalExpiry = null): array
     {
-        $expiry = time() + 60;
+        $expiry = $originalExpiry ?? time() + 60;
         $ticket = $this->fence->issueViewerTicket($this->fixture->owner, $this->fixture->organization->id,
             Request::create('/public-core/source-tcb', 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']), $expiry);
         $binding = ['viewerTicketRef' => $ticket, 'requestRef' => 'request_'.bin2hex(random_bytes(24)),
