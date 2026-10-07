@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Privacy\PublicCore;
 
 use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantLocalLoop;
+use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
@@ -221,7 +222,8 @@ final class PublicCoreProcessor
                 throw new \LogicException('invalid_model_output');
             }
             $result = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $requestRef,
-                'reply' => $native['reply'], 'trace' => $native['trace'], 'transportAllowed' => false];
+                'reply' => $native['reply'], 'trace' => $native['trace'], 'transportAllowed' => false,
+                'actual_model' => null, 'tools' => [], 'sources' => []];
         } catch (Throwable) {
             $result = self::blocked('source_unavailable') + ['request_ref' => $requestRef];
         }
@@ -743,9 +745,11 @@ final class PublicCoreProcessor
             || array_keys($instance) !== ['runtime', 'instanceRef'] || $instance['runtime'] !== $runtime
             || !GatewayModelRequest::isReference($instance['instanceRef'])
             || ($request['execution']['processRef'] ?? null) !== $this->processRef
-            || !GatewayModelRequest::hasExactKeys($result, ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed'])
-            || array_keys($result) !== ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed']
+            || !GatewayModelRequest::hasExactKeys($result, ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed', 'actual_model', 'tools', 'sources'])
+            || array_keys($result) !== ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed', 'actual_model', 'tools', 'sources']
             || $result['status'] !== 'completed' || $result['reasonCode'] !== 'none' || $result['request_ref'] !== $request['requestRef']
+            || ($profile->isActualProfile() && $result['actual_model'] === null)
+            || (!$profile->isActualProfile() && $result['actual_model'] !== null)
             || $result['transportAllowed'] !== false || !$this->validTrace($result['trace']) || !is_string($result['reply'])
             || trim($result['reply']) === '' || strlen($result['reply']) > 32768 || preg_match('//u', $result['reply']) !== 1
             || str_contains($result['reply'], "\0")) {
@@ -762,11 +766,14 @@ final class PublicCoreProcessor
                 || $this->readiness->currentProfileFingerprint() !== $profile->fingerprint()) {
                 return null;
             }
-            return ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $request['requestRef'],
+            $binding = ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $request['requestRef'],
                 'sessionRef' => $request['sessionRef'], 'processRef' => $this->processRef, 'ownerDigest' => $session['ownerDigest'],
                 'profileFingerprint' => $profile->fingerprint(), 'registryDigest' => $source['registryDigest'],
                 'manifestGenerationRef' => $source['manifestGenerationRef'], 'runtimeGenerationRef' => $source['runtimeGenerationRef'],
                 'runtimeInstanceRef' => $instance['instanceRef'], 'resultDigest' => hash('sha256', RegisteredPublicFixtureRegistry::canonical($result))];
+            PublicCoreRuntimeResource::completedEvidence($result);
+
+            return $binding;
         } catch (Throwable) {
             return null;
         }

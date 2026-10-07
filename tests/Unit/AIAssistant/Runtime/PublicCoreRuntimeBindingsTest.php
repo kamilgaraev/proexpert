@@ -555,6 +555,83 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         PublicCoreRuntimeResource::committedEnvelopeResponse($stage['envelopeBytes'].' ', $stage['envelopeDigest']);
     }
 
+    public function testCompletedEvidenceSurvivesCanonicalCoreStagingAndEnvelopeDigest(): void
+    {
+        [, , , , , , $candidate] = self::sourcePublicationFixture();
+        $core = json_decode($candidate['resultBytes'], true, 64, JSON_THROW_ON_ERROR);
+        $call = 'ref_'.str_repeat('1', 32);
+        $core['actual_model'] = 'observed-response-model/1';
+        $core['tools'] = [['label' => 'Поиск материалов', 'call_ref' => $call]];
+        $core['sources'] = [['ref' => 'ref_'.str_repeat('2', 32), 'label' => 'Учебный каталог']];
+        array_unshift($core['trace'], ['action' => 'tool', 'step' => 1, 'tokens' => 20, 'callRef' => $call]);
+        $bytes = json_encode($core, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $binding = array_replace($candidate['binding'], ['resultDigest' => hash('sha256', $bytes)]);
+        $stage = PublicCoreRuntimeResource::stageCoreCompletedEnvelope($bytes, $binding);
+        $response = PublicCoreRuntimeResource::committedEnvelopeResponse($stage['bodyBytes'], $stage['envelopeDigest']);
+        $data = $response->getData(true)['data'];
+        self::assertSame($core['actual_model'], $data['actual_model']);
+        self::assertSame($core['tools'], $data['tools']);
+        self::assertSame($core['sources'], $data['sources']);
+        self::assertNotSame($candidate['binding']['resultDigest'], $stage['resultDigest']);
+        self::assertSame($stage['envelopeDigest'], hash('sha256', $response->getContent()));
+        $this->expectExceptionMessage('public_core_response_invalid');
+        PublicCoreRuntimeResource::stageCoreCompletedEnvelope($bytes, $candidate['binding']);
+    }
+
+    public function testNonCompletedStatesCannotPublishResponseEvidence(): void
+    {
+        foreach (['accepted', 'running', 'blocked'] as $status) {
+            $dto = array_replace(PublicCoreRuntimeResource::blocked(), [
+                'status' => $status, 'reason_code' => $status === 'blocked' ? 'runtime_not_activated' : 'none',
+                'request_ref' => 'ref_'.str_repeat('1', 32), 'public_session_ref' => 'ref_'.str_repeat('2', 32),
+            ]);
+            $safe = (new PublicCoreRuntimeResource($dto))->resolve();
+            self::assertNull($safe['actual_model']);
+            self::assertSame([], $safe['tools']);
+            self::assertSame([], $safe['sources']);
+            foreach (['actual_model' => 'observed-response-model/1',
+                'tools' => [['label' => 'Поиск материалов', 'call_ref' => 'ref_'.str_repeat('3', 32)]],
+                'sources' => [['label' => 'Учебный каталог', 'ref' => 'ref_'.str_repeat('4', 32)]]] as $key => $value) {
+                try {
+                    (new PublicCoreRuntimeResource(array_replace($dto, [$key => $value])))->resolve();
+                    self::fail('Response evidence may be published only after completion');
+                } catch (LogicException $failure) {
+                    self::assertSame('public_core_response_invalid', $failure->getMessage());
+                }
+            }
+        }
+    }
+
+    #[DataProvider('unsafeCompletedEvidence')]
+    public function testCompletedEvidenceRejectsUnsafeShapeBoundsAndUnrelatedCalls(array $patch): void
+    {
+        $this->expectExceptionMessage('public_core_response_invalid');
+        PublicCoreRuntimeResource::stageCompletedEnvelope(array_replace(self::completed(), $patch));
+    }
+
+    public static function unsafeCompletedEvidence(): array
+    {
+        $call = 'ref_'.str_repeat('a', 32);
+        $source = ['ref' => 'ref_'.str_repeat('b', 32), 'label' => 'Учебный каталог'];
+        $tool = ['label' => 'Поиск материалов', 'call_ref' => $call];
+        $trace = [['action' => 'tool', 'step' => 1, 'tokens' => 10, 'callRef' => $call]];
+        return [
+            [['actual_model' => "model\nPRIVATE"]],
+            [['actual_model' => str_repeat('m', 129)]],
+            [['actual_model' => ['id' => 'model']]],
+            [['tools' => [$tool]]],
+            [['tools' => [$tool + ['raw_output' => 'PRIVATE']], 'trace' => $trace]],
+            [['tools' => [$tool, $tool], 'trace' => $trace]],
+            [['tools' => array_fill(0, 65, $tool), 'trace' => $trace]],
+            [['tools' => ['call' => $tool], 'trace' => $trace]],
+            [['sources' => [$source + ['private_id' => 123]]]],
+            [['sources' => [$source, $source]]],
+            [['sources' => array_fill(0, 65, $source)]],
+            [['sources' => ['source' => $source]]],
+            [['sources' => [['ref' => 'private/123', 'label' => 'PRIVATE']]]],
+        ];
+    }
+
     public function testCompletedEnvelopeRejectsPrivateOrUnknownFieldsBeforeStaging(): void
     {
         $this->expectExceptionMessage('public_core_response_invalid');
@@ -633,7 +710,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
             'sequence' => 2, 'genuineExpiresAt' => time() + 60];
         $core = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $context['requestRef'],
             'reply' => 'Проверенный ответ МОСТ / пример.', 'trace' => [['action' => 'ready', 'step' => 2, 'tokens' => 30, 'callRef' => null]],
-            'transportAllowed' => false];
+            'transportAllowed' => false, 'actual_model' => null, 'tools' => [], 'sources' => []];
         $bytes = json_encode($core, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $binding = ['schemaVersion' => 'public-core-result-binding/1', 'requestRef' => $context['requestRef'],
             'sessionRef' => $context['sessionRef'], 'processRef' => 'process_'.str_repeat('e', 48), 'ownerDigest' => str_repeat('a', 64),
@@ -721,8 +798,6 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     public function testPublicResourceExcludesRealEntityNavigationAndPlanText(): void
     {
         $result = self::completed() + ['private_map' => 'PRIVATE'];
-        $result['sources'][0]['entity_id'] = 37;
-        $result['sources'][0]['navigation_target'] = ['route' => '/projects/37'];
         $result['trace'][0]['plan'] = 'PRIVATE plan';
         $public = (new PublicCoreRuntimeResource($result))->resolve();
         self::assertSame($result['reply'], $public['reply']);

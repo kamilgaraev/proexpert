@@ -1829,7 +1829,8 @@ final class PublicCoreAuthorityTest extends TestCase
         $reflection->getProperty('runtimes')->setValue($processor, [$request['sessionRef'] => $corpus]);
         $reflection->getProperty('runtimeInstances')->setValue($processor, [$request['sessionRef'] => ['runtime' => $corpus, 'instanceRef' => $instanceRef]]);
         $result = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $request['requestRef'],
-            'reply' => 'PUBLIC PRIOR COMPLETED RESULT', 'trace' => [], 'transportAllowed' => false];
+            'reply' => 'PUBLIC PRIOR COMPLETED RESULT', 'trace' => [], 'transportAllowed' => false,
+            'actual_model' => null, 'tools' => [], 'sources' => []];
         $generation = $corpus->records()[0]->generationRef;
         $fingerprint = $this->currentGatewayProfile->fingerprint();
         $this->store->transaction(function (array &$state) use ($request, $result, $generation, $fingerprint, $processRef, $instanceRef): array {
@@ -2075,7 +2076,7 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertSame('public-core-result-publication/1', $receipt['schemaVersion']);
         $record = $this->publications[$receipt['publicationRef']];
         $data = json_decode($record['bodyBytes'], true, flags: JSON_THROW_ON_ERROR)['data'];
-        self::assertSame(['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed'], array_keys($data));
+        self::assertSame(['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed', 'actual_model', 'tools', 'sources'], array_keys($data));
         self::assertSame($trace, $data['trace']);
         self::assertSame(hash('sha256', RegisteredPublicFixtureRegistry::canonical($data)), $record['resultDigest']);
         self::assertNotSame($record['resultDigest'], $record['envelopeDigest']);

@@ -36,15 +36,15 @@ final class PublicCoreRuntimeResource extends JsonResource
     {
         return self::common() + [
             'status' => 'blocked', 'reason_code' => $reason, 'request_ref' => null,
-            'public_session_ref' => null, 'reply' => null, 'sources' => [], 'trace' => [],
+            'public_session_ref' => null, 'reply' => null, 'actual_model' => null, 'tools' => [], 'sources' => [], 'trace' => [],
         ];
     }
 
     public static function stageCompletedEnvelope(array $dto): array
     {
         $keys = ['schema_version', 'mode', 'data_scope', 'status', 'reason_code', 'request_ref',
-            'public_session_ref', 'reply', 'sources', 'trace'];
-        if (count($dto) !== 10 || array_diff(array_keys($dto), $keys) !== [] || ($dto['status'] ?? null) !== 'completed') {
+            'public_session_ref', 'reply', 'actual_model', 'tools', 'sources', 'trace'];
+        if (count($dto) !== 12 || array_diff(array_keys($dto), $keys) !== [] || ($dto['status'] ?? null) !== 'completed') {
             throw new LogicException('public_core_response_invalid');
         }
         $resource = new self($dto);
@@ -70,7 +70,7 @@ final class PublicCoreRuntimeResource extends JsonResource
             throw new LogicException('public_core_response_invalid');
         }
         $core = json_decode($resultBytes, true, 64, JSON_THROW_ON_ERROR);
-        if (!is_array($core) || array_keys($core) !== ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed']
+        if (!is_array($core) || array_keys($core) !== ['status', 'reasonCode', 'request_ref', 'reply', 'trace', 'transportAllowed', 'actual_model', 'tools', 'sources']
             || $core['status'] !== 'completed' || $core['reasonCode'] !== 'none' || $core['request_ref'] !== $binding['requestRef']
             || $core['transportAllowed'] !== false || !self::text($core['reply'], 32768) || trim($core['reply']) === ''
             || strlen($core['reply']) > 32768 || !is_array($core['trace']) || !array_is_list($core['trace']) || count($core['trace']) > 64
@@ -87,7 +87,8 @@ final class PublicCoreRuntimeResource extends JsonResource
             }
         }
         $dto = self::common() + ['status' => 'completed', 'reason_code' => 'none', 'request_ref' => $binding['requestRef'],
-            'public_session_ref' => $binding['sessionRef'], 'reply' => $core['reply'], 'sources' => [], 'trace' => $core['trace']];
+            'public_session_ref' => $binding['sessionRef'], 'reply' => $core['reply'], 'actual_model' => $core['actual_model'],
+            'tools' => $core['tools'], 'sources' => $core['sources'], 'trace' => $core['trace']];
         $envelope = self::stageCompletedEnvelope($dto);
 
         return ['binding' => $binding, 'resultDigest' => $binding['resultDigest'],
@@ -128,21 +129,16 @@ final class PublicCoreRuntimeResource extends JsonResource
             || $value['public_session_ref'] === null || $value['reason_code'] !== 'none')) {
             throw new LogicException('public_core_response_invalid');
         }
-        if (!is_array($value['sources'] ?? null) || !array_is_list($value['sources'])
+        if (!array_key_exists('actual_model', $value) || ($value['actual_model'] !== null && !self::modelIdentity($value['actual_model']))
+            || !is_array($value['tools'] ?? null) || !array_is_list($value['tools']) || count($value['tools']) > 64
+            || !is_array($value['sources'] ?? null) || !array_is_list($value['sources']) || count($value['sources']) > 64
             || !is_array($value['trace'] ?? null) || !array_is_list($value['trace']) || count($value['trace']) > 64) {
             throw new LogicException('public_core_response_invalid');
         }
         $reply = $value['reply'] ?? null;
         if ($value['status'] === 'completed' ? !self::text($reply, 32768)
-            : ($reply !== null || $value['sources'] !== [] || ($value['status'] === 'blocked' && $value['reason_code'] === 'none'))) {
+            : ($reply !== null || $value['actual_model'] !== null || $value['tools'] !== [] || $value['sources'] !== [] || ($value['status'] === 'blocked' && $value['reason_code'] === 'none'))) {
             throw new LogicException('public_core_response_invalid');
-        }
-        $sources = [];
-        foreach ($value['sources'] as $source) {
-            if (!is_array($source) || !self::opaqueRef($source['ref'] ?? null) || !self::text($source['label'] ?? null)) {
-                throw new LogicException('public_core_response_invalid');
-            }
-            $sources[] = ['ref' => $source['ref'], 'label' => $source['label']];
         }
         $trace = [];
         foreach ($value['trace'] as $event) {
@@ -156,11 +152,56 @@ final class PublicCoreRuntimeResource extends JsonResource
             $trace[] = array_intersect_key($event, array_flip(['action', 'step', 'tokens', 'callRef']));
         }
 
+        $evidence = self::completedEvidence($value);
+
         return self::common() + [
             'status' => $value['status'], 'reason_code' => $value['reason_code'],
             'request_ref' => $value['request_ref'], 'public_session_ref' => $value['public_session_ref'],
-            'reply' => $reply, 'sources' => $sources, 'trace' => $trace,
+            'reply' => $reply, 'actual_model' => $evidence['actual_model'], 'tools' => $evidence['tools'],
+            'sources' => $evidence['sources'], 'trace' => $trace,
         ];
+    }
+
+    public static function completedEvidence(array $value): array
+    {
+        if (!array_key_exists('actual_model', $value) || ($value['actual_model'] !== null && !self::modelIdentity($value['actual_model']))
+            || !is_array($value['tools'] ?? null) || !array_is_list($value['tools']) || count($value['tools']) > 64
+            || !is_array($value['sources'] ?? null) || !array_is_list($value['sources']) || count($value['sources']) > 64
+            || !is_array($value['trace'] ?? null) || !array_is_list($value['trace']) || count($value['trace']) > 64) {
+            throw new LogicException('public_core_response_invalid');
+        }
+        $trace = $value['trace'];
+        foreach ($trace as $event) {
+            if (!is_array($event) || !is_string($event['action'] ?? null) || !array_key_exists('callRef', $event)) {
+                throw new LogicException('public_core_response_invalid');
+            }
+        }
+        $sources = [];
+        $sourceRefs = [];
+        foreach ($value['sources'] as $source) {
+            if (!is_array($source) || count($source) !== 2 || array_diff(array_keys($source), ['ref', 'label']) !== []
+                || !self::opaqueRef($source['ref'] ?? null) || !self::text($source['label'] ?? null)
+                || in_array($source['ref'], $sourceRefs, true)) {
+                throw new LogicException('public_core_response_invalid');
+            }
+            $sourceRefs[] = $source['ref'];
+            $sources[] = ['ref' => $source['ref'], 'label' => $source['label']];
+        }
+        $tools = [];
+        $callRefs = [];
+        foreach ($value['tools'] as $tool) {
+            if (!is_array($tool) || count($tool) !== 2 || array_diff(array_keys($tool), ['label', 'call_ref']) !== []
+                || !self::text($tool['label'] ?? null) || !self::opaqueRef($tool['call_ref'] ?? null)
+                || in_array($tool['call_ref'], $callRefs, true)
+                || !in_array($tool['call_ref'], array_column(array_filter($trace,
+                    static fn (array $event): bool => $event['action'] === 'tool'), 'callRef'), true)) {
+                throw new LogicException('public_core_response_invalid');
+            }
+            $callRefs[] = $tool['call_ref'];
+            $tools[] = ['label' => $tool['label'], 'call_ref' => $tool['call_ref']];
+        }
+
+        return ['actual_model' => $value['actual_model'], 'tools' => $tools, 'sources' => $sources];
     }
 
     public static function opaqueRef(mixed $value): bool
@@ -223,6 +264,11 @@ final class PublicCoreRuntimeResource extends JsonResource
             'free_input_enabled' => false, 'uploads_enabled' => false, 'actions_enabled' => false,
             'private_ready' => false, 'fixtures' => $fixtures,
         ];
+    }
+
+    private static function modelIdentity(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/\A[A-Za-z0-9_.:\/-]{1,128}\z/D', $value) === 1;
     }
 
     private static function selector(mixed $value): bool
