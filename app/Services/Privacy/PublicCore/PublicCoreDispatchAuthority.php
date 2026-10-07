@@ -10,6 +10,7 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use Throwable;
 
@@ -30,6 +31,7 @@ final class PublicCoreDispatchAuthority
     private ?int $lastWall = null;
     private ?array $cancelRequest = null;
     private array $seenTransfers = [];
+    private ?PublicCoreProcessor $nativeProcessor = null;
 
     public function __construct(
         private readonly PublicCoreReceiptStore $receipts,
@@ -235,9 +237,41 @@ final class PublicCoreDispatchAuthority
         return $operation();
     }
 
+    public function matchesGatewayChannel(AuthenticatedPublicCoreChannel $channel): bool
+    {
+        try {
+            return $this->validPins() && $channel->peer() === $this->controlPins['gatewayPeer']
+                && $channel->channelRef() === $this->controlPins['gatewayChannelRef'];
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    public function uploadPending(): bool
+    {
+        return $this->ledgerHeld || $this->appGuard !== null;
+    }
+
+    public function withProcessorGateway(PublicCoreProcessor $processor, AuthenticatedPublicCoreChannel $channel,
+        GatewayModelRequest $packet, Closure $operation): GatewayModelResponse
+    {
+        if ($this->heldPacket !== $packet || $this->phase !== 'PREPARED' || $this->nativeProcessor !== null
+            || !$this->matchesGatewayChannel($channel)) {
+            return GatewayModelResponse::unavailable($packet, 'gateway_identity_unavailable');
+        }
+        $this->nativeProcessor = $processor;
+        try {
+            return $operation();
+        } finally {
+            if (!$this->uploadPending()) {
+                $this->nativeProcessor = null;
+            }
+        }
+    }
+
     public function authorizeWrite(GatewayModelRequest $packet): array
     {
-        if ($this->heldPacket !== $packet || $this->phase !== 'PREPARED' || $this->nativeTransfer === null
+        if ($this->heldPacket !== $packet || $this->phase !== 'PREPARED' || ($this->nativeTransfer === null && $this->nativeProcessor === null)
             || $this->appControl === null || $this->uploadBounds === null || !$this->validPins()) {
             return ['reasonCode' => 'gateway_channel_unavailable'];
         }
@@ -347,8 +381,12 @@ final class PublicCoreDispatchAuthority
         if ($this->appGuard === null || $this->releaseSent || $event['transferRef'] !== $this->transferRef) {
             return ['reasonCode' => 'receipt_changed'];
         }
+        $completionRef = $this->nativeProcessor === null ? self::reference()
+            : $this->nativeProcessor->gatewayCompletionRef($this, $packet, $event);
+        if (!GatewayModelRequest::isReference($completionRef)) {
+            return ['reasonCode' => 'gateway_channel_unavailable'];
+        }
         $this->releaseSent = true;
-        $completionRef = self::reference();
         $guard = $this->appGuard;
         $ledgerSaved = true;
         if ($this->ledgerHeld) {
@@ -434,14 +472,17 @@ final class PublicCoreDispatchAuthority
 
     public function handleGatewayFrame(array $frame, array $verifiedPeer, GatewayModelRequest $packet): array
     {
-        if ($this->heldPacket !== $packet || !$this->validFrame($frame, $verifiedPeer, 'gateway', $packet, $packet->expiresAt)) {
+        $cleanup = $this->nativeProcessor?->acceptsGatewayCleanupFrame($this, $packet, $frame) === true;
+        if ($this->heldPacket !== $packet || !$this->validFrame($frame, $verifiedPeer, 'gateway', $packet, $packet->expiresAt, $cleanup)) {
             return ['reasonCode' => 'gateway_identity_unavailable'];
         }
         $payload = $frame['payload'];
-        if ($frame['command'] === 'abort' && $this->cancelRequest !== null
+        if ($frame['command'] === 'abort'
             && GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'reasonCode'])
-            && $payload['schemaVersion'] === 'public-core-gateway-upload-stopped/1' && $payload['binding'] === $packet->binding()
-            && $payload['reasonCode'] === $this->cancelRequest['reasonCode']) {
+            && $payload['schemaVersion'] === 'public-core-gateway-upload-stopped/1'
+            && (new GatewayPublicCoreRequestValidator())->validateBinding($packet, $payload['binding']) === null
+            && in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true) && $payload['reasonCode'] !== 'none'
+            && ($this->cancelRequest === null || $payload['reasonCode'] === $this->cancelRequest['reasonCode'])) {
             $event = $this->nativeState('read', $packet);
             return $event !== null && $event['event'] === 'stopped'
                 ? $this->releaseFromNativeEvent($packet, $event) : ['reasonCode' => 'gateway_unavailable'];
@@ -533,7 +574,7 @@ final class PublicCoreDispatchAuthority
         return $reply;
     }
 
-    private function validFrame(array $frame, array $peer, string $role, ?GatewayModelRequest $packet, int $expiresAt): bool
+    private function validFrame(array $frame, array $peer, string $role, ?GatewayModelRequest $packet, int $expiresAt, bool $cleanup = false): bool
     {
         $now = $this->now();
         if (!$this->validPins() || !GatewayModelRequest::hasExactKeys($frame,
@@ -542,7 +583,8 @@ final class PublicCoreDispatchAuthority
             || $frame['channelRef'] !== $this->controlPins[$role . 'ChannelRef'] || !is_int($frame['sequence'])
             || $frame['sequence'] !== ($this->sequences[$role] ?? 1) + 1 || !is_string($frame['command'])
             || $frame['requestRef'] !== $packet?->requestRef || $frame['attemptRef'] !== $packet?->attemptRef
-            || $frame['expiresAt'] !== $expiresAt || $now === null || $expiresAt <= $now || !is_array($frame['payload'])) {
+            || $frame['expiresAt'] !== $expiresAt || $now === null || (!$cleanup && $expiresAt <= $now)
+            || ($cleanup && ($role !== 'gateway' || $frame['command'] !== 'abort')) || !is_array($frame['payload'])) {
             return false;
         }
         $this->sequences[$role] = $frame['sequence'];
@@ -582,14 +624,17 @@ final class PublicCoreDispatchAuthority
 
     private function nativeState(string $operation, GatewayModelRequest $packet): ?array
     {
-        if ($this->nativeTransfer === null || !$this->validPins()) {
+        if (($this->nativeTransfer === null && $this->nativeProcessor === null) || !$this->validPins()) {
             return null;
         }
         try {
-            $value = ($this->nativeTransfer)($operation, $packet, $operation === 'cancel' ? $this->cancelRequest : null);
+            $value = $this->nativeProcessor === null
+                ? ($this->nativeTransfer)($operation, $packet, $operation === 'cancel' ? $this->cancelRequest : null)
+                : $this->nativeProcessor->nativeGatewayTransfer($this, $operation, $packet, $operation === 'cancel' ? $this->cancelRequest : null);
             $profile = $this->readiness->qualifiedProfile();
             if (!GatewayModelRequest::hasExactKeys($value, ['qualification', 'channelRef', 'transferRef', 'requestRef', 'attemptRef', 'projectionDigest', 'event'])
-                || $profile === null || $value['qualification'] !== ($profile->isActualProfile() ? 'actual-native' : 'local-source-test')
+                || $profile === null || ($profile->isActualProfile() && $this->nativeProcessor === null)
+                || $value['qualification'] !== ($profile->isActualProfile() ? 'actual-native' : 'local-source-test')
                 || $value['channelRef'] !== $this->controlPins['gatewayChannelRef'] || !GatewayModelRequest::isReference($value['transferRef'])
                 || ($this->transferRef !== null && $value['transferRef'] !== $this->transferRef)
                 || $value['requestRef'] !== $packet->requestRef || $value['attemptRef'] !== $packet->attemptRef
