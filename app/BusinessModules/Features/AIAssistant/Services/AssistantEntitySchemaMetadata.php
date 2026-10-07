@@ -12,36 +12,93 @@ use Illuminate\Support\Facades\Schema;
 final class AssistantEntitySchemaMetadata
 {
     private array $columns = [];
+
     private bool $schemaMetadataPrefetched = false;
 
     public function columns(string $table, ?AssistantAclQueryCompiler $compiler = null): array
     {
-        if (isset($this->columns[$table])) { return $this->columns[$table]; }
+        if (isset($this->columns[$table])) {
+            return $this->columns[$table];
+        }
         $load = static fn (): array => Schema::getColumnListing($table);
         $columns = $compiler === null ? $load() : $compiler->remember('schema:'.$table, $load);
-        if ($columns !== []) { $this->columns[$table] = $columns; }
+        if ($columns !== []) {
+            $this->columns[$table] = $columns;
+        }
 
         return $columns;
     }
 
-    public function prefetch(array $definitions, ?callable $checkpoint = null, ?callable $checkDeadline = null): void
+    public function prefetchForEntities(array $types, ?callable $checkpoint = null): void
     {
-        if ($this->schemaMetadataPrefetched || DB::connection()->getDriverName() !== 'pgsql') { return; }
-        if ($checkDeadline !== null) { $checkDeadline(); }
+        $definitions = AssistantEntityAccessCatalog::entityDefinitions();
+        $parents = AssistantEntityAccessCatalog::parentColumns();
+        $intrinsicParents = AssistantEntityAccessCatalog::intrinsicParents();
+        $queue = [];
+        $seen = [];
+        $enqueue = static function (mixed $type) use (&$queue, &$seen, $definitions): void {
+            if (! is_string($type) || ! isset($definitions[$type]) || isset($seen[$type]) || count($queue) >= 32) {
+                return;
+            }
+            $seen[$type] = true;
+            $queue[] = $type;
+        };
+        foreach ($types as $type) {
+            $enqueue($type);
+        }
+        $selected = [];
+        for ($i = 0; $i < count($queue); $i++) {
+            $type = $queue[$i];
+            $selected[$type] = $definitions[$type];
+            $enqueue($intrinsicParents[$type][1] ?? null);
+            foreach ($parents[$type] ?? [] as $parent) {
+                $enqueue($parent['type'] ?? null);
+            }
+            if ($type === 'estimate') {
+                $enqueue('contract');
+            }
+            if ($type === 'payment_document') {
+                foreach (['contract', 'estimate', 'performance_act', 'completed_work'] as $parent) {
+                    $enqueue($parent);
+                }
+            }
+        }
+        if ($selected !== []) {
+            $this->prefetch($selected, $checkpoint, cacheMissing: false);
+        }
+    }
+
+    public function prefetch(array $definitions, ?callable $checkpoint = null, ?callable $checkDeadline = null, bool $cacheMissing = true): void
+    {
+        if ($this->schemaMetadataPrefetched || DB::connection()->getDriverName() !== 'pgsql') {
+            return;
+        }
+        if ($checkDeadline !== null) {
+            $checkDeadline();
+        }
 
         $connection = DB::connection();
         $schemaBuilder = $connection->getSchemaBuilder();
-        if (! $schemaBuilder instanceof PostgresBuilder) { return; }
+        if (! $schemaBuilder instanceof PostgresBuilder) {
+            return;
+        }
 
         $grammar = $connection->getSchemaGrammar();
         $pairTables = [];
         foreach ($definitions as $definition) {
             $modelClass = $definition[1] ?? null;
-            if (! is_string($modelClass) || ! class_exists($modelClass)) { continue; }
+            if (! is_string($modelClass) || ! class_exists($modelClass)) {
+                continue;
+            }
 
             $model = (new \ReflectionClass($modelClass))->newInstanceWithoutConstructor();
-            if (! $model instanceof Model) { continue; }
+            if (! $model instanceof Model) {
+                continue;
+            }
             $table = $model->getTable();
+            if (! $cacheMissing && isset($this->columns[$table])) {
+                continue;
+            }
             [$schema, $relation] = $this->schemaMetadataTableReference($schemaBuilder, $connection, $table);
             $grammar->compileColumns($schema, $relation);
             $pairTables[$schema."\0".$relation][$table] = true;
@@ -58,7 +115,9 @@ final class AssistantEntitySchemaMetadata
 
         $columnsByPair = [];
         if ($values !== []) {
-            if ($checkpoint !== null) { $checkpoint(); }
+            if ($checkpoint !== null) {
+                $checkpoint();
+            }
             $sql = 'select n.nspname as schema_name, c.relname as table_name, a.attname as column_name, a.attnum as ordinal_position '
                 .'from pg_attribute a join pg_class c on c.oid = a.attrelid join pg_type t on t.oid = a.atttypid '
                 .'join pg_namespace n on n.oid = c.relnamespace where a.attnum > 0 '
@@ -71,14 +130,22 @@ final class AssistantEntitySchemaMetadata
                 $columnsByPair[$key][] = (string) $row->column_name;
             }
         }
-        if ($checkDeadline !== null) { $checkDeadline(); }
+        if ($checkDeadline !== null) {
+            $checkDeadline();
+        }
 
         $columns = [];
         foreach ($pairTables as $key => $tables) {
-            foreach (array_keys($tables) as $table) { $columns[$table] = $columnsByPair[$key] ?? []; }
+            $tableColumns = $columnsByPair[$key] ?? [];
+            if (! $cacheMissing && $tableColumns === []) {
+                continue;
+            }
+            foreach (array_keys($tables) as $table) {
+                $columns[$table] = $tableColumns;
+            }
         }
         $this->columns = array_replace($this->columns, $columns);
-        $this->schemaMetadataPrefetched = true;
+        $this->schemaMetadataPrefetched = $cacheMissing;
     }
 
     private function schemaMetadataTableReference(PostgresBuilder $schemaBuilder, \Illuminate\Database\Connection $connection, string $table): array
@@ -87,5 +154,4 @@ final class AssistantEntitySchemaMetadata
 
         return [$schema, $connection->getTablePrefix().$relation];
     }
-
 }
