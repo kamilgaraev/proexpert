@@ -349,11 +349,17 @@ final class AuthenticatedPublicCoreChannel
     private function bindGatewayTransfer(GatewayModelRequest $request, int $outerExpiry, string $role): void
     {
         if ($this->gatewayTransfer !== null || $this->cleanupBinding !== null || $outerExpiry <= time()
-            || $outerExpiry > min($request->expiresAt, $this->expiresAt) || $this->verifiedPeer === null) {
+            || $outerExpiry !== $request->expiresAt || $request->expiresAt > $this->expiresAt || $this->verifiedPeer === null) {
+            throw new LogicException('gateway_channel_unavailable');
+        }
+        $before = hrtime(true);
+        $remaining = ($request->expiresAt - microtime(true)) * 1000000000;
+        $after = hrtime(true);
+        if ($remaining <= 0 || $after + (int) ceil($remaining) > $this->deadline) {
             throw new LogicException('gateway_channel_unavailable');
         }
         $this->gatewayTransfer = ['role' => $role, 'request' => $request, 'outerExpiry' => $outerExpiry,
-            'genuineDeadline' => min($this->deadline, hrtime(true) + (int) floor(($outerExpiry - microtime(true)) * 1000000000)),
+            'genuineDeadline' => $before + (int) floor($remaining),
             'phase' => 'pending', 'control' => null, 'event' => null, 'eventSequence' => null, 'reasonCode' => 'none'];
     }
 
@@ -612,7 +618,7 @@ final class AuthenticatedPublicCoreChannel
     public function beginCleanup(GatewayModelRequest $request, int $originalOuterExpiry): void
     {
         if ($this->closed || $this->verifiedPeer === null || $this->cleanupBinding !== null
-            || $originalOuterExpiry < 1 || $originalOuterExpiry > $request->expiresAt
+            || $originalOuterExpiry !== $request->expiresAt
             || $this->gatewayTransfer === null || $this->gatewayTransfer['request'] !== $request
             || $this->gatewayTransfer['outerExpiry'] !== $originalOuterExpiry
             || ! in_array($this->gatewayTransfer['phase'], ['authorized', 'cancelling'], true)

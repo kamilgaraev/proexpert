@@ -769,7 +769,7 @@ final class PublicCoreGatewayTest extends TestCase
         $lockPath = $directory.'/authority.lock';
         $listener = AuthenticatedPublicCoreChannel::listen($path);
         $profile = $this->httpSourceFixtureProfile();
-        $request = $this->request($profile, ['expiresAt' => time() + 10]);
+        $request = $this->request($profile, ['expiresAt' => time() + 3]);
         $uid = posix_geteuid();
         $gid = posix_getegid();
         $parentPid = getmypid();
@@ -783,7 +783,7 @@ final class PublicCoreGatewayTest extends TestCase
             flock($held, LOCK_EX);
             try {
                 $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parentPid], 5000);
-                $expiresAt = min($request->expiresAt, $channel->deadlineExpiresAt());
+                $expiresAt = $request->expiresAt;
                 $channel->dispatchGatewayRequest($request, $expiresAt);
                 $authorized = false;
                 $uploaded = false;
@@ -983,7 +983,7 @@ final class PublicCoreGatewayTest extends TestCase
             $body['messages'] = array_fill(0, 4, ['role' => 'user', 'content' => str_repeat('a', 60000)]);
         }
         $bytes = GatewayModelRequest::canonicalJson($body);
-        $request = $this->request($profile, ['bodyBytes' => $bytes, 'projectionDigest' => hash('sha256', $bytes), 'expiresAt' => time() + (in_array($mode, ['expiry', 'response-expiry'], true) ? 2 : 10)]);
+        $request = $this->request($profile, ['bodyBytes' => $bytes, 'projectionDigest' => hash('sha256', $bytes), 'expiresAt' => time() + (in_array($mode, ['expiry', 'response-expiry'], true) ? 2 : 6)]);
         $socketPath = $directory.'/control.sock';
         $listener = AuthenticatedPublicCoreChannel::listen($socketPath);
         $uid = posix_geteuid();
@@ -996,7 +996,7 @@ final class PublicCoreGatewayTest extends TestCase
             try {
                 socket_close($listener);
                 $control = AuthenticatedPublicCoreChannel::connect($socketPath, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 8000);
-                $expiry = min($request->expiresAt, $control->deadlineExpiresAt());
+                $expiry = $request->expiresAt;
                 $control->dispatchGatewayRequest($request, $expiry);
                 self::assertSame('pending', $control->gatewayLifecycle()['state']);
                 $held = fopen($directory.'/authority.lock', 'c');
@@ -1245,7 +1245,9 @@ final class PublicCoreGatewayTest extends TestCase
             $probe = ['projectionDigest' => $owned->projectionDigest, 'profileFingerprint' => $owned->profileFingerprint];
             $channel->send('authorize_write', $owned->requestRef, $owned->attemptRef, $probe, $owned->expiresAt);
             $channel->receive();
-            if (str_starts_with($mode, 'cleanup-') && $mode !== 'cleanup-stale') {
+            $original = GatewayModelRequest::canonicalJson($owned->values());
+            $originalBinding = GatewayModelRequest::canonicalJson($owned->binding());
+            if (str_starts_with($mode, 'cleanup-') && ! in_array($mode, ['cleanup-stale', 'cleanup-short', 'cleanup-greater'], true)) {
                 $channel->beginCleanup($owned, $owned->expiresAt);
             }
             if ($mode === 'cleanup-stale') {
@@ -1253,31 +1255,48 @@ final class PublicCoreGatewayTest extends TestCase
             } elseif ($mode === 'cleanup-grace') {
                 usleep((AuthenticatedPublicCoreChannel::CLEANUP_GRACE_MS + 20) * 1000);
             }
-            try {
-                match ($mode) {
-                    'manual-upload' => $channel->send('upload_complete', $owned->requestRef, $owned->attemptRef,
-                        ['projectionDigest' => $owned->projectionDigest, 'bodyLength' => strlen($owned->bodyBytes)], $owned->expiresAt),
-                    'manual-stopped' => $channel->send('abort', $owned->requestRef, $owned->attemptRef,
-                        ['schemaVersion' => 'public-core-gateway-upload-stopped/1', 'binding' => $owned->binding(), 'reasonCode' => 'expired'], $owned->expiresAt),
-                    'wrong-role-cancel' => $channel->send('abort', $owned->requestRef, $owned->attemptRef,
-                        ['schemaVersion' => 'public-core-gateway-upload-cancel/1', 'binding' => $owned->binding(), 'reasonCode' => 'expired'], $owned->expiresAt),
-                    'unbound-sender' => $channel->publishGatewayLifecycle(new GatewayPublicCoreHttpSender, 'stopped'),
-                    'wrong-role-reader' => $channel->receiveGatewayControl(),
-                    'wrong-role-lifecycle' => $channel->gatewayLifecycle(),
-                    'wrong-binding' => $channel->send('result', $owned->requestRef, 'attempt:wrong-source-binding-01', GatewayModelResponse::blocked($owned, 'expired')->values(), $owned->expiresAt),
-                    'bootstrap-in-gateway' => $channel->send('check_binding', null, null,
-                        ['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => 'ticket:source-phase-test-01'], $owned->expiresAt),
-                    'cleanup-reset', 'cleanup-stale' => $channel->beginCleanup($owned, $owned->expiresAt),
-                    'cleanup-grant' => $channel->send('write_authorized', $owned->requestRef, $owned->attemptRef,
-                        ['schemaVersion' => 'public-core-gateway-upload-grant/1', 'binding' => $owned->binding(), 'uploadTimeoutMs' => 1000], $owned->expiresAt),
-                    'cleanup-result' => $channel->send('result', $owned->requestRef, $owned->attemptRef, GatewayModelResponse::blocked($owned, 'expired')->values(), $owned->expiresAt),
-                    'cleanup-grace' => $channel->poll(),
-                    default => throw new LogicException('gateway_channel_unavailable'),
-                };
-                self::fail('Invalid native control phase accepted');
-            } catch (LogicException $error) {
-                self::assertContains($error->getMessage(), ['gateway_channel_unavailable', 'receipt_changed']);
+            if ($mode === 'cleanup-positive') {
+                $cleanup = (new \ReflectionProperty(AuthenticatedPublicCoreChannel::class, 'cleanupBinding'))->getValue($channel);
+                self::assertTrue($channel->isCleanupOnly());
+                self::assertSame($owned->expiresAt, $cleanup['outerExpiry']);
+                self::assertSame($owned->requestRef, $cleanup['requestRef']);
+                self::assertSame($owned->attemptRef, $cleanup['attemptRef']);
+                self::assertSame($originalBinding, GatewayModelRequest::canonicalJson($cleanup['binding']));
+            } else {
+                try {
+                    match ($mode) {
+                        'manual-upload' => $channel->send('upload_complete', $owned->requestRef, $owned->attemptRef,
+                            ['projectionDigest' => $owned->projectionDigest, 'bodyLength' => strlen($owned->bodyBytes)], $owned->expiresAt),
+                        'manual-stopped' => $channel->send('abort', $owned->requestRef, $owned->attemptRef,
+                            ['schemaVersion' => 'public-core-gateway-upload-stopped/1', 'binding' => $owned->binding(), 'reasonCode' => 'expired'], $owned->expiresAt),
+                        'wrong-role-cancel' => $channel->send('abort', $owned->requestRef, $owned->attemptRef,
+                            ['schemaVersion' => 'public-core-gateway-upload-cancel/1', 'binding' => $owned->binding(), 'reasonCode' => 'expired'], $owned->expiresAt),
+                        'unbound-sender' => $channel->publishGatewayLifecycle(new GatewayPublicCoreHttpSender, 'stopped'),
+                        'wrong-role-reader' => $channel->receiveGatewayControl(),
+                        'wrong-role-lifecycle' => $channel->gatewayLifecycle(),
+                        'wrong-binding' => $channel->send('result', $owned->requestRef, 'attempt:wrong-source-binding-01', GatewayModelResponse::blocked($owned, 'expired')->values(), $owned->expiresAt),
+                        'bootstrap-in-gateway' => $channel->send('check_binding', null, null,
+                            ['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => 'ticket:source-phase-test-01'], $owned->expiresAt),
+                        'cleanup-reset', 'cleanup-stale' => $channel->beginCleanup($owned, $owned->expiresAt),
+                        'cleanup-short' => $channel->beginCleanup($owned, $owned->expiresAt - 1),
+                        'cleanup-greater' => $channel->beginCleanup($owned, $owned->expiresAt + 1),
+                        'cleanup-grant' => $channel->send('write_authorized', $owned->requestRef, $owned->attemptRef,
+                            ['schemaVersion' => 'public-core-gateway-upload-grant/1', 'binding' => $owned->binding(), 'uploadTimeoutMs' => 1000], $owned->expiresAt),
+                        'cleanup-result' => $channel->send('result', $owned->requestRef, $owned->attemptRef, GatewayModelResponse::blocked($owned, 'expired')->values(), $owned->expiresAt),
+                        'cleanup-grace' => $channel->poll(),
+                        default => throw new LogicException('gateway_channel_unavailable'),
+                    };
+                    self::fail('Invalid native control phase accepted');
+                } catch (LogicException $error) {
+                    self::assertContains($error->getMessage(), ['gateway_channel_unavailable', 'receipt_changed']);
+                }
             }
+            if (in_array($mode, ['cleanup-short', 'cleanup-greater'], true)) {
+                self::assertFalse($channel->isCleanupOnly());
+            }
+            self::assertSame($owned->expiresAt, $channel->gatewayOuterExpiry());
+            self::assertSame($original, GatewayModelRequest::canonicalJson($owned->values()));
+            self::assertSame($originalBinding, GatewayModelRequest::canonicalJson($owned->binding()));
         } finally {
             $channel?->close();
             socket_close($listener);
@@ -1293,7 +1312,7 @@ final class PublicCoreGatewayTest extends TestCase
     {
         $cases = ['manual-upload', 'manual-stopped', 'wrong-role-cancel', 'unbound-sender', 'wrong-role-reader',
             'wrong-role-lifecycle', 'wrong-binding', 'bootstrap-in-gateway', 'cleanup-reset', 'cleanup-stale',
-            'cleanup-grant', 'cleanup-result', 'cleanup-grace'];
+            'cleanup-grant', 'cleanup-result', 'cleanup-grace', 'cleanup-short', 'cleanup-greater', 'cleanup-positive'];
 
         return array_combine($cases, array_map(static fn (string $case): array => [$case], $cases));
     }
@@ -1382,5 +1401,174 @@ final class PublicCoreGatewayTest extends TestCase
         $cases = ['valid', 'denial', 'wrong-ticket', 'extra', 'unauthorized-viewer', 'invalid-viewer-type', 'gateway-grant', 'missing-ticket'];
 
         return array_combine($cases, array_map(static fn (string $case): array => [$case], $cases));
+    }
+
+    #[DataProvider('nativeOwnedExpiryCases')]
+    public function test_native_owned_expiry_admission_is_independently_correlated(string $side, string $case): void
+    {
+        if (! AuthenticatedPublicCoreChannel::isNativeAvailable() || ! function_exists('pcntl_fork')) {
+            self::markTestSkipped('Owned expiry admission needs actual Linux peer credentials');
+        }
+        if ($case === 'monotonic-insufficient') {
+            $remaining = time() + 1 - microtime(true);
+            if ($remaining < 0.65) {
+                usleep((int) ceil(($remaining + 0.05) * 1000000));
+            }
+        }
+        $profile = $this->httpSourceFixtureProfile();
+        $packetExpiry = time() + match ($case) {
+            'expired' => -1, 'insufficient' => 4, 'monotonic-insufficient' => 1, default => 2,
+        };
+        $request = $this->request($profile, ['expiresAt' => $packetExpiry]);
+        $original = GatewayModelRequest::canonicalJson($request->values());
+        $originalBinding = GatewayModelRequest::canonicalJson($request->binding());
+        $outerExpiry = $packetExpiry + match ($case) {
+            'short' => -1, 'greater' => 1, default => 0,
+        };
+        $limitedMs = $case === 'monotonic-insufficient' ? 300 : 2000;
+        $directory = sys_get_temp_dir().'/gate27-expiry-'.bin2hex(random_bytes(5));
+        mkdir($directory, 0700);
+        $path = $directory.'/control.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parent = getmypid();
+        $child = pcntl_fork();
+        self::assertGreaterThan(0, $child === 0 ? 1 : $child);
+        if ($child === 0) {
+            socket_close($listener);
+            $peer = null;
+            $outcome = ['dispatchAccepted' => false, 'rawSent' => false, 'reasonCode' => null];
+            try {
+                $peer = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent],
+                    in_array($case, ['insufficient', 'monotonic-insufficient'], true) ? $limitedMs : 5000);
+                if ($side === 'sender') {
+                    $peer->dispatchGatewayRequest($request, $outerExpiry);
+                    $outcome['dispatchAccepted'] = true;
+                } else {
+                    $frame = ['schemaVersion' => AuthenticatedPublicCoreChannel::SCHEMA_VERSION, 'channelRef' => $peer->channelRef(),
+                        'sequence' => 2, 'command' => 'dispatch',
+                        'requestRef' => $case === 'wrong-request' ? 'request:independently-forged-01' : $request->requestRef,
+                        'attemptRef' => $case === 'wrong-attempt' ? 'attempt:independently-forged-01' : $request->attemptRef,
+                        'expiresAt' => $outerExpiry, 'payload' => $request->values()];
+                    $bytes = GatewayModelRequest::canonicalJson($frame);
+                    $socket = (new \ReflectionProperty(AuthenticatedPublicCoreChannel::class, 'socket'))->getValue($peer);
+                    $wire = pack('N', strlen($bytes)).$bytes;
+                    if (socket_sendmsg($socket, ['iov' => [$wire]], 0) !== strlen($wire)) {
+                        exit(101);
+                    }
+                    $outcome['rawSent'] = true;
+                }
+            } catch (LogicException $error) {
+                $outcome['reasonCode'] = $error->getMessage();
+            } catch (\Throwable) {
+                exit(102);
+            }
+            $outcome['packetUnchanged'] = GatewayModelRequest::canonicalJson($request->values()) === $original;
+            $outcome['bindingUnchanged'] = GatewayModelRequest::canonicalJson($request->binding()) === $originalBinding;
+            file_put_contents($directory.'/sender.json', json_encode($outcome, JSON_THROW_ON_ERROR));
+            if ($outcome['dispatchAccepted'] || $outcome['rawSent']) {
+                try {
+                    $peer->receive();
+                } catch (LogicException) {
+                }
+            }
+            $peer?->close();
+            exit(0);
+        }
+        $channel = null;
+        $admitted = false;
+        $receiverReason = null;
+        $credentials = $providerCalls = $readinessChecks = 0;
+        $transferState = null;
+        try {
+            $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child],
+                in_array($case, ['insufficient', 'monotonic-insufficient'], true) ? $limitedMs : 5000);
+            try {
+                if ($case === 'exact') {
+                    $accepted = $channel->acceptGatewayRequest();
+                    $admitted = true;
+                    self::assertSame($packetExpiry, $channel->gatewayOuterExpiry());
+                    self::assertSame($original, GatewayModelRequest::canonicalJson($accepted->values()));
+                    self::assertSame($originalBinding, GatewayModelRequest::canonicalJson($accepted->binding()));
+                } else {
+                    $sender = new GatewayPublicCoreHttpSender(
+                        static function () use (&$credentials): string {
+                            $credentials++;
+
+                            return 'source-fixture-credential-not-a-provider-key';
+                        },
+                        static function () use (&$providerCalls): array {
+                            $providerCalls++;
+
+                            throw new LogicException('gateway_unavailable');
+                        },
+                    );
+                    GatewayPublicCoreTransport::handleAuthenticatedChannel($channel, $profile, $sender,
+                        fn (string $bytes, GatewayModelProfile $selected): array => $this->tokenCount($selected),
+                        static function () use (&$readinessChecks): string {
+                            $readinessChecks++;
+
+                            return 'runtime_not_activated';
+                        },
+                    );
+                    $admitted = true;
+                }
+            } catch (LogicException $error) {
+                $receiverReason = $error->getMessage();
+            }
+            $transferState = (new \ReflectionProperty(AuthenticatedPublicCoreChannel::class, 'gatewayTransfer'))->getValue($channel);
+        } finally {
+            $channel?->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+        }
+        $senderOutcome = json_decode(file_get_contents($directory.'/sender.json'), true, 64, JSON_THROW_ON_ERROR);
+        unlink($directory.'/sender.json');
+        unlink($path);
+        rmdir($directory);
+        $evidence = ['side' => $side, 'case' => $case, 'sender' => $senderOutcome, 'receiverAdmitted' => $admitted,
+            'receiverReason' => $receiverReason, 'childExit' => pcntl_wexitstatus($status), 'packetExpiry' => $packetExpiry,
+            'outerExpiry' => $outerExpiry, 'credentialsRead' => $credentials, 'providerCalls' => $providerCalls,
+            'readinessChecks' => $readinessChecks, 'transferBound' => $transferState !== null,
+            'controlGrant' => ($transferState['phase'] ?? null) === 'authorized',
+            'completionProof' => ($transferState['event'] ?? null) !== null];
+        echo 'NATIVE_OWNED_EXPIRY '.GatewayModelRequest::canonicalJson($evidence).PHP_EOL;
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status));
+        self::assertTrue($senderOutcome['packetUnchanged']);
+        self::assertTrue($senderOutcome['bindingUnchanged']);
+        self::assertSame($case === 'exact', $admitted);
+        self::assertSame($case === 'exact', $transferState !== null);
+        self::assertFalse($evidence['controlGrant']);
+        self::assertFalse($evidence['completionProof']);
+        self::assertSame(0, $credentials);
+        self::assertSame(0, $providerCalls);
+        self::assertSame(0, $readinessChecks);
+        if ($side === 'sender') {
+            self::assertSame($case === 'exact', $senderOutcome['dispatchAccepted']);
+            if ($case !== 'exact') {
+                self::assertSame('gateway_channel_unavailable', $senderOutcome['reasonCode']);
+            }
+        } else {
+            self::assertTrue($senderOutcome['rawSent']);
+        }
+        if ($case !== 'exact') {
+            self::assertSame(in_array($case, ['wrong-request', 'wrong-attempt'], true) ? 'receipt_changed' : 'gateway_channel_unavailable', $receiverReason);
+        }
+    }
+
+    public static function nativeOwnedExpiryCases(): array
+    {
+        $result = [];
+        foreach (['sender', 'receiver'] as $side) {
+            foreach (['exact', 'short', 'greater', 'expired', 'insufficient', 'monotonic-insufficient'] as $case) {
+                $result[$side.' '.$case] = [$side, $case];
+            }
+        }
+        $result['receiver wrong request'] = ['receiver', 'wrong-request'];
+        $result['receiver wrong attempt'] = ['receiver', 'wrong-attempt'];
+
+        return $result;
     }
 }
