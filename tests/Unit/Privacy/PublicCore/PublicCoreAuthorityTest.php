@@ -15,6 +15,8 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
 use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRuntimeComposition;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreGatewayModelDriver;
 use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
 use App\Services\Privacy\PublicCore\PublicCoreProcessor;
 use App\Services\Privacy\PublicCore\PublicCoreReceiptStore;
@@ -1717,6 +1719,99 @@ final class PublicCoreAuthorityTest extends TestCase
         self::assertNotContains('authorize_write', $this->controlCalls);
     }
 
+    #[DataProvider('registeredCompositionCases')]
+    public function testRegisteredCompositionUsesNativeReceiptsPublicSearchAndSuccessfulEvidenceWithFakeGateway(string $mode): void
+    {
+        $this->now = time();
+        $calls = 0;
+        $composer = new PublicCoreRuntimeComposition(
+            function (GatewayModelProfile $profile, PublicCoreReceiptStore $publisher, array $request, array $viewer,
+                \Closure $sourceState, \Closure $privateBinding) use (&$calls, $mode): PublicCoreGatewayModelDriver {
+                $this->runtimeSource = $sourceState();
+                $readiness = $this->qualifiedReadiness($profile);
+                $native = function (string $operation, GatewayModelRequest $packet): array {
+                    if ($operation === 'cancel') { $this->nativeEvent = 'stopped'; }
+                    return ['qualification' => 'local-source-test', 'channelRef' => $this->controlPins()['gatewayChannelRef'],
+                        'transferRef' => 'ref_'.substr(hash('sha256', $packet->attemptRef), 0, 32),
+                        'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+                        'projectionDigest' => $packet->projectionDigest, 'event' => $this->nativeEvent];
+                };
+                $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, $viewer, $request['requestRef'],
+                    $sourceState, $this->appControlSource(), fn (): int => $this->now, fn (): int => $this->monoMs,
+                    $native, fn (): array => ['predicateRemainingMs' => 2000, 'loopRemainingMs' => 2000], $this->controlPins());
+                $gateway = $this->localGateway($dispatch, $readiness, function (GatewayModelProfile $profile, string $bytes) use (&$calls, $dispatch, $mode): array {
+                    $calls++;
+                    $this->nativeEvent = 'uploaded';
+                    $held = (new \ReflectionProperty($dispatch, 'heldPacket'))->getValue($dispatch);
+                    self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($held));
+                    $body = json_decode($bytes, true, flags: JSON_THROW_ON_ERROR);
+                    $input = json_decode($body['messages'][1]['content'], true, flags: JSON_THROW_ON_ERROR);
+                    if ($mode === 'revoked') { $this->viewer['authorized'] = false; }
+                    if ($mode === 'tenant_changed') { $this->viewer['organizationRef'] = 'other-current-organization'; }
+                    if ($mode === 'bounded') {
+                        $action = ['type' => 'plan', 'plan' => 'Проверить публичные данные.'];
+                    } elseif ($mode === 'photo') {
+                        $sources = [];
+                        foreach ($input['context']['messages'] as $message) {
+                            if ($message['role'] === 'user') { $sources = array_values(array_unique([...$sources, ...$message['sourceRefs']])); }
+                        }
+                        $action = ['type' => 'final', 'text' => 'Второй пункт учебной расшифровки — арматурный каркас.',
+                            'claims' => [], 'sourceRefs' => $sources, 'claimScope' => $input['contextScope']];
+                    } elseif ($input['toolReferences'] === null) {
+                        $action = ['type' => 'tool', 'tool' => 'material.search', 'arguments' => ['query' => 'бетон', 'limit' => 1]];
+                    } else {
+                        $sources = [];
+                        foreach ($input['context']['messages'] as $message) { if ($message['role'] === 'tool') { $sources = $message['sourceRefs']; } }
+                        $action = ['type' => 'final', 'text' => 'Бетон В25 стоит 7800.00 RUB за м³.',
+                            'claims' => [['value' => '7800.00', 'unit' => 'm3', 'currency' => 'RUB', 'sourceRefs' => $sources]],
+                            'sourceRefs' => $sources, 'claimScope' => $input['toolReferences']['claimScope']];
+                    }
+                    return ['actionBytes' => GatewayModelRequest::canonicalJson($action), 'usage' => null];
+                });
+                return new PublicCoreGatewayModelDriver($profile, $dispatch, $gateway,
+                    function (string $ref) use ($privateBinding): array { $this->nativeEvent = 'pending'; return $privateBinding($ref); });
+            },
+            static fn (): array => ['status' => 'valid', 'reason' => 'none'],
+        );
+        $processor = $this->processor($composer(...), $composer->currentRuntime(...));
+        $peer = ['pid' => 111, 'uid' => 1001, 'gid' => 1001];
+        $selection = $mode === 'photo' ? ['fixture_id' => 'public-photo-metadata-v1',
+            'fixture_version' => 'public-photo-metadata/1', 'input_id' => 'photo-explain',
+            'request_id' => 'cc5b0d36-5c63-4a8c-bcfa-53c41e43ed0c'] : $this->selection();
+        $opened = $processor->handle('open_or_resume', ['viewer_ticket_ref' => 'ref_server_viewer_ticket'] + $selection, $peer);
+        self::assertSame('accepted', $opened['status']);
+        $out = $processor->handle('execute_owned', ['viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref']], $peer);
+        if (in_array($mode, ['revoked', 'tenant_changed', 'bounded'], true)) {
+            self::assertSame('blocked', $out['status']);
+            self::assertArrayNotHasKey('reply', $out);
+            self::assertSame($mode === 'bounded' ? 12 : 1, $calls);
+            return;
+        }
+        self::assertSame('public-core-result-publication/1', $out['schemaVersion'] ?? json_encode($out));
+        $record = $this->store->transaction(fn (array &$state): array => $state['requests'][$opened['request_ref']]);
+        $result = $record['execution']['result'];
+        self::assertSame('completed', $result['status']);
+        self::assertNull($result['actual_model']);
+        self::assertCount($mode === 'photo' ? 0 : 1, $result['tools']);
+        if ($mode !== 'photo') {
+            self::assertSame('Поиск публичных материалов', $result['tools'][0]['label']);
+            self::assertCount(1, $result['sources']);
+            self::assertSame('Публичный каталог материалов', $result['sources'][0]['label']);
+        } else { self::assertCount(2, $result['sources']); }
+        self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+        $this->viewer['authorized'] = false;
+        self::assertSame('authorization_changed', $processor->handle('lookup_owned', [
+            'viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref'],
+        ], $peer)['reasonCode']);
+        self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+    }
+
+    public static function registeredCompositionCases(): array
+    {
+        return array_combine(['search', 'photo', 'revoked', 'tenant_changed', 'bounded'],
+            array_map(static fn (string $mode): array => [$mode], ['search', 'photo', 'revoked', 'tenant_changed', 'bounded']));
+    }
+
     private function processor(?\Closure $composition = null, ?\Closure $currentRuntimeSource = null, bool $withRuntimeReader = true,
         bool $withPublisher = true): PublicCoreProcessor
     {
@@ -1743,7 +1838,7 @@ final class PublicCoreAuthorityTest extends TestCase
     private function controlledPublication(): \Closure
     {
         return $this->withAssertions(function (array $input, object $runtime, \Closure $prepare): mixed {
-            if ($this->publicationMutex || !$runtime instanceof SyntheticMaterialSearchCorpus) {
+            if ($this->publicationMutex || !($runtime instanceof SyntheticMaterialSearchCorpus || $runtime instanceof PublicCoreRuntimeComposition)) {
                 return null;
             }
             $this->publicationMutex = true;
@@ -1788,7 +1883,7 @@ final class PublicCoreAuthorityTest extends TestCase
                     || $this->currentGatewayProfile === null || $this->currentGatewayProfile->fingerprint() !== $input['resultBinding']['profileFingerprint']
                     || ($this->runtimeProof['profileFingerprint'] ?? null) !== $input['resultBinding']['profileFingerprint']
                     || $this->now >= $input['genuineExpiresAt'] || intdiv(hrtime(true), 1000000) - $start >= $input['maxDurationMs']
-                    || $runtime->guard($runtime->context()) !== null) {
+                    || ($runtime instanceof SyntheticMaterialSearchCorpus && $runtime->guard($runtime->context()) !== null)) {
                     return null;
                 }
                 $this->publications[$ref] = $record;
@@ -1807,7 +1902,7 @@ final class PublicCoreAuthorityTest extends TestCase
         };
         $reader = function (object $runtime, array $request, GatewayModelProfile $profile): ?array {
             $this->currentRuntimeChecks++;
-            if (!$this->runtimeReaderAvailable || !$runtime instanceof SyntheticMaterialSearchCorpus || $runtime->guard($runtime->context()) !== null) {
+            if (!$this->runtimeReaderAvailable || !$runtime instanceof SyntheticMaterialSearchCorpus || ($runtime instanceof SyntheticMaterialSearchCorpus && $runtime->guard($runtime->context()) !== null)) {
                 return null;
             }
             $source = ['registryDigest' => $this->registry->manifestDigest(), 'manifestGenerationRef' => $request['registered']['source_generation_ref'],

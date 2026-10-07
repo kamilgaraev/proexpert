@@ -1193,6 +1193,49 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         $driver->action($request, $other);
     }
 
+    public function testDriverCannotPublishGuessedOrStaleActualModelEvidence(): void
+    {
+        $profile = GatewayModelProfile::fromArray(array_replace(self::gatewayProfile()->values(), [
+            'qualification' => 'actual', 'apiMethod' => 'chat_completions', 'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
+            'modelId' => 'source-fixture-model', 'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
+        ]));
+        $driver = new PublicCoreGatewayModelDriver($profile);
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
+        $ref = 'ref_'.str_repeat('a', 32);
+        $final = ['type' => 'final', 'text' => 'Публичный ответ.', 'claims' => [], 'sourceRefs' => [$ref],
+            'claimScope' => ['kind' => 'selected_entity', 'scopeRef' => $ref, 'sourceGenerationRef' => $ref, 'unitRefs' => [$ref]]];
+        $bytes = GatewayModelRequest::canonicalJson($final);
+        $model = $profile->values()['modelId'];
+        $usage = ['inputTokens' => 10, 'outputTokens' => 10, 'totalTokens' => 20];
+        self::assertSame(json_decode($bytes, true, flags: JSON_THROW_ON_ERROR), $driver->action($request, GatewayModelResponse::completed($request, $bytes, $usage, $model)));
+        self::assertSame($model, $driver->actualModel());
+        self::assertSame('public-gateway-actual', PublicCoreContextBindings::coreProfile($profile)['qualification']);
+        foreach ([null, 'wrong-provider-model'] as $invalid) {
+            try {
+                $driver->action($request, GatewayModelResponse::completed($request, $bytes, $usage, $invalid));
+                self::fail('Profile identity cannot replace observed response model');
+            } catch (LogicException $error) {
+                self::assertSame('invalid_model_output', $error->getMessage());
+                self::assertNull($driver->actualModel());
+            }
+        }
+        $stub = self::gatewayProfile();
+        $local = new PublicCoreGatewayModelDriver($stub);
+        $packet = self::gatewayRequest($stub, $local->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
+        $this->expectExceptionMessage('invalid_model_output');
+        $local->action($packet, GatewayModelResponse::completed($packet, $bytes, null, $model));
+    }
+
+    public function testReadyResourceCannotUseProfileGuessAsObservedResponseModel(): void
+    {
+        $state = array_replace(PublicCoreRuntimeResource::unavailable(), ['status' => 'ready', 'reason_code' => 'none',
+            'model_enabled' => true, 'capabilities' => ['text'], 'actual_model' => null]);
+        self::assertNull((new PublicCoreRuntimeResource($state))->toArray(Request::create('/'))['actual_model']);
+        $state['actual_model'] = 'profile-model-guess';
+        $this->expectExceptionMessage('public_core_response_invalid');
+        (new PublicCoreRuntimeResource($state))->toArray(Request::create('/'));
+    }
+
     public function testUnavailableGatewayResponseCannotBecomeModelAction(): void
     {
         $profile = self::gatewayProfile();

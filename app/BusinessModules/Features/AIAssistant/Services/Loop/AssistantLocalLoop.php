@@ -25,6 +25,7 @@ final readonly class AssistantLocalLoop
         private ?AssistantLoopLimits $limits = null,
         private ?Closure $clock = null,
         private ?Closure $finalGuard = null,
+        private ?Closure $completionEvidence = null,
     ) {
     }
 
@@ -217,7 +218,18 @@ final readonly class AssistantLocalLoop
                 }
                 $trace->add('ready', $step, $tokens);
 
-                return ['status' => 'READY', 'mode' => 'offline-synthetic', 'transportAllowed' => false, 'reply' => $value['text'], 'trace' => $trace->events()];
+                $result = ['status' => 'READY', 'mode' => 'offline-synthetic', 'transportAllowed' => false, 'reply' => $value['text'], 'trace' => $trace->events()];
+                if ($this->completionEvidence !== null) {
+                    $completed = ($this->completionEvidence)($value, $receipt, $results, $trace->events());
+                    if (!is_array($completed) || !AssistantModelContextProfile::hasExactKeys($completed, ['actual_model', 'tools', 'sources'])) {
+                        throw new LogicException('completion_evidence_invalid');
+                    }
+                    $result += $completed;
+                    $fresh(false);
+                    $checkTime();
+                }
+
+                return $result;
             }
             if ($verdict['status'] === 'blocked' || ++$repairs > $limits->repairs) {
                 throw new LogicException('reply_validation_blocked');

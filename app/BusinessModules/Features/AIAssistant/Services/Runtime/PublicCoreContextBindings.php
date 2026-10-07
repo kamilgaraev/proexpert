@@ -369,10 +369,10 @@ final readonly class PublicCoreContextBindings
 
     public static function processorLoop(AssistantContextPreparationService $context, Closure $authority, Closure $tokenizer,
         Closure $modelDriver, AssistantToolResultAdapter $tools, AssistantLoopResponseValidator $validator,
-        Closure $clock, Closure $finalGuard, ?AssistantLoopLimits $limits = null): AssistantLocalLoop
+        Closure $clock, Closure $finalGuard, ?AssistantLoopLimits $limits = null, ?Closure $completionEvidence = null): AssistantLocalLoop
     {
         return new AssistantLocalLoop($context, $authority, $tokenizer, $modelDriver, $tools, $validator,
-            $limits ?? new AssistantLoopLimits(), $clock, $finalGuard);
+            $limits ?? new AssistantLoopLimits(), $clock, $finalGuard, $completionEvidence);
     }
 
     public static function processorResponseValidator(Closure $semanticValidator): AssistantLoopResponseValidator
@@ -491,7 +491,7 @@ final readonly class PublicCoreContextBindings
         }
         $values = $gateway->values();
         $profile = [
-            'profileRef' => $values['profileRef'], 'qualification' => 'offline-synthetic',
+            'profileRef' => $values['profileRef'], 'qualification' => $gateway->isActualProfile() ? 'public-gateway-actual' : 'offline-synthetic',
             'adapterRevision' => $values['adapterRevision'], 'modelId' => $values['modelId'],
             'modelRevision' => $values['modelRevision'], 'tokenizerId' => $values['tokenizerId'],
             'tokenizerRevision' => $values['tokenizerRevision'], 'contextWindow' => $values['contextWindow'],

@@ -215,7 +215,8 @@ final class PublicCoreProcessor
             $native = $composition['loop']->run($composition['profileRef'], $composition['refs']);
             $freshSource = ($composition['sourceState'])();
             if ($freshSource !== $source || $this->readiness->currentProfileFingerprint() !== $profile->fingerprint()
-                || !GatewayModelRequest::hasExactKeys($native, ['status', 'mode', 'transportAllowed', 'reply', 'trace'])
+                || !(GatewayModelRequest::hasExactKeys($native, ['status', 'mode', 'transportAllowed', 'reply', 'trace', 'actual_model', 'tools', 'sources'])
+                    || (!$profile->isActualProfile() && GatewayModelRequest::hasExactKeys($native, ['status', 'mode', 'transportAllowed', 'reply', 'trace'])))
                 || $native['status'] !== 'READY' || $native['mode'] !== 'offline-synthetic' || $native['transportAllowed'] !== false
                 || !is_string($native['reply']) || trim($native['reply']) === '' || strlen($native['reply']) > 32768
                 || !$this->validTrace($native['trace'])) {
@@ -223,7 +224,7 @@ final class PublicCoreProcessor
             }
             $result = ['status' => 'completed', 'reasonCode' => 'none', 'request_ref' => $requestRef,
                 'reply' => $native['reply'], 'trace' => $native['trace'], 'transportAllowed' => false,
-                'actual_model' => null, 'tools' => [], 'sources' => []];
+                'actual_model' => $native['actual_model'] ?? null, 'tools' => $native['tools'] ?? [], 'sources' => $native['sources'] ?? []];
         } catch (Throwable) {
             $result = self::blocked('source_unavailable') + ['request_ref' => $requestRef];
         }

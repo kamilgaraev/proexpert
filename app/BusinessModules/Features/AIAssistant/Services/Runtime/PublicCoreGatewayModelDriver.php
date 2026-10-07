@@ -17,12 +17,14 @@ use Closure;
 use LogicException;
 use Throwable;
 
-final readonly class PublicCoreGatewayModelDriver
+final class PublicCoreGatewayModelDriver
 {
-    public function __construct(private GatewayModelProfile $profile,
-        private ?PublicCoreDispatchAuthority $dispatch = null, private ?GatewayModelTransport $transport = null,
-        private ?Closure $privateBindingSource = null, private ?PublicCoreProcessor $nativeProcessor = null,
-        private ?AuthenticatedPublicCoreChannel $nativeChannel = null)
+    private ?string $observedModel = null;
+
+    public function __construct(private readonly GatewayModelProfile $profile,
+        private readonly ?PublicCoreDispatchAuthority $dispatch = null, private readonly ?GatewayModelTransport $transport = null,
+        private readonly ?Closure $privateBindingSource = null, private readonly ?PublicCoreProcessor $nativeProcessor = null,
+        private readonly ?AuthenticatedPublicCoreChannel $nativeChannel = null)
     {
     }
 
@@ -49,6 +51,7 @@ final readonly class PublicCoreGatewayModelDriver
 
     public function action(GatewayModelRequest $request, GatewayModelResponse $response): array
     {
+        $this->observedModel = null;
         $profile = $this->profile->values();
         if (!$this->profile->isQualified() || $request->profileRef !== $profile['profileRef']
             || !hash_equals($this->profile->fingerprint(), $request->profileFingerprint)
@@ -59,16 +62,29 @@ final readonly class PublicCoreGatewayModelDriver
         if ($response->status !== 'completed' || $response->actionBytes === null) {
             throw new LogicException($response->reasonCode);
         }
+        if (($this->profile->isActualProfile() && $response->actualModel !== $profile['modelId'])
+            || (!$this->profile->isActualProfile() && $response->actualModel !== null)) {
+            throw new LogicException('invalid_model_output');
+        }
         $usageError = (new GatewayPublicCoreRequestValidator())->validateUsage($this->profile, $response->usage);
         if ($usageError !== null) {
             throw new LogicException($usageError);
         }
 
-        return AssistantModelAction::parse(json_decode($response->actionBytes, true, 64, JSON_THROW_ON_ERROR))->values();
+        $action = AssistantModelAction::parse(json_decode($response->actionBytes, true, 64, JSON_THROW_ON_ERROR))->values();
+        $this->observedModel = $action['type'] === 'final' ? $response->actualModel : null;
+
+        return $action;
+    }
+
+    public function actualModel(): ?string
+    {
+        return $this->observedModel;
     }
 
     public function __invoke(array $input): array
     {
+        $this->observedModel = null;
         if ($this->dispatch === null || $this->privateBindingSource === null) {
             throw new LogicException('receipt_unavailable');
         }

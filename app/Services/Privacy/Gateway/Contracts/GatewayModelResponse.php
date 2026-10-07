@@ -9,7 +9,7 @@ use LogicException;
 
 final readonly class GatewayModelResponse
 {
-    public const SCHEMA_VERSION = 'public-core-model-response/1';
+    public const SCHEMA_VERSION = 'public-core-model-response/2';
 
     public const REASON_CODES = [
         'none', 'runtime_not_activated', 'gateway_not_configured',
@@ -29,13 +29,14 @@ final readonly class GatewayModelResponse
         public string $reasonCode,
         public ?string $actionBytes,
         public ?array $usage,
+        public ?string $actualModel,
     ) {}
 
     public static function fromArray(mixed $value): self
     {
         if (! GatewayModelRequest::hasExactKeys($value, [
             'schemaVersion', 'contractVersion', 'requestRef', 'attemptRef',
-            'profileFingerprint', 'status', 'reasonCode', 'actionBytes', 'usage',
+            'profileFingerprint', 'status', 'reasonCode', 'actionBytes', 'usage', 'actualModel',
         ]) || $value['schemaVersion'] !== self::SCHEMA_VERSION
             || $value['contractVersion'] !== GatewayModelRequest::CONTRACT_VERSION
             || ! GatewayModelRequest::isReference($value['requestRef'])
@@ -46,7 +47,9 @@ final readonly class GatewayModelResponse
             throw new LogicException('invalid_model_output');
         }
         if ($value['status'] === 'completed') {
-            if ($value['reasonCode'] !== 'none' || ! is_string($value['actionBytes'])
+            if (($value['actualModel'] !== null && (!is_string($value['actualModel'])
+                || preg_match('~\A[A-Za-z0-9_.:/-]{1,128}\z~D', $value['actualModel']) !== 1))
+                || $value['reasonCode'] !== 'none' || ! is_string($value['actionBytes'])
                 || strlen($value['actionBytes']) > 131072 || str_contains($value['actionBytes'], "\0")) {
                 throw new LogicException('invalid_model_output');
             }
@@ -61,13 +64,13 @@ final readonly class GatewayModelResponse
                 || $value['usage']['totalTokens'] !== $value['usage']['inputTokens'] + $value['usage']['outputTokens'])) {
                 throw new LogicException('invalid_model_output');
             }
-        } elseif ($value['reasonCode'] === 'none' || $value['actionBytes'] !== null || $value['usage'] !== null) {
+        } elseif ($value['reasonCode'] === 'none' || $value['actionBytes'] !== null || $value['usage'] !== null || $value['actualModel'] !== null) {
             throw new LogicException('invalid_model_output');
         }
 
         return new self(
             $value['requestRef'], $value['attemptRef'], $value['profileFingerprint'],
-            $value['status'], $value['reasonCode'], $value['actionBytes'], $value['usage'],
+            $value['status'], $value['reasonCode'], $value['actionBytes'], $value['usage'], $value['actualModel'],
         );
     }
 
@@ -81,12 +84,12 @@ final readonly class GatewayModelResponse
         return self::result($request, 'blocked', $reasonCode, null, null);
     }
 
-    public static function completed(GatewayModelRequest $request, string $actionBytes, ?array $usage): self
+    public static function completed(GatewayModelRequest $request, string $actionBytes, ?array $usage, ?string $actualModel = null): self
     {
-        return self::result($request, 'completed', 'none', $actionBytes, $usage);
+        return self::result($request, 'completed', 'none', $actionBytes, $usage, $actualModel);
     }
 
-    private static function result(GatewayModelRequest $request, string $status, string $reasonCode, ?string $actionBytes, ?array $usage): self
+    private static function result(GatewayModelRequest $request, string $status, string $reasonCode, ?string $actionBytes, ?array $usage, ?string $actualModel = null): self
     {
         return self::fromArray([
             'schemaVersion' => self::SCHEMA_VERSION,
@@ -98,6 +101,7 @@ final readonly class GatewayModelResponse
             'reasonCode' => $reasonCode,
             'actionBytes' => $actionBytes,
             'usage' => $usage,
+            'actualModel' => $actualModel,
         ]);
     }
 
@@ -113,6 +117,7 @@ final readonly class GatewayModelResponse
             'reasonCode' => $this->reasonCode,
             'actionBytes' => $this->actionBytes,
             'usage' => $this->usage,
+            'actualModel' => $this->actualModel,
         ];
     }
 }

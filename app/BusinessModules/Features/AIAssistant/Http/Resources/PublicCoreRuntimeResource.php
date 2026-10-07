@@ -212,7 +212,7 @@ final class PublicCoreRuntimeResource extends JsonResource
     private function readiness(array $value): array
     {
         if (!self::text($value['source_contract_version'] ?? null) || !array_key_exists('actual_model', $value)
-            || ($value['actual_model'] !== null && !self::text($value['actual_model']))
+            || $value['actual_model'] !== null
             || !is_bool($value['model_enabled'] ?? null) || !is_array($value['capabilities'] ?? null)
             || !array_is_list($value['capabilities']) || !is_array($value['fixtures'] ?? null)
             || !array_is_list($value['fixtures'])) {
@@ -223,7 +223,7 @@ final class PublicCoreRuntimeResource extends JsonResource
                 throw new LogicException('public_core_response_invalid');
             }
         }
-        if ($value['status'] === 'ready' ? (!$value['model_enabled'] || $value['actual_model'] === null
+        if ($value['status'] === 'ready' ? (!$value['model_enabled']
             || $value['reason_code'] !== 'none' || !in_array('text', $value['capabilities'], true))
             : ($value['model_enabled'] || $value['reason_code'] === 'none')) {
             throw new LogicException('public_core_response_invalid');

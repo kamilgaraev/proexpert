@@ -67,7 +67,7 @@ final readonly class PublicCoreRuntimeReadiness
             return null;
         }
         $v = $profile->values();
-        return ['profileRef' => $v['profileRef'], 'qualification' => 'offline-synthetic', 'adapterRevision' => $v['adapterRevision'],
+        return ['profileRef' => $v['profileRef'], 'qualification' => $profile->isActualProfile() ? 'public-gateway-actual' : 'offline-synthetic', 'adapterRevision' => $v['adapterRevision'],
             'modelId' => $v['modelId'], 'modelRevision' => $v['modelRevision'], 'tokenizerId' => $v['tokenizerId'],
             'tokenizerRevision' => $v['tokenizerRevision'], 'contextWindow' => $v['contextWindow'], 'maxOutputTokens' => $v['maxOutputTokens'],
             'answerReserve' => $v['answerReserve'], 'toolReserve' => $v['toolReserve']];
@@ -101,7 +101,7 @@ final readonly class PublicCoreRuntimeReadiness
             'status' => $live ? 'ready' : 'unavailable',
             'reason_code' => $live ? 'none' : 'runtime_not_activated',
             'source_contract_version' => 'public-core-authority/0.7-candidate',
-            'actual_model' => $live ? $profile->values()['modelId'] : null,
+            'actual_model' => null,
             'model_enabled' => $live,
             'capabilities' => ['text' => $live, 'tools' => $live, 'vision' => false],
             'free_input_enabled' => false,
