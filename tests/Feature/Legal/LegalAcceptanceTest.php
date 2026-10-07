@@ -50,14 +50,14 @@ final class LegalAcceptanceTest extends TestCase
         self::assertTrue($service->manifest()['commercial_ready']);
     }
 
-    public function test_provider_change_alters_hash_and_rendered_snapshot(): void
+    public function test_provider_change_alters_hash_and_requisites_snapshot(): void
     {
         LegalAcceptanceFixture::enable();
         $service = app(LegalDocumentService::class);
         $before = $service->hash('offer');
         config(['legal.provider.name' => 'Другой тестовый поставщик']);
         self::assertNotSame($before, $service->hash('offer'));
-        self::assertStringContainsString('Другой тестовый поставщик', $service->snapshot('offer')['document']['sections'][0]['paragraphs'][1]);
+        self::assertSame('Другой тестовый поставщик', $service->snapshot('offer')['provider']['name']);
     }
 
     public function test_stale_client_hash_is_rejected(): void

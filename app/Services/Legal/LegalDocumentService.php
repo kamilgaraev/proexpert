@@ -10,7 +10,7 @@ final class LegalDocumentService
 {
     public function bundle(): array
     {
-        return json_decode((string) file_get_contents(resource_path('legal/2026-10-06.json')), true, 512, JSON_THROW_ON_ERROR);
+        return json_decode((string) file_get_contents(resource_path('legal/2026-10-07.json')), true, 512, JSON_THROW_ON_ERROR);
     }
 
     public function snapshot(string $key): array
