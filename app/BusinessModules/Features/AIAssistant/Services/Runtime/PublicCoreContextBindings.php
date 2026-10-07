@@ -15,14 +15,114 @@ use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantLoopResponse
 use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantToolResultAdapter;
 use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use LogicException;
 
 final readonly class PublicCoreContextBindings
 {
     private function __construct(private string $sourceChannelRef, private string $sourcePeerRole,
-        private Closure $sourceCompletionReader, private object $sourceSequence, private ?object $sourcePublicationState = null)
+        private Closure $sourceCompletionReader, private object $sourceSequence, private ?object $sourcePublicationState = null,
+        private ?AuthenticatedPublicCoreChannel $nativeChannel = null, private ?string $nativeIdentityFile = null,
+        private ?string $nativeIdentityDigest = null)
     {
+    }
+
+    public static function authenticatedAppControlPort(AuthenticatedPublicCoreChannel $channel, string $identityFile): self
+    {
+        $identity = self::appProcessorIdentity($identityFile, $channel);
+
+        return new self($channel->channelRef(), 'Processor', static fn (): null => null,
+            (object) ['next' => 2, 'bootstrap' => null, 'replied' => false], null, $channel, $identityFile, $identity['digest']);
+    }
+
+    public function receiveAppBootstrap(): array
+    {
+        $this->assertNativeIdentity();
+        if ($this->nativeChannel === null || $this->sourceSequence->bootstrap !== null || $this->sourceSequence->replied) {
+            throw new LogicException('authorization_changed');
+        }
+        $frame = $this->nativeChannel->receive();
+        $expiresAt = $frame['expiresAt'];
+        if ($expiresAt > $this->nativeChannel->deadlineExpiresAt()) { throw new LogicException('expired'); }
+        $payload = self::appViewerBootstrapPayload($frame, $this->sourceChannelRef,
+            $this->sourceSequence->next, $expiresAt, $this->sourcePeerRole);
+        $this->assertNativeIdentity();
+        $this->sourceSequence->bootstrap = $frame;
+        $this->sourceSequence->next++;
+
+        return ['payload' => $payload, 'expiresAt' => $expiresAt];
+    }
+
+    public function replyAppBootstrap(array $binding): void
+    {
+        $this->assertNativeIdentity();
+        $frame = $this->sourceSequence->bootstrap;
+        if ($this->nativeChannel === null || !is_array($frame) || $this->sourceSequence->replied
+            || ($binding['viewerTicketRef'] ?? null) !== $frame['payload']['viewerTicketRef']) {
+            throw new LogicException('authorization_changed');
+        }
+        $this->sourceSequence->replied = true;
+        $this->nativeChannel->send('binding', null, null, $binding, $frame['expiresAt']);
+    }
+
+    private function assertNativeIdentity(): void
+    {
+        if ($this->nativeChannel === null || $this->nativeIdentityFile === null || $this->nativeIdentityDigest === null
+            || self::appProcessorIdentity($this->nativeIdentityFile, $this->nativeChannel)['digest'] !== $this->nativeIdentityDigest) {
+            throw new LogicException('authorization_changed');
+        }
+    }
+
+    private static function appProcessorIdentity(string $path, AuthenticatedPublicCoreChannel $channel): array
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !str_starts_with($path, '/')
+            || str_contains($path, "\0") || realpath($path) !== $path) {
+            throw new LogicException('gateway_identity_unavailable');
+        }
+        clearstatcache(true, $path);
+        $stat = lstat($path);
+        $parent = lstat(dirname($path));
+        if (!is_array($parent) || realpath(dirname($path)) !== dirname($path) || ($parent['mode'] & 0170000) !== 0040000
+            || ($parent['mode'] & 0077) !== 0 || $parent['uid'] !== posix_geteuid() || $parent['gid'] !== posix_getegid()
+            || !is_array($stat) || ($stat['mode'] & 0170000) !== 0100000 || ($stat['mode'] & 0077) !== 0
+            || $stat['uid'] !== posix_geteuid() || $stat['gid'] !== posix_getegid()
+            || $stat['size'] < 2 || $stat['size'] > 4096) {
+            throw new LogicException('gateway_identity_unavailable');
+        }
+        $stream = fopen($path, 'rb');
+        if ($stream === false) { throw new LogicException('gateway_identity_unavailable'); }
+        try {
+            $opened = fstat($stream);
+            $bytes = stream_get_contents($stream, 4097);
+            clearstatcache(true, $path);
+            $current = lstat($path);
+            if (!is_array($opened) || !is_array($current) || $opened['dev'] !== $stat['dev'] || $opened['ino'] !== $stat['ino']
+                || $current['dev'] !== $opened['dev'] || $current['ino'] !== $opened['ino']
+                || $current['mode'] !== $stat['mode'] || $current['uid'] !== $stat['uid'] || $current['gid'] !== $stat['gid']
+                || !is_string($bytes) || strlen($bytes) !== $stat['size']) {
+                throw new LogicException('gateway_identity_unavailable');
+            }
+        } finally {
+            fclose($stream);
+        }
+        $identity = json_decode($bytes, true, 8, JSON_THROW_ON_ERROR);
+        if (!GatewayModelRequest::hasExactKeys($identity, ['schemaVersion', 'localRole', 'peerRole', 'localIdentityRef',
+            'peerIdentityRef', 'localKernel', 'peerKernel']) || $identity['schemaVersion'] !== 'public-core-app-processor-identity/1'
+            || $identity['localRole'] !== 'App' || $identity['peerRole'] !== 'Processor'
+            || !GatewayModelRequest::isReference($identity['localIdentityRef']) || !GatewayModelRequest::isReference($identity['peerIdentityRef'])
+            || $identity['localIdentityRef'] === $identity['peerIdentityRef']
+            || !GatewayModelRequest::hasExactKeys($identity['localKernel'], ['pid', 'uid', 'gid'])
+            || !GatewayModelRequest::hasExactKeys($identity['peerKernel'], ['pid', 'uid', 'gid'])
+            || GatewayModelRequest::canonicalJson($identity['localKernel']) !== GatewayModelRequest::canonicalJson(
+                ['pid' => getmypid(), 'uid' => posix_geteuid(), 'gid' => posix_getegid()])
+            || GatewayModelRequest::canonicalJson($identity['peerKernel']) !== GatewayModelRequest::canonicalJson($channel->peer())
+            || $channel->isCleanupOnly()) {
+            throw new LogicException('gateway_identity_unavailable');
+        }
+
+        return ['digest' => hash('sha256', $bytes)];
     }
 
     public static function sourceAppControlPort(string $channelRef, string $peerRole, Closure $privateCompletionReader,
@@ -37,7 +137,7 @@ final readonly class PublicCoreContextBindings
 
     public function sourceOnly(): bool
     {
-        return true;
+        return $this->nativeChannel === null;
     }
 
     public function sourceChannel(): string
@@ -48,7 +148,7 @@ final readonly class PublicCoreContextBindings
     public function consumeSourceFrame(array $frame, string $command, array $binding, int $expiresAt): array
     {
         $keys = ['schemaVersion', 'channelRef', 'sequence', 'command', 'requestRef', 'attemptRef', 'expiresAt', 'payload'];
-        if ($this->sourcePeerRole !== 'Processor' || count($frame) !== 8 || array_diff(array_keys($frame), $keys) !== []
+        if ($this->nativeChannel !== null || $this->sourcePeerRole !== 'Processor' || count($frame) !== 8 || array_diff(array_keys($frame), $keys) !== []
             || ($frame['schemaVersion'] ?? null) !== 'public-core-channel/1'
             || ($frame['channelRef'] ?? null) !== $this->sourceChannelRef
             || ($frame['sequence'] ?? null) !== $this->sourceSequence->next || ($frame['command'] ?? null) !== $command
@@ -198,7 +298,7 @@ final readonly class PublicCoreContextBindings
         $keys = ['schemaVersion', 'channelRef', 'sequence', 'command', 'requestRef', 'attemptRef', 'expiresAt', 'payload'];
         if ($peerRole !== 'Processor' || count($frame) !== count($keys) || array_diff(array_keys($frame), $keys) !== []
             || ($frame['schemaVersion'] ?? null) !== 'public-core-channel/1'
-            || !PublicCoreRuntimeResource::opaqueRef($channelRef) || ($frame['channelRef'] ?? null) !== $channelRef
+            || !GatewayModelRequest::isReference($channelRef) || ($frame['channelRef'] ?? null) !== $channelRef
             || $sequence < 2 || ($frame['sequence'] ?? null) !== $sequence || ($frame['command'] ?? null) !== 'check_binding'
             || !array_key_exists('requestRef', $frame) || $frame['requestRef'] !== null
             || !array_key_exists('attemptRef', $frame) || $frame['attemptRef'] !== null

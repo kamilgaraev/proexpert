@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeRes
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use LogicException;
 
@@ -24,6 +25,21 @@ class PublicCoreAssistantRuntime
     public function __construct(private readonly ?PublicCoreBackendAuthorityFence $sourceFence = null)
     {
         $this->registry = RegisteredPublicFixtureRegistry::compiled();
+    }
+
+    public function serveAppProcessorBootstrap(AuthenticatedPublicCoreChannel $channel, string $identityFile): void
+    {
+        $port = PublicCoreContextBindings::authenticatedAppControlPort($channel, $identityFile);
+        $check = $port->receiveAppBootstrap();
+        try {
+            $binding = $this->sourceFence?->viewerTicketBinding($check['payload'], $check['expiresAt'])
+                ?? throw new LogicException('authorization_changed');
+        } catch (\Throwable $error) {
+            $binding = ['schemaVersion' => 'public-core-app-viewer-ticket-denial/1',
+                'viewerTicketRef' => $check['payload']['viewerTicketRef'],
+                'reasonCode' => $error->getMessage() === 'expired' ? 'expired' : 'authorization_changed'];
+        }
+        $port->replyAppBootstrap($binding);
     }
 
     public function openSourceDelivery(array $context): string

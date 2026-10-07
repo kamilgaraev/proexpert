@@ -21,6 +21,7 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelTransport;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Config\Repository;
 use Illuminate\Contracts\Routing\ResponseFactory;
@@ -121,6 +122,125 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         $logger = $manager->channel();
         self::assertInstanceOf(\Illuminate\Log\Logger::class, $logger);
         $logger->warning('Public Core isolated fixture logging probe.');
+    }
+
+    #[DataProvider('nativeAppBootstrapCases')]
+    public function testNativeAppProcessorBootstrapUsesActualPeerAndFailsClosed(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork')) {
+            self::markTestSkipped('App–Processor bootstrap needs Linux SCM_CREDENTIALS; Windows is not native PASS.');
+        }
+        $directory = sys_get_temp_dir().'/assist-app-'.bin2hex(random_bytes(5));
+        mkdir($directory, 0700);
+        $socketPath = $directory.'/control.sock';
+        $identityFile = $directory.'/identity.json';
+        $listener = AuthenticatedPublicCoreChannel::listen($socketPath);
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parent = getmypid();
+        $ticket = 'viewer_'.str_repeat('a', 48);
+        $wireCases = ['valid', 'canonical-identity', 'denial', 'missing-fence', 'replay'];
+        $child = pcntl_fork();
+        if ($child === 0) {
+            socket_close($listener);
+            $peer = null;
+            try {
+                $peer = AuthenticatedPublicCoreChannel::connect($socketPath, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 3000);
+                $expiry = min(time() + 2, $peer->deadlineExpiresAt());
+                if ($mode === 'wrong-phase') {
+                    $peer->send('readiness', 'request:unowned-bootstrap', 'attempt:unowned-bootstrap', [], $expiry);
+                } else {
+                    $peer->send('check_binding', null, null,
+                        ['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => $ticket], $expiry);
+                }
+                $result = $peer->receive();
+                if (!in_array($mode, $wireCases, true) || $result['command'] !== 'binding'
+                    || $result['requestRef'] !== null || $result['attemptRef'] !== null || $result['expiresAt'] !== $expiry
+                    || $result['payload']['viewerTicketRef'] !== $ticket
+                    || $result['payload']['schemaVersion'] !== (in_array($mode, ['denial', 'missing-fence'], true)
+                        ? 'public-core-app-viewer-ticket-denial/1' : 'public-core-app-viewer-ticket-binding/1')) { exit(91); }
+                exit(0);
+            } catch (\Throwable) {
+                exit(in_array($mode, $wireCases, true) ? 92 : 0);
+            } finally {
+                $peer?->close();
+            }
+        }
+        self::assertGreaterThan(0, $child);
+        $channel = null;
+        $called = 0;
+        try {
+            $identity = ['schemaVersion' => 'public-core-app-processor-identity/1', 'localRole' => 'App', 'peerRole' => 'Processor',
+                'localIdentityRef' => 'app:local-source', 'peerIdentityRef' => 'processor:local-source',
+                'localKernel' => ['pid' => $parent, 'uid' => $uid, 'gid' => $gid],
+                'peerKernel' => ['pid' => $child, 'uid' => $uid, 'gid' => $gid]];
+            if ($mode === 'wrong-role') { $identity['peerRole'] = 'Gateway'; }
+            if ($mode === 'wrong-peer') { $identity['peerKernel']['pid']++; }
+            if ($mode === 'same-identity') { $identity['peerIdentityRef'] = $identity['localIdentityRef']; }
+            if ($mode === 'extra-identity') { $identity['authorized'] = true; }
+            file_put_contents($identityFile, $mode === 'canonical-identity'
+                ? GatewayModelRequest::canonicalJson($identity) : json_encode($identity, JSON_THROW_ON_ERROR));
+            chmod($identityFile, $mode === 'world-readable' ? 0644 : 0600);
+            $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 3000);
+            $binding = ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $ticket,
+                'currentViewer' => ['authorized' => true, 'viewerRef' => 'actor:source', 'organizationRef' => 'organization:source',
+                    'authorizationRevision' => 'revision:source', 'policyRevision' => 'policy:source']];
+            $fence = Mockery::mock(PublicCoreBackendAuthorityFence::class);
+            $fence->shouldReceive('viewerTicketBinding')->andReturnUsing(function (array $payload, int $expiresAt) use (&$called,
+                $mode, $binding, $identityFile, $identity): array {
+                $called++;
+                self::assertSame($binding['viewerTicketRef'], $payload['viewerTicketRef']);
+                self::assertGreaterThan(time(), $expiresAt);
+                if ($mode === 'denial') { throw new LogicException('authorization_changed'); }
+                if ($mode === 'identity-mutation') {
+                    file_put_contents($identityFile, json_encode(array_replace($identity, ['peerIdentityRef' => 'processor:changed']), JSON_THROW_ON_ERROR));
+                }
+
+                return $mode === 'wrong-ticket' ? array_replace($binding, ['viewerTicketRef' => 'viewer:wrong']) : $binding;
+            });
+            try {
+                if ($mode === 'replay') {
+                    $port = PublicCoreContextBindings::authenticatedAppControlPort($channel, $identityFile);
+                    self::assertFalse($port->sourceOnly());
+                    $bootstrap = $port->receiveAppBootstrap();
+                    self::assertNull($port->sourceCompletion('completion:caller-supplied'));
+                    try {
+                        $port->consumeSourceFrame([], 'authorize_write', [], $bootstrap['expiresAt']);
+                        self::fail('Native bootstrap cannot be upgraded to a source-array upload guard');
+                    } catch (LogicException $error) {
+                        self::assertSame('authorization_changed', $error->getMessage());
+                    }
+                    $port->replyAppBootstrap($binding);
+                    try { $port->replyAppBootstrap($binding); self::fail('Native bootstrap reply cannot be reused'); }
+                    catch (LogicException $error) { self::assertSame('authorization_changed', $error->getMessage()); }
+                } else {
+                    (new PublicCoreAssistantRuntime($mode === 'missing-fence' ? null : $fence))
+                        ->serveAppProcessorBootstrap($channel, $mode === 'missing-identity' ? $directory.'/missing.json' : $identityFile);
+                }
+                self::assertContains($mode, $wireCases);
+            } catch (LogicException $error) {
+                self::assertNotContains($mode, $wireCases, $error->getMessage().' at '.$error->getFile().':'.$error->getLine());
+                self::assertContains($error->getMessage(), ['authorization_changed', 'gateway_identity_unavailable']);
+            }
+            self::assertSame(in_array($mode, ['valid', 'canonical-identity', 'denial', 'identity-mutation', 'wrong-ticket'], true) ? 1 : 0, $called);
+        } finally {
+            $channel?->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+            if (is_file($identityFile)) { unlink($identityFile); }
+            unlink($socketPath);
+            rmdir($directory);
+        }
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status));
+    }
+
+    public static function nativeAppBootstrapCases(): array
+    {
+        $cases = ['valid', 'canonical-identity', 'denial', 'missing-fence', 'replay', 'wrong-role', 'wrong-peer', 'same-identity',
+            'extra-identity', 'world-readable', 'missing-identity', 'identity-mutation', 'wrong-ticket', 'wrong-phase'];
+
+        return array_combine($cases, array_map(static fn (string $case): array => [$case], $cases));
     }
 
     public function testProcessorFactoryComposesNativeContextLoopAndMaterialPortsWithoutQualifyingTransport(): void
