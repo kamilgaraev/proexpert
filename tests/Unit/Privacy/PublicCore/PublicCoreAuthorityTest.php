@@ -62,6 +62,10 @@ final class PublicCoreAuthorityTest extends TestCase
     private bool $publicationQualified = true;
     private ?string $publicationFault = null;
     private ?array $nativePins = null;
+    private bool $expectUnsolicitedHandler = false;
+    private int $unsolicitedHandlerReleases = 0;
+    private ?PublicCoreProcessor $observedNativeProcessor = null;
+    private ?PublicCoreDispatchAuthority $observedNativeAuthority = null;
 
     protected function setUp(): void
     {
@@ -520,6 +524,17 @@ final class PublicCoreAuthorityTest extends TestCase
                     $event = $this->store->transaction(static fn (array &$state): array => $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['uploadEvent']);
                     self::assertContains($event['event'], ['uploaded', 'stopped']);
                     self::assertSame($event['completionRef'], $payload['completionRef']);
+                    if ($this->expectUnsolicitedHandler) {
+                        $functions = array_column(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 12), 'function');
+                        self::assertContains('handleGatewayFrame', $functions);
+                        self::assertNotContains('cancelUpload', $functions);
+                        self::assertSame('stopped', $event['event']);
+                        $received = $this->observedNativeProcessor->nativeGatewayTransfer($this->observedNativeAuthority, 'read', $packet);
+                        self::assertSame('stopped', $received['event']);
+                        self::assertNull($this->observedNativeProcessor->gatewayCompletionRef($this->observedNativeAuthority, $packet, $received));
+                        self::assertNull($this->observedNativeProcessor->nativeGatewayTransfer($this->observedNativeAuthority, 'read', clone $packet));
+                        $this->unsolicitedHandlerReleases++;
+                    }
                 }
                 self::assertTrue(GatewayModelRequest::isReference($payload['completionRef']));
                 self::assertNotNull($this->store->transaction(static fn (): array => ['ledgerReleased' => true]));
@@ -721,6 +736,12 @@ final class PublicCoreAuthorityTest extends TestCase
                 if (preg_match('/Content-Length: (\d+)/i', $headers, $match) !== 1) {
                     exit(62);
                 }
+                if ($mode === 'unsolicited') {
+                    file_put_contents($this->directory . '/received', '0');
+                    fclose($connection);
+                    fclose($server);
+                    exit(0);
+                }
                 $received = '';
                 while (strlen($received) < (int) $match[1] && !feof($connection)) {
                     $part = fread($connection, min(4096, (int) $match[1] - strlen($received)));
@@ -756,10 +777,12 @@ final class PublicCoreAuthorityTest extends TestCase
         $gateway = pcntl_fork();
         if ($gateway === 0) {
             $retained = null;
+            $weakHandle = null;
             try {
                 $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
                 $sender = new GatewayPublicCoreHttpSender(static fn (): string => 'source-fixture-no-provider-credential', null,
-                    static function ($handle) use ($port, $ca, $mode, &$retained): void {
+                    function ($handle) use ($port, $ca, $mode, $channel, &$sender, &$retained, &$weakHandle): void {
+                        $weakHandle = \WeakReference::create($handle);
                         curl_setopt($handle, CURLOPT_CONNECT_TO, ['api.timeweb.ai:443:127.0.0.1:' . $port]);
                         curl_setopt($handle, CURLOPT_CAINFO, $ca);
                         if ($mode !== 'full') {
@@ -767,6 +790,17 @@ final class PublicCoreAuthorityTest extends TestCase
                         }
                         if ($mode === 'uncertain') {
                             $retained = $handle;
+                        }
+                        if ($mode === 'unsolicited') {
+                            foreach ([$sender, new GatewayPublicCoreHttpSender()] as $unqualified) {
+                                try {
+                                    $channel->publishGatewayLifecycle($unqualified, 'stopped');
+                                    throw new \RuntimeException('Pending/unbound sender published a native event');
+                                } catch (\LogicException $failure) {
+                                    self::assertSame('gateway_channel_unavailable', $failure->getMessage());
+                                }
+                            }
+                            file_put_contents($this->directory . '/origin-denials', 'pending/unbound denied');
                         }
                     }, $mode === 'late' ? static function ($multi, $handle): int {
                         usleep(350000);
@@ -777,6 +811,18 @@ final class PublicCoreAuthorityTest extends TestCase
                         'tokenizerRevision' => $profile->values()['tokenizerRevision'], 'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']],
                     static fn (): string => 'none');
                 file_put_contents($this->directory . '/gateway-status', $response->status);
+                if ($mode === 'unsolicited') {
+                    self::assertNull($weakHandle->get());
+                    foreach (['stopped', 'uploaded'] as $duplicate) {
+                        try {
+                            $channel->publishGatewayLifecycle($sender, $duplicate);
+                            throw new \RuntimeException('Terminal event published again');
+                        } catch (\LogicException $failure) {
+                            self::assertSame('gateway_channel_unavailable', $failure->getMessage());
+                        }
+                    }
+                    file_put_contents($this->directory . '/one-shot-denials', 'duplicate/conflicting denied');
+                }
                 $retained = null;
                 $channel->close();
                 exit(0);
@@ -792,11 +838,19 @@ final class PublicCoreAuthorityTest extends TestCase
         if ($mode !== 'full') {
             $this->grantBudget = 200;
         }
+        if ($mode === 'unsolicited') {
+            $this->grantBudget = 1500;
+            $this->expectUnsolicitedHandler = true;
+        }
         if ($mode === 'aged') {
             $this->rpcDelayMs = 120;
         }
         [$authority, $packet, $readiness] = $this->dispatchPreparation($profile);
         $processor = new PublicCoreProcessor($this->registry, $this->store, $this->sessions, $readiness);
+        if ($mode === 'unsolicited') {
+            $this->observedNativeProcessor = $processor;
+            $this->observedNativeAuthority = $authority;
+        }
         $started = hrtime(true);
         try {
             $response = $processor->dispatchGateway($authority, $channel, $packet);
@@ -836,11 +890,16 @@ final class PublicCoreAuthorityTest extends TestCase
             self::assertFalse($authority->uploadPending());
             self::assertSame(1, count(array_filter($this->controlCalls, static fn (string $command): bool => $command === 'upload_complete')));
         }
+        if ($mode === 'unsolicited') {
+            self::assertSame(1, $this->unsolicitedHandlerReleases);
+            self::assertSame('pending/unbound denied', file_get_contents($this->directory . '/origin-denials'));
+            self::assertSame('duplicate/conflicting denied', file_get_contents($this->directory . '/one-shot-denials'));
+        }
     }
 
     public static function nativeProcessorCases(): array
     {
-        return [['full'], ['stop'], ['uncertain'], ['late'], ['aged']];
+        return [['full'], ['stop'], ['uncertain'], ['late'], ['aged'], 'genuine unsolicited stopped handler' => ['unsolicited']];
     }
 
     #[DataProvider('nativeProcessorDenials')]
