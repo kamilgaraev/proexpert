@@ -118,6 +118,26 @@ class ProcurementLifecycleService
         $supplierRequest->loadMissing(['proposals', 'proposalDecision', 'purchaseRequest']);
         $supplierRequest = $this->syncSupplierRequestExpiry($supplierRequest);
 
+        return $this->supplierRequestSummary($supplierRequest);
+    }
+
+    public function forLoadedSupplierRequest(SupplierRequest $supplierRequest): ProcurementLifecycleSummary
+    {
+        $supplierRequest->loadMissing(['proposals', 'proposalDecision', 'purchaseRequest']);
+
+        if (
+            $supplierRequest->status === SupplierRequestStatusEnum::SENT
+            && $supplierRequest->public_token_expires_at !== null
+            && $supplierRequest->public_token_expires_at->isPast()
+        ) {
+            $supplierRequest = $this->syncSupplierRequestExpiry($supplierRequest);
+        }
+
+        return $this->supplierRequestSummary($supplierRequest);
+    }
+
+    private function supplierRequestSummary(SupplierRequest $supplierRequest): ProcurementLifecycleSummary
+    {
         return match ($supplierRequest->status) {
             SupplierRequestStatusEnum::DRAFT => $this->summary('supplier_request_draft', 'send_supplier_request', [
                 'canSendSupplierRequest' => true,

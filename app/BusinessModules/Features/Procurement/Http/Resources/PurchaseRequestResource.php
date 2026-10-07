@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
@@ -11,6 +12,14 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /** @mixin PurchaseRequest */
 class PurchaseRequestResource extends JsonResource
 {
+    private readonly bool $useLoadedSupplierState;
+
+    public function __construct(mixed $resource, mixed $useLoadedSupplierState = false)
+    {
+        parent::__construct($resource);
+        $this->useLoadedSupplierState = $useLoadedSupplierState === true;
+    }
+
     public function toArray(Request $request): array
     {
         $workflowSummary = app(ProcurementLifecycleService::class)
@@ -65,7 +74,14 @@ class PurchaseRequestResource extends JsonResource
                 'specification' => $line->specification,
                 'needed_by' => $line->needed_by?->format('Y-m-d'),
             ])),
-            'supplier_requests' => $this->whenLoaded('supplierRequests', fn() => SupplierRequestResource::collection($this->supplierRequests)),
+            'supplier_requests' => $this->whenLoaded('supplierRequests', fn() => SupplierRequestResource::collection(
+                $this->supplierRequests->map(fn (SupplierRequest $supplierRequest) => new SupplierRequestResource(
+                    $supplierRequest,
+                    workflowSummary: $this->useLoadedSupplierState
+                        ? app(ProcurementLifecycleService::class)->forLoadedSupplierRequest($supplierRequest)
+                        : null,
+                ))
+            )),
             'purchase_orders' => $this->whenLoaded('purchaseOrders', fn() => PurchaseOrderResource::collection($this->purchaseOrders)),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
