@@ -48,6 +48,30 @@ final class EstimateGenerationPriceLookupIndexRuntime
         DB::statement('DROP INDEX CONCURRENTLY IF EXISTS public."eg_prices_version_kind_idx"');
     }
 
+    public function ensureRetentionReferenceCandidates(): void
+    {
+        $expressions = [];
+        foreach (['metadata', 'custom_resources', 'resource_calculation'] as $column) {
+            $type = DB::getSchemaBuilder()->getColumnType('estimate_items', $column);
+            if (! in_array($type, ['json', 'jsonb'], true)) {
+                throw new RuntimeException('estimate_generation_retention_json_column_type_mismatch');
+            }
+            $argument = $type === 'json' ? '('.$column.')::jsonb' : $column;
+            $expressions[] = 'eg_regional_price_retention_json_may_reference('.$argument.')';
+        }
+        $this->ensure([
+            'name' => 'eg_items_retention_json_refs_idx',
+            'create' => 'CREATE INDEX CONCURRENTLY eg_items_retention_json_refs_idx ON public.estimate_items (id) WHERE public.eg_regional_price_retention_json_may_reference(metadata::jsonb) OR public.eg_regional_price_retention_json_may_reference(custom_resources::jsonb) OR public.eg_regional_price_retention_json_may_reference(resource_calculation::jsonb)',
+            'drop' => 'DROP INDEX CONCURRENTLY IF EXISTS public."eg_items_retention_json_refs_idx"',
+            'expected' => 'CREATE INDEX eg_items_retention_json_refs_idx ON public.estimate_items USING btree (id) WHERE ('.implode(' OR ', $expressions).')',
+        ]);
+    }
+
+    public function dropRetentionReferenceCandidates(): void
+    {
+        DB::statement('DROP INDEX CONCURRENTLY IF EXISTS public."eg_items_retention_json_refs_idx"');
+    }
+
     public function dropAll(): void
     {
         foreach (array_reverse(self::INDEXES) as $index) {
