@@ -72,6 +72,45 @@ final class EstimateGenerationPriceLookupIndexRuntime
         DB::statement('DROP INDEX CONCURRENTLY IF EXISTS public."eg_items_retention_json_refs_idx"');
     }
 
+    public function ensureRetentionVersionReferences(): void
+    {
+        foreach (['estimate_items' => 'eg_items_retention_versions_idx', 'estimate_generation_package_items' => 'eg_packages_retention_versions_idx', 'estimates' => 'eg_estimates_retention_versions_idx'] as $table => $name) {
+            $row = DB::selectOne('SELECT fields FROM public.eg_regional_price_retention_reference_fields() WHERE table_name = ?', [$table]);
+            $fields = json_decode($row->fields ?? '{}', true, flags: JSON_THROW_ON_ERROR);
+            $expressions = [];
+            $predicates = [];
+            foreach ($fields as $column => $kind) {
+                if (! in_array($kind, ['json', 'snapshot'], true)) {
+                    continue;
+                }
+                $type = DB::getSchemaBuilder()->getColumnType($table, $column);
+                if (! in_array($type, ['json', 'jsonb'], true) || ! preg_match('/^[a-z_][a-z0-9_]*$/', $column)) {
+                    throw new RuntimeException('estimate_generation_retention_json_column_type_mismatch');
+                }
+                $argument = $type === 'json' ? '('.$column.')::jsonb' : $column;
+                $expressions[] = 'eg_regional_price_retention_json_version_ids('.$argument.', '.($kind === 'snapshot' ? 'true' : 'false').')';
+                $predicates[] = '(cardinality('.end($expressions).') > 0)';
+            }
+            if ($expressions === []) {
+                throw new RuntimeException('estimate_generation_retention_json_fields_missing');
+            }
+            $predicate = implode(' OR ', $predicates);
+            $this->ensure([
+                'name' => $name,
+                'create' => 'CREATE INDEX CONCURRENTLY '.$name.' ON public.'.$table.' USING gin ('.implode(', ', $expressions).') WHERE '.$predicate,
+                'drop' => 'DROP INDEX CONCURRENTLY IF EXISTS public."'.$name.'"',
+                'expected' => 'CREATE INDEX '.$name.' ON public.'.$table.' USING gin ('.implode(', ', $expressions).') WHERE ('.$predicate.')',
+            ]);
+        }
+    }
+
+    public function dropRetentionVersionReferences(): void
+    {
+        foreach (['eg_estimates_retention_versions_idx', 'eg_packages_retention_versions_idx', 'eg_items_retention_versions_idx'] as $name) {
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS public."'.$name.'"');
+        }
+    }
+
     public function dropAll(): void
     {
         foreach (array_reverse(self::INDEXES) as $index) {
