@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
+use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 
 use function trans_message;
@@ -16,8 +18,7 @@ final class ProcurementIssueService
 {
     public function __construct(
         private readonly ProcurementLifecycleService $lifecycleService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{items: array<int, array<string, mixed>>, meta: array<string, int>, summary: array<string, int>}
@@ -103,6 +104,10 @@ final class ProcurementIssueService
             ))
             ->orderByDesc('created_at')
             ->get()
+            ->tap(static function (EloquentCollection $purchaseRequests): void {
+                $purchaseRequests->filter(static fn (PurchaseRequest $request): bool => $request->status === PurchaseRequestStatusEnum::APPROVED)
+                    ->loadMissing('lines');
+            })
             ->flatMap(function (PurchaseRequest $purchaseRequest): array {
                 $issues = [];
 
@@ -127,11 +132,10 @@ final class ProcurementIssueService
                     );
                 }
 
-                if (
-                    $purchaseRequest->status === PurchaseRequestStatusEnum::APPROVED
-                    && $this->lifecycleService->forPurchaseRequest($purchaseRequest)->canCreateSupplierRequest
-                ) {
-                    $lifecycleSummary = $this->lifecycleService->forPurchaseRequest($purchaseRequest);
+                $lifecycleSummary = $purchaseRequest->status === PurchaseRequestStatusEnum::APPROVED
+                    ? $this->lifecycleService->forPurchaseRequest($purchaseRequest)
+                    : null;
+                if ($lifecycleSummary?->canCreateSupplierRequest) {
 
                     $issues[] = $this->makeIssue(
                         id: "pr-without-order-{$purchaseRequest->id}",
@@ -182,10 +186,12 @@ final class ProcurementIssueService
             ->get()
             ->flatMap(function (PurchaseOrder $purchaseOrder): array {
                 $issues = [];
+                $lifecycleSummary = $this->lifecycleService->forPurchaseOrder($purchaseOrder);
 
                 if ($purchaseOrder->status === PurchaseOrderStatusEnum::DRAFT) {
                     $issues[] = $this->purchaseOrderIssue(
                         $purchaseOrder,
+                        $lifecycleSummary,
                         'purchase_order_draft',
                         'warning',
                         'draft',
@@ -195,15 +201,17 @@ final class ProcurementIssueService
                 if ($purchaseOrder->status === PurchaseOrderStatusEnum::SENT) {
                     $issues[] = $this->purchaseOrderIssue(
                         $purchaseOrder,
+                        $lifecycleSummary,
                         'purchase_order_sent',
                         'info',
                         'sent',
                     );
                 }
 
-                if ($purchaseOrder->status === PurchaseOrderStatusEnum::CONFIRMED && !$purchaseOrder->hasContract()) {
+                if ($purchaseOrder->status === PurchaseOrderStatusEnum::CONFIRMED && ! $purchaseOrder->hasContract()) {
                     $issues[] = $this->purchaseOrderIssue(
                         $purchaseOrder,
+                        $lifecycleSummary,
                         'purchase_order_confirmed_without_contract',
                         'warning',
                         'confirmed_without_contract',
@@ -213,6 +221,7 @@ final class ProcurementIssueService
                 if ($purchaseOrder->status === PurchaseOrderStatusEnum::CONFIRMED) {
                     $issues[] = $this->purchaseOrderIssue(
                         $purchaseOrder,
+                        $lifecycleSummary,
                         'purchase_order_confirmed_waiting_delivery',
                         'info',
                         'confirmed_waiting_delivery',
@@ -222,6 +231,7 @@ final class ProcurementIssueService
                 if ($purchaseOrder->status === PurchaseOrderStatusEnum::IN_DELIVERY) {
                     $issues[] = $this->purchaseOrderIssue(
                         $purchaseOrder,
+                        $lifecycleSummary,
                         'purchase_order_in_delivery',
                         'warning',
                         'in_delivery',
@@ -234,12 +244,11 @@ final class ProcurementIssueService
 
     private function purchaseOrderIssue(
         PurchaseOrder $purchaseOrder,
+        ProcurementLifecycleSummary $lifecycleSummary,
         string $type,
         string $severity,
         string $translationKey
     ): array {
-        $lifecycleSummary = $this->lifecycleService->forPurchaseOrder($purchaseOrder);
-
         return $this->makeIssue(
             id: "po-{$translationKey}-{$purchaseOrder->id}",
             scope: 'purchase_orders',
@@ -262,7 +271,7 @@ final class ProcurementIssueService
     }
 
     /**
-     * @param array<int, string|null> $meta
+     * @param  array<int, string|null>  $meta
      * @return array<string, mixed>
      */
     private function makeIssue(
@@ -301,7 +310,7 @@ final class ProcurementIssueService
     }
 
     /**
-     * @param Collection<int, array<string, mixed>> $issues
+     * @param  Collection<int, array<string, mixed>>  $issues
      * @return array<string, int>
      */
     private function summary(Collection $issues): array
