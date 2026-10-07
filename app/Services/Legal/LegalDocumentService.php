@@ -8,9 +8,11 @@ use Illuminate\Validation\ValidationException;
 
 final class LegalDocumentService
 {
+    private const BUNDLE_PATH = 'legal/2026-10-07.json';
+
     public function bundle(): array
     {
-        return json_decode((string) file_get_contents(resource_path('legal/2026-10-07.json')), true, 512, JSON_THROW_ON_ERROR);
+        return json_decode((string) file_get_contents(resource_path(self::BUNDLE_PATH)), true, 512, JSON_THROW_ON_ERROR);
     }
 
     public function snapshot(string $key): array
@@ -52,7 +54,7 @@ final class LegalDocumentService
 
         return [
             'version' => $this->bundle()['version'],
-            'content_sha256' => hash_file('sha256', resource_path('legal/2026-10-06.json')),
+            'content_sha256' => hash_file('sha256', resource_path(self::BUNDLE_PATH)),
             'privacy_ready' => true,
             'commercial_ready' => true,
             'analytics_ready' => true,
