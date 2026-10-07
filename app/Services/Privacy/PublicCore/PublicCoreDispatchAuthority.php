@@ -450,6 +450,46 @@ final class PublicCoreDispatchAuthority
         }
     }
 
+    public function bootstrapNormalViewer(PublicCoreProcessor $processor, string $viewerTicketRef): ?array
+    {
+        $scope = $processor->normalAppScope($this, $viewerTicketRef);
+        if ($scope === null) {
+            return null;
+        }
+        $this->sequences['app'] = $scope['receivedSequence'];
+        $result = $processor->exchangeNormalBootstrap($this, $viewerTicketRef);
+        if (!GatewayModelRequest::hasExactKeys($result, ['frame', 'peer']) || !is_array($result['frame'])) {
+            $processor->rejectNormalBootstrap($this);
+            return null;
+        }
+        $frame = $result['frame'];
+        if ($result['peer'] !== $scope['peer'] || !GatewayModelRequest::hasExactKeys($frame,
+            ['schemaVersion', 'channelRef', 'sequence', 'command', 'requestRef', 'attemptRef', 'expiresAt', 'payload'])
+            || $frame['schemaVersion'] !== 'public-core-channel/1' || $frame['channelRef'] !== $scope['channel']->channelRef()
+            || $frame['sequence'] !== $this->sequences['app'] + 1 || $frame['command'] !== 'binding'
+            || $frame['requestRef'] !== null || $frame['attemptRef'] !== null
+            || $frame['expiresAt'] !== $scope['frame']['expiresAt'] || time() >= $frame['expiresAt']) {
+            $processor->rejectNormalBootstrap($this);
+            return null;
+        }
+        $this->sequences['app'] = $frame['sequence'];
+        $payload = $frame['payload'];
+        if (GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'viewerTicketRef', 'reasonCode'])
+            && $payload['schemaVersion'] === 'public-core-app-viewer-ticket-denial/1' && $payload['viewerTicketRef'] === $viewerTicketRef
+            && in_array($payload['reasonCode'], GatewayModelResponse::REASON_CODES, true) && $payload['reasonCode'] !== 'none') {
+            return null;
+        }
+        if (!GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'viewerTicketRef', 'currentViewer'])
+            || $payload['schemaVersion'] !== 'public-core-app-viewer-ticket-binding/1' || $payload['viewerTicketRef'] !== $viewerTicketRef
+            || !$this->validViewer($payload['currentViewer'])) {
+            $processor->rejectNormalBootstrap($this);
+            return null;
+        }
+        $viewer = $payload['currentViewer'];
+        return ['authorized' => true, 'viewerRef' => $viewer['viewerRef'], 'organizationRef' => $viewer['organizationRef'],
+            'authorizationRevision' => $viewer['authorizationRevision'], 'policyRevision' => $viewer['policyRevision']];
+    }
+
     public function bootstrapViewer(string $viewerTicketRef): ?array
     {
         if (!GatewayModelRequest::isReference($viewerTicketRef) || $this->bootstrapExpiry === null || $this->appControl === null) {
