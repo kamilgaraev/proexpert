@@ -154,7 +154,7 @@ final class RagExpectedSourceProjection
             $query->orderBy($column);
         }
         $deleted = $this->deleteBatches($organizationId, $query, $maxRows, $deadline ?? microtime(true) + 40, $cursorColumns);
-        if (! $query->exists()) {
+        if ((clone $query)->reorder('generation')->toBase()->selectRaw('1 AS remaining')->first() === null) {
             $pending = (array) Cache::get($key, []);
             unset($pending[$generation]);
             if ($pending === []) {
