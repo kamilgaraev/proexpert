@@ -551,6 +551,37 @@ final class ProcurementChainServiceTest extends TestCase
         $this->assertSame('payment_document_missing', $summary->blockers->first()?->key);
     }
 
+    public function test_compact_purchase_request_summary_skips_unused_permission_map_but_checks_the_action(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $checked = [];
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, string $permission, array $context) use (&$checked, $user, $organization): bool {
+            self::assertSame($user, $actor);
+            self::assertSame(['organization_id' => $organization->id], $context);
+            $checked[] = $permission;
+
+            return false;
+        });
+        $service = new ProcurementChainService(
+            app(\App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver::class),
+            new \App\BusinessModules\Features\Procurement\Services\ProcurementChainActionResolver($authorization),
+        );
+        $compact = $service->forPurchaseRequest($purchaseRequest, $user, includePermissions: false);
+        $actionChecks = count($checked);
+        self::assertGreaterThan(0, $actionChecks);
+        self::assertSame([], $compact->permissions);
+        self::assertFalse($compact->nextAction?->isEnabled);
+        self::assertContains($compact->nextAction?->requiredPermission, $checked);
+        $full = $service->forPurchaseRequest($purchaseRequest, $user);
+        self::assertNotEmpty($full->permissions);
+        self::assertGreaterThan($actionChecks, count($checked) - $actionChecks);
+        self::assertSame($full->compact()->toArray(), $compact->compact()->toArray());
+        self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
+    }
+
     private function createSiteRequest(Organization $organization): SiteRequest
     {
         $project = Project::factory()->create(['organization_id' => $organization->id]);

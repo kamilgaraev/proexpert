@@ -16,7 +16,7 @@ class PurchaseRequestResource extends JsonResource
         $workflowSummary = app(ProcurementLifecycleService::class)
             ->forPurchaseRequest($this->resource);
         $chainSummary = app(ProcurementChainService::class)
-            ->forPurchaseRequest($this->resource, $request->user());
+            ->forPurchaseRequest($this->resource, $request->user(), includePermissions: false);
 
         return [
             'id' => $this->id,

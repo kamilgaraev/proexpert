@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -27,6 +28,47 @@ use Tests\TestCase;
 class PurchaseRequestCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_purchase_request_list_and_show_preserve_compact_chain_and_organization_scope(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::PENDING);
+        $draft = $this->createPurchaseRequest($context);
+        $foreignPurchaseRequest = $this->createPurchaseRequest($foreignContext, PurchaseRequestStatusEnum::PENDING);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $expectedSummary = app(ProcurementChainService::class)
+            ->forPurchaseRequest($purchaseRequest, $context->user)
+            ->compact()
+            ->toArray();
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20&status=pending');
+
+        $indexResponse->assertOk();
+        $ids = collect($indexResponse->json('data'))->pluck('id')->all();
+        $this->assertSame([$purchaseRequest->id], $ids);
+        $this->assertNotContains($draft->id, $ids);
+        $this->assertNotContains($foreignPurchaseRequest->id, $ids);
+        $this->assertSame($expectedSummary, $indexResponse->json('data.0.procurement_chain_summary'));
+        $this->assertNotNull($indexResponse->json('data.0.workflow_summary'));
+
+        $showResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('data.id', $purchaseRequest->id);
+        $this->assertSame($expectedSummary, $showResponse->json('data.procurement_chain_summary'));
+        $this->assertSame($indexResponse->json('data.0.workflow_summary'), $showResponse->json('data.workflow_summary'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$foreignPurchaseRequest->id}")
+            ->assertNotFound();
+    }
 
     public function test_owner_can_create_list_show_and_reject_purchase_request_without_organization_leaks(): void
     {
