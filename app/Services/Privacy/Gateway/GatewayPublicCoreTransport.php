@@ -74,11 +74,11 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                 return 'runtime_not_activated';
             }
         };
-        $sender = new GatewayPublicCoreHttpSender(static function () use ($configurationFile): string {
+        $credentialReader = static function () use ($configurationFile): string {
             $current = self::protectedConfiguration($configurationFile);
 
             return trim(self::protectedBytes($current['credentialFile'], 4096));
-        });
+        };
         $listener = AuthenticatedPublicCoreChannel::listen($configuration['socketPath']);
         try {
             for ($handled = 0; $handled < $configuration['maxRequests']; $handled++) {
@@ -86,7 +86,7 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                 try {
                     $current = self::protectedConfiguration($configurationFile);
                     $channel = AuthenticatedPublicCoreChannel::accept($listener, $current['processorPeer'], $current['deadlineMs']);
-                    self::handleAuthenticatedChannel($channel, $profile, $sender, $counter, $readiness);
+                    self::handleProtectedTransfer($channel, $profile, $credentialReader, $counter, $readiness);
                 } catch (Throwable) {
                 } finally {
                     $channel?->close();
@@ -95,6 +95,18 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
         } finally {
             socket_close($listener);
         }
+    }
+
+    private static function handleProtectedTransfer(
+        AuthenticatedPublicCoreChannel $channel,
+        GatewayModelProfile $profile,
+        Closure $credentialReader,
+        Closure $tokenCounter,
+        Closure $runtimeReadiness,
+    ): GatewayModelResponse {
+        $sender = new GatewayPublicCoreHttpSender($credentialReader);
+
+        return self::handleAuthenticatedChannel($channel, $profile, $sender, $tokenCounter, $runtimeReadiness);
     }
 
     private static function protectedConfiguration(string $path): array

@@ -1571,4 +1571,138 @@ final class PublicCoreGatewayTest extends TestCase
 
         return $result;
     }
+
+    public function test_pre_native_denial_consumes_only_its_owned_sender_and_never_resets_it(): void
+    {
+        $profile = $this->profile();
+        $first = $this->request($profile);
+        $next = $this->request($profile, ['requestRef' => 'request:distinct-custody-step-02', 'attemptRef' => 'attempt:distinct-custody-step-02']);
+        $credentials = 0;
+        $reader = static function () use (&$credentials): string {
+            $credentials++;
+
+            return 'source-fixture-credential-not-a-provider-key';
+        };
+        $old = new GatewayPublicCoreHttpSender($reader);
+        $fresh = new GatewayPublicCoreHttpSender($reader);
+        $outcomes = [];
+        foreach ([[$old, $first, 'channel:custody-step-01'], [$old, $next, 'channel:custody-step-02'], [$fresh, $next, 'channel:custody-step-02']] as [$sender, $request, $channel]) {
+            try {
+                $sender->sendBound($profile, $request, $channel, static fn (): int => hrtime(true) + 1000000000, static function (): void {});
+                self::fail('Pre-native profile denial unexpectedly admitted a transfer');
+            } catch (LogicException $error) {
+                $outcomes[] = $error->getMessage();
+            }
+        }
+        self::assertSame(['model_profile_unqualified', 'gateway_channel_unavailable', 'model_profile_unqualified'], $outcomes);
+        self::assertSame(0, $credentials);
+        $oldState = $old->nativeLifecycle($first, 'channel:custody-step-01');
+        $newState = $fresh->nativeLifecycle($next, 'channel:custody-step-02');
+        self::assertFalse($oldState['nativeStarted']);
+        self::assertFalse($newState['nativeStarted']);
+        self::assertNotSame($oldState['transferRef'], $newState['transferRef']);
+        self::assertSame($first->binding(), $oldState['binding']);
+        self::assertSame($next->binding(), $newState['binding']);
+    }
+
+    public function test_protected_per_channel_source_path_owns_fresh_senders_after_failed_first_attempt(): void
+    {
+        if (! AuthenticatedPublicCoreChannel::isNativeAvailable() || ! function_exists('pcntl_fork')) {
+            self::markTestSkipped('Protected per-channel source composition needs actual Linux SCM credentials');
+        }
+        $directory = sys_get_temp_dir().'/gate27-custody-'.bin2hex(random_bytes(5));
+        mkdir($directory, 0700);
+        $path = $directory.'/control.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $profile = $this->httpSourceFixtureProfile();
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parent = getmypid();
+        $child = pcntl_fork();
+        self::assertGreaterThan(0, $child === 0 ? 1 : $child);
+        if ($child === 0) {
+            socket_close($listener);
+            $channels = [];
+            $authorizations = 0;
+            try {
+                for ($step = 1; $step <= 2; $step++) {
+                    $request = $this->request($profile, ['requestRef' => 'request:custody-native-step-0'.$step,
+                        'attemptRef' => 'attempt:custody-native-step-0'.$step, 'expiresAt' => time() + 3]);
+                    $peer = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 5000);
+                    $channels[] = $peer->channelRef();
+                    $peer->dispatchGatewayRequest($request, $request->expiresAt);
+                    $checks = 0;
+                    while (true) {
+                        $frame = $peer->receiveGatewayControl();
+                        if ($frame['command'] === 'check_binding') {
+                            $checks++;
+                            $peer->send('binding', $request->requestRef, $request->attemptRef, $request->binding(), $request->expiresAt);
+                        } elseif ($frame['command'] === 'authorize_write') {
+                            if ($checks !== 3) {
+                                exit(111);
+                            }
+                            $authorizations++;
+                            $peer->send('write_authorized', $request->requestRef, $request->attemptRef,
+                                ['reasonCode' => 'authorization_changed'], $request->expiresAt);
+                        } elseif ($frame['command'] === 'result') {
+                            $response = GatewayModelResponse::fromArray($frame['payload']);
+                            if ($response->reasonCode !== 'authorization_changed' || $peer->gatewayLifecycle()['state'] !== 'pending') {
+                                exit(112);
+                            }
+                            break;
+                        } else {
+                            exit(113);
+                        }
+                    }
+                    $peer->close();
+                }
+                file_put_contents($directory.'/peer.json', json_encode(['channels' => $channels, 'authorizeRequests' => $authorizations], JSON_THROW_ON_ERROR));
+                exit(0);
+            } catch (\Throwable) {
+                exit(114);
+            }
+        }
+        $credentials = 0;
+        $reader = static function () use (&$credentials): string {
+            $credentials++;
+
+            return 'source-fixture-credential-not-a-provider-key';
+        };
+        $responses = [];
+        $channels = [];
+        $handler = new \ReflectionMethod(GatewayPublicCoreTransport::class, 'handleProtectedTransfer');
+        try {
+            for ($step = 1; $step <= 2; $step++) {
+                $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 5000);
+                try {
+                    $channels[] = $channel->channelRef();
+                    $response = $handler->invoke(null, $channel, $profile, $reader,
+                        fn (string $bytes, GatewayModelProfile $selected): array => $this->tokenCount($selected),
+                        static fn (): string => 'none');
+                    $responses[] = ['requestRef' => $response->requestRef, 'attemptRef' => $response->attemptRef, 'reasonCode' => $response->reasonCode];
+                } finally {
+                    $channel->close();
+                }
+            }
+        } finally {
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+        }
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status));
+        $peerEvidence = json_decode(file_get_contents($directory.'/peer.json'), true, 64, JSON_THROW_ON_ERROR);
+        unlink($directory.'/peer.json');
+        unlink($path);
+        rmdir($directory);
+        self::assertSame($channels, $peerEvidence['channels']);
+        self::assertNotSame($channels[0], $channels[1]);
+        self::assertSame(2, $credentials);
+        self::assertSame(2, $peerEvidence['authorizeRequests']);
+        self::assertSame(['authorization_changed', 'authorization_changed'], array_column($responses, 'reasonCode'));
+        self::assertNotSame($responses[0]['requestRef'], $responses[1]['requestRef']);
+        self::assertNotSame($responses[0]['attemptRef'], $responses[1]['attemptRef']);
+        echo 'NATIVE_SENDER_CUSTODY '.GatewayModelRequest::canonicalJson(['channels' => $channels, 'responses' => $responses,
+            'childExit' => pcntl_wexitstatus($status), 'credentialsRead' => $credentials, 'authorizeRequests' => $peerEvidence['authorizeRequests'],
+            'nativeStarted' => false, 'providerCalls' => 0, 'actualProtectedStartupProof' => false]).PHP_EOL;
+    }
 }
