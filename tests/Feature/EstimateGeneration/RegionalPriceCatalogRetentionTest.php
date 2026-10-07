@@ -33,6 +33,7 @@ final class RegionalPriceCatalogRetentionTest extends TestCase
     protected function tearDown(): void
     {
         try {
+            (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->down();
             (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php'))->down();
             (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_04_000200_add_regional_price_retention_guards.php'))->down();
         } finally {
@@ -98,6 +99,7 @@ SQL);
         }
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_04_000200_add_regional_price_retention_guards.php'))->up();
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php'))->up();
+        (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->up();
     }
 
     public function test_dry_run_then_bounded_batches_delete_old_quarters_and_are_idempotent(): void
@@ -391,6 +393,7 @@ SQL);
     public function test_actual_published_pricing_guards_preserve_insert_update_and_finalized_reference_contracts(): void
     {
         $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_04_000200_add_regional_price_retention_guards.php');
+        (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->down();
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php'))->down();
         $migration->down();
         DB::unprepared(<<<'SQL'
@@ -412,6 +415,7 @@ SQL);
         }
         $migration->up();
         (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php'))->up();
+        (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->up();
 
         $mutations = [
             static fn () => DB::table('estimate_resource_prices')->insert(['id' => 999, 'regional_price_version_id' => 6]),
@@ -544,6 +548,7 @@ SQL, $projection, $predicate);
             ['id' => 1, 'metadata' => '{"price_id":10,"duplicate":"same"}'],
             ['id' => 2, 'metadata' => '{"regional_price_version_id":2,"duplicate":"same"}'],
         ]);
+        (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->down();
         DB::statement('DROP INDEX CONCURRENTLY public.eg_items_retention_json_refs_idx');
         DB::statement('ALTER TABLE public.estimate_items ALTER COLUMN metadata TYPE json USING metadata::json');
         try {
@@ -565,6 +570,103 @@ SQL, $projection, $predicate);
         foreach ([1, 2] as $versionId) {
             self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_referenced(?) AS referenced', [$versionId])->referenced);
         }
+        $migration->up();
+        (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->up();
+    }
+
+    public function test_empty_versions_keep_exact_json_protection_and_direct_price_checks(): void
+    {
+        $this->version(7, 1, 'failed');
+        DB::table('estimate_resource_prices')->where('id', 70)->delete();
+        DB::table('estimate_resource_prices')->insert(['id' => 999, 'regional_price_version_id' => null]);
+        DB::table('estimate_items')->insert(['id' => 7, 'metadata' => '{"nested":[{"regional_price_version_id":7}],"price_id":999}']);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_references_any(ARRAY[7]::bigint[],ARRAY[]::bigint[]) AS referenced')->referenced);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_references_any(ARRAY[7]::bigint[],NULL::bigint[]) AS referenced')->referenced);
+        self::assertContains(7, app(RegionalPriceCatalogRetentionService::class)->prune(true)['protected_versions']);
+        DB::table('estimate_items')->where('id', 7)->update(['metadata' => '{"price_id":999}']);
+        self::assertFalse(DB::selectOne('SELECT public.eg_regional_price_retention_references_any(ARRAY[7]::bigint[],ARRAY[]::bigint[]) AS referenced')->referenced);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_references_any(ARRAY[7]::bigint[],ARRAY[999]::bigint[]) AS referenced')->referenced);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_references_any(NULL::bigint[],ARRAY[999]::bigint[]) AS referenced')->referenced);
+        self::assertFalse(DB::selectOne('SELECT public.eg_regional_price_retention_references_any(NULL::bigint[],NULL::bigint[]) AS referenced')->referenced);
+        DB::table('estimates')->insert(['id' => 7, 'regional_price_snapshot' => '{"nested":[{"version_id":7}]}']);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_referenced(7) AS referenced')->referenced);
+        DB::table('estimates')->where('id', 7)->delete();
+        DB::table('estimate_generation_package_items')->insert(['id' => 7, 'metadata' => '{"version_id":7,"region_id":null,"period_id":null,"price_zone_id":null}']);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_referenced(7) AS referenced')->referenced);
+    }
+
+    public function test_version_reference_index_uses_exact_parser_output_and_bounded_plan(): void
+    {
+        foreach ([null, 'null', '[]', '{}', '{"regional_price_version_id":1.0}', '{"regional_price_version_id":"01"}', '{"price_id":10}', '{"version_id":1}', '{"nested":[{"regional_price_version\u005fid":"9223372036854775808"},{"estimate_regional_price_version_id":1}]}'] as $payload) {
+            foreach ([false, true] as $generic) {
+                self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_json_version_ids(?::jsonb,?::boolean) IS NOT DISTINCT FROM (SELECT COALESCE(array_agg(reference_id ORDER BY reference_id),ARRAY[]::text[]) FROM public.eg_regional_price_retention_json_references(?::jsonb,?::boolean) WHERE reference_kind=\'version\') AS equivalent', [$payload, $generic, $payload, $generic])->equivalent);
+            }
+        }
+        DB::unprepared(<<<'SQL'
+INSERT INTO public.estimate_items(id,metadata)
+SELECT id,jsonb_build_object('price_id',10,'note',repeat('ordinary estimate content ',80))
+FROM generate_series(1000,6999) id;
+SQL);
+        DB::table('estimate_items')->insert(['id' => 7, 'metadata' => '{"regional_price_version_id":1}']);
+        DB::statement('ANALYZE public.estimate_items');
+        $fields = json_decode(DB::selectOne("SELECT fields FROM public.eg_regional_price_retention_reference_fields() WHERE table_name='estimate_items'")->fields, true, flags: JSON_THROW_ON_ERROR);
+        $columns = array_keys(array_filter($fields, static fn (string $kind): bool => in_array($kind, ['json', 'snapshot'], true)));
+        $predicates = [];
+        $filters = [];
+        foreach ($columns as $column) {
+            $expression = 'public.eg_regional_price_retention_json_version_ids(t.'.$column.'::jsonb,false)';
+            $predicates[] = 'cardinality('.$expression.')>0';
+            $filters[] = $expression.' && ARRAY[\'999\']::text[]';
+        }
+        $query = 'EXPLAIN (ANALYZE, FORMAT JSON) SELECT EXISTS(SELECT 1 FROM public.estimate_items t WHERE ('.implode(' OR ', $predicates).') AND ('.implode(' OR ', $filters).'))';
+        DB::statement('DROP INDEX CONCURRENTLY public.eg_items_retention_versions_idx');
+        $before = DB::selectOne($query)->{'QUERY PLAN'};
+        self::assertStringContainsString('Seq Scan', $before);
+        (require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php'))->up();
+        $after = DB::selectOne($query)->{'QUERY PLAN'};
+        self::assertStringContainsString('eg_items_retention_versions_idx', $after);
+        self::assertStringNotContainsString('Seq Scan', $after);
+        $source = DB::selectOne("SELECT prosrc FROM pg_proc WHERE oid='public.eg_regional_price_retention_references_any(bigint[],bigint[])'::regprocedure")->prosrc;
+        self::assertSame(1, preg_match('/EXECUTE format\(\x27(WITH price_scope.*?)\x27,document_projection,evidence.table_name,candidate_filter,evidence.table_name,version_candidates,version_filter,projection\)/s', $source, $matches));
+        $template = str_replace(['%I', "''"], ['%s', "'"], $matches[1]);
+        $documents = implode(',', array_map(static fn (string $column): string => 't.'.$column, $columns));
+        $candidates = implode(' OR ', array_map(static fn (string $column): string => 'public.eg_regional_price_retention_json_may_reference(t.'.$column.'::jsonb)', $columns));
+        $versionFilter = str_replace("ARRAY['999']::text[]", 'ARRAY(SELECT id::text FROM unnest($1::bigint[]) id)', implode(' OR ', $filters));
+        $projection = implode(',', array_map(static fn (string $column): string => '(t.'.$column.'::jsonb,false)', $columns));
+        $branch = sprintf($template, $documents, 'estimate_items', $candidates, 'estimate_items', implode(' OR ', $predicates), $versionFilter, $projection);
+        $branch = str_replace(['$1', '$2'], ['ARRAY[999]::bigint[]', 'ARRAY[]::bigint[]'], $branch);
+        $plan = json_decode(DB::selectOne('EXPLAIN (ANALYZE, FORMAT JSON) '.$branch)->{'QUERY PLAN'}, true, flags: JSON_THROW_ON_ERROR)[0]['Plan'];
+        $indexLoops = 0;
+        $parserLoops = 0;
+        $walk = static function (array $node) use (&$walk, &$indexLoops, &$parserLoops): void {
+            if (($node['Index Name'] ?? null) === 'eg_items_retention_versions_idx') {
+                $indexLoops += $node['Actual Loops'];
+            }
+            if (($node['Function Name'] ?? null) === 'eg_regional_price_retention_json_references') {
+                $parserLoops += $node['Actual Loops'];
+            }
+            foreach ($node['Plans'] ?? [] as $child) {
+                $walk($child);
+            }
+        };
+        $walk($plan);
+        self::assertGreaterThan(0, $indexLoops);
+        self::assertSame(0, $parserLoops);
+
+    }
+
+    public function test_version_reference_migration_is_idempotent_and_rollback_retains_protection(): void
+    {
+        $migration = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php');
+        $migration->up();
+        DB::table('estimate_items')->insert(['id' => 7, 'metadata' => '{"regional_price_version_id":1}']);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_referenced(1) AS referenced')->referenced);
+        $migration->down();
+        foreach (['eg_items_retention_versions_idx', 'eg_packages_retention_versions_idx', 'eg_estimates_retention_versions_idx'] as $index) {
+            self::assertNull(DB::selectOne('SELECT to_regclass(?) AS index', ['public.'.$index])->index);
+        }
+        self::assertNull(DB::selectOne("SELECT to_regprocedure('public.eg_regional_price_retention_json_version_ids(jsonb,boolean)') AS helper")->helper);
+        self::assertTrue(DB::selectOne('SELECT public.eg_regional_price_retention_referenced(1) AS referenced')->referenced);
         $migration->up();
     }
 
