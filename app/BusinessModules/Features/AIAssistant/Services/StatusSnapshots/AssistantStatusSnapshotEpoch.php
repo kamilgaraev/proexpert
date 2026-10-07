@@ -141,9 +141,9 @@ final class AssistantStatusSnapshotEpoch
 WITH RECURSIVE relations AS (
     SELECT c.oid, c.relname, c.relkind,
         concat_ws(':', c.oid, c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity,
-            (SELECT jsonb_agg(jsonb_build_array(a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attisdropped, a.attgenerated, a.attidentity, a.attcollation) ORDER BY a.attnum)::text FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0),
+            (SELECT array_agg(ROW(a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attisdropped, a.attgenerated, a.attidentity, a.attcollation) ORDER BY a.attnum)::text FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0),
             CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) ELSE '' END, pg_get_expr(c.relpartbound, c.oid),
-            (SELECT jsonb_agg(jsonb_build_array(p.polname, p.polcmd, p.polpermissive, p.polroles, pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)) ORDER BY p.oid)::text FROM pg_policy p WHERE p.polrelid = c.oid)) AS definition
+            (SELECT array_agg(ROW(p.polname, p.polcmd, p.polpermissive, p.polroles, pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)) ORDER BY p.oid)::text FROM pg_policy p WHERE p.polrelid = c.oid)) AS definition
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') AND c.relname NOT IN (__EXCLUDED__)
 ), roots AS (SELECT oid FROM relations WHERE __ROOTS__), dependency_edges AS (
