@@ -110,7 +110,8 @@ final class PublicCoreTestApiTest extends TestCase
     public static function forbiddenFields(): array
     {
         return array_map(static fn (string $field): array => [$field],
-            ['message', 'context', 'conversation_id', 'history', 'page', 'attachment_ids', 'uploads', 'actions', 'organization_id', 'unknown']);
+            ['message', 'context', 'conversation_id', 'history', 'page', 'attachment_ids', 'uploads', 'actions', 'organization_id', 'unknown',
+                'operationRef', 'viewer_ticket_ref', 'process_ref', 'original_expires_at', 'native_proof', 'normal_command', 'normal_source_port']);
     }
 
     public function testReadinessAndPollingRejectRawQueryInput(): void

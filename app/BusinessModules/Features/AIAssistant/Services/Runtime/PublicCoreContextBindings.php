@@ -16,6 +16,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantToolResultAd
 use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use LogicException;
@@ -25,8 +27,162 @@ final readonly class PublicCoreContextBindings
     private function __construct(private string $sourceChannelRef, private string $sourcePeerRole,
         private Closure $sourceCompletionReader, private object $sourceSequence, private ?object $sourcePublicationState = null,
         private ?AuthenticatedPublicCoreChannel $nativeChannel = null, private ?string $nativeIdentityFile = null,
-        private ?string $nativeIdentityDigest = null)
+        private ?string $nativeIdentityDigest = null, private ?object $normalState = null)
     {
+    }
+
+    public static function sourceNormalAppPort(AuthenticatedPublicCoreChannel $channel, string $identityFile): self
+    {
+        static $channels;
+        $channels ??= new \WeakMap();
+        if (isset($channels[$channel])) { throw new LogicException('receipt_changed'); }
+        $identity = self::appProcessorIdentity($identityFile, $channel);
+        $normal = (object) ['active' => false, 'phase' => 'IDLE', 'violated' => false, 'lastSequence' => null, 'used' => []];
+        $channels[$channel] = $normal;
+        return new self($channel->channelRef(), 'Processor', static fn (): null => null,
+            (object) ['next' => null, 'bootstrap' => null, 'replied' => true], null, $channel, $identityFile, $identity['digest'],
+            $normal);
+    }
+
+    public function callNormalSource(string $command, array $input, int $rpcExpiresAt,
+        PublicCoreBackendAuthorityFence $viewerSource, ?int $requestOriginalExpiresAt = null): array
+    {
+        if ($this->normalState === null || $this->nativeChannel === null) { throw new LogicException('receipt_unavailable'); }
+        if ($this->normalState->active) {
+            $this->normalState->violated = true;
+            throw new LogicException('receipt_changed');
+        }
+        $this->assertNativeIdentity();
+        self::normalInput($command, $input);
+        if ($rpcExpiresAt <= time() || $rpcExpiresAt > $this->nativeChannel->deadlineExpiresAt()
+            || ($requestOriginalExpiresAt !== null && $rpcExpiresAt > $requestOriginalExpiresAt)
+            || (in_array($command, ['execute_owned', 'lookup_owned'], true) && $requestOriginalExpiresAt === null)
+            || count($this->normalState->used) >= 1024) { throw new LogicException('expired'); }
+        $operation = 'ref_'.bin2hex(random_bytes(16));
+        $requestRef = in_array($command, ['readiness', 'open_or_resume'], true) ? $operation : $input['request_ref'];
+        $peer = $this->nativeChannel->peer();
+        $this->normalState->used[$operation] = true;
+        $this->normalState->active = true;
+        $this->normalState->phase = 'NORMAL_RUNNING';
+        $this->normalState->violated = false;
+        try {
+            $this->nativeChannel->send($command, $requestRef, $operation,
+                ['schemaVersion' => 'public-core-processor-operation/1-proposal', 'operationRef' => $operation, 'input' => $input], $rpcExpiresAt);
+            while (true) {
+                $frame = $this->nativeChannel->receive();
+                if ($this->normalState->phase !== 'NORMAL_RUNNING' || $this->normalState->violated || $this->nativeChannel->peer() !== $peer || $rpcExpiresAt <= time()
+                    || $frame['channelRef'] !== $this->sourceChannelRef || $frame['expiresAt'] !== $rpcExpiresAt
+                    || ($this->normalState->lastSequence !== null && $frame['sequence'] !== $this->normalState->lastSequence + 1)) {
+                    throw new LogicException('receipt_changed');
+                }
+                $this->normalState->lastSequence = $frame['sequence'];
+                $this->assertNativeIdentity();
+                if ($frame['command'] === 'check_binding') {
+                    $check = $frame['payload'];
+                    if ($command === 'readiness' || $frame['requestRef'] !== null || $frame['attemptRef'] !== null
+                        || !GatewayModelRequest::hasExactKeys($check, ['schemaVersion', 'viewerTicketRef'])
+                        || $check['schemaVersion'] !== 'public-core-app-viewer-ticket-check/1'
+                        || $check['viewerTicketRef'] !== $input['viewer_ticket_ref']) { throw new LogicException('authorization_changed'); }
+                    $this->normalState->phase = 'VIEWER_CHECK';
+                    try { $binding = $viewerSource->viewerTicketBinding($check, $rpcExpiresAt); }
+                    catch (\Throwable $failure) {
+                        $binding = ['schemaVersion' => 'public-core-app-viewer-ticket-denial/1',
+                            'viewerTicketRef' => $check['viewerTicketRef'],
+                            'reasonCode' => $failure->getMessage() === 'expired' ? 'expired' : 'authorization_changed'];
+                    }
+                    if ($this->normalState->violated || $rpcExpiresAt <= time()) { throw new LogicException('receipt_changed'); }
+                    $this->assertNativeIdentity();
+                    $this->nativeChannel->send('binding', null, null, $binding, $rpcExpiresAt);
+                    $this->normalState->phase = 'NORMAL_RUNNING';
+                    continue;
+                }
+                if ($frame['command'] !== 'result' || $frame['requestRef'] !== $requestRef || $frame['attemptRef'] !== $operation
+                    || !GatewayModelRequest::hasExactKeys($frame['payload'], ['schemaVersion', 'operationRef', 'output'])
+                    || $frame['payload']['schemaVersion'] !== 'public-core-processor-operation-result/1-proposal'
+                    || $frame['payload']['operationRef'] !== $operation || !is_array($frame['payload']['output'])) {
+                    throw new LogicException('receipt_changed');
+                }
+                return self::normalOutput($command, $input, $frame['payload']['output'], $rpcExpiresAt, $requestOriginalExpiresAt);
+            }
+        } catch (\Throwable $failure) {
+            $this->nativeChannel->close();
+            throw $failure;
+        } finally {
+            $this->normalState->active = false;
+            $this->normalState->phase = 'IDLE';
+        }
+    }
+
+    private static function normalOwnedRef(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/^ref_[a-f0-9]{32}$/D', $value) === 1;
+    }
+
+    private static function normalInput(string $command, array $input): void
+    {
+        if ($command === 'readiness' && $input === []) { return; }
+        if (!in_array($command, ['open_or_resume', 'execute_owned', 'lookup_owned'], true)
+            || !is_string($input['viewer_ticket_ref'] ?? null)
+            || preg_match('/^viewer_[a-f0-9]{48}$/D', $input['viewer_ticket_ref']) !== 1) {
+            throw new LogicException('authorization_changed');
+        }
+        if ($command !== 'open_or_resume') {
+            if (!GatewayModelRequest::hasExactKeys($input, ['viewer_ticket_ref', 'request_ref'])
+                || !self::normalOwnedRef($input['request_ref'])) { throw new LogicException('receipt_changed'); }
+            return;
+        }
+        if (!GatewayModelRequest::hasExactKeys($input, ['viewer_ticket_ref', 'fixture_id', 'fixture_version', 'input_id', 'request_id', 'public_session_ref'])
+            || !is_string($input['request_id']) || preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D', $input['request_id']) !== 1
+            || ($input['public_session_ref'] !== null && !self::normalOwnedRef($input['public_session_ref']))) { throw new LogicException('receipt_changed'); }
+        foreach (['fixture_id', 'fixture_version', 'input_id'] as $key) {
+            if (!is_string($input[$key]) || strlen($input[$key]) > 128 || preg_match('~^[A-Za-z0-9._/-]+$~D', $input[$key]) !== 1) {
+                throw new LogicException('source_unavailable');
+            }
+        }
+        if (RegisteredPublicFixtureRegistry::compiled()->resolve($input['fixture_id'], $input['fixture_version'], $input['input_id']) === null) {
+            throw new LogicException('source_unavailable');
+        }
+    }
+
+    private static function normalOutput(string $command, array $input, array $output, int $rpcExpiresAt, ?int $originalExpiresAt): array
+    {
+        if (($output['status'] ?? null) === 'blocked') {
+            $keys = array_key_exists('request_ref', $output) ? ['status', 'reasonCode', 'transportAllowed', 'request_ref'] : ['status', 'reasonCode', 'transportAllowed'];
+            if (!GatewayModelRequest::hasExactKeys($output, $keys) || $output['transportAllowed'] !== false
+                || !in_array($output['reasonCode'], GatewayModelResponse::REASON_CODES, true) || $output['reasonCode'] === 'none'
+                || (isset($output['request_ref']) && (!in_array($command, ['execute_owned', 'lookup_owned'], true)
+                    || $output['request_ref'] !== $input['request_ref']))) { throw new LogicException('receipt_changed'); }
+            return $output;
+        }
+        if ($command === 'readiness') {
+            $keys = ['schema_version', 'mode', 'data_scope', 'status', 'reason_code', 'source_contract_version', 'actual_model', 'model_enabled',
+                'capabilities', 'free_input_enabled', 'uploads_enabled', 'actions_enabled', 'private_ready', 'fixtures'];
+            if (!GatewayModelRequest::hasExactKeys($output, $keys) || $output['schema_version'] !== 'public-core-runtime-api/1'
+                || $output['mode'] !== 'public_core_test' || $output['data_scope'] !== 'registered_public_fixture'
+                || $output['status'] !== 'unavailable' || $output['reason_code'] !== 'runtime_not_activated'
+                || $output['source_contract_version'] !== 'public-core-authority/0.7-candidate'
+                || $output['actual_model'] !== null || $output['model_enabled'] !== false
+                || !GatewayModelRequest::hasExactKeys($output['capabilities'], ['text', 'tools', 'vision'])
+                || $output['capabilities']['text'] !== false || $output['capabilities']['tools'] !== false || $output['capabilities']['vision'] !== false
+                || $output['free_input_enabled'] !== false || $output['uploads_enabled'] !== false || $output['actions_enabled'] !== false
+                || $output['private_ready'] !== false || !is_array($output['fixtures'])
+                || GatewayModelRequest::canonicalJson($output['fixtures']) !== GatewayModelRequest::canonicalJson(RegisteredPublicFixtureRegistry::compiled()->catalog())) {
+                throw new LogicException('source_unavailable');
+            }
+            return $output;
+        }
+        if ($command === 'open_or_resume') {
+            if (!GatewayModelRequest::hasExactKeys($output, ['status', 'reasonCode', 'request_ref', 'public_session_ref', 'transportAllowed', 'process_ref', 'original_expires_at'])
+                || $output['status'] !== 'accepted' || $output['reasonCode'] !== 'none' || $output['transportAllowed'] !== false
+                || !self::normalOwnedRef($output['request_ref']) || !self::normalOwnedRef($output['public_session_ref']) || !self::normalOwnedRef($output['process_ref'])
+                || !is_int($output['original_expires_at']) || $output['original_expires_at'] < $rpcExpiresAt
+                || ($originalExpiresAt !== null && $output['original_expires_at'] !== $originalExpiresAt)) { throw new LogicException('receipt_changed'); }
+            return $output;
+        }
+        if ($command !== 'lookup_owned' || !GatewayModelRequest::hasExactKeys($output, ['status', 'reasonCode', 'request_ref', 'transportAllowed'])
+            || $output['status'] !== 'accepted' || $output['reasonCode'] !== 'none' || $output['transportAllowed'] !== false
+            || $output['request_ref'] !== $input['request_ref']) { throw new LogicException('receipt_changed'); }
+        return $output;
     }
 
     public static function authenticatedAppControlPort(AuthenticatedPublicCoreChannel $channel, string $identityFile): self
@@ -40,7 +196,7 @@ final readonly class PublicCoreContextBindings
     public function receiveAppBootstrap(): array
     {
         $this->assertNativeIdentity();
-        if ($this->nativeChannel === null || $this->sourceSequence->bootstrap !== null || $this->sourceSequence->replied) {
+        if ($this->normalState !== null || $this->nativeChannel === null || $this->sourceSequence->bootstrap !== null || $this->sourceSequence->replied) {
             throw new LogicException('authorization_changed');
         }
         $frame = $this->nativeChannel->receive();

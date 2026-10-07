@@ -42,6 +42,13 @@ class PublicCoreAssistantRuntime
         $port->replyAppBootstrap($binding);
     }
 
+    public function callNormalSource(PublicCoreContextBindings $port, string $command, array $input,
+        int $rpcExpiresAt, ?int $requestOriginalExpiresAt = null): array
+    {
+        if ($this->sourceFence === null) { throw new LogicException('runtime_not_activated'); }
+        return $port->callNormalSource($command, $input, $rpcExpiresAt, $this->sourceFence, $requestOriginalExpiresAt);
+    }
+
     public function openSourceDelivery(array $context): string
     {
         $keys = ['viewerTicketRef', 'requestRef', 'sessionRef', 'channelRef', 'sequence', 'genuineExpiresAt'];

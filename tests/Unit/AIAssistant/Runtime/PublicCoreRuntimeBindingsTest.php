@@ -24,6 +24,8 @@ use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
 use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
 use App\Services\Privacy\PublicCore\PublicCoreProcessor;
 use App\Services\Privacy\PublicCore\PublicCoreRuntimeReadiness;
+use App\Services\Privacy\PublicCore\PublicCoreReceiptStore;
+use App\Services\Privacy\PublicCore\PublicCoreSessionAuthority;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -264,6 +266,238 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
             'extra-identity', 'world-readable', 'missing-identity', 'identity-mutation', 'wrong-ticket', 'wrong-phase'];
 
         return array_combine($cases, array_map(static fn (string $case): array => [$case], $cases));
+    }
+
+    #[DataProvider('normalSourceConsumerCases')]
+    public function testNormalSourceConsumerUsesImportedProducerAndFreshActualChannelFrames(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork')) {
+            self::markTestSkipped('Normal caller source tests require Linux SCM; SourceSim owner is not actual authority.');
+        }
+        $directory = sys_get_temp_dir().'/assist-normal-'.bin2hex(random_bytes(5));
+        mkdir($directory, 0700);
+        $path = $directory.'/control.sock';
+        $identityFile = $directory.'/identity.json';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parent = getmypid();
+        $now = time();
+        $ticket = 'viewer_'.str_repeat('a', 48);
+        $peerProcess = pcntl_fork();
+        if ($peerProcess === 0) {
+            socket_close($listener);
+            $channel = null;
+            try {
+                $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
+                $registry = RegisteredPublicFixtureRegistry::compiled();
+                $store = new PublicCoreReceiptStore($directory.'/producer', str_repeat('s', 32));
+                $processorCell = new class { public ?PublicCoreProcessor $processor = null; };
+                $sessions = new PublicCoreSessionAuthority($registry, $store,
+                    static function (array $binding) use ($processorCell): ?array {
+                        return $processorCell->processor instanceof PublicCoreProcessor
+                            ? $processorCell->processor->currentNormalViewer($binding) : null;
+                    }, static fn (): int => $now);
+                $peer = $channel->peer();
+                $processor = new PublicCoreProcessor($registry, $store, $sessions, new PublicCoreRuntimeReadiness($registry),
+                    static fn (array $actual): ?array => $actual === $peer
+                        ? ['role' => 'app', 'identityRef' => 'ref_source_only_app_role', 'kernelPeer' => $actual] : null,
+                    static fn (string $reference): array => ['viewerTicketRef' => $reference],
+                    static function () use ($directory): array { file_put_contents($directory.'/factory-called', '1'); return []; });
+                $processorCell->processor = $processor;
+                $processor->serveAppChannel($channel);
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($directory.'/peer-error', $failure->getMessage());
+                exit(91);
+            } finally { $channel?->close(); }
+        }
+        self::assertGreaterThan(0, $peerProcess);
+        $channel = null;
+        $runtime = null;
+        $port = null;
+        $input = null;
+        $checks = 0;
+        $sourceOwner = new class { public bool $revoke = false; };
+        $invocation = new class {
+            public ?PublicCoreAssistantRuntime $runtime = null;
+            public ?PublicCoreContextBindings $port = null;
+            public ?array $input = null;
+            public int $expiry = 0;
+        };
+        $expiry = 0;
+        try {
+            $identity = ['schemaVersion' => 'public-core-app-processor-identity/1', 'localRole' => 'App', 'peerRole' => 'Processor',
+                'localIdentityRef' => 'ref_source_only_app_identity', 'peerIdentityRef' => 'ref_source_only_processor_identity',
+                'localKernel' => ['pid' => $parent, 'uid' => $uid, 'gid' => $gid],
+                'peerKernel' => ['pid' => $peerProcess, 'uid' => $uid, 'gid' => $gid]];
+            file_put_contents($identityFile, GatewayModelRequest::canonicalJson($identity));
+            chmod($identityFile, 0600);
+            $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $peerProcess], 30000);
+            $port = PublicCoreContextBindings::sourceNormalAppPort($channel, $identityFile);
+            $invocation->port = $port;
+            try { PublicCoreContextBindings::sourceNormalAppPort($channel, $identityFile); self::fail('Same actual Channel cannot have concurrent source pumps'); }
+            catch (LogicException $failure) { self::assertSame('receipt_changed', $failure->getMessage()); }
+            $fence = Mockery::mock(PublicCoreBackendAuthorityFence::class);
+            $fence->shouldReceive('viewerTicketBinding')->andReturnUsing(function (array $check, int $wireExpiry) use (&$checks,
+                $invocation, $sourceOwner, $ticket, $mode): array {
+                $checks++;
+                self::assertSame($ticket, $check['viewerTicketRef']);
+                self::assertSame($invocation->expiry, $wireExpiry);
+                if ($mode === 'reentry' && $invocation->runtime !== null && $invocation->input !== null) {
+                    try { $invocation->runtime->callNormalSource($invocation->port, 'open_or_resume', $invocation->input, $invocation->expiry); }
+                    catch (LogicException) {}
+                }
+                if ($mode === 'revoked' || $sourceOwner->revoke) { throw new LogicException('authorization_changed'); }
+                return ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $ticket,
+                    'currentViewer' => ['authorized' => true, 'viewerRef' => 'real-source-principal', 'organizationRef' => 'real-source-organization',
+                        'authorizationRevision' => 'source-revision-stable', 'policyRevision' => 'source-policy-stable']];
+            });
+            $runtime = new PublicCoreAssistantRuntime($fence);
+            $invocation->runtime = $runtime;
+            $expiry = min(time() + 20, $channel->deadlineExpiresAt());
+            $invocation->expiry = $expiry;
+            $readiness = $runtime->callNormalSource($port, 'readiness', [], $expiry);
+            self::assertSame('unavailable', $readiness['status']);
+            self::assertFalse($readiness['model_enabled']);
+            self::assertSame(0, $checks);
+            $input = ['viewer_ticket_ref' => $ticket, 'fixture_id' => 'material-search-v1', 'fixture_version' => 'public-material/1',
+                'input_id' => 'price-b25', 'request_id' => 'cc5b0d36-5c63-4a8c-bcfa-53c41e43ed0c', 'public_session_ref' => null];
+            $invocation->input = $input;
+            if ($mode === 'reentry') {
+                try { $runtime->callNormalSource($port, 'open_or_resume', $input, $expiry); self::fail('Reentry poisons exact active operation'); }
+                catch (LogicException $failure) { self::assertSame('receipt_changed', $failure->getMessage()); }
+            } else {
+                $opened = $runtime->callNormalSource($port, 'open_or_resume', $input, $expiry);
+                if ($mode === 'revoked') {
+                    self::assertSame('blocked', $opened['status']);
+                    self::assertSame('authorization_changed', $opened['reasonCode']);
+                } else {
+                    self::assertSame('accepted', $opened['status']);
+                    self::assertSame($now + 120, $opened['original_expires_at']);
+                    self::assertGreaterThanOrEqual(4, $checks);
+                    if ($mode === 'later-revoke') {
+                        $sourceOwner->revoke = true;
+                        $lookup = $runtime->callNormalSource($port, 'lookup_owned',
+                            ['viewer_ticket_ref' => $ticket, 'request_ref' => $opened['request_ref']], $expiry, $opened['original_expires_at']);
+                        self::assertSame('blocked', $lookup['status']);
+                        self::assertSame('authorization_changed', $lookup['reasonCode']);
+                    } else {
+                        $replayed = $runtime->callNormalSource($port, 'open_or_resume', $input, $expiry, $opened['original_expires_at']);
+                        self::assertSame($opened, $replayed);
+                        $beforePoll = $checks;
+                        $ownedInput = ['viewer_ticket_ref' => $ticket, 'request_ref' => $opened['request_ref']];
+                        $pending = $runtime->callNormalSource($port, 'lookup_owned', $ownedInput, $expiry, $opened['original_expires_at']);
+                        self::assertSame('accepted', $pending['status']);
+                        self::assertGreaterThan($beforePoll, $checks);
+                        $blocked = $runtime->callNormalSource($port, 'execute_owned', $ownedInput, $expiry, $opened['original_expires_at']);
+                        self::assertSame('blocked', $blocked['status']);
+                        self::assertSame('runtime_not_activated', $blocked['reasonCode']);
+                        self::assertArrayNotHasKey('reply', $blocked);
+                        self::assertArrayNotHasKey('trace', $blocked);
+                        try { $runtime->callNormalSource($port, 'lookup_owned', $ownedInput, $expiry + 1, $expiry); self::fail('Stored original E cannot be refreshed'); }
+                        catch (LogicException $failure) { self::assertSame('expired', $failure->getMessage()); }
+                    }
+                }
+            }
+            self::assertFileDoesNotExist($directory.'/factory-called');
+        } finally {
+            $channel?->close();
+            socket_close($listener);
+            pcntl_waitpid($peerProcess, $status);
+            self::assertTrue(pcntl_wifexited($status));
+            self::assertSame(0, pcntl_wexitstatus($status), is_file($directory.'/peer-error') ? file_get_contents($directory.'/peer-error') : '');
+            foreach (glob($directory.'/producer/*') ?: [] as $file) { unlink($file); }
+            if (is_dir($directory.'/producer')) { rmdir($directory.'/producer'); }
+            foreach (glob($directory.'/*') ?: [] as $file) { unlink($file); }
+            rmdir($directory);
+        }
+    }
+
+    public static function normalSourceConsumerCases(): array
+    {
+        return [['valid'], ['revoked'], ['later-revoke'], ['reentry']];
+    }
+
+    #[DataProvider('normalConsumerMalformedReplies')]
+    public function testNormalSourceConsumerRejectsActualMalformedResultAndForeignPhase(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork')) {
+            self::markTestSkipped('Malformed normal source frames require actual local Linux SCM.');
+        }
+        $directory = sys_get_temp_dir().'/assist-normal-deny-'.bin2hex(random_bytes(5));
+        mkdir($directory, 0700);
+        $socketPath = $directory.'/control.sock';
+        $identityFile = $directory.'/identity.json';
+        $listener = AuthenticatedPublicCoreChannel::listen($socketPath);
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parent = getmypid();
+        $child = pcntl_fork();
+        if ($child === 0) {
+            socket_close($listener);
+            $peer = null;
+            try {
+                $peer = AuthenticatedPublicCoreChannel::connect($socketPath, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 10000);
+                $request = $peer->receive();
+                if ($mode === 'foreign-phase') {
+                    $peer->send('check_binding', null, null, ['schemaVersion' => 'public-core-app-viewer-ticket-check/1',
+                        'viewerTicketRef' => 'viewer_'.str_repeat('a', 48)], $request['expiresAt']);
+                } else {
+                    $output = (new PublicCoreRuntimeReadiness(RegisteredPublicFixtureRegistry::compiled()))->resolve();
+                    $payload = ['schemaVersion' => 'public-core-processor-operation-result/1-proposal',
+                        'operationRef' => $request['payload']['operationRef'], 'output' => $output];
+                    if ($mode === 'schema') { $payload['schemaVersion'] = 'unknown-normal/1'; }
+                    if ($mode === 'operation') { $payload['operationRef'] = 'ref_'.str_repeat('f', 32); }
+                    if ($mode === 'extra') { $payload['raw'] = 'private reply'; }
+                    if ($mode === 'raw-core') { $payload['output'] = ['status' => 'completed', 'reply' => 'private cached reply']; }
+                    if ($mode === 'receipt') { $payload['output'] = ['schemaVersion' => 'public-core-result-publication/1', 'publicationRef' => 'ref_'.str_repeat('e', 32)]; }
+                    if ($mode === 'ready-tag') { $payload['output']['status'] = 'ready'; $payload['output']['model_enabled'] = true; }
+                    $peer->send('result', $mode === 'request' ? 'ref_'.str_repeat('b', 32) : $request['requestRef'],
+                        $mode === 'attempt' ? 'ref_'.str_repeat('c', 32) : $request['attemptRef'], $payload,
+                        $mode === 'expiry' ? $request['expiresAt'] + 1 : $request['expiresAt']);
+                }
+                usleep(10000);
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($directory.'/peer-error', $failure->getMessage());
+                exit(91);
+            } finally { $peer?->close(); }
+        }
+        self::assertGreaterThan(0, $child);
+        $channel = null;
+        try {
+            $identity = ['schemaVersion' => 'public-core-app-processor-identity/1', 'localRole' => 'App', 'peerRole' => 'Processor',
+                'localIdentityRef' => 'ref_source_only_app_identity', 'peerIdentityRef' => 'ref_source_only_processor_identity',
+                'localKernel' => ['pid' => $parent, 'uid' => $uid, 'gid' => $gid],
+                'peerKernel' => ['pid' => $child, 'uid' => $uid, 'gid' => $gid]];
+            file_put_contents($identityFile, GatewayModelRequest::canonicalJson($identity));
+            chmod($identityFile, 0600);
+            $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $child], 10000);
+            $port = PublicCoreContextBindings::sourceNormalAppPort($channel, $identityFile);
+            $fence = Mockery::mock(PublicCoreBackendAuthorityFence::class);
+            $fence->shouldNotReceive('viewerTicketBinding');
+            try {
+                (new PublicCoreAssistantRuntime($fence))->callNormalSource($port, 'readiness', [], time() + 5);
+                self::fail('Only exact normal reply/phase/correlation may complete a source call');
+            } catch (LogicException $failure) {
+                self::assertContains($failure->getMessage(), ['receipt_changed', 'source_unavailable', 'authorization_changed']);
+            }
+        } finally {
+            $channel?->close();
+            socket_close($listener);
+            pcntl_waitpid($child, $status);
+            self::assertTrue(pcntl_wifexited($status));
+            self::assertSame(0, pcntl_wexitstatus($status), is_file($directory.'/peer-error') ? file_get_contents($directory.'/peer-error') : '');
+            foreach (glob($directory.'/*') ?: [] as $file) { unlink($file); }
+            rmdir($directory);
+        }
+    }
+
+    public static function normalConsumerMalformedReplies(): array
+    {
+        return array_map(static fn (string $mode): array => [$mode],
+            ['schema', 'operation', 'extra', 'raw-core', 'receipt', 'ready-tag', 'request', 'attempt', 'expiry', 'foreign-phase']);
     }
 
     public function testProcessorFactoryComposesNativeContextLoopAndMaterialPortsWithoutQualifyingTransport(): void
