@@ -312,7 +312,10 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
             'project.organization:id,name',
             'project.organizations:id,name',
             'projects:id,name', // Для мультипроектных контрактов
-            'agreements:id,contract_id,change_amount' // Для расчета эффективной суммы контракта
+            'agreements:id,contract_id,change_amount', // Для расчета эффективной суммы контракта
+            'stateEvents' => static fn ($events) => $events
+                ->withExists('supersededByEvents')
+                ->orderBy('created_at', 'asc'),
         ]);
 
         // Сортировка

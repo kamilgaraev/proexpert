@@ -27,6 +27,7 @@ final class RecordApiResponseTime
         $metrics = new ApiQueryMetrics($request->isMethod('GET') && $request->is(
             'api/v1/admin/ai-assistant/conversations',
             'api/v1/admin/ai-assistant/rag/status',
+            'api/v1/admin/projects/*/contracts',
         ));
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;
