@@ -335,6 +335,11 @@ final class AssistantDataAccessPolicy
                 if (! ($decisions[$key] ?? false)) { continue; }
                 foreach ($indices as $index) { $neededFinancialReferences[$index] = $financialReferences[$index]; }
             }
+            if ($entities !== [] || $neededFinancialReferences !== []) {
+                $schemaTypes = array_keys($entities);
+                if ($neededFinancialReferences !== []) { $schemaTypes = array_merge($schemaTypes, ['estimate', 'estimate_item', 'estimate_item_resource', 'project']); }
+                $this->schemaMetadata->prefetchForEntities($schemaTypes, $this->currentCheckpoint);
+            }
             if ($neededFinancialReferences !== []) {
                 $this->currentCheckpoint?->__invoke();
                 $financialAuthorization = $this->currentAuthorization();
