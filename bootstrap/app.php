@@ -96,7 +96,6 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // ГРУППА MIDDLEWARE ДЛЯ API
         // ============================================================
         $middleware->api([
-            \App\Http\Middleware\EnsureLegalReadiness::class,
             \App\Http\Middleware\UseJwtCookieForAuthorization::class,
             \App\Http\Middleware\WebInterfaceSecurityMiddleware::class,
             'throttle:api', // Rate limiting

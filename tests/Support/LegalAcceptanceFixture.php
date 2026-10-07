@@ -11,7 +11,6 @@ final class LegalAcceptanceFixture
     public static function enable(): void
     {
         config([
-            'legal.reviewed' => true, 'legal.commercial_enabled' => true, 'legal.analytics_reviewed' => true,
             'legal.provider' => ['name' => 'Тестовый поставщик', 'status' => 'ИП', 'inn' => '000000000000',
                 'registration_number' => '000000000000000', 'address' => 'Тестовый адрес', 'email' => 'legal@example.test',
                 'bank_details' => 'Тестовые реквизиты', 'tax_status' => 'Тестовый режим'],

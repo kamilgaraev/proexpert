@@ -14,9 +14,6 @@ final class AnalyticsConsentService
 
     public function active(array $data): bool
     {
-        if (! $this->documents->manifest()['analytics_ready']) {
-            return false;
-        }
         $visitor = hash_hmac('sha256', $data['visitor_id'], (string) config('app.key'));
         $receipt = LegalAcceptanceEvent::query()->whereKey($data['receipt_id'])->where('source', 'analytics_choice')
             ->where('evidence->details->visitor_fingerprint', $visitor)->exists();
@@ -35,10 +32,7 @@ final class AnalyticsConsentService
     {
         $visitor = hash_hmac('sha256', $data['visitor_id'], (string) config('app.key'));
         if ($data['analytics']) {
-            $this->documents->assertAccepted($data, ['cookies'], false);
-            if (! $this->documents->manifest()['analytics_ready']) {
-                throw ValidationException::withMessages(['analytics' => trans_message('legal.unavailable')]);
-            }
+            $this->documents->assertAccepted($data, ['cookies']);
         } else {
             $previous = LegalAcceptanceEvent::query()->find($data['receipt_id'] ?? '');
             $previousEvidence = $previous?->getAttribute('evidence');

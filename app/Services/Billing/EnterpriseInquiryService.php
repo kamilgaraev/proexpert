@@ -21,7 +21,7 @@ final readonly class EnterpriseInquiryService
         if (! filter_var($legalInput['consent_to_personal_data'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
             throw \Illuminate\Validation\ValidationException::withMessages(['consent_to_personal_data' => trans_message('public_contact.validation.consent_required')]);
         }
-        app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($legalInput, ['contactConsent'], false);
+        app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($legalInput, ['contactConsent']);
         if (! $user->organizations()->whereKey($organizationId)->exists()) {
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('legal.authority'));
         }

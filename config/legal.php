@@ -4,10 +4,6 @@ declare(strict_types=1);
 
 return [
     'version' => '2026-10-06.1',
-    'reviewed' => (bool) env('LEGAL_REVIEWED', false),
-    'commercial_enabled' => (bool) env('LEGAL_COMMERCIAL_ENABLED', false),
-    'analytics_reviewed' => (bool) env('LEGAL_ANALYTICS_REVIEWED', false),
-    'telegram_contact_notifications' => (bool) env('LEGAL_TELEGRAM_CONTACT_NOTIFICATIONS', false),
     'provider' => [
         'name' => env('LEGAL_PROVIDER_NAME', ''),
         'status' => env('LEGAL_PROVIDER_STATUS', ''),

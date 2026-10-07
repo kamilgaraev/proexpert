@@ -27,28 +27,27 @@ final class LegalAcceptanceTest extends TestCase
         (require database_path('migrations/2026_10_06_190000_create_legal_acceptance_events_table.php'))->up();
     }
 
-    public function test_unidentified_provider_cannot_collect_new_acceptances(): void
+    public function test_empty_requisites_do_not_block_forms_or_documents(): void
     {
         $this->getJson('/api/public/legal')->assertOk()
-            ->assertJsonPath('data.privacy_ready', false)->assertJsonPath('data.commercial_ready', false)
-            ->assertJsonPath('data.analytics_ready', false)->assertJsonPath('data.provider.name', '');
-        foreach (['/api/v1/landing/auth/register', '/api/public/contact'] as $path) {
-            $this->postJson($path, [])->assertStatus(503);
-        }
-        $this->postJson('/api/v1/landing/billing/commercial/checkout', [])->assertUnauthorized();
+            ->assertJsonPath('data.privacy_ready', true)->assertJsonPath('data.commercial_ready', true)
+            ->assertJsonPath('data.analytics_ready', true)->assertJsonPath('data.provider.name', '');
+        $this->withHeaders(['Origin' => (string) config('web_auth.origins.lk.0'), 'Idempotency-Key' => 'empty-requisites-test'])
+            ->postJson('/api/v1/landing/auth/register', [])->assertUnprocessable();
+        $this->withHeaders(['Origin' => (string) config('web_auth.origins.public.0')])
+            ->postJson('/api/public/contact', [])->assertUnprocessable();
+        $this->withHeaders(['Origin' => (string) config('web_auth.origins.lk.0')])
+            ->postJson('/api/v1/landing/billing/commercial/checkout', [])->assertUnauthorized();
         $this->assertDatabaseCount('legal_acceptance_events', 0);
     }
 
-    public function test_readiness_needs_complete_provider_and_disclosed_processors(): void
+    public function test_acceptance_is_available_without_approval_flags_or_processor_registry(): void
     {
-        LegalAcceptanceFixture::enable();
         $service = app(LegalDocumentService::class);
-        self::assertTrue($service->commercialReady());
-        config(['legal.provider.name' => '']);
-        self::assertFalse($service->privacyReady());
-        LegalAcceptanceFixture::enable();
-        config(['legal.subprocessors' => []]);
-        self::assertFalse($service->privacyReady());
+        config(['legal.reviewed' => false, 'legal.commercial_enabled' => false, 'legal.analytics_reviewed' => false, 'legal.subprocessors' => []]);
+        $service->assertAccepted(LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']), ['offer', 'processing', 'privacy']);
+        self::assertSame('', $service->snapshot('offer')['provider']['name']);
+        self::assertTrue($service->manifest()['commercial_ready']);
     }
 
     public function test_provider_change_alters_hash_and_rendered_snapshot(): void
@@ -114,12 +113,13 @@ final class LegalAcceptanceTest extends TestCase
         self::assertSame(1, LegalAcceptanceEvent::query()->where('action', 'revoked')->count());
     }
 
-    public function test_analytics_rejects_valid_hash_while_launch_is_not_ready(): void
+    public function test_analytics_can_be_enabled_with_empty_requisites_after_explicit_consent(): void
     {
         $this->postJson('/api/public/legal/analytics-consent', [
             ...LegalAcceptanceFixture::payload(['cookies']), 'analytics' => true,
             'visitor_id' => (string) Str::uuid(), 'event_id' => (string) Str::uuid(),
-        ])->assertUnprocessable();
-        $this->assertDatabaseCount('legal_acceptance_events', 0);
+        ])->assertCreated();
+        $this->assertDatabaseCount('legal_acceptance_events', 1);
+        self::assertSame('', LegalAcceptanceEvent::query()->firstOrFail()->snapshot['provider']['name']);
     }
 }

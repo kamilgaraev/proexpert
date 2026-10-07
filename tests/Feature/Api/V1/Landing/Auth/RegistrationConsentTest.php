@@ -10,12 +10,6 @@ use Tests\TestCase;
 
 final class RegistrationConsentTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-        \Tests\Support\LegalAcceptanceFixture::enable();
-    }
-
     use RefreshDatabase;
 
     public function test_registration_requires_both_consents(): void
@@ -38,7 +32,7 @@ final class RegistrationConsentTest extends TestCase
             ->assertJsonValidationErrors('terms_accepted');
     }
 
-    public function test_registration_records_server_versioned_consent_evidence_atomically(): void
+    public function test_registration_with_empty_requisites_records_versioned_evidence_atomically(): void
     {
         Notification::fake();
         config([
@@ -67,6 +61,8 @@ final class RegistrationConsentTest extends TestCase
         ]);
         $this->assertDatabaseCount('legal_acceptance_events', 3);
         $this->assertDatabaseCount('user_consents', 0);
+        $snapshot = $this->app['db']->table('legal_acceptance_events')->where('document_key', 'offer')->value('snapshot');
+        self::assertSame('', json_decode($snapshot, true, 512, JSON_THROW_ON_ERROR)['provider']['name']);
     }
 
     public function test_consent_persistence_failure_rolls_back_user_organization_and_attempt(): void

@@ -22,7 +22,7 @@ class ContactFormService
         if (! filter_var($payload['consent_to_personal_data'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
             throw \Illuminate\Validation\ValidationException::withMessages(['consent_to_personal_data' => trans_message('public_contact.validation.consent_required')]);
         }
-        app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($payload, ['contactConsent'], false);
+        app(\App\Services\Legal\LegalDocumentService::class)->assertAccepted($payload, ['contactConsent']);
         $payload['consent_version'] = config('legal.version');
         $analyticsAllowed = ($payload['analytics_consent'] ?? false)
             && isset($payload['analytics_visitor_id'], $payload['analytics_receipt_id'])
