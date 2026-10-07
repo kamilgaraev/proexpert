@@ -19,6 +19,8 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     private bool $createdLegalEpochFixture = false;
 
+    private bool $renamedLegalEpochTable = false;
+
     public function beginDatabaseTransaction(): void
     {
         self::assertSame('pgsql', DB::connection()->getDriverName());
@@ -68,6 +70,9 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
             if ($this->createdLegalEpochFixture) {
                 DB::statement('DROP TABLE public.legal_acceptance_events');
                 DB::statement('DROP FUNCTION IF EXISTS public.assistant_snapshot_legal_guard_test()');
+            }
+            if ($this->renamedLegalEpochTable) {
+                DB::statement('ALTER TABLE public.assistant_snapshot_legal_original_test RENAME TO legal_acceptance_events');
             }
             if ($this->restoreEpoch) {
                 $this->migration->up();
@@ -277,6 +282,39 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertTrue($this->capture()['cacheable']);
     }
 
+    public function test_schema_fingerprint_preserves_escaped_identifiers_and_policy_changes(): void
+    {
+        $table = 'public.assistant_snapshot_epoch_unrelated_test';
+        $names = ['codec,(a)', 'codec"a', 'codec\\a', 'codec{a}', 'codec NULL', 'кодек'];
+        $quote = static fn (string $name): string => '"'.str_replace('"', '""', $name).'"';
+        DB::statement('ALTER TABLE '.$table.' ADD COLUMN '.$quote($names[0]).' text');
+        foreach (array_slice($names, 1) as $index => $name) {
+            $state = $this->capture();
+            self::assertTrue($state['cacheable']);
+            self::assertTrue($this->valid($state));
+            DB::statement('ALTER TABLE '.$table.' RENAME COLUMN '.$quote($names[$index]).' TO '.$quote($name));
+            self::assertFalse($this->valid($state));
+        }
+        DB::statement('CREATE POLICY "codec,(policy)" ON '.$table.' USING (payload IS NULL)');
+        $state = $this->capture();
+        self::assertTrue($state['cacheable']);
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' USING (payload IS NOT NULL)');
+        self::assertFalse($this->valid($state));
+        $state = $this->capture();
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' TO CURRENT_USER');
+        self::assertFalse($this->valid($state));
+        $state = $this->capture();
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' WITH CHECK (payload IS NULL)');
+        self::assertFalse($this->valid($state));
+        $state = $this->capture();
+        self::assertTrue($this->valid($state));
+        DB::statement('ALTER POLICY "codec,(policy)" ON '.$table.' RENAME TO "codec""policy"');
+        self::assertFalse($this->valid($state));
+    }
+
     public function test_semantic_session_settings_invalidate_while_budget_settings_preserve_proof(): void
     {
         $state = $this->capture();
@@ -305,6 +343,7 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     public function test_late_legal_table_guard_restores_proof_and_preserves_existing_write_protection(): void
     {
+        $this->isolateOptionalLegalTable();
         self::assertNull(DB::selectOne("SELECT to_regclass('public.legal_acceptance_events') AS relation")->relation);
         DB::statement('CREATE TABLE public.legal_acceptance_events (id bigint PRIMARY KEY)');
         $this->createdLegalEpochFixture = true;
@@ -339,6 +378,7 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     public function test_legal_epoch_repair_tolerates_absent_optional_table_and_epoch(): void
     {
+        $this->isolateOptionalLegalTable();
         self::assertNull(DB::selectOne("SELECT to_regclass('public.legal_acceptance_events') AS relation")->relation);
         $repair = require base_path('database/migrations/2026_10_07_021000_track_legal_acceptance_events_for_assistant_snapshots.php');
         $repair->up();
@@ -352,6 +392,14 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertSame([1], DB::table('legal_acceptance_events')->pluck('id')->all());
         $this->migration->up();
         self::assertTrue($this->capture()['cacheable']);
+    }
+
+    private function isolateOptionalLegalTable(): void
+    {
+        if (DB::selectOne("SELECT to_regclass('public.legal_acceptance_events') AS relation")->relation !== null) {
+            DB::statement('ALTER TABLE public.legal_acceptance_events RENAME TO assistant_snapshot_legal_original_test');
+            $this->renamedLegalEpochTable = true;
+        }
     }
 
     private function capture(): array

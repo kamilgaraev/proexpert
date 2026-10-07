@@ -24,7 +24,10 @@ final class RecordApiResponseTime
 
         $startedAt = hrtime(true);
         $previousMetrics = $request->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE);
-        $metrics = new ApiQueryMetrics($request->isMethod('GET') && $request->is('api/v1/admin/ai-assistant/conversations'));
+        $metrics = new ApiQueryMetrics($request->isMethod('GET') && $request->is(
+            'api/v1/admin/ai-assistant/conversations',
+            'api/v1/admin/ai-assistant/rag/status',
+        ));
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;
         $statusCode = null;

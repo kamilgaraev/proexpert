@@ -80,9 +80,11 @@ final class RecordApiResponseTimeTest extends TestCase
         self::assertStringNotContainsString('secret_table', json_encode($summary, JSON_THROW_ON_ERROR));
     }
 
-    public function test_source_diagnostics_are_limited_to_the_conversation_list_get(): void
+    public function test_source_diagnostics_are_limited_to_selected_assistant_get_routes(): void
     {
         foreach ([['GET', '/api/v1/admin/ai-assistant/conversations', true], ['POST', '/api/v1/admin/ai-assistant/conversations', false],
+            ['GET', '/api/v1/admin/ai-assistant/rag/status', true], ['POST', '/api/v1/admin/ai-assistant/rag/status', false],
+            ['GET', '/api/v1/admin/ai-assistant/rag/status/detail', false],
             ['GET', '/api/v1/admin/ai-assistant/conversations/1', false], ['GET', '/api/v1/mobile/ai-assistant/conversations', false]] as [$method, $path, $expected]) {
             Facade::clearResolvedInstances();
             $captured = null;
