@@ -11,10 +11,8 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\SupplementaryAgreement;
 use App\Repositories\ContractRepository;
-use App\Services\Contract\ContractStateEventService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Mockery;
 use Tests\TestCase;
 
 final class ContractListEventQueryBudgetTest extends TestCase
@@ -35,10 +33,6 @@ final class ContractListEventQueryBudgetTest extends TestCase
             $this->event($eventContract, ContractStateEventTypeEnum::PAYMENT_CREATED, 100);
         }
         $this->event($foreign, ContractStateEventTypeEnum::CREATED, 9999);
-        $service = Mockery::mock(ContractStateEventService::class);
-        $service->shouldReceive('getCurrentState')->andReturn(['total_amount' => 1300]);
-        $service->shouldNotReceive('getTimeline');
-        $this->app->instance(ContractStateEventService::class, $service);
         $repository = app(ContractRepository::class);
         $filters = ['project_id' => $project->id];
         DB::enableQueryLog();
