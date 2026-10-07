@@ -33,7 +33,7 @@ class PurchaseOrderResource extends JsonResource
         $paymentSummary = app(PurchaseOrderPaymentGateService::class)
             ->summary($this->resource);
         $chainSummary = $this->procurementChain ?? app(ProcurementChainService::class)
-            ->forPurchaseOrder($this->resource, $request->user());
+            ->forPurchaseOrder($this->resource, $request->user(), includePermissions: false);
 
         return [
             'id' => $this->id,
