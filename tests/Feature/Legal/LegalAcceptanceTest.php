@@ -30,7 +30,7 @@ final class LegalAcceptanceTest extends TestCase
     public function test_empty_requisites_do_not_block_forms_or_documents(): void
     {
         $this->getJson('/api/public/legal')->assertOk()
-            ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-07.json')))
+            ->assertJsonPath('data.content_sha256', hash_file('sha256', resource_path('legal/2026-10-07.2.json')))
             ->assertJsonPath('data.privacy_ready', true)->assertJsonPath('data.commercial_ready', true)
             ->assertJsonPath('data.analytics_ready', true)->assertJsonPath('data.provider.name', '');
         $this->withHeaders(['Origin' => (string) config('web_auth.origins.lk.0'), 'Idempotency-Key' => 'empty-requisites-test'])
