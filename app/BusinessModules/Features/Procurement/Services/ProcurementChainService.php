@@ -89,9 +89,9 @@ final class ProcurementChainService
         return $this->build($this->resolver->fromPurchaseRequest($purchaseRequest), 'purchase-requests', $purchaseRequest->id, $actor, $includePermissions);
     }
 
-    public function forPurchaseOrder(PurchaseOrder $purchaseOrder, ?User $actor = null): ProcurementChainSummary
+    public function forPurchaseOrder(PurchaseOrder $purchaseOrder, ?User $actor = null, bool $includePermissions = true): ProcurementChainSummary
     {
-        return $this->build($this->resolver->fromPurchaseOrder($purchaseOrder), 'purchase-orders', $purchaseOrder->id, $actor);
+        return $this->build($this->resolver->fromPurchaseOrder($purchaseOrder), 'purchase-orders', $purchaseOrder->id, $actor, $includePermissions);
     }
 
     public function forPaymentDocument(PaymentDocument $paymentDocument, ?User $actor = null): ProcurementChainSummary

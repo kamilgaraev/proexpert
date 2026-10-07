@@ -582,6 +582,47 @@ final class ProcurementChainServiceTest extends TestCase
         self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
     }
 
+    public function test_compact_order_summary_checks_action_and_keeps_explicit_full_resource_payload(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::DRAFT);
+        $checked = [];
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, string $permission, array $context) use (&$checked, $user, $organization): bool {
+            self::assertSame($user, $actor);
+            self::assertSame(['organization_id' => $organization->id], $context);
+            $checked[] = $permission;
+
+            return false;
+        });
+        $service = new ProcurementChainService(
+            app(\App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver::class),
+            new \App\BusinessModules\Features\Procurement\Services\ProcurementChainActionResolver($authorization),
+        );
+        $compact = $service->forPurchaseOrder($order, $user, includePermissions: false);
+        $actionChecks = count($checked);
+        self::assertGreaterThan(0, $actionChecks);
+        self::assertSame([], $compact->permissions);
+        self::assertFalse($compact->nextAction?->isEnabled);
+        self::assertContains($compact->nextAction?->requiredPermission, $checked);
+        $full = $service->forPurchaseOrder($order, $user);
+        self::assertNotEmpty($full->permissions);
+        self::assertGreaterThan($actionChecks, count($checked) - $actionChecks);
+        self::assertSame($full->compact()->toArray(), $compact->compact()->toArray());
+        self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
+        $this->app->instance(ProcurementChainService::class, $service);
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/procurement/purchase-orders', 'GET');
+        $request->setUserResolver(fn () => $user);
+        $resource = new \App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource($order);
+        $payload = $resource->resolve($request);
+        self::assertSame($full->compact()->toArray(), $payload['procurement_chain_summary']);
+        self::assertArrayNotHasKey('procurement_chain', $payload);
+        $explicit = new \App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource($order, $full);
+        self::assertSame($full->toArray(), $explicit->resolve($request)['procurement_chain']);
+    }
+
     private function createSiteRequest(Organization $organization): SiteRequest
     {
         $project = Project::factory()->create(['organization_id' => $organization->id]);
