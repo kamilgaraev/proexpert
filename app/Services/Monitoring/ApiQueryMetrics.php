@@ -27,6 +27,8 @@ final class ApiQueryMetrics
 
     private int $sourcesDropped = 0;
 
+    private ?array $assistantSnapshot = null;
+
     public function __construct(private readonly bool $captureSources = false) {}
 
     public static function recordQuery(Request $request, QueryExecuted $query): void
@@ -94,8 +96,29 @@ final class ApiQueryMetrics
             }, array_values($this->sources));
             $summary['sql_sources_dropped_count'] = $this->sourcesDropped;
         }
+        if ($this->assistantSnapshot !== null) {
+            $summary['assistant_snapshot'] = $this->assistantSnapshot;
+        }
 
         return $summary;
+    }
+
+    public function recordAssistantSnapshot(array $context): void
+    {
+        if (! in_array($context['phase'] ?? null, ['missing_release', 'ready', 'snapshot_rejected', 'snapshot_missing'], true)
+            || ! in_array($context['section'] ?? null, ['all', 'sources', 'documents'], true)) {
+            return;
+        }
+        $snapshot = ['phase' => $context['phase'], 'section' => $context['section']];
+        foreach (['release_sha' => 40, 'key_hash' => 64, 'cache_namespace_hash' => 64, 'queue_namespace_hash' => 64] as $field => $length) {
+            $value = $context[$field] ?? null;
+            $snapshot[$field] = is_string($value) && preg_match('/^[a-f0-9]{'.$length.'}$/D', $value) === 1 ? $value : null;
+        }
+        $age = $context['age_seconds'] ?? null;
+        $snapshot['age_seconds'] = is_int($age) && $age >= 0 ? $age : null;
+        $queued = $context['refresh_queued'] ?? null;
+        $snapshot['refresh_queued'] = is_bool($queued) ? $queued : null;
+        $this->assistantSnapshot = $snapshot;
     }
 
     private function recordSource(QueryExecuted $query, string $group): void

@@ -16,6 +16,24 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_snapshot_metadata_accepts_only_the_closed_schema(): void
+    {
+        $metrics = new ApiQueryMetrics;
+        $metrics->recordAssistantSnapshot(['phase' => 'private-value', 'section' => 'sources']);
+        self::assertArrayNotHasKey('assistant_snapshot', $metrics->summary());
+        $metrics->recordAssistantSnapshot(['phase' => 'snapshot_missing', 'section' => 'sources',
+            'key_hash' => 'private-key', 'release_sha' => str_repeat('a', 40), 'age_seconds' => -1,
+            'refresh_queued' => 'private-flag', 'actor_id' => 42, 'secret' => 'private-secret']);
+        $snapshot = $metrics->summary()['assistant_snapshot'];
+        self::assertNull($snapshot['key_hash']);
+        self::assertNull($snapshot['age_seconds']);
+        self::assertNull($snapshot['refresh_queued']);
+        self::assertSame(str_repeat('a', 40), $snapshot['release_sha']);
+        self::assertCount(8, $snapshot);
+        self::assertStringNotContainsString('private-', json_encode($snapshot, JSON_THROW_ON_ERROR));
+        self::assertArrayNotHasKey('actor_id', $snapshot);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

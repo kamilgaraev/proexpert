@@ -16,6 +16,7 @@ use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotEpoch;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotInputs;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -113,7 +114,11 @@ final class AssistantIndexStatusService
             return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $epoch, $inputs): array {
                 if (! $this->access->canReadDomain($currentActor, $organizationId, 'assistant')) { throw new AuthorizationException; }
                 $fingerprint = $inputs->fingerprint($currentActor, $organizationId, $surface, $section, $ip, $authorization);
-                if ($fingerprint === null) { return $this->unavailableStatus(); }
+                if ($fingerprint === null) {
+                    AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
+
+                    return $this->unavailableStatus();
+                }
                 $key = $this->snapshotKey($organizationId, (int) $currentActor->id, $surface).':'.$section.':'.$fingerprint;
                 $snapshot = Cache::get($key);
                 $age = $inputs->age(is_array($snapshot) ? ($snapshot['generated_at'] ?? null) : null);
@@ -127,6 +132,7 @@ final class AssistantIndexStatusService
                     && $inputs->decisionsMatch($snapshot['decisions'], $currentActor, $authorization)
                     && $this->access->withCurrentChecks($currentActor, $organizationId,
                         static fn (AuthorizationService $current): bool => $current === $authorization)) {
+                    AssistantStatusSnapshotDiagnostics::request('ready', $section, $key, $age);
                     $status = $snapshot['status'];
                     $status['can_reindex'] = $canReindex;
                     if (is_numeric($status['lag_seconds'] ?? null)
@@ -137,7 +143,9 @@ final class AssistantIndexStatusService
 
                     return $status;
                 }
-                if (Cache::add($key.':queued', true, 90)) {
+                $queued = Cache::add($key.':queued', true, 90);
+                AssistantStatusSnapshotDiagnostics::request(is_array($snapshot) ? 'snapshot_rejected' : 'snapshot_missing', $section, $key, $age, $queued);
+                if ($queued) {
                     try {
                         RefreshAssistantIndexStatusJob::dispatch($organizationId, (int) $currentActor->id, $surface, $key, $section, $ip)->afterCommit();
                     } catch (Throwable $exception) {
