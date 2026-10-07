@@ -11,6 +11,8 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelTransport;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
 use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
+use App\Services\Privacy\PublicCore\PublicCoreProcessor;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use LogicException;
 use Throwable;
@@ -19,7 +21,8 @@ final readonly class PublicCoreGatewayModelDriver
 {
     public function __construct(private GatewayModelProfile $profile,
         private ?PublicCoreDispatchAuthority $dispatch = null, private ?GatewayModelTransport $transport = null,
-        private ?Closure $privateBindingSource = null)
+        private ?Closure $privateBindingSource = null, private ?PublicCoreProcessor $nativeProcessor = null,
+        private ?AuthenticatedPublicCoreChannel $nativeChannel = null)
     {
     }
 
@@ -66,7 +69,15 @@ final readonly class PublicCoreGatewayModelDriver
 
     public function __invoke(array $input): array
     {
-        if ($this->dispatch === null || $this->transport === null || $this->privateBindingSource === null) {
+        if ($this->dispatch === null || $this->privateBindingSource === null) {
+            throw new LogicException('receipt_unavailable');
+        }
+        $native = $this->nativeProcessor !== null || $this->nativeChannel !== null;
+        if ($native && ($this->nativeProcessor === null || $this->nativeChannel === null || $this->transport !== null
+            || !AuthenticatedPublicCoreChannel::isNativeAvailable() || !$this->dispatch->matchesGatewayChannel($this->nativeChannel))) {
+            throw new LogicException('gateway_identity_unavailable');
+        }
+        if (!$native && ($this->transport === null || $this->profile->isActualProfile())) {
             throw new LogicException('receipt_unavailable');
         }
         $contextRef = $input['context']['contextRef'] ?? null;
@@ -82,7 +93,9 @@ final readonly class PublicCoreGatewayModelDriver
             $reason = $packet['reasonCode'] ?? 'receipt_unavailable';
             throw new LogicException(in_array($reason, GatewayModelResponse::REASON_CODES, true) ? $reason : 'receipt_unavailable');
         }
-        $response = $this->dispatch->withDispatchFence($packet, $this->transport->send(...));
+        $response = $native
+            ? $this->nativeProcessor->dispatchGateway($this->dispatch, $this->nativeChannel, $packet)
+            : $this->dispatch->withDispatchFence($packet, $this->transport->send(...));
 
         return $this->action($packet, $response);
     }

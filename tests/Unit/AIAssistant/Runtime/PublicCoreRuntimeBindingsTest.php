@@ -20,6 +20,10 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelTransport;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
+use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
+use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
+use App\Services\Privacy\PublicCore\PublicCoreProcessor;
+use App\Services\Privacy\PublicCore\PublicCoreRuntimeReadiness;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -647,6 +651,224 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
             ['viewer', 'receipt_unavailable'], ['source', 'receipt_unavailable'], ['native', 'gateway_unavailable'],
             ['grant', 'gateway_unavailable'], ['binding-unavailable', 'receipt_unavailable'], ['binding-throws', 'receipt_unavailable'],
         ];
+    }
+
+    #[DataProvider('nativeDriverCases')]
+    public function testNativeDriverUsesOneFenceWithRealLocalTransferAndSourceOnlyAppGuard(string $mode): void
+    {
+        if (!AuthenticatedPublicCoreChannel::isNativeAvailable() || !function_exists('pcntl_fork') || !extension_loaded('curl')) {
+            self::markTestSkipped('Single native fence needs Linux SCM/cURL; Windows is not native proof.');
+        }
+        $fixture = new PublicCoreAuthorityTest('testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt');
+        (new \ReflectionMethod($fixture, 'setUp'))->invoke($fixture);
+        $directory = (new \ReflectionProperty($fixture, 'directory'))->getValue($fixture);
+        mkdir($directory, 0700);
+        (new \ReflectionProperty($fixture, 'now'))->setValue($fixture, time());
+        $profile = (new \ReflectionMethod($fixture, 'nativeFixtureProfile'))->invoke($fixture);
+        $config = $directory.'/openssl.cnf';
+        file_put_contents($config, "[req]\ndistinguished_name=dn\n[dn]\n[v3]\nsubjectAltName=DNS:api.timeweb.ai\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\n");
+        $key = openssl_pkey_new(['private_key_bits' => 2048]);
+        $csr = openssl_csr_new(['commonName' => 'api.timeweb.ai'], $key, ['config' => $config, 'digest_alg' => 'sha256']);
+        $cert = openssl_csr_sign($csr, null, $key, 1, ['config' => $config, 'x509_extensions' => 'v3', 'digest_alg' => 'sha256']);
+        openssl_pkey_export($key, $privateKey);
+        openssl_x509_export($cert, $certificate);
+        $pem = $directory.'/server.pem';
+        $ca = $directory.'/ca.pem';
+        file_put_contents($pem, $privateKey.$certificate);
+        file_put_contents($ca, $certificate);
+        $server = stream_socket_server('tcp://127.0.0.1:0', $error, $message, STREAM_SERVER_BIND | STREAM_SERVER_LISTEN,
+            stream_context_create(['ssl' => ['local_cert' => $pem, 'verify_peer' => false]]));
+        self::assertIsResource($server);
+        $address = stream_socket_get_name($server, false);
+        $port = (int) substr($address, strrpos($address, ':') + 1);
+        $tls = pcntl_fork();
+        if ($tls === 0) {
+            try {
+                $connection = @stream_socket_accept($server, 3);
+                if ($connection === false) {
+                    if ($mode === 'stopped') { file_put_contents($directory.'/body', ''); }
+                    exit($mode === 'valid' ? 71 : 0);
+                }
+                stream_set_timeout($connection, 3);
+                if (!stream_socket_enable_crypto($connection, true, STREAM_CRYPTO_METHOD_TLS_SERVER)) { exit(72); }
+                $headers = '';
+                while (!str_ends_with($headers, "\r\n\r\n") && strlen($headers) < 16384) { $headers .= fread($connection, 1); }
+                if (preg_match('/Content-Length: (\d+)/i', $headers, $length) !== 1) { exit(73); }
+                $body = '';
+                while (strlen($body) < (int) $length[1] && !feof($connection)) {
+                    $part = fread($connection, (int) $length[1] - strlen($body));
+                    if ($part === false || $part === '') { break; }
+                    $body .= $part;
+                }
+                file_put_contents($directory.'/body', $body);
+                if ($mode === 'stopped') { fclose($connection); exit(0); }
+                $payload = GatewayModelRequest::canonicalJson(['id' => 'local-source-native-fence', 'object' => 'chat.completion',
+                    'created' => time(), 'model' => 'source-fixture-model', 'choices' => [['index' => 0,
+                        'message' => ['role' => 'assistant', 'content' => '{"type":"plan","plan":"Read public facts."}'], 'finish_reason' => 'stop']]]);
+                fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ".strlen($payload)."\r\nConnection: close\r\n\r\n".$payload);
+                fclose($connection);
+                exit(0);
+            } catch (\Throwable) { exit(74); }
+        }
+        self::assertGreaterThan(0, $tls);
+        fclose($server);
+        $path = $directory.'/driver.sock';
+        $listener = AuthenticatedPublicCoreChannel::listen($path);
+        $uid = posix_geteuid();
+        $gid = posix_getegid();
+        $parent = getmypid();
+        $gateway = pcntl_fork();
+        if ($gateway === 0) {
+            try {
+                $wire = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
+                $sender = new GatewayPublicCoreHttpSender(static function () use ($directory): string {
+                    file_put_contents($directory.'/credentials-read', '1');
+                    return 'local-source-no-provider-secret';
+                }, null, static function ($handle) use ($port, $ca, $mode): void {
+                    curl_setopt($handle, CURLOPT_CONNECT_TO, ['api.timeweb.ai:443:127.0.0.1:'.$port]);
+                    curl_setopt($handle, CURLOPT_CAINFO, $ca);
+                    if ($mode === 'stopped') { curl_setopt($handle, CURLOPT_MAX_SEND_SPEED_LARGE, 512); }
+                });
+                GatewayPublicCoreTransport::handleAuthenticatedChannel($wire, $profile, $sender,
+                    static fn (): array => ['inputTokens' => 42, 'tokenizerId' => $profile->values()['tokenizerId'],
+                        'tokenizerRevision' => $profile->values()['tokenizerRevision'], 'mappingEvidenceRef' => $profile->values()['mappingEvidenceRef']],
+                    static fn (): string => 'none');
+                $wire->close();
+                exit(0);
+            } catch (\Throwable $failure) {
+                file_put_contents($directory.'/gateway-error', $failure->getMessage());
+                exit($mode === 'valid' ? 75 : 0);
+            }
+        }
+        self::assertGreaterThan(0, $gateway);
+        $channel = null;
+        $expectedBodyLength = null;
+        try {
+            $channel = AuthenticatedPublicCoreChannel::accept($listener, ['uid' => $uid, 'gid' => $gid, 'pid' => $gateway], 30000);
+            $pins = ['appPeer' => ['pid' => 111, 'uid' => 1001, 'gid' => 1001], 'appChannelRef' => 'channel_app_source_test',
+                'gatewayPeer' => $channel->peer(), 'gatewayChannelRef' => $channel->channelRef()];
+            if ($mode === 'channel-mismatch') { $pins['gatewayChannelRef'] = 'channel_wrong_source_pair'; }
+            (new \ReflectionProperty($fixture, 'nativePins'))->setValue($fixture, $pins);
+            if ($mode === 'stopped') { (new \ReflectionProperty($fixture, 'grantBudget'))->setValue($fixture, 200); }
+            [$authority, $preparedFixturePacket, $readiness, , $input, $binding] =
+                (new \ReflectionMethod($fixture, 'dispatchPreparation'))->invoke($fixture, $profile);
+            $expectedBodyLength = strlen($preparedFixturePacket->bodyBytes);
+            $store = (new \ReflectionProperty($fixture, 'store'))->getValue($fixture);
+            $sessions = (new \ReflectionProperty($fixture, 'sessions'))->getValue($fixture);
+            $registry = (new \ReflectionProperty($fixture, 'registry'))->getValue($fixture);
+            $store->transaction(static function (array &$state) use ($preparedFixturePacket): array {
+                unset($state['requests'][$preparedFixturePacket->requestRef]['dispatchAttempts'][$preparedFixturePacket->attemptRef]);
+                return ['sourceFixtureSetup' => true];
+            });
+            $processor = new PublicCoreProcessor($registry, $store, $sessions,
+                $mode === 'processor-mismatch' ? new PublicCoreRuntimeReadiness($registry) : $readiness);
+            $lookups = (object) ['count' => 0];
+            $driver = new PublicCoreGatewayModelDriver($profile, $authority, null,
+                static function (string $contextRef) use ($binding, $lookups): array {
+                    $lookups->count++;
+                    self::assertSame($binding['receipt']['contextRef'], $contextRef);
+                    return $binding;
+                }, $processor, $channel);
+            self::assertSame('source-fixture-model', $profile->values()['modelId']);
+            try {
+                $action = $driver($input);
+                self::assertSame('valid', $mode);
+                self::assertEquals(['type' => 'plan', 'plan' => 'Read public facts.'], $action);
+            } catch (LogicException $failure) {
+                self::assertNotSame('valid', $mode, $failure->getMessage());
+                self::assertContains($failure->getMessage(), $mode === 'stopped'
+                    ? ['expired', 'gateway_unavailable'] : ['gateway_identity_unavailable']);
+            }
+            $disk = json_decode(file_get_contents($directory.'/authority.json'), true, flags: JSON_THROW_ON_ERROR)['state'];
+            $attempts = $disk['requests'][$preparedFixturePacket->requestRef]['dispatchAttempts'];
+            if ($mode === 'channel-mismatch') {
+                self::assertSame(0, $lookups->count);
+                self::assertSame([], $attempts);
+            } else {
+                self::assertSame(1, $lookups->count);
+                self::assertCount(1, $attempts);
+            }
+            if (in_array($mode, ['valid', 'stopped'], true)) {
+                $attempt = array_values($attempts)[0];
+                self::assertSame('consumed', $attempt['status']);
+                self::assertSame($mode === 'valid' ? 'uploaded' : 'stopped', $attempt['uploadEvent']['event']);
+                self::assertTrue(GatewayModelRequest::isReference($attempt['uploadEvent']['completionRef']));
+                if ($mode === 'valid') {
+                    self::assertSame($attempt['binding']['projectionDigest'], hash('sha256', file_get_contents($directory.'/body')));
+                }
+                self::assertFalse((new \ReflectionProperty($fixture, 'appHeld'))->getValue($fixture));
+                self::assertFalse($authority->uploadPending());
+                $beforeReplay = $lookups->count;
+                try { $driver($input); self::fail('Closed native channel cannot be replayed'); }
+                catch (LogicException $failure) { self::assertSame('gateway_identity_unavailable', $failure->getMessage()); }
+                self::assertSame($beforeReplay, $lookups->count);
+            } else {
+                self::assertFileDoesNotExist($directory.'/credentials-read');
+                self::assertFileDoesNotExist($directory.'/body');
+            }
+        } finally {
+            $channel?->close();
+            socket_close($listener);
+            pcntl_waitpid($gateway, $gatewayStatus);
+            pcntl_waitpid($tls, $tlsStatus);
+            self::assertTrue(pcntl_wifexited($gatewayStatus));
+            self::assertSame(0, pcntl_wexitstatus($gatewayStatus), is_file($directory.'/gateway-error') ? file_get_contents($directory.'/gateway-error') : '');
+            self::assertTrue(pcntl_wifexited($tlsStatus));
+            self::assertSame(0, pcntl_wexitstatus($tlsStatus));
+            if ($mode === 'stopped' && $expectedBodyLength !== null) {
+                self::assertLessThan($expectedBodyLength, strlen(file_get_contents($directory.'/body')));
+            }
+            (new \ReflectionMethod($fixture, 'tearDown'))->invoke($fixture);
+        }
+    }
+
+    public static function nativeDriverCases(): array
+    {
+        return ['valid' => ['valid'], 'stopped' => ['stopped'], 'channel-mismatch' => ['channel-mismatch'], 'processor-mismatch' => ['processor-mismatch']];
+    }
+
+    #[DataProvider('missingNativeDriverPorts')]
+    public function testNativeDriverRejectsHalfUnqualifiedAndFallbackPortsBeforeBinding(string $mode): void
+    {
+        $fixture = new PublicCoreAuthorityTest('testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt');
+        (new \ReflectionMethod($fixture, 'setUp'))->invoke($fixture);
+        try {
+            $profile = (new \ReflectionMethod($fixture, 'nativeFixtureProfile'))->invoke($fixture);
+            [$authority, , $readiness, , $input] = (new \ReflectionMethod($fixture, 'dispatchPreparation'))->invoke($fixture, $profile);
+            $processor = new PublicCoreProcessor((new \ReflectionProperty($fixture, 'registry'))->getValue($fixture),
+                (new \ReflectionProperty($fixture, 'store'))->getValue($fixture),
+                (new \ReflectionProperty($fixture, 'sessions'))->getValue($fixture), $readiness);
+            $unqualified = (new \ReflectionClass(AuthenticatedPublicCoreChannel::class))->newInstanceWithoutConstructor();
+            $state = (object) ['bindings' => 0, 'sends' => 0];
+            $transport = new class($state) implements GatewayModelTransport {
+                public function __construct(private object $state) {}
+                public function send(GatewayModelRequest $request): GatewayModelResponse
+                {
+                    $this->state->sends++;
+                    throw new LogicException('unqualified_transport_must_not_run');
+                }
+            };
+            $driver = new PublicCoreGatewayModelDriver($profile, $authority,
+                in_array($mode, ['mixed', 'actual-transport-fallback'], true) ? $transport : null,
+                static function () use ($state): null { $state->bindings++; return null; },
+                in_array($mode, ['processor-only', 'unqualified-pair', 'mixed'], true) ? $processor : null,
+                in_array($mode, ['channel-only', 'unqualified-pair', 'mixed'], true) ? $unqualified : null);
+            try { $driver($input); self::fail('Incomplete or unknown native origin cannot dispatch'); }
+            catch (LogicException $failure) {
+                self::assertSame(in_array($mode, ['missing', 'actual-transport-fallback'], true)
+                    ? 'receipt_unavailable' : 'gateway_identity_unavailable', $failure->getMessage());
+            }
+            self::assertSame(0, $state->bindings);
+            self::assertSame(0, $state->sends);
+        } finally {
+            (new \ReflectionMethod($fixture, 'tearDown'))->invoke($fixture);
+        }
+    }
+
+    public static function missingNativeDriverPorts(): array
+    {
+        $cases = ['missing', 'processor-only', 'channel-only', 'unqualified-pair', 'mixed', 'actual-transport-fallback'];
+        return array_combine($cases, array_map(static fn (string $case): array => [$case], $cases));
     }
 
     public function testDriverDecodesExactCanonicalActionAndRejectsForeignResponseBindings(): void
