@@ -36,6 +36,7 @@ final class ApiQueryMetricsTest extends TestCase
         Log::shouldReceive('channel')->with('api_latency')->twice()->andReturn($logger);
         (new RecordApiResponseTime)->handle($request, static function (): Response {
             AssistantStatusSnapshotDiagnostics::request('snapshot_missing', 'sources', 'private-cache-key', null, true);
+            AssistantStatusSnapshotDiagnostics::epoch('relation_mutation_present', 'ai_rag_sources');
             $first = request()->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE)->summary()['assistant_snapshot'];
             config(['database.redis.cache.password' => 'different-private-secret',
                 'database.redis.cache.url' => 'redis://changed:other-private-secret@cache-host:6379/1']);
@@ -59,6 +60,8 @@ final class ApiQueryMetricsTest extends TestCase
         self::assertSame('snapshot_missing', $captured[0]['assistant_snapshot']['phase']);
         self::assertTrue($captured[0]['assistant_snapshot']['refresh_queued']);
         self::assertArrayNotHasKey('assistant_snapshot', $captured[1]);
+        self::assertSame(['phase' => 'relation_mutation_present', 'relation' => 'ai_rag_sources'], $captured[0]['assistant_snapshot_epoch']);
+        self::assertArrayNotHasKey('assistant_snapshot_epoch', $captured[1]);
         self::assertFalse($request->attributes->has(ApiQueryMetrics::REQUEST_ATTRIBUTE));
         foreach (['private-', 'cache-host', 'codex', 'changed'] as $private) {
             self::assertStringNotContainsString($private, json_encode($captured, JSON_THROW_ON_ERROR));

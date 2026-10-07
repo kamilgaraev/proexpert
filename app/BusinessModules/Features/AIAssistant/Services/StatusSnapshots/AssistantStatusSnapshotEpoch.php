@@ -47,6 +47,7 @@ final class AssistantStatusSnapshotEpoch
 
     public function isValid(array $state, int $ttlSeconds = 300): bool
     {
+        AssistantStatusSnapshotDiagnostics::epoch('state_rejected');
         if (($state['cacheable'] ?? null) !== true || $ttlSeconds <= 0
             || ! is_string($state['snapshot'] ?? null) || ! is_string($state['captured_at'] ?? null)
             || ! is_string($state['schema_fingerprint'] ?? null) || ! is_int($state['gc_generation'] ?? null)
@@ -60,18 +61,26 @@ final class AssistantStatusSnapshotEpoch
             if ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0)) { return false; }
         } catch (Throwable) { return false; }
         $connection = $this->connection();
+        AssistantStatusSnapshotDiagnostics::epoch('transaction_rejected');
         if ($connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() === 0) { return false; }
         $mode = $connection->selectOne("SELECT current_setting('transaction_isolation') AS isolation, current_setting('transaction_read_only') AS read_only");
         if ($mode->isolation !== 'repeatable read' || $mode->read_only !== 'on') { return false; }
         $schema = $this->schemaState($relations);
+        AssistantStatusSnapshotDiagnostics::epoch('schema_rejected');
         if ($schema->cacheable !== true || ! hash_equals((string) $schema->fingerprint, $state['schema_fingerprint'])) { return false; }
-        $valid = $connection->selectOne('SELECT gc_generation = ? AND clock_timestamp() >= ?::timestamptz '
+        $valid = $connection->selectOne('WITH changed_relation AS MATERIALIZED (SELECT e.relation_oid FROM public.'.self::CHANGE_TABLE.' e '
+            .'WHERE e.relation_oid = ANY(?::oid[]) AND e.xid >= pg_snapshot_xmin(?::pg_snapshot) '
+            .'AND NOT pg_visible_in_snapshot(e.xid, ?::pg_snapshot) LIMIT 1) '
+            .'SELECT gc_generation = ? AND clock_timestamp() >= ?::timestamptz '
             .'AND clock_timestamp() < ?::timestamptz + make_interval(secs => ?) '
             .'AND pg_snapshot_xmax(?::pg_snapshot) <= pg_snapshot_xmax(pg_current_snapshot()) '
-            .'AND NOT EXISTS (SELECT 1 FROM public.'.self::CHANGE_TABLE.' e WHERE e.relation_oid = ANY(?::oid[]) AND e.xid >= pg_snapshot_xmin(?::pg_snapshot) '
-            .'AND NOT pg_visible_in_snapshot(e.xid, ?::pg_snapshot)) AS valid '
+            .'AND NOT EXISTS (SELECT 1 FROM changed_relation) AS valid, '
+            .'(SELECT c.relname FROM changed_relation e JOIN pg_class c ON c.oid = e.relation_oid) AS changed_relation '
             .'FROM public.'.self::CONTROL_TABLE.' WHERE id = 1',
-            [$state['gc_generation'], $state['captured_at'], $state['captured_at'], $ttlSeconds, $state['snapshot'], $schema->relation_oids, $state['snapshot'], $state['snapshot']]);
+            [$schema->relation_oids, $state['snapshot'], $state['snapshot'], $state['gc_generation'], $state['captured_at'], $state['captured_at'], $ttlSeconds, $state['snapshot']]);
+
+        AssistantStatusSnapshotDiagnostics::epoch($valid !== null && $valid->valid === true ? 'valid'
+            : (is_string($valid?->changed_relation) ? 'relation_mutation_present' : 'epoch_guard_rejected'), $valid?->changed_relation);
 
         return $valid !== null && $valid->valid === true;
     }

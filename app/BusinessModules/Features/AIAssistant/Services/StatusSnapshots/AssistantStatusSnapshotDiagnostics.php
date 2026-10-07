@@ -39,6 +39,17 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
+    public static function epoch(string $phase, ?string $relation = null): void
+    {
+        try {
+            $metrics = request()->attributes->get(ApiQueryMetrics::REQUEST_ATTRIBUTE);
+            if ($metrics instanceof ApiQueryMetrics) {
+                $metrics->recordAssistantSnapshotEpoch($phase, $relation);
+            }
+        } catch (Throwable) {
+        }
+    }
+
     private static function context(string $phase, string $section, ?string $cacheKey): array
     {
         $release = config('ai-assistant.status_snapshot_release') ?: getenv('MOST_RELEASE_SHA');

@@ -32,6 +32,12 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertCount(8, $snapshot);
         self::assertStringNotContainsString('private-', json_encode($snapshot, JSON_THROW_ON_ERROR));
         self::assertArrayNotHasKey('actor_id', $snapshot);
+        $metrics->recordAssistantSnapshotEpoch('private-phase', 'private-data');
+        self::assertArrayNotHasKey('assistant_snapshot_epoch', $metrics->summary());
+        $metrics->recordAssistantSnapshotEpoch('relation_mutation_present', 'ai_rag_sources');
+        self::assertSame(['phase' => 'relation_mutation_present', 'relation' => 'ai_rag_sources'], $metrics->summary()['assistant_snapshot_epoch']);
+        $metrics->recordAssistantSnapshotEpoch('schema_rejected', 'personal@example.test');
+        self::assertSame(['phase' => 'schema_rejected', 'relation' => null], $metrics->summary()['assistant_snapshot_epoch']);
     }
 
     protected function setUp(): void
