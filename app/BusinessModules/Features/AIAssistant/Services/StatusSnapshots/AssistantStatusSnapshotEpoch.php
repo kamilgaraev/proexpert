@@ -16,17 +16,19 @@ final class AssistantStatusSnapshotEpoch
     public const CONTROL_TABLE = 'ai_assistant_status_snapshot_control';
     public const FUNCTION_NAME = 'track_assistant_status_snapshot_mutation';
     public const TRIGGER_NAME = 'assistant_status_snapshot_mutation';
-    public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', 'ai_rag_embedding_checkpoints', self::CHANGE_TABLE, self::CONTROL_TABLE];
-    public const FUNCTION_BODY = "\nBEGIN\n    INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    RETURN NULL;\nEND;\n";
+    public const EXCLUDED_TABLES = ['cache', 'cache_locks', 'jobs', 'failed_jobs', 'job_batches', 'sessions', 'ai_rag_embedding_checkpoints', self::CHANGE_TABLE, self::CONTROL_TABLE, AssistantStatusScopedMutationGuard::CHANGE_TABLE];
+    public const LEGACY_FUNCTION_BODY = "\nBEGIN\n    INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    RETURN NULL;\nEND;\n";
+    public const FUNCTION_BODY = "\nBEGIN\n    INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n".AssistantStatusScopedMutationGuard::WITNESS_SQL."    RETURN NULL;\nEND;\n";
 
     private const PURGE_BATCH_SIZE = 10000;
 
     public function __construct(private readonly ?string $connectionName = null) {}
 
-    public function capture(?array $usedRelations = null): array
+    public function capture(?array $usedRelations = null, ?int $organizationId = null): array
     {
         $relations = $this->normalizeRelations($usedRelations);
-        $state = ['snapshot' => '', 'captured_at' => '', 'gc_generation' => -1, 'schema_fingerprint' => '', 'cacheable' => false, 'used_relations' => $relations];
+        $state = ['snapshot' => '', 'captured_at' => '', 'gc_generation' => -1, 'schema_fingerprint' => '', 'cacheable' => false, 'used_relations' => $relations, 'organization_id' => $organizationId];
+        if ($organizationId !== null && $organizationId <= 0) { return $state; }
         if ($usedRelations !== null && $relations === []) { return $state; }
         $connection = $this->connection();
         if ($connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() === 0) { return $state; }
@@ -34,7 +36,7 @@ final class AssistantStatusSnapshotEpoch
         $state['snapshot'] = (string) $clock->snapshot;
         $state['captured_at'] = (string) $clock->captured_at;
         if ($clock->isolation !== 'repeatable read' || $clock->read_only !== 'on') { return $state; }
-        $schema = $this->schemaState($relations);
+        $schema = $this->schemaState($relations, $organizationId);
         $state['schema_fingerprint'] = (string) $schema->fingerprint;
         if ($schema->cacheable !== true) { return $state; }
         $control = $connection->selectOne('SELECT gc_generation FROM public.'.self::CONTROL_TABLE.' WHERE id = 1');
@@ -45,10 +47,11 @@ final class AssistantStatusSnapshotEpoch
         return $state;
     }
 
-    public function isValid(array $state, int $ttlSeconds = 300): bool
+    public function isValid(array $state, int $ttlSeconds = 300, ?int $organizationId = null): bool
     {
         AssistantStatusSnapshotDiagnostics::epoch('state_rejected');
         if (($state['cacheable'] ?? null) !== true || $ttlSeconds <= 0
+            || ($state['organization_id'] ?? null) !== $organizationId || $organizationId !== null && $organizationId <= 0
             || ! is_string($state['snapshot'] ?? null) || ! is_string($state['captured_at'] ?? null)
             || ! is_string($state['schema_fingerprint'] ?? null) || ! is_int($state['gc_generation'] ?? null)
             || ! array_key_exists('used_relations', $state) || $state['used_relations'] !== null && ! is_array($state['used_relations'])) { return false; }
@@ -65,19 +68,29 @@ final class AssistantStatusSnapshotEpoch
         if ($connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() === 0) { return false; }
         $mode = $connection->selectOne("SELECT current_setting('transaction_isolation') AS isolation, current_setting('transaction_read_only') AS read_only");
         if ($mode->isolation !== 'repeatable read' || $mode->read_only !== 'on') { return false; }
-        $schema = $this->schemaState($relations);
+        $schema = $this->schemaState($relations, $organizationId);
         AssistantStatusSnapshotDiagnostics::epoch('schema_rejected');
         if ($schema->cacheable !== true || ! hash_equals((string) $schema->fingerprint, $state['schema_fingerprint'])) { return false; }
+        $scopedCondition = $organizationId === null ? '' : 'AND e.relation_oid <> ALL(?::oid[]) ';
+        $bindings = [$schema->relation_oids, $state['snapshot'], $state['snapshot']];
+        $scopedChanges = '';
+        if ($organizationId !== null) {
+            $bindings[] = $schema->scoped_relation_oids;
+            $scopedChanges = 'UNION ALL SELECT e.relation_oid FROM public.'.AssistantStatusScopedMutationGuard::CHANGE_TABLE.' e '
+                .'WHERE e.relation_oid = ANY(?::oid[]) AND e.organization_id IN (0, ?) '
+                .'AND e.xid >= pg_snapshot_xmin(?::pg_snapshot) AND NOT pg_visible_in_snapshot(e.xid, ?::pg_snapshot) ';
+            array_push($bindings, $schema->relation_oids, $organizationId, $state['snapshot'], $state['snapshot']);
+        }
         $valid = $connection->selectOne('WITH changed_relation AS MATERIALIZED (SELECT e.relation_oid FROM public.'.self::CHANGE_TABLE.' e '
             .'WHERE e.relation_oid = ANY(?::oid[]) AND e.xid >= pg_snapshot_xmin(?::pg_snapshot) '
-            .'AND NOT pg_visible_in_snapshot(e.xid, ?::pg_snapshot) LIMIT 1) '
+            .'AND NOT pg_visible_in_snapshot(e.xid, ?::pg_snapshot) '.$scopedCondition.$scopedChanges.'LIMIT 1) '
             .'SELECT gc_generation = ? AND clock_timestamp() >= ?::timestamptz '
             .'AND clock_timestamp() < ?::timestamptz + make_interval(secs => ?) '
             .'AND pg_snapshot_xmax(?::pg_snapshot) <= pg_snapshot_xmax(pg_current_snapshot()) '
             .'AND NOT EXISTS (SELECT 1 FROM changed_relation) AS valid, '
             .'(SELECT c.relname FROM changed_relation e JOIN pg_class c ON c.oid = e.relation_oid) AS changed_relation '
             .'FROM public.'.self::CONTROL_TABLE.' WHERE id = 1',
-            [$schema->relation_oids, $state['snapshot'], $state['snapshot'], $state['gc_generation'], $state['captured_at'], $state['captured_at'], $ttlSeconds, $state['snapshot']]);
+            [...$bindings, $state['gc_generation'], $state['captured_at'], $state['captured_at'], $ttlSeconds, $state['snapshot']]);
 
         AssistantStatusSnapshotDiagnostics::epoch($valid !== null && $valid->valid === true ? 'valid'
             : (is_string($valid?->changed_relation) ? 'relation_mutation_present' : 'epoch_guard_rejected'), $valid?->changed_relation);
@@ -96,6 +109,11 @@ final class AssistantStatusSnapshotEpoch
             $deleted = $connection->delete('DELETE FROM public.'.self::CHANGE_TABLE.' WHERE ctid = ANY(ARRAY('
                 .'SELECT ctid FROM public.'.self::CHANGE_TABLE.' WHERE created_at < statement_timestamp() - make_interval(secs => ?) '
                 .'ORDER BY created_at LIMIT ?))', [$retentionSeconds, self::PURGE_BATCH_SIZE]);
+            if ($connection->selectOne('SELECT to_regclass(?) IS NOT NULL AS present', ['public.'.AssistantStatusScopedMutationGuard::CHANGE_TABLE])->present === true) {
+                $deleted += $connection->delete('DELETE FROM public.'.AssistantStatusScopedMutationGuard::CHANGE_TABLE.' WHERE ctid = ANY(ARRAY('
+                    .'SELECT ctid FROM public.'.AssistantStatusScopedMutationGuard::CHANGE_TABLE.' WHERE created_at < statement_timestamp() - make_interval(secs => ?) '
+                    .'ORDER BY created_at LIMIT ?))', [$retentionSeconds, self::PURGE_BATCH_SIZE]);
+            }
             if ($deleted > 0) {
                 $updated = $connection->update('UPDATE public.'.self::CONTROL_TABLE.' SET gc_generation = gc_generation + 1 WHERE id = 1');
                 if ($updated !== 1) { throw new LogicException('assistant_snapshot_control_missing'); }
@@ -139,7 +157,7 @@ final class AssistantStatusSnapshotEpoch
         return $normalized;
     }
 
-    private function schemaState(?array $usedRelations = null): object
+    private function schemaState(?array $usedRelations = null, ?int $organizationId = null): object
     {
         $excluded = implode(', ', array_map(static fn (string $table): string => "'".$table."'", self::EXCLUDED_TABLES));
         $names = $usedRelations === null ? [] : array_map(static fn (string $relation): string => substr($relation, 7), $usedRelations);
@@ -219,8 +237,17 @@ SQL;
             throw new LogicException('assistant_source_snapshot_body_unavailable');
         }
 
-        return $this->connection()->selectOne(str_replace(['__EXCLUDED__', '__ROOTS__', '__COMPLETE__', '__RESOLUTION__', '__SOURCE_BODY_PREFIX__', '__SOURCE_BODY_SEPARATOR__', '__SOURCE_BODY_SUFFIX__'],
+        $schema = $this->connection()->selectOne(str_replace(['__EXCLUDED__', '__ROOTS__', '__COMPLETE__', '__RESOLUTION__', '__SOURCE_BODY_PREFIX__', '__SOURCE_BODY_SEPARATOR__', '__SOURCE_BODY_SUFFIX__'],
             [$excluded, $roots, $complete, $resolution, $prefix, $separator, $suffix], $sql),
             [...$names, 'public.'.self::FUNCTION_NAME.'()', 'public.'.self::FUNCTION_NAME.'()', 'public.'.self::FUNCTION_NAME.'()', self::FUNCTION_BODY, self::TRIGGER_NAME, 'public.'.self::FUNCTION_NAME.'()']);
+        if ($schema === null) { throw new LogicException('assistant_snapshot_schema_unavailable'); }
+        if ($organizationId !== null) {
+            $scoped = AssistantStatusScopedMutationGuard::proof($this->connection());
+            $schema->cacheable = $schema->cacheable === true && $scoped->cacheable === true;
+            $schema->fingerprint = hash('sha256', $schema->fingerprint.'|'.$scoped->fingerprint);
+            $schema->scoped_relation_oids = $scoped->relation_oids;
+        }
+
+        return $schema;
     }
 }

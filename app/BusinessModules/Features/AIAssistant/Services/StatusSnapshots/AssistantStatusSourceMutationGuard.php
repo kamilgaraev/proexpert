@@ -16,19 +16,20 @@ final class AssistantStatusSourceMutationGuard
 
     public const BODY_SEPARATOR = ') IS DISTINCT FROM ROW(';
 
-    public const BODY_SUFFIX = ") THEN\n        INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    END IF;\n    RETURN NULL;\nEND;\n";
+    public const LEGACY_BODY_SUFFIX = ") THEN\n        INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n    END IF;\n    RETURN NULL;\nEND;\n";
+    public const BODY_SUFFIX = ") THEN\n        INSERT INTO public.ai_assistant_status_snapshot_changes (xid, relation_oid) VALUES (pg_current_xact_id(), TG_RELID) ON CONFLICT (xid, relation_oid) DO NOTHING;\n".AssistantStatusScopedMutationGuard::WITNESS_SQL."    END IF;\n    RETURN NULL;\nEND;\n";
 
     public static function quoteColumn(string $column): string
     {
         return '"'.str_replace('"', '""', $column).'"';
     }
 
-    public static function body(array $columns): string
+    public static function body(array $columns, bool $legacy = false): string
     {
         return self::BODY_PREFIX
             .implode(', ', array_map(static fn (string $column): string => 'OLD.'.self::quoteColumn($column), $columns))
             .self::BODY_SEPARATOR
             .implode(', ', array_map(static fn (string $column): string => 'NEW.'.self::quoteColumn($column), $columns))
-            .self::BODY_SUFFIX;
+            .($legacy ? self::LEGACY_BODY_SUFFIX : self::BODY_SUFFIX);
     }
 }

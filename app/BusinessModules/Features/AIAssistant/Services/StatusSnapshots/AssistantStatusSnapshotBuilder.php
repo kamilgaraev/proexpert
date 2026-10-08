@@ -82,7 +82,7 @@ final class AssistantStatusSnapshotBuilder
 
                 return null;
             }
-            $epoch = $this->epoch->capture($observed['relations']);
+            $epoch = $this->epoch->capture($observed['relations'], $organizationId);
             if (! $epoch['cacheable']) {
                 \Illuminate\Support\Facades\Log::warning('assistant.rag_status_snapshot_unavailable', ['organization_id' => $organizationId, 'reason' => 'unproven_database_epoch']);
 
