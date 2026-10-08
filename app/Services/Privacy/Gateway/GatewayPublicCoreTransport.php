@@ -471,17 +471,16 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                         return $response = GatewayModelResponse::blocked($request, 'expired');
                     }
                     try {
-                        if (! (GatewayModelRequest::hasExactKeys($provider, ['actionBytes', 'usage', 'actualModel'])
-                            || (!$this->profile->isActualProfile() && GatewayModelRequest::hasExactKeys($provider, ['actionBytes', 'usage'])))
-                            || ($this->profile->isActualProfile() && ($provider['actualModel'] ?? null) !== $this->profile->values()['modelId'])
-                            || (!$this->profile->isActualProfile() && ($provider['actualModel'] ?? null) !== null)
-                            || ! is_string($provider['actionBytes'])
+                        if (! GatewayModelRequest::hasExactKeys($provider, ['outputItemsBytes', 'providerResponseId', 'usage', 'actualModel'])
+                            || $provider['actualModel'] !== $this->profile->values()['modelId']
+                            || ! is_string($provider['outputItemsBytes']) || ! is_string($provider['providerResponseId'])
                             || ($provider['usage'] !== null && ! is_array($provider['usage']))) {
                             return $response = GatewayModelResponse::blocked($request, 'invalid_model_output');
                         }
 
-                        $completed = GatewayModelResponse::completed($request, $provider['actionBytes'], $provider['usage'], $provider['actualModel'] ?? null);
-                        $reason = $this->validator->validateUsage($this->profile, $completed->usage);
+                        $completed = GatewayModelResponse::completed($request, $provider['outputItemsBytes'], $provider['providerResponseId'], $provider['usage'], $provider['actualModel']);
+                        $reason = $this->validator->validateOutput($request->bodyBytes, $provider['outputItemsBytes'])
+                            ?? $this->validator->validateUsage($this->profile, $completed->usage);
 
                         return $response = $reason === null
                             ? $completed : GatewayModelResponse::blocked($request, $reason);

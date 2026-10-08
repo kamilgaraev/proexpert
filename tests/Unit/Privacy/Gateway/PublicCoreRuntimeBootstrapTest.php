@@ -26,6 +26,25 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         return dirname(__DIR__, 4).'/deploy/public-core-runtime.json.example';
     }
 
+    public function testNativeResponsesProfileRequiresNewMethodAdapterAndFingerprint(): void
+    {
+        $class = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::class;
+        $value = ['profileRef' => 'profile:native-source-fixture', 'qualification' => 'actual',
+            'adapterRevision' => $class::ADAPTER_REVISION, 'apiMethod' => 'responses', 'endpoint' => 'https://api.timeweb.ai/v1/responses',
+            'modelId' => 'openai/gpt-6-luna', 'modelRevision' => 'synthetic-native-only', 'tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1',
+            'mappingEvidenceRef' => 'evidence:fixture-tokenizer', 'capabilityEvidenceRef' => 'evidence:fixture-native-method',
+            'capacityEvidenceRef' => 'evidence:fixture-capacity', 'contextWindow' => 4096, 'maxOutputTokens' => 512, 'answerReserve' => 768, 'toolReserve' => 128];
+        $profile = $class::fromArray($value);
+        self::assertSame('responses', $profile->values()['apiMethod']);
+        self::assertSame(hash('sha256', \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::canonicalJson($value)), $profile->fingerprint());
+        foreach ([['apiMethod' => 'chat_completions'], ['endpoint' => 'https://api.timeweb.ai/v1/chat/completions'],
+            ['adapterRevision' => 'fixture-v1'], ['capabilityEvidenceRef' => null]] as $change) {
+            try { $class::fromArray(array_replace($value, $change)); self::fail('Historical method/profile accepted'); }
+            catch (LogicException $error) { self::assertSame('model_profile_unqualified', $error->getMessage()); }
+        }
+        self::assertNotSame($profile->fingerprint(), $class::fromArray(array_replace($value, ['capabilityEvidenceRef' => 'evidence:other-native-proof']))->fingerprint());
+    }
+
     public function testModelInputExportUsesOnlyStagedLiteralSourcePolicyAndRedactsPrivateValues(): void
     {
         $class = \Most\PublicCore\ModelInputDescription::class;
@@ -97,6 +116,20 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         self::assertFalse(AppRuntimeBootstrap::defer($app, $reader)); // Already resolved scope cannot be swapped.
     }
 
+    public function testAppRegistrationInstallsUnavailableDeferredBindingBeforeProtectedInputsExist(): void
+    {
+        $app = $this->application();
+        self::assertTrue(AppRuntimeBootstrap::register($app, '/not-observed/source-fixture/bootstrap.php'));
+        self::assertTrue($app->bound(PublicCoreAssistantRuntime::class));
+        $first = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNull((new \ReflectionProperty($first, 'nativePortFactory'))->getValue($first));
+        $app->forgetScopedInstances();
+        $second = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNotSame($first, $second);
+        self::assertNull((new \ReflectionProperty($second, 'nativePortFactory'))->getValue($second));
+        self::assertFalse(AppRuntimeBootstrap::register($app));
+    }
+
     public function testDeferredAppReaderRejectsEmptyAndDuplicateConfiguration(): void
     {
         foreach ([0, 2] as $count) {
@@ -109,46 +142,117 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         }
     }
 
-    public function testApprovedStageRequiresFreshPublicationAndPreservesNamespace(): void
+    public function testApprovedTupleRejectsFinalErrorsAndResumeDrift(): void
     {
-        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Offline Bash lifecycle mocks need Linux, no Docker calls.'); }
-        $harness = <<<'LIFECYCLE_BASH'
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Offline Bash tuple mocks need Linux, no Docker calls.'); }
+        // All authority/generation/lifetime values below are synthetic source fixtures.
+        $harness = <<<'TUPLE_BASH'
 source "$1"
 fixture_mode="$2"; scratch="$3"
-api=$(printf '%064d' 1); processor=$(printf '%064d' 2); gateway=$(printf '%064d' 3); image=sha256:$(printf '%064d' 4)
+api=$(printf '%064d' 1); processor=$(printf '%064d' 2); gateway=$(printf '%064d' 3); image=sha256:$(printf '%064d' 4); release=$(printf '%040d' 5)
 python3() { [ "$fixture_mode" != inactive ] && printf approved || printf inactive; }
+public_core_monotonic_ns() { if [[ "$fixture_mode" == expired* ]] && [ -e "$scratch/${fixture_mode#expired_}" ]; then printf 31000000000; else printf 1000000000; fi; }
+public_core_process_lifetime() {
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = lifetime_error ]; then printf '%064d' 6; return 17; fi
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = lifetime_drift ]; then printf '%064d' 7; else printf '%064d' 6; fi
+}
+public_core_generation_identity() {
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = generation_expired ]; then return 17; fi
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = generation_error ]; then printf '%064d' 8; return 17; fi
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = generation_drift ]; then printf '%064d' 9; else printf '%064d' 8; fi
+}
 observe_public_core_parked_peers() { printf observe >> "$scratch/events"; [ "$fixture_mode" != observation ]; }
-prepare_public_core_projections() { printf publish >> "$scratch/events"; touch "$scratch/published"; [ "$fixture_mode" != expired ] && [ "$fixture_mode" != missing_proof ]; }
+prepare_public_core_projections() { printf publish >> "$scratch/events"; touch "$scratch/published"; [ "$fixture_mode" != missing_proof ]; }
+# New CURRENT importer is mocked separately from actual tuple checks; no measurements fabricated.
+MOST_PUBLIC_CORE_CURRENT_REVISION=7; MOST_PUBLIC_CORE_CURRENT_SHA256=$(printf '%064d' 9)
+verify_public_core_current_candidate() { :; }
+stage_public_core_current_publication_inputs() { [ "$fixture_mode" != missing_proof ]; }
+MOST_COMPOSE_WRITER_SERVICES=(api queue-worker scheduler)
 docker() {
   case "$1" in
-    compose) printf compose >> "$scratch/events" ;;
-    ps)
-      if [[ "$*" == *service=public-core-processor* ]]; then
-        if [ "$fixture_mode" = recreated_peer ] && [ -e "$scratch/published" ]; then printf '%064d' 9; else printf '%s' "$processor"; fi
-      elif [[ "$*" == *service=public-core-gateway* ]]; then printf '%s' "$gateway"
-      else
-        [ "$fixture_mode" != missing_api ] || return 0
-        if [ "$fixture_mode" = recreated_api ] && [ -e "$scratch/published" ]; then printf '%064d' 8; else printf '%s' "$api"; fi
+    compose)
+      printf compose >> "$scratch/events"
+      if [[ "$*" == *queue-worker* ]]; then
+        if [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ]; then
+          [[ "$*" != *api* ]] && [[ "$*" != *public-core-* ]] && [[ "$*" != *remove-orphans* ]] || return 87
+        fi
+        touch "$scratch/resumed"
+      fi
+      ;;
+    image)
+      if [ "$4" = '{{.Id}}' ]; then printf '%s' "$image"; else
+        if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = source_drift ]; then printf '%040d' 9; else printf '%s' "$release"; fi
+        [ "$fixture_mode" != source_error ] || return 17
+        if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = resumed_source_error ]; then return 17; fi
       fi ;;
-    image) printf '%s' "$image" ;;
+    ps)
+      local role=api cid="$api"
+      if [[ "$*" == *service=public-core-processor* ]]; then role=processor; cid="$processor"
+      elif [[ "$*" == *service=public-core-gateway* ]]; then role=gateway; cid="$gateway"; fi
+      [ "$fixture_mode" != missing_api ] || [ "$role" != api ] || return 0
+      if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_id_drift" ]; then printf '%064d' 9; else printf '%s' "$cid"; fi
+      if [ -e "$scratch/published" ] && [ ! -e "$scratch/resumed" ] && [ "$fixture_mode" = "final_${role}_ps" ]; then return 17; fi
+      if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "resume_${role}_ps" ]; then return 17; fi
+      ;;
     inspect)
+      local role=api pid=100
+      if [ "$4" = "$processor" ]; then role=processor; pid=101
+      elif [ "$4" = "$gateway" ]; then role=gateway; pid=102; fi
       case "$3" in
-        '{{.Image}}') [ "$fixture_mode" != wrong_image ] && printf '%s' "$image" || printf 'sha256:bad' ;;
-        '{{.State.Pid}}') case "$4" in "$api") printf 100 ;; "$processor") printf 101 ;; *) printf 102 ;; esac ;;
-        '{{.HostConfig.PidMode}}') [ "$fixture_mode" != wrong_namespace ] && printf 'container:%s' "$api" || printf host ;;
-        '{{.State.Running}}:{{.State.Pid}}:{{.Image}}') case "$4" in "$api") printf 'true:100:%s' "$image" ;; "$processor") printf 'true:101:%s' "$image" ;; *) printf 'true:102:%s' "$image" ;; esac ;;
+        '{{.State.Pid}}') printf '%s' "$pid" ;;
+        '{{.State.Running}}:{{.State.Pid}}:{{.Image}}')
+          local running=true current_image="$image"
+          if [ -e "$scratch/resumed" ]; then
+            [ "$fixture_mode" != "${role}_pid_drift" ] || pid=999
+            [ "$fixture_mode" != "${role}_death" ] || running=false
+            [ "$fixture_mode" != "${role}_image_drift" ] || current_image=sha256:bad
+          fi
+          [ "$fixture_mode" != wrong_image ] || current_image=sha256:bad
+          printf '%s:%s:%s' "$running" "$pid" "$current_image"
+          if [ -e "$scratch/published" ] && [ ! -e "$scratch/resumed" ] && [ "$fixture_mode" = "final_${role}_state" ]; then return 17; fi
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "resume_${role}_state" ]; then return 17; fi
+          ;;
+        '{{.HostConfig.PidMode}}')
+          if [ "$role" = api ] && [ -e "$scratch/resumed" ] && [ "$fixture_mode" = api_namespace_drift ]; then printf host; fi
+          if [ "$role" != api ]; then
+            if [ "$fixture_mode" = wrong_namespace ] || { [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_namespace_drift" ]; }; then printf host; else printf 'container:%s' "$api"; fi
+          fi
+          if [ -e "$scratch/published" ] && [ ! -e "$scratch/resumed" ] && [ "$fixture_mode" = "final_${role}_namespace" ]; then return 17; fi
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "resume_${role}_namespace" ]; then return 17; fi
+          ;;
+        '{{.State.Restarting}}:{{.RestartCount}}:{{.State.StartedAt}}')
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_restart" ]; then printf false:1:changed; else printf false:0:unchanged; fi
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_start_error" ]; then return 17; fi
+          ;;
         *) return 86 ;;
       esac ;;
     *) return 87 ;;
   esac
 }
-stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@$image" "$(printf '%040d' 5)"
-LIFECYCLE_BASH;
-        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/lifecycle-'.bin2hex(random_bytes(6));
+# Conditional call intentionally disables inherited errexit: all checks must handle status.
+if stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@$image" "$release"; then
+  resume_public_core_backend_writers "ghcr.io/kamilgaraev/proexpert/prohelper@$image" 'api queue-worker scheduler'
+else exit 1; fi
+TUPLE_BASH;
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/tuple-'.bin2hex(random_bytes(6));
         mkdir($directory, 0755);
+        $modes = ['inactive', 'normal', 'missing_api', 'wrong_image', 'wrong_namespace', 'observation', 'missing_proof',
+            'final_api_state', 'final_api_ps', 'final_processor_state', 'final_gateway_state',
+            'final_processor_namespace', 'final_gateway_namespace', 'resume_api_ps',
+            'expired_published', 'expired_resumed', 'generation_expired', 'generation_drift', 'lifetime_drift', 'lifetime_error', 'source_error', 'source_drift', 'resumed_source_error', 'generation_error'];
+        foreach (['api', 'processor', 'gateway'] as $role) {
+            foreach (['pid_drift', 'id_drift', 'death', 'image_drift', 'restart', 'start_error', 'namespace_drift'] as $change) {
+                $modes[] = $role.'_'.$change;
+            }
+            $modes[] = 'final_'.$role.'_ps';
+            $modes[] = 'final_'.$role.'_namespace';
+            $modes[] = 'resume_'.$role.'_ps';
+            $modes[] = 'resume_'.$role.'_state';
+            $modes[] = 'resume_'.$role.'_namespace';
+        }
         try {
-            foreach (['inactive', 'normal', 'missing_api', 'wrong_image', 'wrong_namespace', 'observation', 'expired', 'missing_proof', 'recreated_api', 'recreated_peer'] as $mode) {
-                @unlink($directory.'/events'); @unlink($directory.'/published');
+            foreach ($modes as $mode) {
+                foreach (['events', 'published', 'resumed'] as $file) { @unlink($directory.'/'.$file); }
                 $process = proc_open(['bash', '-c', $harness, 'fixture', dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh', $mode, $directory],
                     [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
                 fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
@@ -156,10 +260,72 @@ LIFECYCLE_BASH;
                 self::assertSame('', $err, $mode);
                 self::assertSame('', $out, $mode);
                 self::assertSame(in_array($mode, ['inactive', 'normal'], true), $exit === 0, $mode);
-                if ($mode === 'inactive') { self::assertFileDoesNotExist($directory.'/events'); }
-                if ($mode === 'normal') { self::assertSame('composecomposeobservepublish', file_get_contents($directory.'/events')); }
+                if ($mode === 'normal') { self::assertSame('composecomposeobservepublishcompose', file_get_contents($directory.'/events')); }
+                if ($mode === 'inactive') { self::assertSame('compose', file_get_contents($directory.'/events')); }
             }
-        } finally { @unlink($directory.'/events'); @unlink($directory.'/published'); rmdir($directory); }
+        } finally {
+            foreach (['events', 'published', 'resumed'] as $file) { @unlink($directory.'/'.$file); }
+            rmdir($directory);
+        }
+    }
+
+    public function testFullInvalidationRemainsUnavailableWithoutCurrentCandidateIntake(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Scratch-only invalidation regression needs Linux Bash.'); }
+        // Reuses AR5-1 reviewer reproduction; no accepted input is invented after revoke.
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/invalidate-'.bin2hex(random_bytes(6));
+        mkdir($directory, 0755);
+        $allowlist = file_get_contents(dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh');
+        file_put_contents($directory.'/allowlist.sh', str_replace('/etc/most/public-core', $directory.'/root', $allowlist));
+        foreach (['app', 'processor', 'gateway'] as $role) {
+            mkdir($directory.'/root/'.$role, 0755, true);
+            file_put_contents($directory.'/root/'.$role.'/generation.json', '{}');
+            if ($role !== 'gateway') { file_put_contents($directory.'/root/'.$role.'/bootstrap.php', '<?php return null;'."\n"); }
+        }
+        file_put_contents($directory.'/root/gateway/runtime.json', '{"activation":"approved"}');
+        $harness = <<<'INVALIDATE_BASH'
+set -eu
+cd "$2"
+source "$1/allowlist.sh"
+scratch="$1"
+stat() { local gid=0; case "${@: -1}" in */app|*/app/*) gid=82 ;; */processor|*/processor/*) gid=41002 ;; */gateway|*/gateway/*) gid=41003 ;; esac; [ -d "${@: -1}" ] && printf '0:%s:750' "$gid" || printf '0:%s:640' "$gid"; }
+chown() { :; }
+install() { shift 6; cp -- "$1" "$2"; }
+quiesce_public_core_gateway_route() { printf quiesce >> "$scratch/events"; }
+ip() { return 1; }
+nft() {
+  if [ "$1" = list ]; then
+    [ -e "$scratch/nft_applied" ] || return 1
+    printf 'comment "most-public-core:gateway-only/1" br-most-pc'; return 0
+  fi
+  if [ "$1" = -j ]; then printf '{"nftables":[{"set":{"elem":[]}}]}'; return 0; fi
+  printf deny >> "$scratch/events"; touch "$scratch/nft_applied"
+}
+docker() { if [ "$1" = network ]; then return 0; fi; printf UNEXPECTED_DOCKER_CALL; return 88; }
+prepare_public_core_deny_policy
+printf drain >> "$scratch/events"
+stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@sha256:$(printf '%064d' 4)" "$(printf '%040d' 5)"
+test -z "$MOST_PUBLIC_CORE_STAGED_API"
+python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))["activation"]=="inactive"' "$scratch/root/gateway/runtime.json"
+for role in app processor gateway; do test ! -e "$scratch/root/$role/generation.json"; done
+INVALIDATE_BASH;
+        try {
+            $process = proc_open(['bash', '-c', $harness, 'fixture', $directory, dirname(__DIR__, 4)],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+            fclose($pipes[1]); fclose($pipes[2]); $exit = proc_close($process);
+            self::assertSame('', $out); self::assertSame('', $err); self::assertSame(0, $exit);
+            self::assertSame('quiescedenydenydrain', file_get_contents($directory.'/events'));
+            // This proves revoke/unavailable, NOT the missing accepted restage→publication path.
+        } finally {
+            foreach (['app', 'processor', 'gateway'] as $role) {
+                foreach (['generation.json', 'bootstrap.php', 'runtime.json'] as $file) { @unlink($directory.'/root/'.$role.'/'.$file); }
+                rmdir($directory.'/root/'.$role);
+            }
+            rmdir($directory.'/root');
+            foreach (['allowlist.sh', 'events', 'nft_applied'] as $file) { @unlink($directory.'/'.$file); }
+            rmdir($directory);
+        }
     }
 
     public function testInactiveManifestCannotStartGateway(): void
@@ -188,8 +354,11 @@ LIFECYCLE_BASH;
 
     public function testInvalidJsonDoesNotReachGateway(): void
     {
-        $this->expectException(JsonException::class);
-        GatewayRuntimeBootstrap::serve(__FILE__);
+        // The suite can exceed the manifest size bound; use a bounded invalid-JSON file.
+        $path = tempnam(sys_get_temp_dir(), 'cmp10-invalid-json-');
+        file_put_contents($path, 'not-json');
+        try { $this->expectException(JsonException::class); GatewayRuntimeBootstrap::serve($path); }
+        finally { unlink($path); }
     }
 
     public function testRoleIdsStayDistinctAndManifestContainsNoActualProofs(): void
@@ -236,7 +405,7 @@ LIFECYCLE_BASH;
     {
         foreach ([AppRuntimeBootstrap::DEFAULT_BOOTSTRAP.'.absent', $this->example(), __FILE__, 'php://memory'] as $path) {
             $app = $this->application();
-            self::assertFalse(AppRuntimeBootstrap::register($app, $path));
+            self::assertTrue(AppRuntimeBootstrap::register($app, $path));
             $runtime = $app->make(PublicCoreAssistantRuntime::class);
             self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
         }
@@ -671,6 +840,137 @@ BASH;
         \Most\PublicCore\ProcessIdentity::lifetime(array_replace($peer, ['uid' => $peer['uid'] + 1]));
     }
 
+    /** Synthetic accepted shape only; never actual account, model, tokenizer or measurement evidence. */
+    private function currentFixture(): array
+    {
+        $runtime = json_decode(file_get_contents($this->example()), true, 64, JSON_THROW_ON_ERROR);
+        $profile = ['profileRef' => 'profile:synthetic-current', 'qualification' => 'actual',
+            'adapterRevision' => \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION,
+            'apiMethod' => 'responses', 'endpoint' => 'https://api.timeweb.ai/v1/responses',
+            'modelId' => 'openai/gpt-6-luna', 'modelRevision' => 'synthetic-current-v1', 'tokenizerId' => 'synthetic-bpe', 'tokenizerRevision' => 'synthetic-v1',
+            'mappingEvidenceRef' => 'evidence:synthetic-tokenizer', 'capabilityEvidenceRef' => 'evidence:synthetic-method', 'capacityEvidenceRef' => 'evidence:synthetic-capacity',
+            'contextWindow' => 4096, 'maxOutputTokens' => 512, 'answerReserve' => 768, 'toolReserve' => 128];
+        $runtime['activation'] = 'approved'; $runtime['profile'] = $profile;
+        $runtime['tokenizerSha256'] = str_repeat('c', 64); $runtime['tokenizerPatternSha256'] = str_repeat('d', 64); $runtime['tokenizerVocabulary'] = $profile['tokenizerId'];
+        foreach (['catalog', 'method', 'capacity', 'tokenizer', 'key', 'identity', 'channel', 'egress', 'backendAuthority', 'nativeTransfer'] as $kind) {
+            $runtime['evidence'][$kind] = ['ref' => 'evidence:synthetic-'.$kind, 'file' => $kind.'.json', 'sha256' => str_repeat('e', 64)];
+        }
+        $descriptor = ['schemaVersion' => 'public-core-accepted-candidate/1', 'revision' => 7, 'status' => 'current',
+            'acceptance' => ['decisionRef' => 'decision:synthetic-only', 'documentRevisionId' => 'revision:synthetic-only', 'artifactSha256' => str_repeat('f', 64), 'custodianChannel' => 'prod-backend-deploy'],
+            'issuedAt' => 999, 'expiresAt' => 1060, 'revokedAt' => null, 'releaseSha' => str_repeat('a', 40), 'imageDigest' => 'sha256:'.str_repeat('b', 64),
+            'runtime' => ['file' => 'candidate-runtime.json', 'sha256' => hash('sha256', json_encode($runtime, JSON_THROW_ON_ERROR))],
+            'profileFingerprint' => \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::fromArray($profile)->fingerprint(),
+            'modelBinding' => ['provider' => 'timeweb', 'modelId' => $profile['modelId'], 'modelRevision' => $profile['modelRevision'], 'catalogDigest' => str_repeat('a', 64),
+                'apiMethod' => 'responses', 'templateVersion' => $profile['adapterRevision'], 'contextWindow' => 4096, 'maxOutputTokens' => 512,
+                'tokenizerId' => $profile['tokenizerId'], 'tokenizerRevision' => $profile['tokenizerRevision'], 'countMethod' => 'full_wire_json_bpe_upper_bound',
+                'vocabularySha256' => $runtime['tokenizerSha256'], 'patternSha256' => $runtime['tokenizerPatternSha256']],
+            'evidence' => $runtime['evidence'], 'tokenizer' => ['vocabulary' => ['file' => 'vocabulary.tiktoken', 'sha256' => $runtime['tokenizerSha256']],
+                'pattern' => ['file' => 'pattern.txt', 'sha256' => $runtime['tokenizerPatternSha256']]]];
+        return [$descriptor, $runtime];
+    }
+
+    public function testCurrentAdmissionRequiresExternalDigestRevisionAndClosedNativeBinding(): void
+    {
+        [$d, $r] = $this->currentFixture(); $json = json_encode(...);
+        $admit = \Most\PublicCore\CurrentCandidateSnapshot::admit(...); $bytes = $json($d, JSON_THROW_ON_ERROR);
+        self::assertSame($d, $admit($bytes, $json($r, JSON_THROW_ON_ERROR), $d['releaseSha'], $d['imageDigest'], 7, hash('sha256', $bytes), 1000, '/etc/most/public-core'));
+        // An arbitrary verified/accepted envelope cannot authorize itself: caller hash/revision must match.
+        foreach ([['digest', str_repeat('0', 64)], ['revision', 6], ['source', str_repeat('0', 40)], ['image', 'sha256:'.str_repeat('0', 64)], ['time', 1060]] as [$kind, $value]) {
+            try {
+                $admit($bytes, $json($r, JSON_THROW_ON_ERROR), $kind === 'source' ? $value : $d['releaseSha'], $kind === 'image' ? $value : $d['imageDigest'],
+                    $kind === 'revision' ? $value : 7, $kind === 'digest' ? $value : hash('sha256', $bytes), $kind === 'time' ? $value : 1000, '/etc/most/public-core');
+                self::fail('External acceptance pin bypassed: '.$kind);
+            } catch (LogicException $error) { self::assertSame('candidate_unavailable', $error->getMessage()); }
+        }
+        $changes = [
+            ['status', 'revoked'], ['status', 'verified'], ['revokedAt', 999], ['issuedAt', 1001], ['issuedAt', 0], ['expiresAt', 1000], ['revision', '7'],
+            ['acceptance.custodianChannel', 'untrusted'], ['acceptance.decisionRef', 'https://private.invalid'], ['acceptance.artifactSha256', 'invalid'],
+            ['acceptance.extra', true], ['runtime.file', '../runtime.json'], ['runtime.sha256', str_repeat('0', 64)], ['profileFingerprint', str_repeat('0', 64)],
+            ['modelBinding.templateVersion', 'chat-completions-action/1'], ['modelBinding.templateVersion', 'responses-public-core/1'],
+            ['modelBinding.apiMethod', 'chat_completions'], ['modelBinding.modelId', 'other/model'], ['modelBinding.provider', 'openai'],
+            ['modelBinding.modelRevision', 'old'], ['modelBinding.catalogDigest', 'invented'], ['modelBinding.contextWindow', 8192],
+            ['modelBinding.tokenizerRevision', 'borrowed'], ['modelBinding.countMethod', 'text_only'], ['modelBinding.vocabularySha256', str_repeat('0', 64)],
+            ['tokenizer.vocabulary.file', '../vocabulary.tiktoken'], ['tokenizer.pattern.file', 'other.txt'], ['evidence.method.file', '../method.json'],
+            ['evidence.method.sha256', 'invented'], ['extra', true],
+        ];
+        foreach ($changes as [$path, $value]) {
+            $bad = $d; $target = &$bad; $parts = explode('.', $path); $last = array_pop($parts);
+            foreach ($parts as $part) { $target = &$target[$part]; } $target[$last] = $value; unset($target);
+            $badBytes = $json($bad, JSON_THROW_ON_ERROR);
+            try { $admit($badBytes, $json($r, JSON_THROW_ON_ERROR), $d['releaseSha'], $d['imageDigest'], 7, hash('sha256', $badBytes), 1000, '/etc/most/public-core'); self::fail('Malformed CURRENT admitted: '.$path); }
+            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'invalid_model_output', 'model_profile_unqualified'], $path); }
+        }
+        foreach ([substr($bytes, 0, -1).',"revision":7}', str_repeat(' ', 65537).$bytes, '{}', '[]'] as $badBytes) {
+            try { $admit($badBytes, $json($r, JSON_THROW_ON_ERROR), $d['releaseSha'], $d['imageDigest'], 7, hash('sha256', $badBytes), 1000, '/etc/most/public-core'); self::fail('Duplicate/oversized/partial CURRENT admitted'); }
+            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'invalid_model_output', 'model_profile_unqualified']); }
+        }
+    }
+
+    public function testCurrentAdmissionRejectsOldPidPrivatePathsAndChangedManifestBytes(): void
+    {
+        [$d, $r] = $this->currentFixture();
+        foreach ([['processorPeer', ['uid' => 41002, 'gid' => 41002, 'pid' => 77]], ['credentialFile', '/etc/private/key'],
+            ['socketPath', '/other'], ['tokenizerFile', '/tmp/borrowed-bpe'], ['tokenizerPattern', '/other'], ['evidenceDirectory', '/other'],
+            ['activation', 'inactive'], ['store', true], ['gatewayUid', 82], ['tokenizerVocabulary', 'borrowed']] as [$key, $bad]) {
+            $runtime = array_replace($r, [$key => $bad]); $candidate = $d; $runtimeBytes = json_encode($runtime, JSON_THROW_ON_ERROR);
+            $candidate['runtime']['sha256'] = hash('sha256', $runtimeBytes); $bytes = json_encode($candidate, JSON_THROW_ON_ERROR);
+            try { \Most\PublicCore\CurrentCandidateSnapshot::admit($bytes, $runtimeBytes, $d['releaseSha'], $d['imageDigest'], 7, hash('sha256', $bytes), 1000, '/etc/most/public-core'); self::fail('Unsafe runtime staged: '.$key); }
+            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'invalid_model_output', 'model_profile_unqualified']); }
+        }
+        $this->expectException(LogicException::class);
+        $bytes = json_encode($d, JSON_THROW_ON_ERROR);
+        \Most\PublicCore\CurrentCandidateSnapshot::admit($bytes, json_encode($r, JSON_THROW_ON_ERROR)."\n", $d['releaseSha'], $d['imageDigest'], 7, hash('sha256', $bytes), 1000, '/etc/most/public-core');
+    }
+
+    public function testCurrentImageGateRejectsNonzeroStatusBeforeAnyStoreWrite(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Offline Bash image/status mocks require Linux; no image operations.'); }
+        $harness = <<<'CURRENT_IMAGE_BASH'
+source "$1"
+mode="$2"; release=$(printf '%040d' 5); image="ghcr.io/kamilgaraev/proexpert/prohelper@sha256:$(printf '%064d' 4)"
+PUBLIC_CORE_HELPER_SHA256=$(printf '%064d' 6); PUBLIC_CORE_RUNTIME_SHA256=$(printf '%064d' 7)
+timeout() { shift 3; "$@"; }
+docker() {
+  local kind
+  case "$1" in
+    image) kind=source; printf '%s' "$release" ;;
+    run)
+      case "${@: -1}" in
+        *release.json*) kind=embedded; printf '%s' "$release" ;;
+        *backend-runtime-allowlist.sh*) kind=helper; printf '%s' "$PUBLIC_CORE_HELPER_SHA256" ;;
+        *runtime.php*) kind=runtime; printf '%s' "$PUBLIC_CORE_RUNTIME_SHA256" ;;
+        *) return 88 ;;
+      esac ;;
+    *) return 89 ;;
+  esac
+  [ "$mode" != "${kind}_status" ] || return 17
+  [ "$mode" != "${kind}_mismatch" ] || printf extra
+}
+# Conditional invocation intentionally removes implicit errexit protection.
+if verify_public_core_candidate_image "$image" "$release"; then exit 0; else exit 1; fi
+CURRENT_IMAGE_BASH;
+        foreach (['normal', 'source_status', 'embedded_status', 'helper_status', 'runtime_status', 'source_mismatch', 'embedded_mismatch', 'helper_mismatch', 'runtime_mismatch'] as $mode) {
+            $process = proc_open(['bash', '-c', $harness, 'fixture', dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh', $mode],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+            fclose($pipes[1]); fclose($pipes[2]); $exit = proc_close($process);
+            self::assertSame('', $out); self::assertSame('', $err); self::assertSame($mode === 'normal', $exit === 0, $mode);
+        }
+    }
+
+    public function testPublishedWrappersAreExactSourceBoundAndDoNotContainAcquisitionOrCredentials(): void
+    {
+        $publisher = \Most\PublicCore\RoleProjectionPublisher::class;
+        foreach (['app', 'processor'] as $role) {
+            $bytes = $publisher::bootstrapBytes($role);
+            self::assertStringContainsString(hash_file('sha256', dirname(__DIR__, 4).'/docker/public-core/runtime.php'), $bytes);
+            self::assertStringContainsString("require_once '/var/www/html/docker/public-core/runtime.php'", $bytes);
+            self::assertStringNotContainsString('provider-key', $bytes); self::assertStringNotContainsString('accepted-candidate', $bytes);
+            self::assertStringContainsString($role === 'app' ? 'configureProtected' : 'protectedListener', $bytes);
+        }
+        $this->expectException(LogicException::class); $publisher::bootstrapBytes('other');
+    }
+
     /** Synthetic schema fixture only: these bytes are never actual profile/runtime evidence. */
     private function projectionFixture(): array
     {
@@ -692,8 +992,8 @@ BASH;
         $configuration['tokenizerSha256'] = hash('sha256', "YQ== 0\n");
         $configuration['tokenizerPatternSha256'] = hash('sha256', '/./');
         $configuration['tokenizerVocabulary'] = 'fixture-bpe';
-        $profile = ['profileRef' => 'profile:synthetic-compiler-only', 'qualification' => 'actual', 'adapterRevision' => 'fixture-v1',
-            'apiMethod' => 'chat_completions', 'endpoint' => 'https://api.timeweb.ai/v1/chat/completions',
+        $profile = ['profileRef' => 'profile:synthetic-compiler-only', 'qualification' => 'actual', 'adapterRevision' => \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION,
+            'apiMethod' => 'responses', 'endpoint' => 'https://api.timeweb.ai/v1/responses',
             'modelId' => 'fixture/model', 'modelRevision' => 'fixture-v1', 'tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1',
             'mappingEvidenceRef' => 'evidence:fixture-tokenizer', 'capabilityEvidenceRef' => 'evidence:fixture-method',
             'capacityEvidenceRef' => 'evidence:fixture-capacity', 'contextWindow' => 4096, 'maxOutputTokens' => 512, 'answerReserve' => 768, 'toolReserve' => 128];
@@ -701,7 +1001,7 @@ BASH;
         $fingerprint = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::fromArray($profile)->fingerprint();
         $source = dirname(__DIR__, 4).'/app/Services/Privacy/';
         $details = ['catalog' => ['modelRevision' => 'fixture-v1', 'catalogDigest' => str_repeat('a', 64)],
-            'method' => ['endpoint' => $profile['endpoint'], 'templateVersion' => 'chat-completions-action/1'],
+            'method' => ['endpoint' => $profile['endpoint'], 'templateVersion' => \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION],
             'capacity' => ['contextWindow' => 4096, 'maxOutputTokens' => 512],
             'tokenizer' => ['tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1', 'modelRevision' => 'fixture-v1',
                 'countMethod' => 'full_wire_json_bpe_upper_bound', 'vocabularySha256' => $configuration['tokenizerSha256'], 'patternSha256' => $configuration['tokenizerPatternSha256']],
@@ -717,7 +1017,7 @@ BASH;
                 'gatewaySourceSha256' => hash_file('sha256', $source.'Gateway/GatewayPublicCoreTransport.php')]];
         foreach ($details as $kind => $value) {
             $proof = ['schemaVersion' => 'public-core-runtime-evidence/1', 'kind' => $kind, 'ref' => 'evidence:fixture-'.$kind,
-                'status' => 'verified', 'profileFingerprint' => $fingerprint, 'modelId' => 'fixture/model', 'apiMethod' => 'chat_completions',
+                'status' => 'verified', 'profileFingerprint' => $fingerprint, 'modelId' => 'fixture/model', 'apiMethod' => 'responses',
                 'issuedAt' => time() - 1, 'expiresAt' => time() + 60, 'details' => $value];
             $bytes = json_encode($proof, JSON_THROW_ON_ERROR);
             $write($configuration['evidenceDirectory'].'/'.$kind.'.json', $bytes);
@@ -779,11 +1079,12 @@ BASH;
         try {
             $inactive = $configuration; $inactive['activation'] = 'inactive';
             $write($root.'/gateway/runtime.json', json_encode($inactive, JSON_THROW_ON_ERROR));
-            self::assertFalse($publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)));
+            try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Required CURRENT cannot be inactive no-op'); }
+            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'invalid_model_output', 'model_profile_unqualified']); }
             self::assertSame([], scandir($root.'/app') === ['.', '..'] ? [] : ['unexpected output']);
             $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
             try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Missing checked inputs fabricated'); }
-            catch (LogicException $failure) { self::assertContains($failure->getMessage(), ['runtime_not_activated', 'model_profile_unqualified', 'tokenizer_unqualified']); }
+            catch (LogicException $failure) { self::assertContains($failure->getMessage(), ['candidate_unavailable', 'runtime_not_activated', 'model_profile_unqualified', 'tokenizer_unqualified']); }
             foreach (['app', 'processor', 'gateway'] as $role) { self::assertFileDoesNotExist($root.'/'.$role.'/generation.json'); }
             self::assertFileDoesNotExist($root.'/app/profile.json'); self::assertFileDoesNotExist($root.'/processor/qualification.json');
             self::assertSame('inactive', json_decode(file_get_contents($root.'/gateway/runtime.json'), true, 64, JSON_THROW_ON_ERROR)['activation']);
