@@ -34,9 +34,9 @@ on:
         type: choice
         required: true
         default: release
-        options: [release, qualification-only, input-only]
+        options: [release, qualification-only, input-only, input-prepare]
       expected_source_sha:
-        description: Full exact source SHA required for qualification-only or input-only mode
+        description: Full exact source SHA required for every dispatched mode
         type: string
         required: false
         default: ''
@@ -54,6 +54,7 @@ jobs:
     outputs:
       allowed: ${{ steps.guard.outputs.allowed }}
       input_allowed: ${{ steps.guard.outputs.input_allowed }}
+      prepare_allowed: ${{ steps.guard.outputs.prepare_allowed }}
     steps:
       - name: Select literal main release without credentials
         id: guard
@@ -64,22 +65,22 @@ jobs:
         run: |
           set -euo pipefail
           allowed=false
-          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$REQUESTED_MODE" != qualification-only ]; then
-            case "$GITHUB_EVENT_NAME" in
-              push) allowed=true ;;
-              workflow_dispatch) if [ "$REQUESTED_MODE" = release ]; then allowed=true; fi ;;
+          input_allowed=false
+          prepare_allowed=false
+          # A source-only main push must NEVER release or acquire inputs.
+          if [ "${GITHUB_REF:-}" = refs/heads/main ] && [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] \
+            && [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}" ]; then
+            case "${REQUESTED_MODE:-}" in
+              release) allowed=true ;;
+              input-only) input_allowed=true ;;
+              input-prepare) prepare_allowed=true ;;
             esac
           fi
-          input_allowed=false
-          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$REQUESTED_MODE" = input-only ] \
-            && [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA" ]; then
-            input_allowed=true
-          fi
-          printf 'allowed=%s\ninput_allowed=%s\n' "$allowed" "$input_allowed" >> "$GITHUB_OUTPUT"
+          printf 'allowed=%s\ninput_allowed=%s\nprepare_allowed=%s\n' "$allowed" "$input_allowed" "$prepare_allowed" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: release_mode
-    if: needs.release_mode.outputs.allowed == 'true' && github.ref == 'refs/heads/main' && inputs.mode != 'qualification-only' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release'))
+    if: needs.release_mode.outputs.allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'release' && inputs.expected_source_sha == github.sha
     permissions:
       contents: read
       packages: write
@@ -92,6 +93,7 @@ jobs:
       - name: Enforce exact main release mode before credentials
         env:
           REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
           CURRENT_CANDIDATE_REVISION: ${{ vars.PUBLIC_CORE_CURRENT_REVISION }}
           CURRENT_CANDIDATE_SHA256: ${{ vars.PUBLIC_CORE_CURRENT_SHA256 }}
           ACCEPTED_MAIN_SHA: ${{ vars.PUBLIC_CORE_ACCEPTED_MAIN_SHA }}
@@ -99,21 +101,19 @@ jobs:
         run: |
           set -euo pipefail
           # Values must be installed by the checked managed acceptance handoff, never dispatch inputs.
-          [[ "$CURRENT_CANDIDATE_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
-          [[ "$CURRENT_CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          if ! [[ "$ACCEPTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          [[ "${CURRENT_CANDIDATE_REVISION:-}" =~ ^[1-9][0-9]{0,8}$ ]]
+          [[ "${CURRENT_CANDIDATE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+          if ! [[ "${ACCEPTED_MAIN_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
             exit 1
           fi
-          if [ "$ACCEPTED_MAIN_SHA" != "$GITHUB_SHA" ]; then
+          if [ "${ACCEPTED_MAIN_SHA:-}" != "${GITHUB_SHA:-}" ]; then
             exit 1
           fi
-          test "$GITHUB_REF" = refs/heads/main
-          test "$REQUESTED_MODE" != qualification-only
-          case "$GITHUB_EVENT_NAME" in
-            push) ;;
-            workflow_dispatch) test "$REQUESTED_MODE" = release ;;
-            *) exit 1 ;;
-          esac
+          test "${GITHUB_REF:-}" = refs/heads/main
+          test "${REQUESTED_MODE:-}" = release
+          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
 
       - name: Checkout exact release
         uses: actions/checkout@v7
@@ -169,6 +169,7 @@ jobs:
           PUBLIC_CORE_RUNTIME_SHA256: ${{ steps.current_helpers.outputs.runtime_sha256 }}
           MANAGED_REF: ${{ github.ref }}
           MANAGED_EVENT: ${{ github.event_name }}
+          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
           RELEASE_SHA: ${{ steps.meta.outputs.release_sha }}
           IMAGE_REPO: ${{ steps.meta.outputs.image_repo }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -184,14 +185,15 @@ jobs:
           key: ${{ secrets.DEPLOY }}
           timeout: 3h
           command_timeout: 3h
-          envs: CURRENT_CANDIDATE_REVISION,CURRENT_CANDIDATE_SHA256,ACCEPTED_MAIN_SHA,PUBLIC_CORE_HELPER_SHA256,PUBLIC_CORE_RUNTIME_SHA256,MANAGED_REF,MANAGED_EVENT,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
+          envs: CURRENT_CANDIDATE_REVISION,CURRENT_CANDIDATE_SHA256,ACCEPTED_MAIN_SHA,PUBLIC_CORE_HELPER_SHA256,PUBLIC_CORE_RUNTIME_SHA256,MANAGED_REF,MANAGED_EVENT,MANAGED_EXPECTED_SHA,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
           script: |
             set -euo pipefail
             umask 077
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
 
             test "${MANAGED_REF}" = refs/heads/main
-            case "${MANAGED_EVENT}" in push|workflow_dispatch) ;; *) exit 1 ;; esac
+            test "${MANAGED_EVENT}" = workflow_dispatch
+            test "${MANAGED_EXPECTED_SHA}" = "${RELEASE_SHA}"
             test "${ACCEPTED_MAIN_SHA}" = "${RELEASE_SHA}"
             [[ "${CURRENT_CANDIDATE_REVISION}" =~ ^[1-9][0-9]{0,8}$ ]]
             [[ "${CURRENT_CANDIDATE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
@@ -630,7 +632,7 @@ jobs:
     needs: release_mode
     if: needs.release_mode.outputs.input_allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'input-only'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     permissions:
       contents: read
     concurrency:
@@ -642,54 +644,496 @@ jobs:
           REQUESTED_MODE: ${{ inputs.mode }}
           EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
           INPUT_IMAGE_REF: ${{ inputs.input_image_ref }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$GITHUB_REF" = refs/heads/main
-          test "$REQUESTED_MODE" = input-only
-          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          test "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA"
-          [[ "$INPUT_IMAGE_REF" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
+          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          test "${GITHUB_REF:-}" = refs/heads/main
+          test "${REQUESTED_MODE:-}" = input-only
+          [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_REF:-}" =~ ^ref_[0-9a-f]{32}$ ]]
+          [[ "${PREPARATION_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${PREPARATION_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_PINS_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${INPUT_IMAGE_REF:-}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
       - name: Checkout exact input source without persisted credentials
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Pin existing input helper source
+      - name: Pin checked exact-main source transport
         id: source
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          printf 'allowlist=%s\n' "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-          printf 'runtime=%s\n' "$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - name: Describe staged model input through existing managed custodian
+          python3 - <<'PYCONTEXT'
+          import hashlib,os,pathlib,re,subprocess,tarfile
+          sha=os.environ['GITHUB_SHA']; assert re.fullmatch('[0-9a-f]{40}',sha)
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==sha
+          assert not subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],text=True).strip()
+          paths=['deploy/backend-runtime-allowlist.sh','docker/public-core/runtime.php','app/BusinessModules/Features/AIAssistant/config/ai-assistant.php','app/Support/AI/LunaModelPolicy.php','app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php','.github/workflows/deploy-backend.yml','Dockerfile.prod','.dockerignore']
+          assert all(pathlib.Path(v).is_file() and not pathlib.Path(v).is_symlink() for v in paths)
+          pins=':'.join(hashlib.sha256(pathlib.Path(v).read_bytes()).hexdigest() for v in paths)
+          assert hashlib.sha256(pins.encode()).hexdigest()==os.environ['PREPARATION_PINS_SHA256']
+          assert os.environ['PREPARATION_SHA']==sha and re.fullmatch('ref_[0-9a-f]{32}',os.environ['PREPARATION_REF'])
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
+          if os.environ['REQUESTED_MODE']=='input-prepare':
+           root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir();archive=root/'source.tar'
+           subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
+           with tarfile.open(archive) as tar:
+            for member in tar.getmembers():
+             path=pathlib.PurePosixPath(member.name);name=path.name
+             assert not path.is_absolute() and '..' not in path.parts and (member.isfile() or member.isdir() or member.issym())
+             assert not (name=='.env' or (name.startswith('.env.') and name!='.env.example') or name in ['.npmrc','.netrc','auth.json','id_rsa','id_ed25519'] or path.suffix.lower() in ['.pem','.key','.p12','.pfx'])
+             if member.issym():assert (context/path.parent/member.linkname).resolve().is_relative_to(context.resolve())
+           subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
+           assert set(['/.git','/.env','/.env.*','/vendor','/node_modules','/storage/*.key']).issubset((context/'.dockerignore').read_text().splitlines())
+           assert all((context/v).is_file() and not (context/v).is_symlink() for v in paths)
+           assert ':'.join(hashlib.sha256((context/v).read_bytes()).hexdigest() for v in paths)==pins
+           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('context='+str(context)+'\n')
+          PYCONTEXT
+      - name: Describe pinned staged input through existing managed custodian
         uses: appleboy/ssh-action@v1.0.3
         env:
           INPUT_SHA: ${{ github.sha }}
           INPUT_IMAGE_REF: ${{ inputs.input_image_ref }}
-          INPUT_ALLOWLIST_SHA: ${{ steps.source.outputs.allowlist }}
-          INPUT_RUNTIME_SHA: ${{ steps.source.outputs.runtime }}
+          INPUT_PINS: ${{ steps.source.outputs.pins }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+          MANAGED_REF: ${{ github.ref }}
+          MANAGED_EVENT: ${{ github.event_name }}
+          MANAGED_MODE: ${{ inputs.mode }}
+          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
         with:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
-          envs: INPUT_SHA,INPUT_IMAGE_REF,INPUT_ALLOWLIST_SHA,INPUT_RUNTIME_SHA
-          command_timeout: 120s
+          envs: INPUT_SHA,INPUT_IMAGE_REF,INPUT_PINS,PREPARATION_REF,PREPARATION_SHA,PREPARATION_PINS_SHA256,MANAGED_REF,MANAGED_EVENT,MANAGED_MODE,MANAGED_EXPECTED_SHA
+          command_timeout: 180s
           script_stop: true
           script: |
             set -euo pipefail
-            [[ "${INPUT_SHA}" =~ ^[0-9a-f]{40}$ ]]
-            [[ "${INPUT_ALLOWLIST_SHA}" =~ ^[0-9a-f]{64}$ ]]
-            [[ "${INPUT_RUNTIME_SHA}" =~ ^[0-9a-f]{64}$ ]]
+            # BEGIN fixed input transport. Mirrored literally in the managed workflow BEFORE
+            # sourcing any extracted helper. Authority is the separately checked CI assignment
+            # and exact-main pins, never a supplied staging manifest or a verified status enum.
+            public_core_input_assignment_guard() {
+              local release="$1" pins="$2" assignment="$3" accepted="$4" expected_pins="$5" digest
+              [ "${MANAGED_REF:-}" = refs/heads/main ] && [ "${MANAGED_EVENT:-}" = workflow_dispatch ] || return 1
+              case "${MANAGED_MODE:-}" in input-prepare|input-only) ;; *) return 1 ;; esac
+              [[ "${release}" =~ ^[0-9a-f]{40}$ ]] && [ "${release}" = "${accepted}" ] && [ "${release}" = "${MANAGED_EXPECTED_SHA:-}" ] || return 1
+              [[ "${assignment}" =~ ^ref_[0-9a-f]{32}$ ]] && [[ "${expected_pins}" =~ ^[0-9a-f]{64}$ ]] || return 1
+              [[ "${pins}" =~ ^[0-9a-f]{64}(:[0-9a-f]{64}){7}$ ]] || return 1
+              digest="$(printf '%s' "${pins}" | sha256sum)" || return 1
+              [ "${digest%% *}" = "${expected_pins}" ] || return 1
+            }
+
+            public_core_input_image_identity() {
+              local image="$1" release="$2" runtime="$3" id revision digests embedded
+              [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+              id="$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null)" || return 1
+              [[ "${id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+              revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}" 2>/dev/null)" || return 1
+              [ "${revision}" = "${release}" ] || return 1
+              # Read only the expected same-repository digest, never unrelated image aliases.
+              digests="$(docker image inspect --format "{{range .RepoDigests}}{{if eq . \"${image}\"}}{{print .}}{{end}}{{end}}" "${image}" 2>/dev/null)" || return 1
+              [ "${digests}" = "${image}" ] || return 1
+              embedded="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+                --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image}" -r \
+                '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
+              [ "${embedded}" = "${release}|${runtime}" ] || return 1
+              printf '%s' "${id}"
+            }
+
+            # Fixed, flat stage: five source files plus our bounded tuple, no caller paths.
+            # Stable reads/ancestor ownership and full directory equality reject foreign or
+            # mutable files. The tuple is compared to external CI pins on EVERY use.
+            public_core_input_stage_check() {
+              python3 - "$@" <<'PYSTAGE'
+            import sys,os,pathlib,stat,hashlib,json,re
+            try:
+             mode,release,image,image_id,pins,assignment=sys.argv[1:]
+             assert mode in ['write','read','parent'] and re.fullmatch('[0-9a-f]{40}',release)
+             assert re.fullmatch('ghcr.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}',image)
+             assert re.fullmatch('sha256:[0-9a-f]{64}',image_id) and re.fullmatch('ref_[0-9a-f]{32}',assignment)
+             hashes=pins.split(':'); assert len(hashes)==8 and all(re.fullmatch('[0-9a-f]{64}',v) for v in hashes)
+             root=pathlib.Path('/etc/most/public-core/input-source'); stage=root/release
+             def stable(s):return (s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+             def directory(p,exact=False):
+              s=p.lstat(); assert stat.S_ISDIR(s.st_mode) and s.st_uid==0 and s.st_gid==0 and not s.st_mode&0o022
+              if exact:assert stat.S_IMODE(s.st_mode)==0o700
+              return stable(s)
+             for a in [pathlib.Path('/'),pathlib.Path('/etc'),pathlib.Path('/etc/most'),pathlib.Path('/etc/most/public-core'),root]:directory(a)
+             if mode=='parent':sys.exit(0)
+             initial=directory(stage,True)
+             names=['allowlist.sh','runtime.php','config.php','policy.php','provider.php']
+             assert set(os.listdir(stage))==set(names+(['source.json'] if mode=='read' else []))
+             def read(name,limit):
+              path=stage/name; s=path.lstat(); assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o600 and 0<s.st_size<=limit
+              fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+              with os.fdopen(fd,'rb') as f:
+               assert stable(os.fstat(f.fileno()))==stable(s); raw=f.read(limit+1); assert stable(os.fstat(f.fileno()))==stable(s)
+              assert len(raw)==s.st_size and stable(path.lstat())==stable(s)
+              return raw
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             tuple={'schemaVersion':'public-core-input-source/1','sourceSha':release,'imageRef':image,'imageId':image_id,'assignmentRef':assignment,'sourcePins':hashes}
+             if mode=='read':
+              def unique(pairs):
+               d={}
+               for k,v in pairs:
+                assert k not in d; d[k]=v
+               return d
+              assert json.loads(read('source.json',4096),object_pairs_hook=unique)==tuple
+             else:
+              raw=json.dumps(tuple,separators=(',',':')).encode(); assert len(raw)<=4096
+              fd=os.open(stage/'source.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+              with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+             # Directory changes only by our exclusive manifest creation in write mode.
+             if mode=='read':assert directory(stage,True)==initial
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             print(hashlib.sha256(json.dumps(tuple,separators=(',',':')).encode()).hexdigest())
+            except Exception:sys.exit(1)
+            PYSTAGE
+            }
+
+            validate_public_core_input_source() {
+              local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6" image_id
+              public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+              local helper runtime config policy provider workflow dockerfile ignore
+              IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+              image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+              public_core_input_stage_check read "${release}" "${image}" "${image_id}" "${pins}" "${assignment}" || return 1
+            }
+
+            validate_public_core_input_source "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}" >/dev/null || exit 1
+            # Sourcing is legal only after independent literal validator/CI tuple and byte pins.
+            exec 3<"/etc/most/public-core/input-source/${INPUT_SHA}/allowlist.sh" || exit 1
+            helper_hash="$(sha256sum /proc/self/fd/3)" || exit 1
+            test "${helper_hash%% *}" = "${INPUT_PINS%%:*}"
+            source /proc/self/fd/3 || exit 1
+            exec 3<&- || exit 1
+            describe_managed_model_input "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}"
+
+  model_input_prepare:
+    needs: release_mode
+    if: needs.release_mode.outputs.prepare_allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'input-prepare'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Validate assigned exact-main preparation before credentials
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          test "${GITHUB_REF:-}" = refs/heads/main
+          test "${REQUESTED_MODE:-}" = input-prepare
+          [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_REF:-}" =~ ^ref_[0-9a-f]{32}$ ]]
+          [[ "${PREPARATION_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${PREPARATION_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_PINS_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+      - name: Checkout exact preparation source without persisted credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin checked exact-main source transport
+        id: source
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCONTEXT'
+          import hashlib,os,pathlib,re,subprocess,tarfile
+          sha=os.environ['GITHUB_SHA']; assert re.fullmatch('[0-9a-f]{40}',sha)
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==sha
+          assert not subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],text=True).strip()
+          paths=['deploy/backend-runtime-allowlist.sh','docker/public-core/runtime.php','app/BusinessModules/Features/AIAssistant/config/ai-assistant.php','app/Support/AI/LunaModelPolicy.php','app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php','.github/workflows/deploy-backend.yml','Dockerfile.prod','.dockerignore']
+          assert all(pathlib.Path(v).is_file() and not pathlib.Path(v).is_symlink() for v in paths)
+          pins=':'.join(hashlib.sha256(pathlib.Path(v).read_bytes()).hexdigest() for v in paths)
+          assert hashlib.sha256(pins.encode()).hexdigest()==os.environ['PREPARATION_PINS_SHA256']
+          assert os.environ['PREPARATION_SHA']==sha and re.fullmatch('ref_[0-9a-f]{32}',os.environ['PREPARATION_REF'])
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
+          if os.environ['REQUESTED_MODE']=='input-prepare':
+           root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir();archive=root/'source.tar'
+           subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
+           with tarfile.open(archive) as tar:
+            for member in tar.getmembers():
+             path=pathlib.PurePosixPath(member.name);name=path.name
+             assert not path.is_absolute() and '..' not in path.parts and (member.isfile() or member.isdir() or member.issym())
+             assert not (name=='.env' or (name.startswith('.env.') and name!='.env.example') or name in ['.npmrc','.netrc','auth.json','id_rsa','id_ed25519'] or path.suffix.lower() in ['.pem','.key','.p12','.pfx'])
+             if member.issym():assert (context/path.parent/member.linkname).resolve().is_relative_to(context.resolve())
+           subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
+           assert set(['/.git','/.env','/.env.*','/vendor','/node_modules','/storage/*.key']).issubset((context/'.dockerignore').read_text().splitlines())
+           assert all((context/v).is_file() and not (context/v).is_symlink() for v in paths)
+           assert ':'.join(hashlib.sha256((context/v).read_bytes()).hexdigest() for v in paths)==pins
+           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('context='+str(context)+'\n')
+          PYCONTEXT
+      - name: Set up existing builder
+        uses: docker/setup-buildx-action@v4
+      - name: Existing registry custodian login
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - name: Build and push only assigned exact-main source image
+        id: build
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: 'false'
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: ${{ steps.source.outputs.context }}
+          file: ${{ steps.source.outputs.context }}/Dockerfile.prod
+          push: true
+          provenance: false
+          sbom: false
+          github-token: ''
+          build-args: MOST_RELEASE_SHA=${{ github.sha }}
+          tags: ghcr.io/kamilgaraev/proexpert/prohelper:${{ github.sha }}
+      - name: Acquire fixed source transport only through existing managed custodian
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          INPUT_SHA: ${{ github.sha }}
+          INPUT_IMAGE_REF: ghcr.io/kamilgaraev/proexpert/prohelper@${{ steps.build.outputs.digest }}
+          INPUT_PINS: ${{ steps.source.outputs.pins }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+          MANAGED_REF: ${{ github.ref }}
+          MANAGED_EVENT: ${{ github.event_name }}
+          MANAGED_MODE: ${{ inputs.mode }}
+          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          DEPLOY_ACTOR: ${{ github.actor }}
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          envs: INPUT_SHA,INPUT_IMAGE_REF,INPUT_PINS,PREPARATION_REF,PREPARATION_SHA,PREPARATION_PINS_SHA256,MANAGED_REF,MANAGED_EVENT,MANAGED_MODE,MANAGED_EXPECTED_SHA,GHCR_PAT,DEPLOY_ACTOR
+          command_timeout: 180s
+          script_stop: true
+          script: |
+            set -euo pipefail
+            # BEGIN fixed input transport. Mirrored literally in the managed workflow BEFORE
+            # sourcing any extracted helper. Authority is the separately checked CI assignment
+            # and exact-main pins, never a supplied staging manifest or a verified status enum.
+            public_core_input_assignment_guard() {
+              local release="$1" pins="$2" assignment="$3" accepted="$4" expected_pins="$5" digest
+              [ "${MANAGED_REF:-}" = refs/heads/main ] && [ "${MANAGED_EVENT:-}" = workflow_dispatch ] || return 1
+              case "${MANAGED_MODE:-}" in input-prepare|input-only) ;; *) return 1 ;; esac
+              [[ "${release}" =~ ^[0-9a-f]{40}$ ]] && [ "${release}" = "${accepted}" ] && [ "${release}" = "${MANAGED_EXPECTED_SHA:-}" ] || return 1
+              [[ "${assignment}" =~ ^ref_[0-9a-f]{32}$ ]] && [[ "${expected_pins}" =~ ^[0-9a-f]{64}$ ]] || return 1
+              [[ "${pins}" =~ ^[0-9a-f]{64}(:[0-9a-f]{64}){7}$ ]] || return 1
+              digest="$(printf '%s' "${pins}" | sha256sum)" || return 1
+              [ "${digest%% *}" = "${expected_pins}" ] || return 1
+            }
+
+            public_core_input_image_identity() {
+              local image="$1" release="$2" runtime="$3" id revision digests embedded
+              [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+              id="$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null)" || return 1
+              [[ "${id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+              revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}" 2>/dev/null)" || return 1
+              [ "${revision}" = "${release}" ] || return 1
+              # Read only the expected same-repository digest, never unrelated image aliases.
+              digests="$(docker image inspect --format "{{range .RepoDigests}}{{if eq . \"${image}\"}}{{print .}}{{end}}{{end}}" "${image}" 2>/dev/null)" || return 1
+              [ "${digests}" = "${image}" ] || return 1
+              embedded="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+                --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image}" -r \
+                '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
+              [ "${embedded}" = "${release}|${runtime}" ] || return 1
+              printf '%s' "${id}"
+            }
+
+            # Fixed, flat stage: five source files plus our bounded tuple, no caller paths.
+            # Stable reads/ancestor ownership and full directory equality reject foreign or
+            # mutable files. The tuple is compared to external CI pins on EVERY use.
+            public_core_input_stage_check() {
+              python3 - "$@" <<'PYSTAGE'
+            import sys,os,pathlib,stat,hashlib,json,re
+            try:
+             mode,release,image,image_id,pins,assignment=sys.argv[1:]
+             assert mode in ['write','read','parent'] and re.fullmatch('[0-9a-f]{40}',release)
+             assert re.fullmatch('ghcr.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}',image)
+             assert re.fullmatch('sha256:[0-9a-f]{64}',image_id) and re.fullmatch('ref_[0-9a-f]{32}',assignment)
+             hashes=pins.split(':'); assert len(hashes)==8 and all(re.fullmatch('[0-9a-f]{64}',v) for v in hashes)
+             root=pathlib.Path('/etc/most/public-core/input-source'); stage=root/release
+             def stable(s):return (s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+             def directory(p,exact=False):
+              s=p.lstat(); assert stat.S_ISDIR(s.st_mode) and s.st_uid==0 and s.st_gid==0 and not s.st_mode&0o022
+              if exact:assert stat.S_IMODE(s.st_mode)==0o700
+              return stable(s)
+             for a in [pathlib.Path('/'),pathlib.Path('/etc'),pathlib.Path('/etc/most'),pathlib.Path('/etc/most/public-core'),root]:directory(a)
+             if mode=='parent':sys.exit(0)
+             initial=directory(stage,True)
+             names=['allowlist.sh','runtime.php','config.php','policy.php','provider.php']
+             assert set(os.listdir(stage))==set(names+(['source.json'] if mode=='read' else []))
+             def read(name,limit):
+              path=stage/name; s=path.lstat(); assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o600 and 0<s.st_size<=limit
+              fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+              with os.fdopen(fd,'rb') as f:
+               assert stable(os.fstat(f.fileno()))==stable(s); raw=f.read(limit+1); assert stable(os.fstat(f.fileno()))==stable(s)
+              assert len(raw)==s.st_size and stable(path.lstat())==stable(s)
+              return raw
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             tuple={'schemaVersion':'public-core-input-source/1','sourceSha':release,'imageRef':image,'imageId':image_id,'assignmentRef':assignment,'sourcePins':hashes}
+             if mode=='read':
+              def unique(pairs):
+               d={}
+               for k,v in pairs:
+                assert k not in d; d[k]=v
+               return d
+              assert json.loads(read('source.json',4096),object_pairs_hook=unique)==tuple
+             else:
+              raw=json.dumps(tuple,separators=(',',':')).encode(); assert len(raw)<=4096
+              fd=os.open(stage/'source.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+              with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+             # Directory changes only by our exclusive manifest creation in write mode.
+             if mode=='read':assert directory(stage,True)==initial
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             print(hashlib.sha256(json.dumps(tuple,separators=(',',':')).encode()).hexdigest())
+            except Exception:sys.exit(1)
+            PYSTAGE
+            }
+
+            validate_public_core_input_source() {
+              local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6" image_id
+              public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+              local helper runtime config policy provider workflow dockerfile ignore
+              IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+              image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+              public_core_input_stage_check read "${release}" "${image}" "${image_id}" "${pins}" "${assignment}" || return 1
+            }
+
+            prepare_public_core_input_source() (
+              local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6"
+              local helper runtime config policy provider workflow dockerfile ignore image_id cid='' owned_stage=false owned_parent=false stage stage_identity='' parent_identity='' observed hash output
+              public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+              [ "${MANAGED_MODE}" = input-prepare ] || return 1
+              [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+              IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+              stage="/etc/most/public-core/input-source/${release}"
+              # Root custodian only. Never create/repair foreign ancestors or reuse a stage.
+              observed="$(id -u)" || return 1
+              [ "${observed}" = 0 ] || return 1
+              cleanup_input_source() {
+                local code=$? cleanup_failed=false
+                trap - EXIT
+                if [ -n "${cid}" ]; then docker rm -- "${cid}" >/dev/null 2>&1 || cleanup_failed=true; fi
+                if [ "${code}" -ne 0 ] && [ "${owned_stage}" = true ]; then
+                  local current_identity
+                  current_identity="$(stat -c '%d:%i' -- "${stage}")" || exit 1
+                  [ ! -L "${stage}" ] && [ "${current_identity}" = "${stage_identity}" ] || exit 1
+                  rm -f -- "${stage}/allowlist.sh" "${stage}/runtime.php" "${stage}/config.php" "${stage}/policy.php" "${stage}/provider.php" "${stage}/source.json" || cleanup_failed=true
+                  rmdir -- "${stage}" || cleanup_failed=true
+                fi
+                if [ "${code}" -ne 0 ] && [ "${owned_parent}" = true ]; then
+                  local current_parent
+                  current_parent="$(stat -c '%d:%i' -- /etc/most/public-core/input-source)" || exit 1
+                  [ ! -L /etc/most/public-core/input-source ] && [ "${current_parent}" = "${parent_identity}" ] || exit 1
+                  rmdir -- /etc/most/public-core/input-source || cleanup_failed=true
+                fi
+                if [ "${cleanup_failed}" = true ]; then exit 1; fi
+                exit "${code}"
+              }
+              trap cleanup_input_source EXIT
+              if [ ! -e /etc/most/public-core/input-source ] && [ ! -L /etc/most/public-core/input-source ]; then
+                mkdir -m 0700 -- /etc/most/public-core/input-source || return 1
+                owned_parent=true
+                parent_identity="$(stat -c '%d:%i' -- /etc/most/public-core/input-source)" || return 1
+              fi
+              public_core_input_stage_check parent "${release}" "${image}" "sha256:$(printf '%064d' 0)" "${pins}" "${assignment}" >/dev/null || return 1
+              [ ! -e "${stage}" ] && [ ! -L "${stage}" ] || return 1
+              docker pull "${image}" >/dev/null 2>&1 || return 1
+              image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+              mkdir -m 0700 -- "${stage}" || return 1
+              owned_stage=true
+              stage_identity="$(stat -c '%d:%i' -- "${stage}")" || return 1
+              cid="$(docker create --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+                --label "most.input-preparation=${assignment}" --entrypoint /bin/true "${image}" 2>/dev/null)" || { cid=''; return 1; }
+              [[ "${cid}" =~ ^[0-9a-f]{64}$ ]] || { cid=''; return 1; }
+              observed="$(docker inspect --format '{{.State.Running}}|{{.State.Pid}}|{{.Image}}|{{index .Config.Labels "most.input-preparation"}}' "${cid}" 2>/dev/null)" || return 1
+              [ "${observed}" = "false|0|${image_id}|${assignment}" ] || return 1
+              # No loop over supplied source names: exactly the five agreed literal copies.
+              docker cp "${cid}:/var/www/html/deploy/backend-runtime-allowlist.sh" "${stage}/allowlist.sh" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/docker/public-core/runtime.php" "${stage}/runtime.php" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/app/BusinessModules/Features/AIAssistant/config/ai-assistant.php" "${stage}/config.php" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/app/Support/AI/LunaModelPolicy.php" "${stage}/policy.php" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php" "${stage}/provider.php" >/dev/null 2>&1 || return 1
+              local name expected
+              for name in allowlist.sh runtime.php config.php policy.php provider.php; do
+                [ -f "${stage}/${name}" ] && [ ! -L "${stage}/${name}" ] || return 1
+                chmod 0600 -- "${stage}/${name}" || return 1
+                case "${name}" in allowlist.sh) expected="$helper" ;; runtime.php) expected="$runtime" ;; config.php) expected="$config" ;; policy.php) expected="$policy" ;; provider.php) expected="$provider" ;; esac
+                hash="$(sha256sum -- "${stage}/${name}")" || return 1
+                [ "${hash%% *}" = "${expected}" ] || return 1
+              done
+              observed="$(docker inspect --format '{{.State.Running}}|{{.State.Pid}}|{{.Image}}|{{index .Config.Labels "most.input-preparation"}}' "${cid}" 2>/dev/null)" || return 1
+              [ "${observed}" = "false|0|${image_id}|${assignment}" ] || return 1
+              output="$(public_core_input_stage_check write "${release}" "${image}" "${image_id}" "${pins}" "${assignment}")" || return 1
+              [[ "${output}" =~ ^[0-9a-f]{64}$ ]] || return 1
+              validate_public_core_input_source "${image}" "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" >/dev/null || return 1
+              docker rm -- "${cid}" >/dev/null 2>&1 || return 1
+              cid=''
+              # No store read, helper sourcing or activation occurs in preparation.
+              python3 - "${release}" "${image}" "${image_id}" "${pins}" "${output}" <<'PYOUTPUT'
+            import sys,json
+            release,image,image_id,pins,staging=sys.argv[1:]; h=pins.split(':')
+            print(json.dumps(dict(schemaVersion='public-core-input-preparation/1',sourceSha=release,workflowDigest=h[5],allowlistDigest=h[0],runtimeDigest=h[1],configDigest=h[2],policyDigest=h[3],providerDigest=h[4],dockerfileDigest=h[6],imageRef=image,imageId=image_id,ociRevision=release,embeddedSourceSha=release,stagingDigest=staging,preparationOnly=True,storeRead=False,providerCalled=False,runtimeActivated=False),separators=(',',':')))
+            PYOUTPUT
+            )
+            # END fixed input transport.
+            public_core_input_assignment_guard "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}"
             [[ "${INPUT_IMAGE_REF}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
-            cd /var/www/prohelper
-            test "$(git rev-parse HEAD)" = "${INPUT_SHA}"
-            git diff --quiet -- deploy/backend-runtime-allowlist.sh docker/public-core/runtime.php
-            test "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" = "${INPUT_ALLOWLIST_SHA}"
-            source deploy/backend-runtime-allowlist.sh
-            describe_managed_model_input "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_RUNTIME_SHA}"
+            # Registry auth stays in an owned temporary config; production docker config unchanged.
+            registry_config="$(mktemp -d)" || exit 1
+            trap 'rm -f -- "$registry_config/config.json"; rmdir -- "$registry_config"' EXIT
+            printf '%s' "$GHCR_PAT" | docker --config "$registry_config" login ghcr.io -u "$DEPLOY_ACTOR" --password-stdin >/dev/null 2>&1
+            export DOCKER_CONFIG="$registry_config"
+            unset GHCR_PAT
+            prepare_public_core_input_source "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}"
+      - name: Clean only own runner tracked context
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCLEAN'
+          import os,pathlib,shutil
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+          if root.exists():
+           assert not root.is_symlink() and root.parent.resolve()==pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+           shutil.rmtree(root)
+          PYCLEAN
 
   qualification:
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'qualification-only' && startsWith(github.ref, 'refs/heads/')

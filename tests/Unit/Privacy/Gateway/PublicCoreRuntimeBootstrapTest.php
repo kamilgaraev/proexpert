@@ -21,6 +21,100 @@ require_once dirname(__DIR__, 4).'/docker/public-core/runtime.php';
 
 final class PublicCoreRuntimeBootstrapTest extends TestCase
 {
+
+    /** @param array<string, string> $environment
+     *  @return array{exit: int, stdout: string, stderr: string}
+     */
+    private function inputPreparationProcess(string $script, array $environment): array
+    {
+        $binary = PHP_OS_FAMILY === 'Windows' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/bash';
+        $process = proc_open([$binary, '-c', $script],
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $environment);
+        if (!is_resource($process)) { throw new LogicException('fixture_process_unavailable'); }
+        fclose($pipes[0]); $stdout = stream_get_contents($pipes[1]); $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]);
+
+        return ['exit' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
+    }
+
+    public function testInputPreparationRoutingNeverDeploysOnPushOrWrongMainIdentity(): void
+    {
+        $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
+        $source = str_replace(' >> "$GITHUB_OUTPUT"', '', $workflow['jobs']['release_mode']['steps'][0]['run']);
+        $sha = str_repeat('a', 40);
+        // No file or credentials: redirect only public selection outputs to stdout.
+        foreach (['release', 'input-only', 'input-prepare', 'qualification-only', 'unknown'] as $mode) {
+            foreach (['push', 'workflow_dispatch'] as $event) {
+                foreach (['refs/heads/main', 'refs/heads/task/fixture'] as $ref) {
+                    foreach ([$sha, '', str_repeat('b', 40)] as $expected) {
+                        $result = $this->inputPreparationProcess($source, ['GITHUB_SHA' => $sha, 'GITHUB_REF' => $ref,
+                            'GITHUB_EVENT_NAME' => $event, 'REQUESTED_MODE' => $mode, 'EXPECTED_SOURCE_SHA' => $expected,
+                            'GITHUB_OUTPUT' => '/dev/stdout']);
+                        $valid = $event === 'workflow_dispatch' && $ref === 'refs/heads/main' && $expected === $sha;
+                        $expectedOutput = 'allowed='.($valid && $mode === 'release' ? 'true' : 'false')."\n"
+                            .'input_allowed='.($valid && $mode === 'input-only' ? 'true' : 'false')."\n"
+                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n";
+                        self::assertSame(0, $result['exit']); self::assertSame('', $result['stderr']);
+                        self::assertSame($expectedOutput, $result['stdout'], $mode.'/'.$event.'/'.$ref.'/'.$expected);
+                    }
+                }
+            }
+        }
+    }
+
+    public function testInputPreparationAndReleaseRejectBeforeCredentialSentinel(): void
+    {
+        $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
+        $sha = str_repeat('a', 40);
+        $base = ['GITHUB_SHA' => $sha, 'GITHUB_REF' => 'refs/heads/main', 'GITHUB_EVENT_NAME' => 'workflow_dispatch',
+            'EXPECTED_SOURCE_SHA' => $sha, 'PREPARATION_REF' => 'ref_'.str_repeat('b', 32), 'PREPARATION_SHA' => $sha,
+            'PREPARATION_PINS_SHA256' => str_repeat('c', 64), 'ACCEPTED_MAIN_SHA' => $sha,
+            'CURRENT_CANDIDATE_REVISION' => '12', 'CURRENT_CANDIDATE_SHA256' => str_repeat('d', 64),
+            'INPUT_IMAGE_REF' => 'ghcr.io/kamilgaraev/proexpert/prohelper@sha256:'.str_repeat('e', 64)];
+        foreach (['model_input_prepare' => 'input-prepare', 'model_input' => 'input-only', 'deploy' => 'release'] as $job => $mode) {
+            $code = $workflow['jobs'][$job]['steps'][0]['run']."\nprintf 'CREDENTIAL_SENTINEL\\n'\n";
+            $cases = [[], ['GITHUB_EVENT_NAME' => 'push'], ['GITHUB_REF' => 'refs/heads/task/fixture'],
+                ['REQUESTED_MODE' => 'qualification-only'], ['EXPECTED_SOURCE_SHA' => ''],
+                ['EXPECTED_SOURCE_SHA' => strtoupper($sha)], ['EXPECTED_SOURCE_SHA' => $sha."\n"],
+                ['EXPECTED_SOURCE_SHA' => str_repeat('f', 40)]];
+            if ($job === 'deploy') {
+                foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $cases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
+                $cases[] = ['CURRENT_CANDIDATE_REVISION' => '']; $cases[] = ['CURRENT_CANDIDATE_SHA256' => ''];
+            } else {
+                $cases[] = ['PREPARATION_REF' => '']; $cases[] = ['PREPARATION_SHA' => str_repeat('f', 40)];
+                $cases[] = ['PREPARATION_PINS_SHA256' => ''];
+                if ($job === 'model_input') { $cases[] = ['INPUT_IMAGE_REF' => 'foreign:latest']; }
+            }
+            foreach ($cases as $index => $change) {
+                $result = $this->inputPreparationProcess($code, array_replace($base, ['REQUESTED_MODE' => $mode], $change));
+                self::assertSame($index === 0, $result['exit'] === 0, $job.'/'.$index);
+                self::assertSame($index === 0 ? "CREDENTIAL_SENTINEL\n" : '', $result['stdout'], $job.'/'.$index);
+                self::assertSame('', $result['stderr']);
+            }
+        }
+    }
+
+    public function testInputPreparationBootstrapCannotSourceSuppliedStageOrUseProviderStore(): void
+    {
+        $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
+        $helper = file_get_contents(dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh');
+        $bootstrap = substr($helper, strpos($helper, '# BEGIN fixed input transport.'));
+        $prepare = $workflow['jobs']['model_input_prepare']['steps'][6]['with']['script'];
+        $start = strpos($prepare, '# BEGIN fixed input transport.');
+        $end = strpos($prepare, '# END fixed input transport.') + strlen('# END fixed input transport.');
+        self::assertSame(trim($bootstrap), substr($prepare, $start, $end - $start));
+        foreach (['/var/www/prohelper', 'describe-model-input', 'provision-credentials', 'publish-projections', 'docker compose'] as $forbidden) {
+            self::assertStringNotContainsString($forbidden, $prepare);
+        }
+        self::assertDoesNotMatchRegularExpression('/^\s*source\s/m', $prepare);
+        self::assertFalse($workflow['jobs']['model_input']['steps'][1]['with']['persist-credentials']);
+        self::assertFalse($workflow['jobs']['model_input_prepare']['steps'][1]['with']['persist-credentials']);
+        $input = $workflow['jobs']['model_input']['steps'][3]['with']['script'];
+        self::assertLessThan(strpos($input, 'source /proc/self/fd/3'), strpos($input, 'validate_public_core_input_source "${INPUT_IMAGE_REF}"'));
+        self::assertLessThan(strpos($input, 'source /proc/self/fd/3'), strpos($input, 'test "${helper_hash%% *}"'));
+        self::assertStringNotContainsString('git rev-parse', $input);
+    }
+
     private function example(): string
     {
         return dirname(__DIR__, 4).'/deploy/public-core-runtime.json.example';
