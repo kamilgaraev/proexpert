@@ -130,13 +130,16 @@ prepare_public_core_image_inputs() {
 # Managed lifecycle only. Keep the old deny barrier until roles and endpoints are gone.
 # Out-of-band privileged table deletion is outside this interface and remains unqualified.
 quiesce_public_core_gateway_route() {
-  local role container_id running host_pid network_id bridge project network_role member_id matches=0
+  local role container_id running host_pid network_id bridge project network_role member_id discovered members inspected matches=0
   local -a ids=()
   for role in "${MOST_PUBLIC_CORE_SERVICES[@]}"; do
-    for container_id in $(docker ps -aq --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${role}"); do
+    discovered="$(docker ps -aq --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${role}")" || return 1
+    for container_id in ${discovered}; do
       [[ "${container_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
-      [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${container_id}")" = prohelper ] \
-        && [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" = "${role}" ] || return 1
+      inspected="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${container_id}")" || return 1
+      [ "${inspected}" = prohelper ] || return 1
+      inspected="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || return 1
+      [ "${inspected}" = "${role}" ] || return 1
       host_pid="$(docker inspect --format '{{.State.Pid}}' "${container_id}")" || return 1
       [[ "${host_pid}" =~ ^[0-9]+$ ]] || return 1
       docker stop --time 30 "${container_id}" >/dev/null || return 1
@@ -148,31 +151,40 @@ quiesce_public_core_gateway_route() {
     done
   done
   # Only the designated Gateway bridge may be disconnected. Foreign/colliding networks abort.
-  for network_id in $(docker network ls --format '{{.ID}}'); do
+  discovered="$(docker network ls --format '{{.ID}}')" || return 1
+  for network_id in ${discovered}; do
     bridge="$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "${network_id}")" || return 1
     [ "${bridge}" = br-most-pc ] || continue
     project="$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "${network_id}")" || return 1
     network_role="$(docker network inspect --format '{{index .Labels "com.docker.compose.network"}}' "${network_id}")" || return 1
     [ "${project}" = prohelper ] && [ "${network_role}" = public-core-gateway ] || return 1
     matches=$((matches + 1)); [ "${matches}" -eq 1 ] || return 1
-    for member_id in $(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}"); do
-      [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${member_id}")" = prohelper ] \
-        && [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${member_id}")" = public-core-gateway ] \
-        && [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${member_id}")" = 'false:0:no' ] || return 1
+    members="$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" || return 1
+    for member_id in ${members}; do
+      [[ "${member_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+      inspected="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${member_id}")" || return 1
+      [ "${inspected}" = prohelper ] || return 1
+      inspected="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${member_id}")" || return 1
+      [ "${inspected}" = public-core-gateway ] || return 1
+      inspected="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${member_id}")" || return 1
+      [ "${inspected}" = 'false:0:no' ] || return 1
       docker network disconnect "${network_id}" "${member_id}" || return 1
     done
-    [ -z "$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" ] || return 1
+    inspected="$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" || return 1
+    [ -z "${inspected}" ] || return 1
   done
   if ip link show br-most-pc >/dev/null 2>&1; then [ "${matches}" -eq 1 ] || return 1; fi
   # Verify stopped roles have no endpoint on any network before invalidating readers.
   for container_id in "${ids[@]}"; do
-    [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" = 'false:0:no' ] \
-      || return 1
+    inspected="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" || return 1
+    [ "${inspected}" = 'false:0:no' ] || return 1
     role="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || return 1
     if [ "${role}" = public-core-processor ]; then
-      [ "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${container_id}")" = none ] || return 1
+      inspected="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${container_id}")" || return 1
+      [ "${inspected}" = none ] || return 1
     else
-      [ -z "$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.EndpointID}}{{.IPAddress}}{{.GlobalIPv6Address}}{{end}}' "${container_id}")" ] || return 1
+      inspected="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.EndpointID}}{{.IPAddress}}{{.GlobalIPv6Address}}{{end}}' "${container_id}")" || return 1
+      [ -z "${inspected}" ] || return 1
     fi
   done
 }
@@ -210,7 +222,7 @@ invalidate_public_core_projections() {
 # Explicit future parked-start preparation only; not called by default inactive deployment.
 # Reads only container labels/image/PIDs and host kernel metadata, never Config.Env or keys.
 observe_public_core_parked_peers() {
-  local image_ref="$1" release_sha="$2" image_digest="${1##*@}" image_id directory temporary role uid ids container_id host_pid service actual_image running
+  local image_ref="$1" release_sha="$2" image_digest="${1##*@}" image_id directory temporary role uid ids container_id host_pid service actual_image running inspected
   [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
   image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
   directory=/etc/most/public-core/control
@@ -223,10 +235,10 @@ observe_public_core_parked_peers() {
     ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=public-core-${role}")" || { rm -f -- "${temporary}"; return 1; }
     [[ "${ids}" =~ ^[0-9a-f]{64}$ ]] || { rm -f -- "${temporary}"; return 1; }
     container_id="${ids}"
-    host_pid="$(docker inspect --format '{{.State.Pid}}' "${container_id}")"
-    service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")"
-    actual_image="$(docker inspect --format '{{.Image}}' "${container_id}")"
-    running="$(docker inspect --format '{{.State.Running}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")"
+    host_pid="$(docker inspect --format '{{.State.Pid}}' "${container_id}")" || { rm -f -- "${temporary}"; return 1; }
+    service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || { rm -f -- "${temporary}"; return 1; }
+    actual_image="$(docker inspect --format '{{.Image}}' "${container_id}")" || { rm -f -- "${temporary}"; return 1; }
+    running="$(docker inspect --format '{{.State.Running}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" || { rm -f -- "${temporary}"; return 1; }
     [[ "${host_pid}" =~ ^[1-9][0-9]*$ ]] && [ "${service}" = "public-core-${role}" ] \
       && [ "${actual_image}" = "${image_id}" ] && [ "${running}" = 'true:no' ] || { rm -f -- "${temporary}"; return 1; }
     python3 - "${host_pid}" "${uid}" "${role}" "${container_id}" "${image_digest}" >> "${temporary}" <<'PYOBS' || { rm -f -- "${temporary}"; return 1; }
@@ -248,8 +260,8 @@ for field in ['Uid','Gid','NSpid']:
 lifetime='ref_'+hashlib.sha256(json.dumps([peer,boot,start],separators=(',',':')).encode()).hexdigest()[:32]
 print(json.dumps({'role':role,'observation':{'containerId':cid,'imageDigest':image,'service':'public-core-'+role,'hostPid':int(host),'peer':peer,'lifetimeRef':lifetime}},separators=(',',':')))
 PYOBS
-    [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${container_id}")" = "true:${host_pid}:${image_id}" ] \
-      || { rm -f -- "${temporary}"; return 1; }
+    inspected="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${container_id}")" || { rm -f -- "${temporary}"; return 1; }
+    [ "${inspected}" = "true:${host_pid}:${image_id}" ] || { rm -f -- "${temporary}"; return 1; }
   done
   local output
   output="$(mktemp "${directory}/.observed.XXXXXXXX")" || { rm -f -- "${temporary}"; return 1; }
@@ -270,7 +282,7 @@ PYOBS
 prepare_public_core_projections() {
   local image_ref="$1" release_sha="$2" image_digest="${1##*@}"
   [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
-  local state api_id
+  local state api_id actual_image expected_image
   local -a pid_options=()
   state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
   case "${state}" in
@@ -278,7 +290,9 @@ prepare_public_core_projections() {
     approved)
       api_id="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" || return 1
       [[ "${api_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
-      [ "$(docker inspect --format '{{.Image}}' "${api_id}")" = "$(docker image inspect --format '{{.Id}}' "${image_ref}")" ] || return 1
+      actual_image="$(docker inspect --format '{{.Image}}' "${api_id}")" || return 1
+      expected_image="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
+      [ "${actual_image}" = "${expected_image}" ] || return 1
       pid_options=(--pid "container:${api_id}") ;;
     *) return 1 ;;
   esac
@@ -294,11 +308,11 @@ prepare_public_core_projections() {
 # checked release input; loading this artifact never grants network readiness.
 prepare_public_core_deny_policy() {
   quiesce_public_core_gateway_route || return 1
-  invalidate_public_core_projections || return 1
   command -v nft >/dev/null 2>&1 || return 1
-  local batch existing network_id bridge_name project_name role_name member_id matches=0
+  local batch existing network_id bridge_name project_name role_name member_id discovered members member_project member_state matches=0
   # Refuse name collisions before touching even our own deny table.
-  for network_id in $(docker network ls --format '{{.ID}}'); do
+  discovered="$(docker network ls --format '{{.ID}}')" || return 1
+  for network_id in ${discovered}; do
     bridge_name="$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "${network_id}")" || return 1
     [ "${bridge_name}" = br-most-pc ] || continue
     project_name="$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "${network_id}")" || return 1
@@ -306,16 +320,25 @@ prepare_public_core_deny_policy() {
     [ "${project_name}" = prohelper ] && [ "${role_name}" = public-core-gateway ] || return 1
     matches=$((matches + 1))
     [ "${matches}" -eq 1 ] || return 1
-    for member_id in $(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}"); do
+    members="$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" || return 1
+    for member_id in ${members}; do
+      [[ "${member_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
       role_name="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${member_id}")" || return 1
       [ "${role_name}" = public-core-gateway ] || return 1
+      member_project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${member_id}")" || return 1
+      member_state="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${member_id}")" || return 1
+      [ "${member_project}" = prohelper ] && [ "${member_state}" = 'false:0:no' ] || return 1
     done
+    # A member reappearing after quiesce is a changed route, not permission to refresh.
+    [ -z "${members}" ] || return 1
   done
   if ip link show br-most-pc >/dev/null 2>&1; then [ "${matches}" -eq 1 ] || return 1; fi
   existing="$(nft list table inet most_public_core 2>/dev/null || true)"
   if [ -n "${existing}" ]; then
     grep -Fq 'comment "most-public-core:gateway-only/1"' <<< "${existing}" || return 1
   fi
+  # All Docker discovery and ownership checks succeeded before reader mutation.
+  invalidate_public_core_projections || return 1
   batch="$(mktemp /etc/most/public-core/.nft.XXXXXXXX)" || return 1
   if [ -n "${existing}" ]; then printf 'delete table inet most_public_core\n' > "${batch}"; fi
   cat docker/public-core/egress-policy.nft >> "${batch}" || { rm -f -- "${batch}"; return 1; }

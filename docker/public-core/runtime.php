@@ -1115,31 +1115,88 @@ final class ProcessorRuntimeBootstrap
      */
     public static function semanticVerdict(array $value, array $payload, array $evidence): array
     {
-        if (!is_string($value['text'] ?? null) || !is_array($value['claims'] ?? null) || $value['claims'] === [] || $evidence === []) {
-            return ['status' => 'repair', 'reason' => 'claims_invalid'];
+        $repair = ['status' => 'repair', 'reason' => 'claims_invalid'];
+        $valid = ['status' => 'valid', 'reason' => 'none'];
+        if (!is_string($value['text'] ?? null) || !is_array($value['claims'] ?? null)
+            || !is_array($value['sourceRefs'] ?? null) || $value['sourceRefs'] === []
+            || !is_array($payload['messages'] ?? null)) { return $repair; }
+        $current = array_values(array_filter($payload['messages'], static fn (array $message): bool =>
+            ($message['ref'] ?? null) === ($payload['currentRef'] ?? null) && ($message['role'] ?? null) === 'user'));
+        if (count($current) !== 1) { return $repair; }
+        $registry = \App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry::compiled();
+        $selectors = array_values(array_filter($registry->catalog(), static fn (array $row): bool =>
+            $row['display_text'] === ($current[0]['content'] ?? null)));
+        if (count($selectors) !== 1) { return $repair; }
+        $selection = $selectors[0];
+        if ($selection['fixture_id'] === 'public-photo-metadata-v1') {
+            // Only the registered transcript already present in the authenticated context.
+            // The original response validator checks contextScope and its source aliases first.
+            if ($value['claims'] !== []) { return $repair; }
+            $records = $registry->records($selection['fixture_id'], $selection['fixture_version']);
+            $transcript = $records[0]['text'] ?? null;
+            foreach ($payload['messages'] as $message) {
+                if (($message['ref'] ?? null) === $payload['currentRef'] || ($message['role'] ?? null) !== 'user'
+                    || ($message['content'] ?? null) !== $transcript || !is_array($message['sourceRefs'] ?? null)
+                    || $message['sourceRefs'] === [] || array_diff($value['sourceRefs'], $message['sourceRefs']) !== []
+                    || !in_array($message['ref'], $value['claimScope']['unitRefs'] ?? [], true)) { continue; }
+                $text = $selection['input_id'] === 'photo-explain' ? $transcript
+                    : 'Второй пункт учебной расшифровки — арматурный каркас. Это текстовая расшифровка, не проверка пикселей изображения.';
+                return $value['text'] === $text ? $valid : $repair;
+            }
+            return $repair;
         }
-        $latest = $evidence[array_key_last($evidence)];
-        $facts = $latest['envelope']['facts'] ?? null;
-        if (!is_array($facts) || count($value['claims']) !== 1) { return ['status' => 'repair', 'reason' => 'claims_invalid']; }
+        $latest = $evidence === [] ? null : $evidence[array_key_last($evidence)];
+        $envelope = $latest['envelope'] ?? null;
+        $facts = $envelope['facts'] ?? null;
+        $scope = $envelope['coverage']['claimScope'] ?? null;
+        if (!is_array($facts) || !is_array($scope)
+            || ($envelope['resultGenerationRef'] ?? null) !== $selection['source_generation_ref']
+            || ($scope['sourceGenerationRef'] ?? null) !== $selection['source_generation_ref']
+            || !in_array($scope['kind'] ?? null, ['search_subset', 'selected_entity'], true)
+            || ($value['claimScope'] ?? null) !== ($latest['modelMetadata']['claimScope'] ?? null)) { return $repair; }
+        if ($selection['input_id'] === 'no-results') {
+            // A completed empty search proves only absence in this bounded search, not globally.
+            return $value['claims'] === [] && $facts === [] && ($envelope['status'] ?? null) === 'no_data'
+                && ($envelope['toolKind'] ?? null) === 'search' && $scope['kind'] === 'search_subset'
+                && ($scope['unitRefs'] ?? null) === [] && ($envelope['coverage']['status'] ?? null) === 'complete'
+                && ($envelope['coverage']['totalUnits'] ?? null) === 0
+                && ($envelope['coverage']['inspectedUnits'] ?? null) === 0
+                && ($envelope['coverage']['omittedUnitRefs'] ?? null) === []
+                && $value['text'] === 'В учебном каталоге по выбранному запросу ничего не найдено.' ? $valid : $repair;
+        }
+        if (count($value['claims']) !== 1) { return $repair; }
         $claim = $value['claims'][0];
+        $records = $registry->records($selection['fixture_id'], $selection['fixture_version']);
+        $recordId = $selection['input_id'] === 'cement-price' ? 'cement-m500' : 'concrete-b25';
+        $records = array_values(array_filter($records ?? [], static fn (array $row): bool => $row['id'] === $recordId));
+        if (count($records) !== 1 || ($claim['currency'] ?? null) !== 'RUB'
+            || ($claim['sourceRefs'] ?? null) !== $value['sourceRefs']) { return $repair; }
+        $record = $records[0];
         foreach ($facts as $fact) {
-            if (($fact['kind'] ?? null) !== 'price'
-                || ($fact['decimal'] ?? null) !== ($claim['value'] ?? null)
-                || ($fact['currency'] ?? null) !== ($claim['currency'] ?? null)
-                || ($fact['perUnit'] ?? null) !== ($claim['unit'] ?? null)) { continue; }
-            $unit = match ($claim['unit']) { 'm3' => 'м³', 'kg' => 'кг', 'm2' => 'м²', 'item' => 'шт.', default => null };
-            if ($unit === null || $claim['currency'] !== 'RUB') { continue; }
+            if (($fact['kind'] ?? null) !== 'price' || ($fact['decimal'] ?? null) !== $record['price']
+                || ($fact['currency'] ?? null) !== 'RUB' || ($fact['perUnit'] ?? null) !== $record['price_basis']
+                || ($fact['provenance']['sourceGenerationRef'] ?? null) !== $selection['source_generation_ref']
+                || !in_array($fact['provenance']['unitRef'] ?? null, $scope['unitRefs'] ?? [], true)) { continue; }
             foreach ($facts as $title) {
-                if (($title['kind'] ?? null) !== 'text'
+                if (($title['kind'] ?? null) !== 'text' || ($title['value']['utf8Text'] ?? null) !== $record['title']
                     || ($title['provenance']['fragmentVersion'] ?? null) !== 'synthetic-material-field/title/1'
-                    || ($title['provenance']['unitRef'] ?? null) !== ($fact['provenance']['unitRef'] ?? null)
-                    || ($title['provenance']['sourceGenerationRef'] ?? null) !== ($fact['provenance']['sourceGenerationRef'] ?? null)
-                    || !is_string($title['value']['utf8Text'] ?? null)) { continue; }
-                $text = $title['value']['utf8Text'].' стоит '.$claim['value'].' RUB за '.$unit.'.';
-                if ($value['text'] === $text) { return ['status' => 'valid', 'reason' => 'none']; }
+                    || ($title['provenance']['unitRef'] ?? null) !== $fact['provenance']['unitRef']
+                    || ($title['provenance']['sourceGenerationRef'] ?? null) !== $selection['source_generation_ref']) { continue; }
+                if ($selection['input_id'] === 'quote-12m3') {
+                    // This selector has one immutable integer quantity; no model arithmetic is trusted.
+                    $minor = (int) str_replace('.', '', $record['price']) * 12;
+                    $total = intdiv($minor, 100).'.'.str_pad((string) ($minor % 100), 2, '0', STR_PAD_LEFT);
+                    $text = 'Стоимость 12 м³ '.$record['title'].' по учебному каталогу: '.$total.' RUB.';
+                    return array_key_exists('unit', $claim) && $claim['unit'] === null && ($claim['value'] ?? null) === $total
+                        && $value['text'] === $text ? $valid : $repair;
+                }
+                $unit = $record['price_basis'] === 'm3' ? 'м³' : 'кг';
+                $text = $record['title'].' стоит '.$record['price'].' RUB за '.$unit.'.';
+                return ($claim['unit'] ?? null) === $record['price_basis'] && ($claim['value'] ?? null) === $record['price']
+                    && $value['text'] === $text ? $valid : $repair;
             }
         }
-        return ['status' => 'repair', 'reason' => 'claims_invalid'];
+        return $repair;
     }
 
     public static function serve(string $path): void
