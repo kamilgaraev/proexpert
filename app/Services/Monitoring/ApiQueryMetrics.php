@@ -27,6 +27,10 @@ final class ApiQueryMetrics
 
     private int $sourcesDropped = 0;
 
+    private float $sourceCaptureMilliseconds = 0;
+
+    private array $processingPhases = [];
+
     private ?array $assistantSnapshot = null;
 
     private ?array $assistantSnapshotEpoch = null;
@@ -54,10 +58,13 @@ final class ApiQueryMetrics
         $metrics->groups[$group]['count'] = ($metrics->groups[$group]['count'] ?? 0) + 1;
         $metrics->groups[$group]['total_ms'] = ($metrics->groups[$group]['total_ms'] ?? 0) + (float) $query->time;
         if ($metrics->captureSources) {
+            $sourceStartedAt = hrtime(true);
             try {
                 $metrics->recordSource($query, $group);
             } catch (\Throwable) {
                 $metrics->sourcesDropped++;
+            } finally {
+                $metrics->sourceCaptureMilliseconds += (hrtime(true) - $sourceStartedAt) / 1_000_000;
             }
         }
     }
@@ -72,6 +79,24 @@ final class ApiQueryMetrics
         $metrics->count++;
         $metrics->total += $milliseconds;
         $metrics->maximum = max($metrics->maximum, $milliseconds);
+    }
+
+    public static function recordProcessingPhase(Request $request, string $phase, int $startedAt): void
+    {
+        $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
+        if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
+            'list_prepare', 'list_encode', 'request_render', 'request_chain',
+            'order_render', 'order_workflow', 'order_payment', 'order_chain',
+        ], true)) {
+            return;
+        }
+        $milliseconds = (hrtime(true) - $startedAt) / 1_000_000;
+        if (! is_finite($milliseconds) || $milliseconds < 0) {
+            return;
+        }
+        $metrics->processingPhases[$phase]['count'] = ($metrics->processingPhases[$phase]['count'] ?? 0) + 1;
+        $metrics->processingPhases[$phase]['total_ms'] = ($metrics->processingPhases[$phase]['total_ms'] ?? 0) + $milliseconds;
+        $metrics->processingPhases[$phase]['max_ms'] = max($metrics->processingPhases[$phase]['max_ms'] ?? 0, $milliseconds);
     }
 
     public function summary(): array
@@ -97,6 +122,13 @@ final class ApiQueryMetrics
                 return $source;
             }, array_values($this->sources));
             $summary['sql_sources_dropped_count'] = $this->sourcesDropped;
+            $summary['sql_source_capture_ms'] = round($this->sourceCaptureMilliseconds, 2);
+            $summary['processing_phases'] = array_map(static function (array $phase): array {
+                $phase['total_ms'] = round($phase['total_ms'], 2);
+                $phase['max_ms'] = round($phase['max_ms'], 2);
+
+                return $phase;
+            }, $this->processingPhases);
         }
         if ($this->assistantSnapshot !== null) {
             $summary['assistant_snapshot'] = $this->assistantSnapshot;

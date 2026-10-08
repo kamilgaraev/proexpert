@@ -16,6 +16,30 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_processing_phases_are_numeric_closed_request_local_and_opt_in(): void
+    {
+        $request = Request::create('/api/v1/admin/procurement/purchase-requests', 'GET');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        ApiQueryMetrics::recordProcessingPhase($request, 'private-secret-phase', hrtime(true));
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', -1);
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', PHP_INT_MAX);
+        self::assertSame([], $metrics->summary()['processing_phases']);
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', hrtime(true));
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', hrtime(true));
+        $phase = $metrics->summary()['processing_phases']['list_prepare'];
+        self::assertSame(2, $phase['count']);
+        self::assertGreaterThanOrEqual(0, $phase['total_ms']);
+        self::assertGreaterThanOrEqual(0, $phase['max_ms']);
+        self::assertLessThanOrEqual($phase['total_ms'], $phase['max_ms']);
+        self::assertStringNotContainsString('private-secret-phase', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+        $other = new ApiQueryMetrics;
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $other);
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_encode', hrtime(true));
+        self::assertArrayNotHasKey('processing_phases', $other->summary());
+        self::assertSame(0, $metrics->summary()['sql_count']);
+    }
+
     public function test_snapshot_metadata_accepts_only_the_closed_schema(): void
     {
         $metrics = new ApiQueryMetrics;
