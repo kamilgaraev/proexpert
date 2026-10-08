@@ -140,27 +140,20 @@ prepare_public_core_image_inputs() {
   done
 }
 
-# Future separately reviewed input-only mode. Read-only store mount, no provision/publish.
+# Future separately assigned input-only: checked stage, readonly fixed store, no provisioning.
 describe_managed_model_input() {
-  local image_ref="$1" release_sha="$2" expected_runtime="$3" observed image_id output
-  [[ "${image_ref}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] \
-    && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] && [[ "${expected_runtime}" =~ ^[0-9a-f]{64}$ ]] || return 1
-  [ "$(git rev-parse HEAD)" = "${release_sha}" ] && git diff --quiet -- docker/public-core/runtime.php deploy/backend-runtime-allowlist.sh || return 1
-  [ "$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)" = "${expected_runtime}" ] || return 1
-  image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}" 2>/dev/null)" || return 1
-  [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
-  observed="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image_ref}" 2>/dev/null)" || return 1
-  [ "${observed}" = "${release_sha}" ] || return 1
-  observed="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
-    --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image_ref}" -r \
-    '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
-  [ "${observed}" = "${release_sha}|${expected_runtime}" ] || return 1
+  local image_ref="$1" release_sha="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6" output
+  local helper runtime config policy provider workflow dockerfile ignore
+  validate_public_core_input_source "${image_ref}" "${release_sha}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" >/dev/null || return 1
+  [ "${MANAGED_MODE}" = input-only ] || return 1
+  IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
   output="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges --user 0:0 --log-driver none \
     --mount type=bind,source=/var/www/prohelper/.env,target=/run/most-ci/environment,readonly \
     --entrypoint php "${image_ref}" docker/public-core/runtime.php describe-model-input "${release_sha}" 2>/dev/null)" || return 1
   [ "${#output}" -le 16384 ] || return 1
   # Never emit rejected output. Fixed schema/enums guard even a malformed export.
+  validate_public_core_input_source "${image_ref}" "${release_sha}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" >/dev/null || return 1
   printf '%s' "${output}" | python3 -c '
 import json,sys,re
 try:
@@ -180,7 +173,7 @@ try:
  assert set(d["fieldOrigins"])==allowed and all(v in ["default","managed_store","source_policy"] for v in d["fieldOrigins"].values())
  print(json.dumps(d,separators=(",",":")))
 except Exception: sys.exit(1)
-' "${release_sha}" "$(sha256sum app/BusinessModules/Features/AIAssistant/config/ai-assistant.php | cut -d' ' -f1)" "$(sha256sum app/Support/AI/LunaModelPolicy.php | cut -d' ' -f1)"
+' "${release_sha}" "${config}" "${policy}" || return 1
 }
 
 # Full invalidation never restores old active inputs. CURRENT admission is a separate
@@ -738,3 +731,173 @@ MOST_SYSTEMD_WRITER_UNITS=(
 )
 
 MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN='^(most|prohelper|laravel-worker|horizon|scheduler|queue|artisan)([-_:].*)?$'
+
+# BEGIN fixed input transport. Mirrored literally in the managed workflow BEFORE
+# sourcing any extracted helper. Authority is the separately checked CI assignment
+# and exact-main pins, never a supplied staging manifest or a verified status enum.
+public_core_input_assignment_guard() {
+  local release="$1" pins="$2" assignment="$3" accepted="$4" expected_pins="$5" digest
+  [ "${MANAGED_REF:-}" = refs/heads/main ] && [ "${MANAGED_EVENT:-}" = workflow_dispatch ] || return 1
+  case "${MANAGED_MODE:-}" in input-prepare|input-only) ;; *) return 1 ;; esac
+  [[ "${release}" =~ ^[0-9a-f]{40}$ ]] && [ "${release}" = "${accepted}" ] && [ "${release}" = "${MANAGED_EXPECTED_SHA:-}" ] || return 1
+  [[ "${assignment}" =~ ^ref_[0-9a-f]{32}$ ]] && [[ "${expected_pins}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ "${pins}" =~ ^[0-9a-f]{64}(:[0-9a-f]{64}){7}$ ]] || return 1
+  digest="$(printf '%s' "${pins}" | sha256sum)" || return 1
+  [ "${digest%% *}" = "${expected_pins}" ] || return 1
+}
+
+public_core_input_image_identity() {
+  local image="$1" release="$2" runtime="$3" id revision digests embedded
+  [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+  id="$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null)" || return 1
+  [[ "${id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}" 2>/dev/null)" || return 1
+  [ "${revision}" = "${release}" ] || return 1
+  # Read only the expected same-repository digest, never unrelated image aliases.
+  digests="$(docker image inspect --format "{{range .RepoDigests}}{{if eq . \"${image}\"}}{{print .}}{{end}}{{end}}" "${image}" 2>/dev/null)" || return 1
+  [ "${digests}" = "${image}" ] || return 1
+  embedded="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image}" -r \
+    '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
+  [ "${embedded}" = "${release}|${runtime}" ] || return 1
+  printf '%s' "${id}"
+}
+
+# Fixed, flat stage: five source files plus our bounded tuple, no caller paths.
+# Stable reads/ancestor ownership and full directory equality reject foreign or
+# mutable files. The tuple is compared to external CI pins on EVERY use.
+public_core_input_stage_check() {
+  python3 - "$@" <<'PYSTAGE'
+import sys,os,pathlib,stat,hashlib,json,re
+try:
+ mode,release,image,image_id,pins,assignment=sys.argv[1:]
+ assert mode in ['write','read','parent'] and re.fullmatch('[0-9a-f]{40}',release)
+ assert re.fullmatch('ghcr.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}',image)
+ assert re.fullmatch('sha256:[0-9a-f]{64}',image_id) and re.fullmatch('ref_[0-9a-f]{32}',assignment)
+ hashes=pins.split(':'); assert len(hashes)==8 and all(re.fullmatch('[0-9a-f]{64}',v) for v in hashes)
+ root=pathlib.Path('/etc/most/public-core/input-source'); stage=root/release
+ def stable(s):return (s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+ def directory(p,exact=False):
+  s=p.lstat(); assert stat.S_ISDIR(s.st_mode) and s.st_uid==0 and s.st_gid==0 and not s.st_mode&0o022
+  if exact:assert stat.S_IMODE(s.st_mode)==0o700
+  return stable(s)
+ for a in [pathlib.Path('/'),pathlib.Path('/etc'),pathlib.Path('/etc/most'),pathlib.Path('/etc/most/public-core'),root]:directory(a)
+ if mode=='parent':sys.exit(0)
+ initial=directory(stage,True)
+ names=['allowlist.sh','runtime.php','config.php','policy.php','provider.php']
+ assert set(os.listdir(stage))==set(names+(['source.json'] if mode=='read' else []))
+ def read(name,limit):
+  path=stage/name; s=path.lstat(); assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o600 and 0<s.st_size<=limit
+  fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+  with os.fdopen(fd,'rb') as f:
+   assert stable(os.fstat(f.fileno()))==stable(s); raw=f.read(limit+1); assert stable(os.fstat(f.fileno()))==stable(s)
+  assert len(raw)==s.st_size and stable(path.lstat())==stable(s)
+  return raw
+ for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+ tuple={'schemaVersion':'public-core-input-source/1','sourceSha':release,'imageRef':image,'imageId':image_id,'assignmentRef':assignment,'sourcePins':hashes}
+ if mode=='read':
+  def unique(pairs):
+   d={}
+   for k,v in pairs:
+    assert k not in d; d[k]=v
+   return d
+  assert json.loads(read('source.json',4096),object_pairs_hook=unique)==tuple
+ else:
+  raw=json.dumps(tuple,separators=(',',':')).encode(); assert len(raw)<=4096
+  fd=os.open(stage/'source.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+  with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+ # Directory changes only by our exclusive manifest creation in write mode.
+ if mode=='read':assert directory(stage,True)==initial
+ for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+ print(hashlib.sha256(json.dumps(tuple,separators=(',',':')).encode()).hexdigest())
+except Exception:sys.exit(1)
+PYSTAGE
+}
+
+validate_public_core_input_source() {
+  local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6" image_id
+  public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+  local helper runtime config policy provider workflow dockerfile ignore
+  IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+  image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+  public_core_input_stage_check read "${release}" "${image}" "${image_id}" "${pins}" "${assignment}" || return 1
+}
+
+prepare_public_core_input_source() (
+  local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6"
+  local helper runtime config policy provider workflow dockerfile ignore image_id cid='' owned_stage=false owned_parent=false stage stage_identity='' parent_identity='' observed hash output
+  public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+  [ "${MANAGED_MODE}" = input-prepare ] || return 1
+  [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+  IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+  stage="/etc/most/public-core/input-source/${release}"
+  # Root custodian only. Never create/repair foreign ancestors or reuse a stage.
+  observed="$(id -u)" || return 1
+  [ "${observed}" = 0 ] || return 1
+  cleanup_input_source() {
+    local code=$? cleanup_failed=false
+    trap - EXIT
+    if [ -n "${cid}" ]; then docker rm -- "${cid}" >/dev/null 2>&1 || cleanup_failed=true; fi
+    if [ "${code}" -ne 0 ] && [ "${owned_stage}" = true ]; then
+      local current_identity
+      current_identity="$(stat -c '%d:%i' -- "${stage}")" || exit 1
+      [ ! -L "${stage}" ] && [ "${current_identity}" = "${stage_identity}" ] || exit 1
+      rm -f -- "${stage}/allowlist.sh" "${stage}/runtime.php" "${stage}/config.php" "${stage}/policy.php" "${stage}/provider.php" "${stage}/source.json" || cleanup_failed=true
+      rmdir -- "${stage}" || cleanup_failed=true
+    fi
+    if [ "${code}" -ne 0 ] && [ "${owned_parent}" = true ]; then
+      local current_parent
+      current_parent="$(stat -c '%d:%i' -- /etc/most/public-core/input-source)" || exit 1
+      [ ! -L /etc/most/public-core/input-source ] && [ "${current_parent}" = "${parent_identity}" ] || exit 1
+      rmdir -- /etc/most/public-core/input-source || cleanup_failed=true
+    fi
+    if [ "${cleanup_failed}" = true ]; then exit 1; fi
+    exit "${code}"
+  }
+  trap cleanup_input_source EXIT
+  if [ ! -e /etc/most/public-core/input-source ] && [ ! -L /etc/most/public-core/input-source ]; then
+    mkdir -m 0700 -- /etc/most/public-core/input-source || return 1
+    owned_parent=true
+    parent_identity="$(stat -c '%d:%i' -- /etc/most/public-core/input-source)" || return 1
+  fi
+  public_core_input_stage_check parent "${release}" "${image}" "sha256:$(printf '%064d' 0)" "${pins}" "${assignment}" >/dev/null || return 1
+  [ ! -e "${stage}" ] && [ ! -L "${stage}" ] || return 1
+  docker pull "${image}" >/dev/null 2>&1 || return 1
+  image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+  mkdir -m 0700 -- "${stage}" || return 1
+  owned_stage=true
+  stage_identity="$(stat -c '%d:%i' -- "${stage}")" || return 1
+  cid="$(docker create --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --label "most.input-preparation=${assignment}" --entrypoint /bin/true "${image}" 2>/dev/null)" || { cid=''; return 1; }
+  [[ "${cid}" =~ ^[0-9a-f]{64}$ ]] || { cid=''; return 1; }
+  observed="$(docker inspect --format '{{.State.Running}}|{{.State.Pid}}|{{.Image}}|{{index .Config.Labels "most.input-preparation"}}' "${cid}" 2>/dev/null)" || return 1
+  [ "${observed}" = "false|0|${image_id}|${assignment}" ] || return 1
+  # No loop over supplied source names: exactly the five agreed literal copies.
+  docker cp "${cid}:/var/www/html/deploy/backend-runtime-allowlist.sh" "${stage}/allowlist.sh" >/dev/null 2>&1 || return 1
+  docker cp "${cid}:/var/www/html/docker/public-core/runtime.php" "${stage}/runtime.php" >/dev/null 2>&1 || return 1
+  docker cp "${cid}:/var/www/html/app/BusinessModules/Features/AIAssistant/config/ai-assistant.php" "${stage}/config.php" >/dev/null 2>&1 || return 1
+  docker cp "${cid}:/var/www/html/app/Support/AI/LunaModelPolicy.php" "${stage}/policy.php" >/dev/null 2>&1 || return 1
+  docker cp "${cid}:/var/www/html/app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php" "${stage}/provider.php" >/dev/null 2>&1 || return 1
+  local name expected
+  for name in allowlist.sh runtime.php config.php policy.php provider.php; do
+    [ -f "${stage}/${name}" ] && [ ! -L "${stage}/${name}" ] || return 1
+    chmod 0600 -- "${stage}/${name}" || return 1
+    case "${name}" in allowlist.sh) expected="$helper" ;; runtime.php) expected="$runtime" ;; config.php) expected="$config" ;; policy.php) expected="$policy" ;; provider.php) expected="$provider" ;; esac
+    hash="$(sha256sum -- "${stage}/${name}")" || return 1
+    [ "${hash%% *}" = "${expected}" ] || return 1
+  done
+  observed="$(docker inspect --format '{{.State.Running}}|{{.State.Pid}}|{{.Image}}|{{index .Config.Labels "most.input-preparation"}}' "${cid}" 2>/dev/null)" || return 1
+  [ "${observed}" = "false|0|${image_id}|${assignment}" ] || return 1
+  output="$(public_core_input_stage_check write "${release}" "${image}" "${image_id}" "${pins}" "${assignment}")" || return 1
+  [[ "${output}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  validate_public_core_input_source "${image}" "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" >/dev/null || return 1
+  docker rm -- "${cid}" >/dev/null 2>&1 || return 1
+  cid=''
+  # No store read, helper sourcing or activation occurs in preparation.
+  python3 - "${release}" "${image}" "${image_id}" "${pins}" "${output}" <<'PYOUTPUT'
+import sys,json
+release,image,image_id,pins,staging=sys.argv[1:]; h=pins.split(':')
+print(json.dumps(dict(schemaVersion='public-core-input-preparation/1',sourceSha=release,workflowDigest=h[5],allowlistDigest=h[0],runtimeDigest=h[1],configDigest=h[2],policyDigest=h[3],providerDigest=h[4],dockerfileDigest=h[6],imageRef=image,imageId=image_id,ociRevision=release,embeddedSourceSha=release,stagingDigest=staging,preparationOnly=True,storeRead=False,providerCalled=False,runtimeActivated=False),separators=(',',':')))
+PYOUTPUT
+)
+# END fixed input transport.
