@@ -127,10 +127,174 @@ prepare_public_core_image_inputs() {
   done
 }
 
+# Managed lifecycle only. Keep the old deny barrier until roles and endpoints are gone.
+# Out-of-band privileged table deletion is outside this interface and remains unqualified.
+quiesce_public_core_gateway_route() {
+  local role container_id running host_pid network_id bridge project network_role member_id matches=0
+  local -a ids=()
+  for role in "${MOST_PUBLIC_CORE_SERVICES[@]}"; do
+    for container_id in $(docker ps -aq --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${role}"); do
+      [[ "${container_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+      [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${container_id}")" = prohelper ] \
+        && [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" = "${role}" ] || return 1
+      host_pid="$(docker inspect --format '{{.State.Pid}}' "${container_id}")" || return 1
+      [[ "${host_pid}" =~ ^[0-9]+$ ]] || return 1
+      docker stop --time 30 "${container_id}" >/dev/null || return 1
+      running="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" || return 1
+      [ "${running}" = 'false:0:no' ] || return 1
+      # A still-live original role PID makes removal unavailable; no table teardown.
+      if [ "${host_pid}" -gt 0 ] && [ -e "/proc/${host_pid}" ]; then return 1; fi
+      ids+=("${container_id}")
+    done
+  done
+  # Only the designated Gateway bridge may be disconnected. Foreign/colliding networks abort.
+  for network_id in $(docker network ls --format '{{.ID}}'); do
+    bridge="$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "${network_id}")" || return 1
+    [ "${bridge}" = br-most-pc ] || continue
+    project="$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "${network_id}")" || return 1
+    network_role="$(docker network inspect --format '{{index .Labels "com.docker.compose.network"}}' "${network_id}")" || return 1
+    [ "${project}" = prohelper ] && [ "${network_role}" = public-core-gateway ] || return 1
+    matches=$((matches + 1)); [ "${matches}" -eq 1 ] || return 1
+    for member_id in $(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}"); do
+      [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${member_id}")" = prohelper ] \
+        && [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${member_id}")" = public-core-gateway ] \
+        && [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${member_id}")" = 'false:0:no' ] || return 1
+      docker network disconnect "${network_id}" "${member_id}" || return 1
+    done
+    [ -z "$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" ] || return 1
+  done
+  if ip link show br-most-pc >/dev/null 2>&1; then [ "${matches}" -eq 1 ] || return 1; fi
+  # Verify stopped roles have no endpoint on any network before invalidating readers.
+  for container_id in "${ids[@]}"; do
+    [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" = 'false:0:no' ] \
+      || return 1
+    role="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || return 1
+    if [ "${role}" = public-core-processor ]; then
+      [ "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${container_id}")" = none ] || return 1
+    else
+      [ -z "$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.EndpointID}}{{.IPAddress}}{{.GlobalIPv6Address}}{{end}}' "${container_id}")" ] || return 1
+    fi
+  done
+}
+
+invalidate_public_core_projections() {
+  local role gid directory file temporary
+  for role in app processor gateway; do
+    case "${role}" in app) gid=82 ;; processor) gid=41002 ;; gateway) gid=41003 ;; esac
+    directory="/etc/most/public-core/${role}"
+    [ ! -L "${directory}" ] && [ "$(stat -c '%u:%g:%a' "${directory}")" = "0:${gid}:750" ] || return 1
+    file="${directory}/generation.json"
+    [ ! -L "${file}" ] || return 1
+    if [ -e "${file}" ]; then
+      [ -f "${file}" ] && [ "$(stat -c '%u:%g:%a' "${file}")" = "0:${gid}:640" ] || return 1
+      rm -- "${file}" || return 1
+    fi
+    # App/Processor code binding is held unavailable; no old active rollback.
+    if [ "${role}" != gateway ]; then
+      file="${directory}/bootstrap.php"
+      [ ! -L "${file}" ] && [ "$(stat -c '%u:%g:%a' "${file}")" = "0:${gid}:640" ] || return 1
+      temporary="$(mktemp "${directory}/.inactive.XXXXXXXX")" || return 1
+      printf '<?php return null;\n' > "${temporary}"
+      chown "root:${gid}" "${temporary}" && chmod 0640 "${temporary}" \
+        && mv -T -- "${temporary}" "${file}" || { rm -f -- "${temporary}"; return 1; }
+    fi
+  done
+  # The Gateway manifest is also revoked, even if later provisioning fails.
+  file=/etc/most/public-core/gateway/runtime.json
+  [ ! -L "${file}" ] && [ "$(stat -c '%u:%g:%a' "${file}")" = '0:41003:640' ] || return 1
+  temporary="$(mktemp /etc/most/public-core/gateway/.inactive.XXXXXXXX)" || return 1
+  install -o root -g 41003 -m 0640 deploy/public-core-runtime.json.example "${temporary}" \
+    && mv -T -- "${temporary}" "${file}" || { rm -f -- "${temporary}"; return 1; }
+}
+
+# Explicit future parked-start preparation only; not called by default inactive deployment.
+# Reads only container labels/image/PIDs and host kernel metadata, never Config.Env or keys.
+observe_public_core_parked_peers() {
+  local image_ref="$1" release_sha="$2" image_digest="${1##*@}" image_id directory temporary role uid ids container_id host_pid service actual_image running
+  [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
+  image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
+  directory=/etc/most/public-core/control
+  [ ! -L "${directory}" ] || return 1
+  if [ ! -e "${directory}" ]; then install -d -o root -g root -m 0750 "${directory}"; fi
+  [ "$(stat -c '%u:%g:%a' "${directory}")" = '0:0:750' ] || return 1
+  temporary="$(mktemp "${directory}/.peers.XXXXXXXX")" || return 1
+  for role in processor gateway; do
+    case "${role}" in processor) uid=41002 ;; gateway) uid=41003 ;; esac
+    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=public-core-${role}")" || { rm -f -- "${temporary}"; return 1; }
+    [[ "${ids}" =~ ^[0-9a-f]{64}$ ]] || { rm -f -- "${temporary}"; return 1; }
+    container_id="${ids}"
+    host_pid="$(docker inspect --format '{{.State.Pid}}' "${container_id}")"
+    service="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")"
+    actual_image="$(docker inspect --format '{{.Image}}' "${container_id}")"
+    running="$(docker inspect --format '{{.State.Running}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")"
+    [[ "${host_pid}" =~ ^[1-9][0-9]*$ ]] && [ "${service}" = "public-core-${role}" ] \
+      && [ "${actual_image}" = "${image_id}" ] && [ "${running}" = 'true:no' ] || { rm -f -- "${temporary}"; return 1; }
+    python3 - "${host_pid}" "${uid}" "${role}" "${container_id}" "${image_digest}" >> "${temporary}" <<'PYOBS' || { rm -f -- "${temporary}"; return 1; }
+import sys,pathlib,re,json,hashlib
+host,uid,role,cid,image=sys.argv[1:];uid=int(uid);proc=pathlib.Path('/proc')/host
+before=(proc/'stat').read_text(); status=(proc/'status').read_text(); cmd=(proc/'cmdline').read_bytes()
+assert b'docker/public-core/runtime.php\0parked-'+role.encode()+b'\0' in cmd
+for field in ['Uid','Gid']:
+ values=list(map(int,re.search(r'^'+field+r':\s+(.+)$',status,re.M).group(1).split()));assert values==[uid]*4
+assert proc.stat().st_uid==uid
+pids=list(map(int,re.search(r'^NSpid:\s+(.+)$',status,re.M).group(1).split()));assert pids[0]==int(host)
+peer={'pid':pids[-1],'uid':uid,'gid':uid};start=before[before.rfind(')')+1:].split()[19]
+boot=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip();assert boot and start.isdigit()
+after=(proc/'stat').read_text();assert after[after.rfind(')')+1:].split()[19]==start
+assert (proc/'cmdline').read_bytes()==cmd
+again=(proc/'status').read_text()
+for field in ['Uid','Gid','NSpid']:
+ assert re.search(r'^'+field+r':\s+(.+)$',again,re.M).group(1)==re.search(r'^'+field+r':\s+(.+)$',status,re.M).group(1)
+lifetime='ref_'+hashlib.sha256(json.dumps([peer,boot,start],separators=(',',':')).encode()).hexdigest()[:32]
+print(json.dumps({'role':role,'observation':{'containerId':cid,'imageDigest':image,'service':'public-core-'+role,'hostPid':int(host),'peer':peer,'lifetimeRef':lifetime}},separators=(',',':')))
+PYOBS
+    [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${container_id}")" = "true:${host_pid}:${image_id}" ] \
+      || { rm -f -- "${temporary}"; return 1; }
+  done
+  local output
+  output="$(mktemp "${directory}/.observed.XXXXXXXX")" || { rm -f -- "${temporary}"; return 1; }
+  python3 - "${temporary}" "${release_sha}" "${image_digest}" > "${output}" <<'PYOBS'
+import sys,json,time
+rows=[json.loads(x) for x in open(sys.argv[1])];assert [x['role'] for x in rows]==['processor','gateway']
+print(json.dumps({'schemaVersion':'public-core-observed-peers/1','releaseSha':sys.argv[2],'imageDigest':sys.argv[3],'observedAt':int(time.time()),'peers':{x['role']:x['observation'] for x in rows}},separators=(',',':')))
+PYOBS
+  local result=$?
+  rm -f -- "${temporary}"
+  [ "${result}" = 0 ] && [ ! -L "${directory}/observed-peers.json" ] \
+    && chown root:root "${output}" && chmod 0640 "${output}" \
+    && mv -T -- "${output}" "${directory}/observed-peers.json" || { rm -f -- "${output}"; return 1; }
+}
+
+# Offline compiler, default inactive. Approved inputs need real parked-role observations
+# and accepted control receipts supplied by the release owner, never generated here.
+prepare_public_core_projections() {
+  local image_ref="$1" release_sha="$2" image_digest="${1##*@}"
+  [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
+  local state api_id
+  local -a pid_options=()
+  state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
+  case "${state}" in
+    inactive) ;;
+    approved)
+      api_id="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" || return 1
+      [[ "${api_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
+      [ "$(docker inspect --format '{{.Image}}' "${api_id}")" = "$(docker image inspect --format '{{.Id}}' "${image_ref}")" ] || return 1
+      pid_options=(--pid "container:${api_id}") ;;
+    *) return 1 ;;
+  esac
+  docker run --rm "${pid_options[@]}" --network none --read-only --cap-drop ALL --cap-add CHOWN \
+    --security-opt no-new-privileges --user 0:0 \
+    --mount type=bind,source=/etc/most/public-core,target=/etc/most/public-core \
+    --tmpfs /tmp:rw,noexec,nosuid,size=16777216,mode=1777 \
+    --entrypoint php "${image_ref}" docker/public-core/runtime.php publish-projections "${release_sha}" "${image_digest}"
+}
+
 # Empty-set deny policy: no DNS/provider calls and no modification of Docker tables.
 # Normal Compose still has an internal bridge. A usable egress grant is a separate,
 # checked release input; loading this artifact never grants network readiness.
 prepare_public_core_deny_policy() {
+  quiesce_public_core_gateway_route || return 1
+  invalidate_public_core_projections || return 1
   command -v nft >/dev/null 2>&1 || return 1
   local batch existing network_id bridge_name project_name role_name member_id matches=0
   # Refuse name collisions before touching even our own deny table.
@@ -157,6 +321,12 @@ prepare_public_core_deny_policy() {
   cat docker/public-core/egress-policy.nft >> "${batch}" || { rm -f -- "${batch}"; return 1; }
   nft -c -f "${batch}" && nft -f "${batch}" || { rm -f -- "${batch}"; return 1; }
   rm -f -- "${batch}"
+  # Read back only our table. Empty provider set means existing flows lose permission too.
+  existing="$(nft list table inet most_public_core)" || return 1
+  grep -Fq 'comment "most-public-core:gateway-only/1"' <<< "${existing}"     && grep -Fq 'br-most-pc' <<< "${existing}" || return 1
+  local provider_set
+  provider_set="$(nft -j list set inet most_public_core provider4)" || return 1
+  python3 -c 'import json,sys; n=json.load(sys.stdin)["nftables"]; s=[x["set"] for x in n if "set" in x]; sys.exit(0 if len(s)==1 and not s[0].get("elem") else 1)' <<< "${provider_set}"
 }
 
 MOST_SYSTEMD_WRITER_UNITS=(

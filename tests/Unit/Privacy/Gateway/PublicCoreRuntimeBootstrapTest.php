@@ -324,4 +324,132 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         \Most\PublicCore\ProcessIdentity::lifetime(array_replace($peer, ['uid' => $peer['uid'] + 1]));
     }
 
+    /** Synthetic schema fixture only: these bytes are never actual profile/runtime evidence. */
+    private function projectionFixture(): array
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0) {
+            self::markTestSkipped('Root-owned isolated Linux schema fixtures required.');
+        }
+        $root = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/compiler-'.bin2hex(random_bytes(6));
+        mkdir($root, 0755);
+        foreach (['gateway', 'gateway/evidence', 'gateway/tokenizer', 'gateway/credential', 'app', 'processor', 'control'] as $role) {
+            mkdir($root.'/'.$role, 0750); chgrp($root.'/'.$role, match ($role) { 'app' => 82, 'processor' => 41002, 'control' => 0, default => 41003 });
+        }
+        $write = static function (string $path, string $bytes): void { file_put_contents($path, $bytes); chgrp($path, 41003); chmod($path, 0640); };
+        $configuration = json_decode(file_get_contents($this->example()), true, 64, JSON_THROW_ON_ERROR);
+        $configuration['activation'] = 'approved'; $configuration['processorPeer']['pid'] = 77;
+        $configuration['evidenceDirectory'] = $root.'/gateway/evidence';
+        $configuration['credentialFile'] = $root.'/gateway/credential/provider-key';
+        $configuration['tokenizerFile'] = $root.'/gateway/tokenizer/vocabulary.tiktoken';
+        $configuration['tokenizerPattern'] = $root.'/gateway/tokenizer/pattern.txt';
+        $configuration['tokenizerSha256'] = hash('sha256', "YQ== 0\n");
+        $configuration['tokenizerPatternSha256'] = hash('sha256', '/./');
+        $configuration['tokenizerVocabulary'] = 'fixture-bpe';
+        $profile = ['profileRef' => 'profile:synthetic-compiler-only', 'qualification' => 'actual', 'adapterRevision' => 'fixture-v1',
+            'apiMethod' => 'chat_completions', 'endpoint' => 'https://api.timeweb.ai/v1/chat/completions',
+            'modelId' => 'fixture/model', 'modelRevision' => 'fixture-v1', 'tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1',
+            'mappingEvidenceRef' => 'evidence:fixture-tokenizer', 'capabilityEvidenceRef' => 'evidence:fixture-method',
+            'capacityEvidenceRef' => 'evidence:fixture-capacity', 'contextWindow' => 4096, 'maxOutputTokens' => 512, 'answerReserve' => 768, 'toolReserve' => 128];
+        $configuration['profile'] = $profile;
+        $fingerprint = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::fromArray($profile)->fingerprint();
+        $source = dirname(__DIR__, 4).'/app/Services/Privacy/';
+        $details = ['catalog' => ['modelRevision' => 'fixture-v1', 'catalogDigest' => str_repeat('a', 64)],
+            'method' => ['endpoint' => $profile['endpoint'], 'templateVersion' => 'chat-completions-action/1'],
+            'capacity' => ['contextWindow' => 4096, 'maxOutputTokens' => 512],
+            'tokenizer' => ['tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1', 'modelRevision' => 'fixture-v1',
+                'countMethod' => 'full_wire_json_bpe_upper_bound', 'vocabularySha256' => $configuration['tokenizerSha256'], 'patternSha256' => $configuration['tokenizerPatternSha256']],
+            'key' => ['credentialFile' => $configuration['credentialFile']],
+            'identity' => ['gatewayUid' => 41003, 'gatewayGid' => 41003, 'processorUid' => 41002, 'processorGid' => 41002, 'appUid' => 82],
+            'channel' => ['protocol' => \App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel::SCHEMA_VERSION, 'socketPath' => $configuration['socketPath']],
+            'egress' => ['allowedEndpoint' => $profile['endpoint'], 'policyDigest' => str_repeat('b', 64)],
+            'backendAuthority' => ['coverageDigest' => str_repeat('c', 64), 'strategyVersion' => 'strategy:fixture-only', 'releasePhase' => 'guarded_upload'],
+            'nativeTransfer' => ['strategy' => 'curl_multi_watchdog/1', 'phpVersionId' => PHP_VERSION_ID, 'curlVersionNumber' => curl_version()['version_number'],
+                'uploadEvent' => 'same_handle_xferinfo_complete', 'cancellation' => 'verified_remove_destroy_no_reuse', 'uploadMaxMs' => 2000,
+                'senderSourceSha256' => hash_file('sha256', $source.'Gateway/GatewayPublicCoreHttpSender.php'),
+                'channelSourceSha256' => hash_file('sha256', $source.'PublicCore/Transport/AuthenticatedPublicCoreChannel.php'),
+                'gatewaySourceSha256' => hash_file('sha256', $source.'Gateway/GatewayPublicCoreTransport.php')]];
+        foreach ($details as $kind => $value) {
+            $proof = ['schemaVersion' => 'public-core-runtime-evidence/1', 'kind' => $kind, 'ref' => 'evidence:fixture-'.$kind,
+                'status' => 'verified', 'profileFingerprint' => $fingerprint, 'modelId' => 'fixture/model', 'apiMethod' => 'chat_completions',
+                'issuedAt' => time() - 1, 'expiresAt' => time() + 60, 'details' => $value];
+            $bytes = json_encode($proof, JSON_THROW_ON_ERROR);
+            $write($configuration['evidenceDirectory'].'/'.$kind.'.json', $bytes);
+            $configuration['evidence'][$kind] = ['ref' => $proof['ref'], 'file' => $kind.'.json', 'sha256' => hash('sha256', $bytes)];
+        }
+        $write($configuration['credentialFile'], 'offline-fixture-only');
+        $write($configuration['tokenizerFile'], "YQ== 0\n"); $write($configuration['tokenizerPattern'], '/./');
+        $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
+        return [$root, $configuration, $write];
+    }
+
+    private function removeCompilerFixture(string $root): void
+    {
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS), \RecursiveIteratorIterator::CHILD_FIRST);
+        foreach ($iterator as $file) { $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname()); }
+        rmdir($root);
+    }
+
+    public function testCompilerParityRejectsChangedEvidenceAndOriginalGatewayGuards(): void
+    {
+        [$root, $configuration, $write] = $this->projectionFixture();
+        try {
+            $snapshot = new \Most\PublicCore\GatewayProjectionSnapshot($root.'/gateway');
+            self::assertSame($configuration, $snapshot->configuration($root.'/gateway/runtime.json'));
+            $files = $snapshot->roleFiles($configuration);
+            self::assertCount(13, $files); self::assertArrayNotHasKey('provider-key', $files);
+            foreach ([['deadlineMs', 11999], ['maxRequests', 129], ['gatewayUid', 82], ['gatewayGid', 82],
+                ['activation', 'inactive'], ['extra', true], ['tokenizerVocabulary', 'bad whitespace']] as [$key, $bad]) {
+                $write($root.'/gateway/runtime.json', json_encode(array_replace($configuration, [$key => $bad]), JSON_THROW_ON_ERROR));
+                try { (new \Most\PublicCore\GatewayProjectionSnapshot($root.'/gateway'))->configuration($root.'/gateway/runtime.json'); self::fail('Gateway guard bypassed'); }
+                catch (LogicException $failure) { self::assertContains($failure->getMessage(), ['runtime_not_activated', 'model_profile_unqualified', 'tokenizer_unqualified']); }
+            }
+            $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
+            foreach (['catalog' => ['catalogDigest', 'invalid'], 'method' => ['templateVersion', 'other'], 'tokenizer' => ['tokenizerRevision', 'other'],
+                'key' => ['credentialFile', '/other'], 'identity' => ['appUid', 41003], 'channel' => ['socketPath', '/other'],
+                'egress' => ['allowedEndpoint', 'https://other.invalid'], 'backendAuthority' => ['releasePhase', 'other'],
+                'nativeTransfer' => ['gatewaySourceSha256', str_repeat('f', 64)]] as $kind => [$field, $bad]) {
+                $file = $root.'/gateway/evidence/'.$kind.'.json'; $original = file_get_contents($file);
+                $proof = json_decode($original, true, 64, JSON_THROW_ON_ERROR); $proof['details'][$field] = $bad;
+                $bytes = json_encode($proof, JSON_THROW_ON_ERROR); $write($file, $bytes);
+                $changed = $configuration; $changed['evidence'][$kind]['sha256'] = hash('sha256', $bytes);
+                $write($root.'/gateway/runtime.json', json_encode($changed, JSON_THROW_ON_ERROR));
+                try { (new \Most\PublicCore\GatewayProjectionSnapshot($root.'/gateway'))->configuration($root.'/gateway/runtime.json'); self::fail('Evidence detail guard bypassed'); }
+                catch (LogicException $failure) { self::assertContains($failure->getMessage(), ['runtime_not_activated', 'model_profile_unqualified', 'tokenizer_unqualified']); }
+                $write($file, $original);
+            }
+            $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
+            $fresh = new \Most\PublicCore\GatewayProjectionSnapshot($root.'/gateway'); $fresh->configuration($root.'/gateway/runtime.json');
+            $write($configuration['tokenizerFile'], "Yg== 0\n");
+            try { $fresh->roleFiles($configuration); self::fail('Changed BPE accepted'); }
+            catch (LogicException $failure) { self::assertContains($failure->getMessage(), ['runtime_not_activated', 'model_profile_unqualified', 'tokenizer_unqualified']); }
+        } finally { $this->removeCompilerFixture($root); }
+    }
+
+    public function testPublisherCannotCreateQualificationFromInactiveOrMissingAcceptedInputs(): void
+    {
+        [$root, $configuration, $write] = $this->projectionFixture();
+        $publish = \Most\PublicCore\RoleProjectionPublisher::publish(...);
+        try {
+            $inactive = $configuration; $inactive['activation'] = 'inactive';
+            $write($root.'/gateway/runtime.json', json_encode($inactive, JSON_THROW_ON_ERROR));
+            self::assertFalse($publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)));
+            self::assertSame([], scandir($root.'/app') === ['.', '..'] ? [] : ['unexpected output']);
+            $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
+            try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Missing checked inputs fabricated'); }
+            catch (LogicException $failure) { self::assertContains($failure->getMessage(), ['runtime_not_activated', 'model_profile_unqualified', 'tokenizer_unqualified']); }
+            foreach (['app', 'processor', 'gateway'] as $role) { self::assertFileDoesNotExist($root.'/'.$role.'/generation.json'); }
+            self::assertFileDoesNotExist($root.'/app/profile.json'); self::assertFileDoesNotExist($root.'/processor/qualification.json');
+            self::assertSame('inactive', json_decode(file_get_contents($root.'/gateway/runtime.json'), true, 64, JSON_THROW_ON_ERROR)['activation']);
+            self::assertSame('offline-fixture-only', file_get_contents($configuration['credentialFile']));
+        } finally { $this->removeCompilerFixture($root); }
+    }
+
+    public function testParkedStartupRejectsWrongRoleBeforeWaitingOrReadingCredentials(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0) { self::markTestSkipped('Isolated root Linux required.'); }
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('gateway_identity_unavailable');
+        \Most\PublicCore\ParkedRoleBootstrap::wait('gateway', 1);
+    }
+
 }

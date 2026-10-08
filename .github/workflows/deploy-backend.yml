@@ -428,8 +428,9 @@ jobs:
 
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE_REF}"
-            prepare_public_core_image_inputs "${IMAGE_REF}" "${RELEASE_SHA}"
             prepare_public_core_deny_policy
+            prepare_public_core_image_inputs "${IMAGE_REF}" "${RELEASE_SHA}"
+            prepare_public_core_projections "${IMAGE_REF}" "${RELEASE_SHA}"
 
             upsert_env MOST_IMAGE_REF "${IMAGE_REF}"
             upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
