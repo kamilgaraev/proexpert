@@ -83,7 +83,7 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp
 
 # Установка PHP расширений
 RUN apk add --no-cache --virtual .curl-build-deps curl-dev \
-    && docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache intl bcmath curl \
+    && docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl posix opcache intl bcmath curl \
     && php -r "exit(function_exists('bcdiv') && extension_loaded('curl') && function_exists('imagewebp') && function_exists('imagecreatefromwebp') ? 0 : 1);" \
     && apk del .curl-build-deps
 
@@ -148,6 +148,22 @@ RUN mkdir -p storage/framework/cache/data \
     storage/framework/views \
     storage/logs \
     bootstrap/cache
+
+# Protected role users share no provider environment; configs start inactive.
+RUN addgroup -S -g 41002 most-processor \
+    && adduser -S -D -H -u 41002 -G most-processor most-processor \
+    && addgroup -S -g 41003 most-gateway \
+    && adduser -S -D -H -u 41003 -G most-gateway most-gateway \
+    && mkdir -p /etc/most/public-core/app /etc/most/public-core/processor /etc/most/public-core/gateway \
+    && printf '<?php return null;\n' > /etc/most/public-core/app/bootstrap.php \
+    && printf '<?php return null;\n' > /etc/most/public-core/processor/bootstrap.php \
+    && cp deploy/public-core-runtime.json.example /etc/most/public-core/gateway/runtime.json \
+    && chown -R root:82 /etc/most/public-core/app \
+    && chown -R root:41002 /etc/most/public-core/processor \
+    && chown -R root:41003 /etc/most/public-core/gateway \
+    && chmod 0750 /etc/most/public-core/app /etc/most/public-core/processor /etc/most/public-core/gateway \
+    && chmod 0640 /etc/most/public-core/app/bootstrap.php /etc/most/public-core/processor/bootstrap.php /etc/most/public-core/gateway/runtime.json \
+    && php -r "exit(function_exists('posix_geteuid') && extension_loaded('sockets') && defined('SO_PASSCRED') && defined('SCM_CREDENTIALS') && extension_loaded('curl') ? 0 : 1);"
 
 # Меняем владельца файлов на пользователя www-data
 RUN chown -R root:root ${APP_DIR} \

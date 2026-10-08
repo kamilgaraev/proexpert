@@ -108,8 +108,10 @@ jobs:
             source .github/scripts/atomic-env.sh
             source deploy/backend-runtime-allowlist.sh
             BACKEND_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
+            BACKEND_STOP_SERVICES="${MOST_COMPOSE_STOP_SERVICES[*]}"
             trap cleanup_deployment_temporary_files EXIT
             initialize_secure_env
+            prepare_public_core_inactive_runtime
 
             ensure_immutable_audit_writer_secret() {
               local current_secret=''
@@ -354,10 +356,10 @@ jobs:
 
             assert_legacy_runtime_stopped() {
               local process_directory process_id command_line working_directory cgroup unit unit_state supervisor_status running_services
-              running_services="$(docker compose ps --status running -q ${BACKEND_SERVICES})"
+              running_services="$(docker compose ps --status running -q ${BACKEND_STOP_SERVICES})"
               if [ -n "${running_services}" ]; then
                 echo 'MOST backend compose writers remain active; refusing deployment'
-                docker compose ps --status running ${BACKEND_SERVICES}
+                docker compose ps --status running ${BACKEND_STOP_SERVICES}
                 return 1
               fi
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
@@ -401,7 +403,7 @@ jobs:
               trap - ERR
               set +e
               systemctl stop nginx
-              docker compose stop --timeout 30 ${BACKEND_SERVICES}
+              docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}
               stop_legacy_supervisor_processes
               stop_legacy_systemd_processes
               stop_legacy_writer_processes
@@ -458,7 +460,7 @@ jobs:
             stop_legacy_supervisor_processes
             stop_legacy_systemd_processes
             stop_legacy_writer_processes
-            docker compose stop --timeout 30 ${BACKEND_SERVICES}
+            docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
