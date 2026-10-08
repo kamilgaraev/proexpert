@@ -116,6 +116,20 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         self::assertFalse(AppRuntimeBootstrap::defer($app, $reader)); // Already resolved scope cannot be swapped.
     }
 
+    public function testAppRegistrationInstallsUnavailableDeferredBindingBeforeProtectedInputsExist(): void
+    {
+        $app = $this->application();
+        self::assertTrue(AppRuntimeBootstrap::register($app, '/not-observed/source-fixture/bootstrap.php'));
+        self::assertTrue($app->bound(PublicCoreAssistantRuntime::class));
+        $first = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNull((new \ReflectionProperty($first, 'nativePortFactory'))->getValue($first));
+        $app->forgetScopedInstances();
+        $second = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNotSame($first, $second);
+        self::assertNull((new \ReflectionProperty($second, 'nativePortFactory'))->getValue($second));
+        self::assertFalse(AppRuntimeBootstrap::register($app));
+    }
+
     public function testDeferredAppReaderRejectsEmptyAndDuplicateConfiguration(): void
     {
         foreach ([0, 2] as $count) {
@@ -391,7 +405,7 @@ INVALIDATE_BASH;
     {
         foreach ([AppRuntimeBootstrap::DEFAULT_BOOTSTRAP.'.absent', $this->example(), __FILE__, 'php://memory'] as $path) {
             $app = $this->application();
-            self::assertFalse(AppRuntimeBootstrap::register($app, $path));
+            self::assertTrue(AppRuntimeBootstrap::register($app, $path));
             $runtime = $app->make(PublicCoreAssistantRuntime::class);
             self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
         }

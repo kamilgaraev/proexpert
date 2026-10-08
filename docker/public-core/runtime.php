@@ -1258,19 +1258,13 @@ final class AppRuntimeBootstrap
         if ($app->resolved(\App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime::class)) {
             return false;
         }
-        try {
-            $bootstrap = ProtectedRoleBootstrap::load($path);
-            if (! $bootstrap instanceof \Closure) {
-                return false; // Missing/inactive readers preserve the unavailable binding.
-            }
-            // API workers may boot before publication in the final PID namespace.
-            // Re-read the protected wrapper/profile and build a fresh fence at scope resolution.
-            return self::defer($app, static function () use ($path): \Closure {
-                $current = ProtectedRoleBootstrap::load($path);
-                if (!$current instanceof \Closure) { throw new LogicException('runtime_not_activated'); }
-                return $current;
-            });
-        } catch (Throwable) { return false; }
+        // API boots behind null placeholders. Install the deferred unavailable binding now;
+        // the same worker re-reads only the CURRENT protected wrapper at scope resolution.
+        return self::defer($app, static function () use ($path): \Closure {
+            $current = ProtectedRoleBootstrap::load($path);
+            if (!$current instanceof \Closure) { throw new LogicException('runtime_not_activated'); }
+            return $current;
+        });
     }
 
     /** Trusted protected-reader resolver only; no model/provider resolution during worker boot. */
