@@ -4,6 +4,7 @@ namespace App\Domain\Authorization\Http\Middleware;
 
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
@@ -34,6 +35,7 @@ class InterfaceMiddleware
      */
     public function handle(Request $request, Closure $next, string $interface, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
+        $phaseStartedAt = hrtime(true);
         $user = $request->user();
 
         if (! $user) {
@@ -45,6 +47,7 @@ class InterfaceMiddleware
 
         // Проверяем доступ к интерфейсу
         $hasAccess = $this->authService->canAccessInterface($user, $interface, $context);
+        ApiQueryMetrics::recordProcessingPhase($request, 'interface_access', $phaseStartedAt);
 
         if (! $hasAccess) {
             // Диагностика для отладки проблем с доступом к интерфейсам

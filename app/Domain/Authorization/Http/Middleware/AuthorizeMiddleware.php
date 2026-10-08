@@ -6,6 +6,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Responses\AdminResponse;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
@@ -37,6 +38,7 @@ class AuthorizeMiddleware
      */
     public function handle(Request $request, Closure $next, string $permission, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
+        $phaseStartedAt = hrtime(true);
         $user = $request->user();
 
         if (! $user) {
@@ -49,6 +51,10 @@ class AuthorizeMiddleware
         // Проверяем право доступа
         if (! $this->authService->can($user, $permission, $context)) {
             return AdminResponse::error(trans_message('errors.unauthorized'), 403);
+        }
+
+        if ($permission === 'admin.access' || $permission === 'procurement.purchase_requests.view') {
+            ApiQueryMetrics::recordProcessingPhase($request, $permission === 'admin.access' ? 'admin_authorize' : 'purchase_authorize', $phaseStartedAt);
         }
 
         return $next($request);

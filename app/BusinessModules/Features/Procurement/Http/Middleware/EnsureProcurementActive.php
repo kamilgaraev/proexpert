@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Http\Middleware;
 
 use App\Http\Responses\AdminResponse;
 use App\Http\Responses\MobileResponse;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -16,6 +17,7 @@ class EnsureProcurementActive
 {
     public function handle(Request $request, Closure $next): Response
     {
+        $phaseStartedAt = hrtime(true);
         $organizationId = $request->attributes->get('current_organization_id');
         $responseClass = $request->is('api/v1/mobile/*') ? MobileResponse::class : AdminResponse::class;
 
@@ -53,6 +55,8 @@ class EnsureProcurementActive
                 ]
             );
         }
+
+        ApiQueryMetrics::recordProcessingPhase($request, 'procurement_modules', $phaseStartedAt);
 
         return $next($request);
     }
