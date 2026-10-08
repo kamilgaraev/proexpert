@@ -26,6 +26,25 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         return dirname(__DIR__, 4).'/deploy/public-core-runtime.json.example';
     }
 
+    public function testNativeResponsesProfileRequiresNewMethodAdapterAndFingerprint(): void
+    {
+        $class = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::class;
+        $value = ['profileRef' => 'profile:native-source-fixture', 'qualification' => 'actual',
+            'adapterRevision' => $class::ADAPTER_REVISION, 'apiMethod' => 'responses', 'endpoint' => 'https://api.timeweb.ai/v1/responses',
+            'modelId' => 'openai/gpt-6-luna', 'modelRevision' => 'synthetic-native-only', 'tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1',
+            'mappingEvidenceRef' => 'evidence:fixture-tokenizer', 'capabilityEvidenceRef' => 'evidence:fixture-native-method',
+            'capacityEvidenceRef' => 'evidence:fixture-capacity', 'contextWindow' => 4096, 'maxOutputTokens' => 512, 'answerReserve' => 768, 'toolReserve' => 128];
+        $profile = $class::fromArray($value);
+        self::assertSame('responses', $profile->values()['apiMethod']);
+        self::assertSame(hash('sha256', \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::canonicalJson($value)), $profile->fingerprint());
+        foreach ([['apiMethod' => 'chat_completions'], ['endpoint' => 'https://api.timeweb.ai/v1/chat/completions'],
+            ['adapterRevision' => 'fixture-v1'], ['capabilityEvidenceRef' => null]] as $change) {
+            try { $class::fromArray(array_replace($value, $change)); self::fail('Historical method/profile accepted'); }
+            catch (LogicException $error) { self::assertSame('model_profile_unqualified', $error->getMessage()); }
+        }
+        self::assertNotSame($profile->fingerprint(), $class::fromArray(array_replace($value, ['capabilityEvidenceRef' => 'evidence:other-native-proof']))->fingerprint());
+    }
+
     public function testModelInputExportUsesOnlyStagedLiteralSourcePolicyAndRedactsPrivateValues(): void
     {
         $class = \Most\PublicCore\ModelInputDescription::class;
@@ -821,8 +840,8 @@ BASH;
         $configuration['tokenizerSha256'] = hash('sha256', "YQ== 0\n");
         $configuration['tokenizerPatternSha256'] = hash('sha256', '/./');
         $configuration['tokenizerVocabulary'] = 'fixture-bpe';
-        $profile = ['profileRef' => 'profile:synthetic-compiler-only', 'qualification' => 'actual', 'adapterRevision' => 'fixture-v1',
-            'apiMethod' => 'chat_completions', 'endpoint' => 'https://api.timeweb.ai/v1/chat/completions',
+        $profile = ['profileRef' => 'profile:synthetic-compiler-only', 'qualification' => 'actual', 'adapterRevision' => \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION,
+            'apiMethod' => 'responses', 'endpoint' => 'https://api.timeweb.ai/v1/responses',
             'modelId' => 'fixture/model', 'modelRevision' => 'fixture-v1', 'tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1',
             'mappingEvidenceRef' => 'evidence:fixture-tokenizer', 'capabilityEvidenceRef' => 'evidence:fixture-method',
             'capacityEvidenceRef' => 'evidence:fixture-capacity', 'contextWindow' => 4096, 'maxOutputTokens' => 512, 'answerReserve' => 768, 'toolReserve' => 128];
@@ -830,7 +849,7 @@ BASH;
         $fingerprint = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::fromArray($profile)->fingerprint();
         $source = dirname(__DIR__, 4).'/app/Services/Privacy/';
         $details = ['catalog' => ['modelRevision' => 'fixture-v1', 'catalogDigest' => str_repeat('a', 64)],
-            'method' => ['endpoint' => $profile['endpoint'], 'templateVersion' => 'chat-completions-action/1'],
+            'method' => ['endpoint' => $profile['endpoint'], 'templateVersion' => 'native-responses-action/1'],
             'capacity' => ['contextWindow' => 4096, 'maxOutputTokens' => 512],
             'tokenizer' => ['tokenizerId' => 'fixture-bpe', 'tokenizerRevision' => 'fixture-v1', 'modelRevision' => 'fixture-v1',
                 'countMethod' => 'full_wire_json_bpe_upper_bound', 'vocabularySha256' => $configuration['tokenizerSha256'], 'patternSha256' => $configuration['tokenizerPatternSha256']],
@@ -846,7 +865,7 @@ BASH;
                 'gatewaySourceSha256' => hash_file('sha256', $source.'Gateway/GatewayPublicCoreTransport.php')]];
         foreach ($details as $kind => $value) {
             $proof = ['schemaVersion' => 'public-core-runtime-evidence/1', 'kind' => $kind, 'ref' => 'evidence:fixture-'.$kind,
-                'status' => 'verified', 'profileFingerprint' => $fingerprint, 'modelId' => 'fixture/model', 'apiMethod' => 'chat_completions',
+                'status' => 'verified', 'profileFingerprint' => $fingerprint, 'modelId' => 'fixture/model', 'apiMethod' => 'responses',
                 'issuedAt' => time() - 1, 'expiresAt' => time() + 60, 'details' => $value];
             $bytes = json_encode($proof, JSON_THROW_ON_ERROR);
             $write($configuration['evidenceDirectory'].'/'.$kind.'.json', $bytes);

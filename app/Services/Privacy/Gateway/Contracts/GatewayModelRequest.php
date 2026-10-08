@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace App\Services\Privacy\Gateway\Contracts;
 
 use LogicException;
+use Throwable;
 
 final readonly class GatewayModelRequest
 {
-    public const SCHEMA_VERSION = 'public-core-model-request/1';
+    public const SCHEMA_VERSION = 'public-core-model-request/2';
 
-    public const CONTRACT_VERSION = 'public-core-gateway/0.2-candidate';
+    public const CONTRACT_VERSION = 'public-core-gateway/0.3-native-responses';
 
     public const PURPOSE = 'assistant_public_core_test';
 
@@ -117,17 +118,91 @@ final readonly class GatewayModelRequest
 
     public static function canonicalJson(mixed $value): string
     {
+        return json_encode(self::canonicalValue($value), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    private static function canonicalValue(mixed $value): mixed
+    {
+        if ($value instanceof \stdClass) {
+            $fields = self::canonicalValue(get_object_vars($value));
+
+            return (object) $fields;
+        }
         if (is_array($value)) {
             if (! array_is_list($value)) {
                 ksort($value, SORT_STRING);
             }
             foreach ($value as $key => $child) {
-                if (is_array($child)) {
-                    $value[$key] = json_decode(self::canonicalJson($child), true, 64, JSON_THROW_ON_ERROR);
+                $value[$key] = self::canonicalValue($child);
+            }
+        }
+
+        return $value;
+    }
+
+    public static function decodeJson(string $bytes, int $maxBytes = 262144): array
+    {
+        if ($bytes === '' || strlen($bytes) > $maxBytes || preg_match('//u', $bytes) !== 1 || str_contains($bytes, "\0")) {
+            throw new LogicException('invalid_model_output');
+        }
+        try {
+            $value = self::jsonValue(json_decode($bytes, false, 64, JSON_THROW_ON_ERROR));
+        } catch (Throwable) {
+            throw new LogicException('invalid_model_output');
+        }
+        if (! is_array($value)) {
+            throw new LogicException('invalid_model_output');
+        }
+        $stack = [];
+        for ($index = 0, $length = strlen($bytes); $index < $length; $index++) {
+            $char = $bytes[$index];
+            if ($char === '{' || $char === '[') {
+                $stack[] = ['object' => $char === '{', 'key' => true, 'seen' => []];
+            } elseif ($char === '}' || $char === ']') {
+                array_pop($stack);
+            } elseif ($char === ',' && $stack !== [] && $stack[count($stack) - 1]['object']) {
+                $stack[count($stack) - 1]['key'] = true;
+            } elseif ($char === '"') {
+                $start = $index;
+                while (++$index < $length) {
+                    if ($bytes[$index] === '\\') {
+                        $index++;
+                    } elseif ($bytes[$index] === '"') {
+                        break;
+                    }
+                }
+                $last = count($stack) - 1;
+                if ($last >= 0 && $stack[$last]['object'] && $stack[$last]['key']) {
+                    $key = json_decode(substr($bytes, $start, $index - $start + 1), true, 2, JSON_THROW_ON_ERROR);
+                    if (preg_match('/\A[0-9]+\z/D', $key) === 1 || isset($stack[$last]['seen'][$key])) {
+                        throw new LogicException('invalid_model_output');
+                    }
+                    $stack[$last]['seen'][$key] = true;
+                    $stack[$last]['key'] = false;
                 }
             }
         }
 
-        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        return $value;
     }
+
+    private static function jsonValue(mixed $value): mixed
+    {
+        if ($value instanceof \stdClass) {
+            $fields = get_object_vars($value);
+            // Keep {} distinct from []; native annotations/summary are lists.
+            if ($fields === []) {
+                return $value;
+            }
+            $value = $fields;
+        }
+        if (is_array($value)) {
+            foreach ($value as $key => $child) {
+                $value[$key] = self::jsonValue($child);
+            }
+        }
+
+        return $value;
+    }
+
 }

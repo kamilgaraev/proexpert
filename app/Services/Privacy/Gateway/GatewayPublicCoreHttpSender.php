@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services\Privacy\Gateway;
 
-use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
@@ -15,7 +14,7 @@ use Throwable;
 
 final class GatewayPublicCoreHttpSender
 {
-    public const ENDPOINT = 'https://api.timeweb.ai/v1/chat/completions';
+    public const ENDPOINT = 'https://api.timeweb.ai/v1/responses';
 
     public const MAX_RESPONSE_BYTES = 262144;
 
@@ -75,7 +74,7 @@ final class GatewayPublicCoreHttpSender
                 throw new LogicException('gateway_channel_unavailable');
             }
             if (! $profile->isActualProfile() || $profile->values()['endpoint'] !== self::ENDPOINT
-                || $profile->values()['apiMethod'] !== 'chat_completions') {
+                || $profile->values()['apiMethod'] !== 'responses') {
                 throw new LogicException('model_profile_unqualified');
             }
             $validator = new GatewayPublicCoreRequestValidator;
@@ -220,7 +219,13 @@ final class GatewayPublicCoreHttpSender
                 throw new LogicException('gateway_unavailable');
             }
 
-            return $this->decode($profile, $response);
+            $decoded = $this->decode($profile, $response);
+            $reason = $validator->validateOutput($bodyBytes, $decoded['outputItemsBytes']);
+            if ($reason !== null) {
+                throw new LogicException($reason);
+            }
+
+            return $decoded;
         } catch (Throwable $error) {
             $reason = $error instanceof LogicException && in_array($error->getMessage(), GatewayModelResponse::REASON_CODES, true)
                 ? $error->getMessage() : 'gateway_unavailable';
@@ -332,64 +337,68 @@ final class GatewayPublicCoreHttpSender
 
     private function decode(GatewayModelProfile $profile, string $bytes): array
     {
-        $envelope = $this->decodeJson($bytes);
-        if (! $this->keysAllowed($envelope, ['id', 'object', 'created', 'model', 'choices'], ['usage', 'system_fingerprint', 'service_tier'])
-            || ! is_string($envelope['id']) || preg_match('/\A[A-Za-z0-9_.:-]{1,128}\z/D', $envelope['id']) !== 1
-            || $envelope['object'] !== 'chat.completion' || ! is_int($envelope['created']) || $envelope['created'] < 1
-            || $envelope['model'] !== $profile->values()['modelId']
-            || ! is_array($envelope['choices']) || ! array_is_list($envelope['choices']) || count($envelope['choices']) !== 1) {
+        $envelope = GatewayModelRequest::decodeJson($bytes, self::MAX_RESPONSE_BYTES);
+        if (! $this->keysAllowed($envelope, ['id', 'object', 'created_at', 'status', 'model', 'output'], [
+            'usage', 'error', 'incomplete_details', 'store', 'stream', 'parallel_tool_calls', 'reasoning',
+            'max_output_tokens', 'text', 'tools', 'tool_choice', 'previous_response_id', 'metadata',
+            'background', 'instructions', 'temperature', 'top_p', 'truncation', 'service_tier',
+        ]) || ! GatewayModelResponse::providerId($envelope['id']) || $envelope['object'] !== 'response'
+            || ! is_int($envelope['created_at']) || $envelope['created_at'] < 1
+            || $envelope['status'] !== 'completed' || $envelope['model'] !== $profile->values()['modelId']
+            || ($envelope['error'] ?? null) !== null || ($envelope['incomplete_details'] ?? null) !== null
+            || ! is_array($envelope['output'])) {
             throw new LogicException('invalid_model_output');
         }
-        foreach (['system_fingerprint', 'service_tier'] as $key) {
-            if (isset($envelope[$key]) && (! is_string($envelope[$key]) || strlen($envelope[$key]) > 128 || preg_match('//u', $envelope[$key]) !== 1)) {
+        // Only explicitly bounded, stateless native echoes are recognized.
+        $expected = [
+            'store' => false, 'stream' => false, 'parallel_tool_calls' => false,
+            'max_output_tokens' => $profile->values()['maxOutputTokens'],
+            'text' => ['format' => ['type' => 'json_object']], 'tools' => GatewayPublicCoreRequestValidator::tools(),
+            'tool_choice' => 'auto', 'previous_response_id' => null, 'metadata' => new \stdClass,
+            'background' => false, 'instructions' => null, 'truncation' => 'disabled',
+        ];
+        foreach ($expected as $key => $value) {
+            if (array_key_exists($key, $envelope) && GatewayModelRequest::canonicalJson($envelope[$key]) !== GatewayModelRequest::canonicalJson($value)) {
                 throw new LogicException('invalid_model_output');
             }
         }
-        $choice = $envelope['choices'][0];
-        if (! is_array($choice) || ! $this->keysAllowed($choice, ['index', 'message', 'finish_reason'], ['logprobs'])
-            || $choice['index'] !== 0 || $choice['finish_reason'] !== 'stop'
-            || ($choice['logprobs'] ?? null) !== null || ! is_array($choice['message'])) {
+        if (array_key_exists('reasoning', $envelope)
+            && GatewayModelRequest::canonicalJson($envelope['reasoning']) !== GatewayModelRequest::canonicalJson(['effort' => 'none'])
+            && GatewayModelRequest::canonicalJson($envelope['reasoning']) !== GatewayModelRequest::canonicalJson(['effort' => 'none', 'summary' => null])) {
             throw new LogicException('invalid_model_output');
         }
-        $message = $choice['message'];
-        if (! $this->keysAllowed($message, ['role', 'content'], ['refusal', 'annotations'])
-            || $message['role'] !== 'assistant' || ($message['refusal'] ?? null) !== null
-            || ($message['annotations'] ?? []) !== [] || ! is_string($message['content'])
-            || $message['content'] === '' || strlen($message['content']) > 131072 || str_contains($message['content'], "\0")) {
+        foreach (['temperature', 'top_p'] as $key) {
+            if (array_key_exists($key, $envelope) && $envelope[$key] !== null
+                && ((! is_int($envelope[$key]) && ! is_float($envelope[$key]))
+                    || $envelope[$key] < 0 || $envelope[$key] > ($key === 'temperature' ? 2 : 1))) {
+                throw new LogicException('invalid_model_output');
+            }
+        }
+        if (isset($envelope['service_tier']) && ! in_array($envelope['service_tier'], ['auto', 'default'], true)) {
             throw new LogicException('invalid_model_output');
         }
-        try {
-            $action = AssistantModelAction::parse($this->decodeJson($message['content']));
-        } catch (Throwable) {
-            throw new LogicException('invalid_model_output');
-        }
-        $actionBytes = GatewayModelRequest::canonicalJson($action->values());
+        $outputItemsBytes = GatewayModelRequest::canonicalJson($envelope['output']);
+        GatewayModelResponse::outputItems($outputItemsBytes);
         $usage = null;
         if (($envelope['usage'] ?? null) !== null) {
             $raw = $envelope['usage'];
-            if (! is_array($raw) || ! $this->keysAllowed($raw, ['prompt_tokens', 'completion_tokens', 'total_tokens'], ['prompt_tokens_details', 'completion_tokens_details'])) {
+            if (! is_array($raw) || ! $this->keysAllowed($raw, ['input_tokens', 'output_tokens', 'total_tokens'], ['input_tokens_details', 'output_tokens_details'])) {
                 throw new LogicException('invalid_model_output');
             }
-            foreach (['prompt_tokens_details' => ['cached_tokens', 'audio_tokens'], 'completion_tokens_details' => ['reasoning_tokens', 'audio_tokens', 'accepted_prediction_tokens', 'rejected_prediction_tokens']] as $key => $allowed) {
-                if (isset($raw[$key])) {
-                    if (! is_array($raw[$key]) || ! $this->keysAllowed($raw[$key], [], $allowed)) {
-                        throw new LogicException('invalid_model_output');
-                    }
-                    foreach ($raw[$key] as $count) {
-                        if (! is_int($count) || $count < 0) {
-                            throw new LogicException('invalid_model_output');
-                        }
-                    }
+            $usage = ['inputTokens' => $raw['input_tokens'], 'outputTokens' => $raw['output_tokens'], 'totalTokens' => $raw['total_tokens']];
+            $reason = (new GatewayPublicCoreRequestValidator)->validateUsage($profile, $usage);
+            if ($reason !== null) {
+                throw new LogicException($reason);
+            }
+            foreach (['input_tokens_details' => ['cached_tokens', $raw['input_tokens']], 'output_tokens_details' => ['reasoning_tokens', $raw['output_tokens']]] as $key => [$detail, $limit]) {
+                if (array_key_exists($key, $raw) && (! GatewayModelRequest::hasExactKeys($raw[$key], [$detail])
+                    || ! is_int($raw[$key][$detail]) || $raw[$key][$detail] < 0 || $raw[$key][$detail] > $limit)) {
+                    throw new LogicException('invalid_model_output');
                 }
             }
-            $usage = ['inputTokens' => $raw['prompt_tokens'], 'outputTokens' => $raw['completion_tokens'], 'totalTokens' => $raw['total_tokens']];
-        }
-        $reason = (new GatewayPublicCoreRequestValidator)->validateUsage($profile, $usage);
-        if ($reason !== null) {
-            throw new LogicException($reason);
         }
 
-        return ['actionBytes' => $actionBytes, 'usage' => $usage, 'actualModel' => $envelope['model']];
+        return ['outputItemsBytes' => $outputItemsBytes, 'providerResponseId' => $envelope['id'], 'usage' => $usage, 'actualModel' => $envelope['model']];
     }
 
     private function keysAllowed(array $value, array $required, array $optional): bool
@@ -398,49 +407,4 @@ final class GatewayPublicCoreHttpSender
             && array_diff(array_keys($value), array_merge($required, $optional)) === [];
     }
 
-    private function decodeJson(string $bytes): array
-    {
-        if ($bytes === '' || strlen($bytes) > self::MAX_RESPONSE_BYTES || preg_match('//u', $bytes) !== 1 || str_contains($bytes, "\0")) {
-            throw new LogicException('invalid_model_output');
-        }
-        try {
-            $value = json_decode($bytes, true, 64, JSON_THROW_ON_ERROR);
-        } catch (Throwable) {
-            throw new LogicException('invalid_model_output');
-        }
-        if (! is_array($value)) {
-            throw new LogicException('invalid_model_output');
-        }
-        $stack = [];
-        for ($index = 0, $length = strlen($bytes); $index < $length; $index++) {
-            $char = $bytes[$index];
-            if ($char === '{' || $char === '[') {
-                $stack[] = ['object' => $char === '{', 'key' => true, 'seen' => []];
-            } elseif ($char === '}' || $char === ']') {
-                array_pop($stack);
-            } elseif ($char === ',' && $stack !== [] && $stack[count($stack) - 1]['object']) {
-                $stack[count($stack) - 1]['key'] = true;
-            } elseif ($char === '"') {
-                $start = $index;
-                while (++$index < $length) {
-                    if ($bytes[$index] === '\\') {
-                        $index++;
-                    } elseif ($bytes[$index] === '"') {
-                        break;
-                    }
-                }
-                $last = count($stack) - 1;
-                if ($last >= 0 && $stack[$last]['object'] && $stack[$last]['key']) {
-                    $key = json_decode(substr($bytes, $start, $index - $start + 1), true, 2, JSON_THROW_ON_ERROR);
-                    if (isset($stack[$last]['seen'][$key])) {
-                        throw new LogicException('invalid_model_output');
-                    }
-                    $stack[$last]['seen'][$key] = true;
-                    $stack[$last]['key'] = false;
-                }
-            }
-        }
-
-        return $value;
-    }
 }

@@ -9,6 +9,7 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelProfile;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
 use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender;
+use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
 use App\Services\Privacy\Gateway\GatewayPublicCoreTransport;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
@@ -38,7 +39,7 @@ final class PublicCoreGatewayTest extends TestCase
             'profileRef' => 'profile:local-stub-profile-01',
             'qualification' => 'local-stub',
             'adapterRevision' => 'local-test-v1',
-            'apiMethod' => 'local_action',
+            'apiMethod' => 'responses',
             'endpoint' => 'local://public-core-stub',
             'modelId' => 'local-action-stub',
             'modelRevision' => 'local-v1',
@@ -59,11 +60,14 @@ final class PublicCoreGatewayTest extends TestCase
         $profile ??= $this->profile();
         $body = GatewayModelRequest::canonicalJson([
             'model' => $profile->values()['modelId'],
-            'messages' => [['role' => 'user', 'content' => 'Публичный локальный сценарий.']],
+            'input' => [['type' => 'message', 'role' => 'user', 'content' => [['type' => 'input_text', 'text' => 'Публичный локальный сценарий.']]]],
             'stream' => false,
             'store' => false,
-            'max_completion_tokens' => $profile->values()['maxOutputTokens'],
-            'response_format' => ['type' => 'json_object'],
+            'max_output_tokens' => $profile->values()['maxOutputTokens'],
+            'reasoning' => ['effort' => 'none'],
+            'parallel_tool_calls' => false,
+            'tools' => GatewayPublicCoreRequestValidator::tools(),
+            'text' => ['format' => ['type' => 'json_object']],
         ]);
 
         return GatewayModelRequest::fromArray(array_replace([
@@ -85,12 +89,22 @@ final class PublicCoreGatewayTest extends TestCase
         ], $changes));
     }
 
-    private function actionBytes(): string
+    private function callItem(): array
     {
-        return GatewayModelRequest::canonicalJson([
-            'type' => 'tool', 'tool' => 'material.search',
-            'arguments' => ['query' => 'бетон', 'limit' => 3],
-        ]);
+        return ['id' => 'fc_source_fixture_01', 'type' => 'function_call', 'status' => 'completed',
+            'call_id' => 'call_source_fixture_01', 'name' => 'material_search',
+            'arguments' => '{"query":"бетон","limit":3}'];
+    }
+
+    private function outputItemsBytes(): string
+    {
+        return GatewayModelRequest::canonicalJson([$this->callItem()]);
+    }
+
+    private function fixtureOutput(?array $usage = null): array
+    {
+        return ['outputItemsBytes' => $this->outputItemsBytes(), 'providerResponseId' => 'resp_source_fixture_01',
+            'usage' => $usage, 'actualModel' => 'local-action-stub'];
     }
 
     private function tokenCount(GatewayModelProfile $profile, int $tokens = 50): array
@@ -131,12 +145,191 @@ final class PublicCoreGatewayTest extends TestCase
                 $this->writes++;
                 $this->written[] = $body;
 
-                return ['actionBytes' => $this->actionBytes(), 'usage' => null];
+                return $this->fixtureOutput();
             },
             'clock' => static fn (): int => self::NOW,
         ], $overrides);
 
         return new GatewayPublicCoreTransport(...$args);
+    }
+
+    public function test_native_responses_closed_body_denies_before_credential_reader(): void
+    {
+        $profile = $this->httpSourceFixtureProfile();
+        $base = GatewayModelRequest::decodeJson($this->request($profile)->bodyBytes);
+        $cases = [];
+        foreach (['messages', 'choices', 'response_format', 'max_completion_tokens', 'previous_response_id', 'conversation', 'background', 'headers', 'api_key', 'url'] as $key) {
+            $cases[] = array_replace($base, [$key => 'untrusted']);
+        }
+        foreach (['store' => true, 'stream' => true, 'parallel_tool_calls' => true, 'model' => 'foreign-model',
+            'max_output_tokens' => 513, 'reasoning' => ['effort' => 'high'], 'text' => ['format' => ['type' => 'text']]] as $key => $value) {
+            $cases[] = array_replace($base, [$key => $value]);
+        }
+        $missing = $base; unset($missing['store']); $cases[] = $missing;
+        $tools = $base; $tools['tools'][0] = ['type' => 'function', 'function' => $tools['tools'][0]]; $cases[] = $tools;
+        $tools = $base; $tools['tools'][0]['parameters']['additionalProperties'] = true; $cases[] = $tools;
+        $tools = $base; $tools['tools'][] = ['type' => 'web_search']; $cases[] = $tools;
+        $keys = 0; $calls = 0;
+        foreach ($cases as $value) {
+            $sender = new GatewayPublicCoreHttpSender(
+                static function () use (&$keys): string { $keys++; return 'fixture-never-read'; },
+                static function () use (&$calls): array { $calls++; return []; },
+            );
+            try {
+                $sender->send($profile, GatewayModelRequest::canonicalJson($value), static fn (): int => hrtime(true) + 1000000000, static function (): void {});
+                self::fail('Foreign/stateful/native body accepted');
+            } catch (LogicException $error) {
+                self::assertSame('source_changed', $error->getMessage());
+            }
+        }
+        self::assertSame(0, $keys); self::assertSame(0, $calls);
+        self::assertNull((new GatewayPublicCoreRequestValidator)->validateBody($profile, $this->request($profile)->bodyBytes));
+    }
+
+    #[DataProvider('invalidNativeArguments')]
+    public function test_native_function_arguments_reject_ambiguous_private_or_out_of_bounds(string $name, string $arguments): void
+    {
+        $item = array_replace($this->callItem(), ['name' => $name, 'arguments' => $arguments]);
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('invalid_model_output');
+        GatewayModelResponse::outputItems(GatewayModelRequest::canonicalJson([$item]));
+    }
+
+    public static function invalidNativeArguments(): array
+    {
+        return [
+            ['project_delete', '{"id":1}'], ['material_search', '{}'], ['material_search', '[]'],
+            ['material_search', '1'], ['material_search', '{"query":" ","limit":1}'],
+            ['material_search', '{"query":"x","limit":"1"}'], ['material_search', '{"query":"x","limit":1.0}'],
+            ['material_search', '{"query":"x","limit":0}'], ['material_search', '{"query":"x","limit":11}'],
+            ['material_search', '{"query":"x","query":"y","limit":1}'],
+            ['material_search', '{"query":"x","q\u0075ery":"y","limit":1}'],
+            ['material_search', '{"query":"x\u0000y","limit":1}'],
+            ['material_search', '{"query":"x","limit":1,"key":"private"}'],
+            ['material_search', '{"query":{},"limit":1}'],
+            ['material_search', json_encode(['query' => str_repeat('x', 513), 'limit' => 1], JSON_THROW_ON_ERROR)],
+            ['material_read_selected', '{"ref":"raw-id-123"}'],
+            ['material_read_selected', '{"ref":"ref_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","privateId":1}'],
+            ['material_read_selected', '{"ref":["ref_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}'],
+        ];
+    }
+
+    public function test_native_ordered_output_preserves_call_and_opaque_reasoning_without_translation(): void
+    {
+        $message = $this->providerEnvelope()['output'][0];
+        $message['content'][0]['text'] = 'Bounded pre-call text, not a final action';
+        $reasoning = ['type' => 'reasoning', 'id' => 'rs_fixture_01', 'summary' => [], 'encrypted_content' => 'opaque_fixture_ciphertext=='];
+        $items = [$reasoning, $message, $this->callItem()];
+        $bytes = GatewayModelRequest::canonicalJson($items);
+        $profile = $this->httpSourceFixtureProfile();
+        $envelope = array_replace($this->providerEnvelope(), ['output' => $items]);
+        $decode = new \ReflectionMethod(GatewayPublicCoreHttpSender::class, 'decode');
+        $provider = $decode->invoke(new GatewayPublicCoreHttpSender, $profile, json_encode($envelope, JSON_THROW_ON_ERROR));
+        self::assertSame($bytes, $provider['outputItemsBytes']);
+        self::assertSame(GatewayModelRequest::decodeJson($bytes), GatewayModelResponse::outputItems($bytes));
+        self::assertSame($this->callItem()['arguments'], GatewayModelResponse::outputItems($bytes)[2]['arguments']);
+        $response = GatewayModelResponse::completed($this->request($profile), $bytes, $provider['providerResponseId'], $provider['usage'], $provider['actualModel']);
+        self::assertSame($response->values(), GatewayModelResponse::fromArray($response->values())->values());
+        self::assertArrayNotHasKey('actionBytes', $response->values());
+        foreach ([[$message, $this->callItem(), array_replace($this->callItem(), ['id' => 'fc_other', 'call_id' => 'call_other'])],
+            [$message, $message], [array_replace($reasoning, ['summary' => [['text' => 'private reasoning']]])],
+            [array_replace($this->callItem(), ['status' => 'in_progress'])],
+            [array_replace($message, ['content' => [['type' => 'refusal', 'refusal' => 'no']]])]] as $invalid) {
+            try { GatewayModelResponse::outputItems(GatewayModelRequest::canonicalJson($invalid)); self::fail('Unsupported native item accepted'); }
+            catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        }
+    }
+
+    private function safeNativeResult(): array
+    {
+        return ['type' => 'function_call_output', 'call_id' => $this->callItem()['call_id'], 'output' => GatewayModelRequest::canonicalJson([
+            'selectionRefs' => ['ref_'.str_repeat('a', 32)], 'toolKind' => 'search', 'status' => 'verified',
+            'claimScope' => ['kind' => 'search_subset', 'scopeRef' => 'ref_'.str_repeat('b', 32),
+                'sourceGenerationRef' => 'ref_'.str_repeat('c', 32), 'unitRefs' => ['ref_'.str_repeat('a', 32)]],
+        ])];
+    }
+
+    public function test_native_replay_is_ordered_correlated_and_contains_only_safe_metadata(): void
+    {
+        $profile = $this->profile();
+        $base = GatewayModelRequest::decodeJson($this->request()->bodyBytes);
+        $context = $base['input']; $call = $this->callItem(); $result = $this->safeNativeResult();
+        $valid = array_replace($base, ['input' => [...$context, $call, $result]]);
+        $validator = new GatewayPublicCoreRequestValidator;
+        self::assertNull($validator->validateBody($profile, GatewayModelRequest::canonicalJson($valid)));
+        $private = $result; $metadata = GatewayModelRequest::decodeJson($private['output']); $metadata['privateCall'] = ['id' => 123]; $private['output'] = GatewayModelRequest::canonicalJson($metadata);
+        $unsafe = $result; $unsafe['output'] = '{"selectionRefs":[],"claimScope":{},"toolKind":"search","status":"verified","status":"verified"}';
+        $badRef = $result; $metadata = GatewayModelRequest::decodeJson($badRef['output']); $metadata['selectionRefs'] = ['private-db-id']; $badRef['output'] = GatewayModelRequest::canonicalJson($metadata);
+        foreach ([ [...$context, $result, $call], [...$context, $call], [...$context, $call, array_replace($result, ['call_id' => 'foreign_call'])],
+            [...$context, $call, $result, $result], [...$context, $call, $result, $call, $result],
+            [...$context, $call, $private], [...$context, $call, $unsafe], [...$context, $call, $badRef],
+            [...$context, ['type' => 'message', 'role' => 'user', 'content' => [['type' => 'input_image', 'image_url' => 'private']]]],
+            [['type' => 'function_call_output', 'call_id' => 'orphan', 'output' => '{}']],
+        ] as $input) {
+            self::assertSame('source_changed', $validator->validateBody($profile, GatewayModelRequest::canonicalJson(array_replace($base, ['input' => $input]))));
+        }
+    }
+
+    public function test_native_bounds_and_reused_provider_call_ids_fail_closed(): void
+    {
+        $validator = new GatewayPublicCoreRequestValidator;
+        $body = GatewayModelRequest::decodeJson($this->request()->bodyBytes);
+        $body['input'] = [...$body['input'], $this->callItem(), $this->safeNativeResult()];
+        self::assertSame('invalid_model_output', $validator->validateOutput(GatewayModelRequest::canonicalJson($body), $this->outputItemsBytes()));
+        $fresh = array_replace($this->callItem(), ['id' => 'fc_fresh_02', 'call_id' => 'call_fresh_02']);
+        self::assertNull($validator->validateOutput(GatewayModelRequest::canonicalJson($body), GatewayModelRequest::canonicalJson([$fresh])));
+        $overflow = GatewayModelRequest::decodeJson($this->request()->bodyBytes);
+        $overflow['input'] = array_fill(0, 129, $overflow['input'][0]);
+        self::assertSame('source_changed', $validator->validateBody($this->profile(), GatewayModelRequest::canonicalJson($overflow)));
+        $message = $this->providerEnvelope()['output'][0];
+        $message['content'][0]['text'] = str_repeat('x', 32769);
+        foreach ([GatewayModelRequest::canonicalJson([$message]), str_repeat('x', 131073),
+            GatewayModelRequest::canonicalJson([array_replace($this->callItem(), ['arguments' => str_repeat('x', 4097)])]),
+            GatewayModelRequest::canonicalJson([['id' => 'rs_overflow', 'type' => 'reasoning', 'summary' => [], 'encrypted_content' => str_repeat('x', 65537)]])] as $bytes) {
+            try { GatewayModelResponse::outputItems($bytes); self::fail('Oversized native content accepted'); }
+            catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        }
+        $raw = json_encode($this->providerEnvelope(), JSON_THROW_ON_ERROR);
+        $decode = new \ReflectionMethod(GatewayPublicCoreHttpSender::class, 'decode');
+        foreach ([str_repeat('x', 262145), str_replace('"object":"response"', '"object":"response","ob\\u006aect":"response"', $raw)] as $bytes) {
+            try { $decode->invoke(new GatewayPublicCoreHttpSender, $this->httpSourceFixtureProfile(), $bytes); self::fail('Ambiguous/oversized native envelope accepted'); }
+            catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        }
+    }
+
+    public function test_native_json_keeps_object_and_array_shapes_distinct(): void
+    {
+        $decode = new \ReflectionMethod(GatewayPublicCoreHttpSender::class, 'decode');
+        $base = $this->providerEnvelope();
+        $metadata = array_replace($base, ['metadata' => new \stdClass]);
+        self::assertSame('resp_source_fixture_01', $decode->invoke(new GatewayPublicCoreHttpSender, $this->httpSourceFixtureProfile(), json_encode($metadata, JSON_THROW_ON_ERROR))['providerResponseId']);
+        $badOutput = $base; $badOutput['output'] = (object) ['0' => $base['output'][0]];
+        $badContent = $base; $badContent['output'][0]['content'] = (object) ['0' => $base['output'][0]['content'][0]];
+        $badAnnotations = $base; $badAnnotations['output'][0]['content'][0]['annotations'] = new \stdClass;
+        foreach ([$badOutput, $badContent, $badAnnotations, array_replace($base, ['metadata' => []])] as $envelope) {
+            try { $decode->invoke(new GatewayPublicCoreHttpSender, $this->httpSourceFixtureProfile(), json_encode($envelope, JSON_THROW_ON_ERROR)); self::fail('Array/object coercion accepted'); }
+            catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        }
+    }
+
+    public function test_native_schema_old_contract_and_missing_observed_identity_are_rejected(): void
+    {
+        $request = $this->request(); $response = GatewayModelResponse::completed($request, $this->outputItemsBytes(), 'resp_fixture_01', null, 'local-action-stub');
+        foreach ([['contractVersion' => 'public-core-gateway/0.2-candidate'], ['schemaVersion' => 'public-core-model-response/2'],
+            ['providerResponseId' => null], ['actualModel' => null], ['outputItemsBytes' => '{}'],
+            ['actionBytes' => '{"type":"plan","plan":"old"}']] as $changes) {
+            try { GatewayModelResponse::fromArray(array_replace($response->values(), $changes)); self::fail('Old/missing native identity accepted'); }
+            catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        }
+        $absent = $this->fixtureOutput(); unset($absent['actualModel']);
+        self::assertSame('invalid_model_output', $this->transport(['sender' => static fn (): array => $absent])->send($request)->reasonCode);
+        $decode = new \ReflectionMethod(GatewayPublicCoreHttpSender::class, 'decode'); $base = $this->providerEnvelope();
+        foreach ([['object' => 'chat.completion'], ['choices' => []], ['model' => null], ['status' => 'failed'],
+            ['error' => ['message' => 'private']], ['store' => true], ['previous_response_id' => 'foreign'],
+            ['output' => []], ['raw_private' => 'secret']] as $changes) {
+            try { $decode->invoke(new GatewayPublicCoreHttpSender, $this->httpSourceFixtureProfile(), json_encode(array_replace($base, $changes), JSON_THROW_ON_ERROR)); self::fail('Invalid native envelope accepted'); }
+            catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        }
     }
 
     public function test_immutable_packet_and_profile_are_detached(): void
@@ -180,7 +373,7 @@ final class PublicCoreGatewayTest extends TestCase
         self::assertFalse($gateway->isActualProfile());
         $request = $this->request($gateway);
         $body = json_decode($request->bodyBytes, true, 64, JSON_THROW_ON_ERROR);
-        self::assertSame($core->modelPayload()['maxOutputTokens'], $body['max_completion_tokens']);
+        self::assertSame($core->modelPayload()['maxOutputTokens'], $body['max_output_tokens']);
         $countedBodies = [];
         $atBoundary = $this->transport(['tokenCounter' => function (string $bytes, GatewayModelProfile $profile) use ($core, &$countedBodies): array {
             $countedBodies[] = $bytes;
@@ -193,7 +386,7 @@ final class PublicCoreGatewayTest extends TestCase
         $overflow = $this->transport(['tokenCounter' => fn (string $bytes, GatewayModelProfile $profile): array => $this->tokenCount($profile, $core->inputBudget() + 1)])->send($request);
         self::assertSame('budget_exceeded', $overflow->reasonCode);
         self::assertSame(1, $this->writes);
-        $body['max_completion_tokens']++;
+        $body['max_output_tokens']++;
         $bytes = GatewayModelRequest::canonicalJson($body);
         $outputOverflow = $this->request($gateway, ['bodyBytes' => $bytes, 'projectionDigest' => hash('sha256', $bytes)]);
         self::assertSame('source_changed', $this->transport()->send($outputOverflow)->reasonCode);
@@ -256,7 +449,7 @@ final class PublicCoreGatewayTest extends TestCase
             'caller permission' => ['transportAllowed', true],
             'raw media' => ['media', 'data:image/png;base64,AAAA'],
             'destination' => ['endpoint', 'https://example.com'],
-            'schema' => ['schemaVersion', 'public-core-model-request/2'],
+            'schema' => ['schemaVersion', 'public-core-model-request/1'],
             'version' => ['contractVersion', 'other/1'],
             'purpose' => ['purpose', 'assistant_chat'],
             'attempt type' => ['attemptRef', 1],
@@ -308,7 +501,7 @@ final class PublicCoreGatewayTest extends TestCase
         self::assertSame('none', $response->reasonCode);
         self::assertSame($request->bodyBytes, $this->written[0]);
         self::assertSame(1, $this->writes);
-        self::assertSame($this->actionBytes(), $response->actionBytes);
+        self::assertSame($this->outputItemsBytes(), $response->outputItemsBytes);
         self::assertNull($response->usage);
         self::assertFalse($this->fenced);
         self::assertSame($response->values(), GatewayModelResponse::fromArray($response->values())->values());
@@ -418,7 +611,7 @@ final class PublicCoreGatewayTest extends TestCase
     {
         $request = $this->request();
         $body = json_decode($request->bodyBytes, true, 64, JSON_THROW_ON_ERROR);
-        foreach ([['stream' => true], ['store' => true], ['model' => 'other-model'], ['tools' => []], ['endpoint' => 'https://example.com'], ['messages' => [['role' => 'user', 'content' => [['type' => 'image_url', 'image_url' => 'private']]]]]] as $change) {
+        foreach ([['stream' => true], ['store' => true], ['model' => 'other-model'], ['tools' => []], ['endpoint' => 'https://example.com'], ['input' => [['role' => 'user', 'content' => [['type' => 'image_url', 'image_url' => 'private']]]]]] as $change) {
             $bytes = GatewayModelRequest::canonicalJson(array_replace($body, $change));
             $changed = $this->request(changes: ['bodyBytes' => $bytes, 'projectionDigest' => hash('sha256', $bytes)]);
             self::assertSame('source_changed', $this->transport()->send($changed)->reasonCode);
@@ -470,12 +663,12 @@ final class PublicCoreGatewayTest extends TestCase
     {
         $outputs = [
             ['raw' => 'provider body'],
-            ['actionBytes' => '{}', 'usage' => null],
-            ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'tool', 'tool' => 'project.delete', 'arguments' => []]), 'usage' => null],
-            ['actionBytes' => '{"type":"plan","plan":"one","plan":"two"}', 'usage' => null],
-            ['actionBytes' => $this->actionBytes(), 'usage' => ['bytes' => 50]],
-            ['actionBytes' => $this->actionBytes(), 'usage' => ['inputTokens' => 10, 'outputTokens' => -1, 'totalTokens' => 9]],
-            ['actionBytes' => $this->actionBytes(), 'usage' => ['inputTokens' => 10, 'outputTokens' => 2, 'totalTokens' => 50]],
+            ['outputItemsBytes' => '{}', 'usage' => null],
+            ['outputItemsBytes' => GatewayModelRequest::canonicalJson(['type' => 'tool', 'tool' => 'project.delete', 'arguments' => []]), 'usage' => null],
+            ['outputItemsBytes' => '{"type":"plan","plan":"one","plan":"two"}', 'usage' => null],
+            ['outputItemsBytes' => $this->outputItemsBytes(), 'usage' => ['bytes' => 50]],
+            ['outputItemsBytes' => $this->outputItemsBytes(), 'usage' => ['inputTokens' => 10, 'outputTokens' => -1, 'totalTokens' => 9]],
+            ['outputItemsBytes' => $this->outputItemsBytes(), 'usage' => ['inputTokens' => 10, 'outputTokens' => 2, 'totalTokens' => 50]],
         ];
         foreach ($outputs as $output) {
             self::assertSame('invalid_model_output', $this->transport(['sender' => static fn (): array => $output])->send($this->request())->reasonCode);
@@ -485,7 +678,7 @@ final class PublicCoreGatewayTest extends TestCase
     public function test_supplied_token_usage_is_preserved(): void
     {
         $usage = ['inputTokens' => 42, 'outputTokens' => 8, 'totalTokens' => 50];
-        $response = $this->transport(['sender' => fn (): array => ['actionBytes' => $this->actionBytes(), 'usage' => $usage]])->send($this->request());
+        $response = $this->transport(['sender' => fn (): array => $this->fixtureOutput($usage)])->send($this->request());
         self::assertSame('completed', $response->status);
         self::assertSame($usage, $response->usage);
     }
@@ -495,7 +688,7 @@ final class PublicCoreGatewayTest extends TestCase
         $profile = $this->profile();
         $boundary = ['inputTokens' => $profile->inputBudget(), 'outputTokens' => $profile->values()['maxOutputTokens']];
         $boundary['totalTokens'] = $boundary['inputTokens'] + $boundary['outputTokens'];
-        $completed = $this->transport(['sender' => fn (): array => ['actionBytes' => $this->actionBytes(), 'usage' => $boundary]])->send($this->request());
+        $completed = $this->transport(['sender' => fn (): array => $this->fixtureOutput($boundary)])->send($this->request());
         self::assertSame('completed', $completed->status);
         self::assertSame($boundary, $completed->usage);
         $overflows = [
@@ -509,11 +702,11 @@ final class PublicCoreGatewayTest extends TestCase
             $response = $this->transport(['sender' => function () use ($usage, &$writes): array {
                 $writes++;
 
-                return ['actionBytes' => $this->actionBytes(), 'usage' => $usage];
+                return $this->fixtureOutput($usage);
             }])->send($this->request());
             self::assertSame('budget_exceeded', $response->reasonCode);
             self::assertSame(1, $writes);
-            self::assertNull($response->actionBytes);
+            self::assertNull($response->outputItemsBytes);
             self::assertNull($response->usage);
         }
     }
@@ -534,9 +727,9 @@ final class PublicCoreGatewayTest extends TestCase
 
     public function test_observed_model_is_bounded_and_survives_strict_response_roundtrip(): void
     {
-        $response = GatewayModelResponse::completed($this->request(), $this->actionBytes(), null, 'observed-provider-model');
+        $response = GatewayModelResponse::completed($this->request(), $this->outputItemsBytes(), 'resp_source_fixture_01', null, 'observed-provider-model');
         self::assertSame('observed-provider-model', GatewayModelResponse::fromArray($response->values())->actualModel);
-        self::assertNull(GatewayModelResponse::completed($this->request(), $this->actionBytes(), null)->actualModel);
+        self::assertSame('resp_source_fixture_01', $response->providerResponseId);
         foreach (['', str_repeat('m', 129), "model\nprivate", 'model secret', ['model']] as $invalid) {
             try {
                 GatewayModelResponse::fromArray(array_replace($response->values(), ['actualModel' => $invalid]));
@@ -546,14 +739,14 @@ final class PublicCoreGatewayTest extends TestCase
             }
         }
         self::assertSame('invalid_model_output', $this->transport(['sender' => fn (): array => [
-            'actionBytes' => $this->actionBytes(), 'usage' => null, 'actualModel' => 'fabricated-real-model',
+            'outputItemsBytes' => $this->outputItemsBytes(), 'usage' => null, 'actualModel' => 'fabricated-real-model',
         ]])->send($this->request())->reasonCode);
     }
 
     public function test_response_cannot_carry_action_on_blocked_or_foreign_fields(): void
     {
         $base = GatewayModelResponse::blocked($this->request(), 'expired')->values();
-        foreach ([['actualModel' => 'model-response-evidence'], ['actionBytes' => $this->actionBytes()], ['reasonCode' => 'secret'], ['usage' => []], ['rawProviderBody' => 'private']] as $change) {
+        foreach ([['actualModel' => 'model-response-evidence'], ['outputItemsBytes' => $this->outputItemsBytes()], ['reasonCode' => 'secret'], ['usage' => []], ['rawProviderBody' => 'private']] as $change) {
             try {
                 GatewayModelResponse::fromArray(array_replace($base, $change));
                 self::fail('Invalid response accepted');
@@ -581,7 +774,8 @@ final class PublicCoreGatewayTest extends TestCase
     {
         return GatewayModelProfile::fromArray(array_replace($this->profile()->values(), [
             'qualification' => 'actual',
-            'apiMethod' => 'chat_completions',
+            'adapterRevision' => GatewayModelProfile::ADAPTER_REVISION,
+            'apiMethod' => 'responses',
             'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
             'modelId' => 'source-fixture-model',
             'modelRevision' => 'source-fixture-v1',
@@ -592,12 +786,11 @@ final class PublicCoreGatewayTest extends TestCase
     private function providerEnvelope(?string $content = null): array
     {
         return [
-            'id' => 'source-fixture-completion-01',
-            'object' => 'chat.completion',
-            'created' => self::NOW,
-            'model' => 'source-fixture-model',
-            'choices' => [['index' => 0, 'message' => ['role' => 'assistant', 'content' => $content ?? ' { "type": "plan", "plan": "Проверить публичные источники" } '], 'finish_reason' => 'stop']],
-            'usage' => ['prompt_tokens' => 42, 'completion_tokens' => 8, 'total_tokens' => 50],
+            'id' => 'resp_source_fixture_01', 'object' => 'response', 'created_at' => self::NOW,
+            'status' => 'completed', 'model' => 'source-fixture-model',
+            'output' => [['id' => 'msg_source_fixture_01', 'type' => 'message', 'role' => 'assistant', 'status' => 'completed',
+                'content' => [['type' => 'output_text', 'text' => $content ?? ' { "type": "plan", "plan": "Проверить публичные источники" } ', 'annotations' => []]]]],
+            'usage' => ['input_tokens' => 42, 'output_tokens' => 8, 'total_tokens' => 50],
         ];
     }
 
@@ -657,7 +850,8 @@ final class PublicCoreGatewayTest extends TestCase
         self::assertSame($this->providerEnvelope()['model'], $result['actualModel']);
         self::assertSame(1, $exchanges);
         self::assertSame('uploaded', $phase);
-        self::assertSame(GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Проверить публичные источники']), $result['actionBytes']);
+        self::assertSame(GatewayModelRequest::canonicalJson($this->providerEnvelope()['output']), $result['outputItemsBytes']);
+        self::assertSame('resp_source_fixture_01', $result['providerResponseId']);
         self::assertSame(['inputTokens' => 42, 'outputTokens' => 8, 'totalTokens' => 50], $result['usage']);
         self::assertTrue($profile->isActualProfile());
         self::assertSame('runtime_not_activated', (new GatewayPublicCoreTransport)->send($request)->reasonCode);
@@ -736,13 +930,13 @@ final class PublicCoreGatewayTest extends TestCase
         $base = $this->providerEnvelope();
         $cases = [
             [array_replace($base, ['model' => 'other-model']), 'invalid_model_output', 200, 0],
-            [array_replace($base, ['choices' => []]), 'invalid_model_output', 200, 0],
-            [array_replace_recursive($base, ['choices' => [['finish_reason' => 'length']]]), 'invalid_model_output', 200, 0],
-            [array_replace_recursive($base, ['choices' => [['message' => ['refusal' => 'no']]]]), 'invalid_model_output', 200, 0],
-            [array_replace_recursive($base, ['choices' => [['message' => ['tool_calls' => []]]]]), 'invalid_model_output', 200, 0],
-            [array_replace($base, ['usage' => ['prompt_tokens' => 42, 'completion_tokens' => 513, 'total_tokens' => 555]]), 'budget_exceeded', 200, 0],
-            [array_replace($base, ['usage' => ['prompt_tokens' => 3201, 'completion_tokens' => 0, 'total_tokens' => 3201]]), 'budget_exceeded', 200, 0],
-            [array_replace($base, ['usage' => ['prompt_tokens' => 42, 'completion_tokens' => 8, 'total_tokens' => 99]]), 'invalid_model_output', 200, 0],
+            [array_replace($base, ['output' => []]), 'invalid_model_output', 200, 0],
+            [array_replace_recursive($base, ['status' => 'incomplete']), 'invalid_model_output', 200, 0],
+            [array_replace_recursive($base, ['output' => [['content' => [['type' => 'refusal']]]]]), 'invalid_model_output', 200, 0],
+            [array_replace_recursive($base, ['output' => [['private' => []]]]), 'invalid_model_output', 200, 0],
+            [array_replace($base, ['usage' => ['input_tokens' => 42, 'output_tokens' => 513, 'total_tokens' => 555]]), 'budget_exceeded', 200, 0],
+            [array_replace($base, ['usage' => ['input_tokens' => 3201, 'output_tokens' => 0, 'total_tokens' => 3201]]), 'budget_exceeded', 200, 0],
+            [array_replace($base, ['usage' => ['input_tokens' => 42, 'output_tokens' => 8, 'total_tokens' => 99]]), 'invalid_model_output', 200, 0],
             [['error' => 'raw-private-provider-error'], 'gateway_unavailable', 401, 0],
             [$base, 'gateway_unavailable', 302, 0],
             [$base, 'gateway_unavailable', 200, 28],
@@ -999,7 +1193,7 @@ final class PublicCoreGatewayTest extends TestCase
         $profile = $this->httpSourceFixtureProfile();
         $body = json_decode($this->request($profile)->bodyBytes, true, 64, JSON_THROW_ON_ERROR);
         if ($cancelPartial) {
-            $body['messages'] = array_fill(0, 4, ['role' => 'user', 'content' => str_repeat('a', 60000)]);
+            $body['input'] = array_fill(0, 4, ['type' => 'message', 'role' => 'user', 'content' => [['type' => 'input_text', 'text' => str_repeat('a', 60000)]]]);
         }
         $bytes = GatewayModelRequest::canonicalJson($body);
         $request = $this->request($profile, ['bodyBytes' => $bytes, 'projectionDigest' => hash('sha256', $bytes), 'expiresAt' => time() + (in_array($mode, ['expiry', 'response-expiry'], true) ? 2 : 6)]);

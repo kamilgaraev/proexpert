@@ -8,6 +8,8 @@ use LogicException;
 
 final readonly class GatewayModelProfile
 {
+    public const ADAPTER_REVISION = 'timeweb-native-responses/1';
+
     public const KEYS = [
         'profileRef', 'qualification', 'adapterRevision', 'apiMethod', 'endpoint',
         'modelId', 'modelRevision', 'tokenizerId', 'tokenizerRevision',
@@ -52,11 +54,12 @@ final readonly class GatewayModelProfile
             throw new LogicException('model_profile_unqualified');
         }
         if ($value['qualification'] === 'actual') {
-            if ($value['apiMethod'] !== 'chat_completions'
-                || $value['endpoint'] !== 'https://api.timeweb.ai/v1/chat/completions') {
+            if ($value['adapterRevision'] !== self::ADAPTER_REVISION
+                || $value['apiMethod'] !== 'responses'
+                || $value['endpoint'] !== 'https://api.timeweb.ai/v1/responses') {
                 throw new LogicException('model_profile_unqualified');
             }
-        } elseif ($value['apiMethod'] !== 'local_action' || $value['endpoint'] !== 'local://public-core-stub'
+        } elseif ($value['apiMethod'] !== 'responses' || $value['endpoint'] !== 'local://public-core-stub'
             || $value['modelId'] !== 'local-action-stub') {
             throw new LogicException('model_profile_unqualified');
         }
