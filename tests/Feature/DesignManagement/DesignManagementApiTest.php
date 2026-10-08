@@ -165,6 +165,91 @@ final class DesignManagementApiTest extends TestCase
         $this->assertSame(2, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
     }
 
+    public function test_project_issue_snapshot_queries_do_not_grow_with_list_size(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->attachProjectUser($project, $context->user);
+        $this->allowAdminAccess();
+        $this->mock(AccessController::class)->shouldReceive('hasModuleAccess')->andReturn(true);
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->times(10)
+            ->with(Mockery::type('string'), 60, Mockery::on(fn ($organization): bool => $organization instanceof \App\Models\Organization && $organization->id === $context->organization->id))
+            ->andReturn('https://storage.example/snapshot.png?signature=test');
+
+        $foreign = AdminApiTestContext::create(roleSlug: 'project_manager');
+        \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+            'organization_id' => $foreign->organization->id, 'project_id' => $project->id,
+            'kind' => 'project', 'created_by' => $foreign->user->id, 'defect_number' => 'FOREIGN-SNAPSHOT',
+            'title' => 'Foreign snapshot', 'severity' => 'major', 'status' => 'open',
+            'metadata' => ['design_issue_context' => ['snapshot' => ['path' => 'org-'.$foreign->organization->id.'/snapshot.png']]],
+        ]);
+
+        $organizationReads = [];
+        $created = 0;
+        foreach ([1, 9] as $count) {
+            while ($created < $count) {
+                $created++;
+                $issue = \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+                    'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                    'kind' => 'project', 'created_by' => $context->user->id, 'defect_number' => 'SNAPSHOT-'.$created,
+                    'title' => 'Project snapshot '.$created, 'severity' => 'major', 'status' => 'open', 'metadata' => [],
+                ]);
+                $issue->update(['metadata' => ['design_issue_context' => ['snapshot' => [
+                    'path' => "org-{$context->organization->id}/design-management/issues/{$issue->id}/snapshot.png",
+                ]]]]);
+            }
+
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                $response = $this->withHeaders($context->authHeaders())
+                    ->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+
+            $response->assertOk()->assertJsonCount($count, 'data');
+            foreach ($response->json('data') as $row) {
+                self::assertSame('https://storage.example/snapshot.png?signature=test', $row['snapshot_url']);
+                self::assertSame($context->user->id, $row['author_id']);
+            }
+            $organizationReads[$count] = count(array_filter($queries, static fn (array $query): bool =>
+                str_contains($query['query'], 'from "organizations"')));
+        }
+
+        self::assertLessThanOrEqual($organizationReads[1], $organizationReads[9],
+            'Organization SELECTs must not scale with snapshots: '.json_encode($organizationReads));
+    }
+
+    public function test_project_issue_snapshot_does_not_reload_a_missing_organization(): void
+    {
+        $path = 'org-999999/design-management/issues/1/snapshot.png';
+        $issue = new \App\BusinessModules\Features\QualityControl\Models\QualityDefect([
+            'organization_id' => 999999, 'project_id' => 1, 'kind' => 'project',
+            'title' => 'Missing organization snapshot', 'severity' => 'major', 'status' => 'open',
+            'metadata' => ['design_issue_context' => ['snapshot' => ['path' => $path]]],
+        ]);
+        $issue->setRelation('organization', null);
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->once()
+            ->with($path, 60, null)->andReturn(null);
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $data = (new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource($issue))
+                ->resolve(\Illuminate\Http\Request::create('/'));
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        self::assertNull($data['snapshot_url']);
+        self::assertSame([], $queries);
+    }
+
     public function test_link_context_opens_the_exact_historical_source_and_rechecks_access(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');

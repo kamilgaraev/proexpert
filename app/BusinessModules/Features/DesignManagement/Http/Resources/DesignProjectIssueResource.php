@@ -75,6 +75,10 @@ final class DesignProjectIssueResource extends JsonResource
             return null;
         }
 
-        return app(FileService::class)->temporaryUrl($path, 60, Organization::query()->find($issue->organization_id));
+        $organization = $issue->relationLoaded('organization')
+            ? $issue->getRelation('organization')
+            : Organization::query()->find($issue->organization_id);
+
+        return app(FileService::class)->temporaryUrl($path, 60, $organization);
     }
 }
