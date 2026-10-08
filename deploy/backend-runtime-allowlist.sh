@@ -183,8 +183,8 @@ except Exception: sys.exit(1)
 ' "${release_sha}" "$(sha256sum app/BusinessModules/Features/AIAssistant/config/ai-assistant.php | cut -d' ' -f1)" "$(sha256sum app/Support/AI/LunaModelPolicy.php | cut -d' ' -f1)"
 }
 
-# Source preparation never restores a revoked runtime candidate. A checked CURRENT
-# candidate intake contract is still required before this approved-only path.
+# Full invalidation never restores old active inputs. CURRENT admission is a separate
+# managed step before the bounded same-process publication attempt.
 public_core_monotonic_ns() {
   python3 -c 'import time; print(time.monotonic_ns())'
 }
@@ -230,6 +230,166 @@ print(hashlib.sha256(json.dumps(hashes,separators=(',',':')).encode()).hexdigest
 PYGENERATION
 }
 
+# Fixed protected CURRENT store only. This validates genuine producer bytes; it never produces claims.
+public_core_current_control_guard() {
+  python3 - "$1" "$2" "$3" "$4" "${5:-candidate}" <<'PYCURRENT'
+import hashlib,json,os,re,stat,sys,time
+ROOT='/etc/most/public-core'
+release,image,revision,digest,mode=sys.argv[1:]
+pins={}
+def fail(): raise ValueError('current_inputs_unavailable')
+def exact(v,keys): return type(v) is dict and set(v)==set(keys)
+def pairs(v):
+    d={}
+    for k,x in v:
+        if k in d: fail()
+        d[k]=x
+    return d
+def read_path(path,gid=0,limit=65536):
+    if os.path.realpath(path)!=path: fail()
+    a=os.lstat(path); parent=os.lstat(os.path.dirname(path))
+    if not stat.S_ISREG(a.st_mode) or a.st_uid!=0 or a.st_gid!=gid or a.st_mode&0o037 or not 0<a.st_size<=limit: fail()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid!=0 or parent.st_gid!=gid or parent.st_mode&0o027: fail()
+    ancestor=os.path.dirname(os.path.dirname(path))
+    while True:
+        m=os.lstat(ancestor)
+        if not stat.S_ISDIR(m.st_mode) or m.st_uid!=0 or m.st_mode&0o022: fail()
+        if ancestor=='/': break
+        ancestor=os.path.dirname(ancestor)
+    with open(path,'rb') as f:
+        b=os.fstat(f.fileno()); data=f.read(limit+1)
+    c=os.lstat(path)
+    fields=('st_dev','st_ino','st_mode','st_uid','st_gid','st_size','st_mtime_ns','st_ctime_ns')
+    if any(getattr(a,k)!=getattr(b,k) or getattr(b,k)!=getattr(c,k) for k in fields) or len(data)!=a.st_size: fail()
+    pin=tuple(getattr(a,k) for k in fields)+(hashlib.sha256(data).hexdigest(),)
+    if path in pins and pins[path][0]!=pin: fail()
+    pins[path]=(pin,gid,limit)
+    return data
+def read(name):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}\.json',name): fail()
+    data=read_path(ROOT+'/control/'+name)
+    return data,json.loads(data,object_pairs_hook=pairs)
+def valid_time(v,now):
+    return type(v.get('issuedAt')) is int and 0<v['issuedAt']<=now and type(v.get('expiresAt')) is int and v['expiresAt']>max(now,v['issuedAt'])
+try:
+    if not re.fullmatch(r'[0-9a-f]{40}',release) or not re.fullmatch(r'sha256:[0-9a-f]{64}',image) or not re.fullmatch(r'[1-9][0-9]{0,8}',revision) or not re.fullmatch(r'[0-9a-f]{64}',digest): fail()
+    raw,d=read('accepted-candidate.json'); now=int(time.time())
+    if not exact(d,['schemaVersion','revision','status','acceptance','issuedAt','expiresAt','revokedAt','releaseSha','imageDigest','runtime','profileFingerprint','modelBinding','evidence','tokenizer']): fail()
+    if hashlib.sha256(raw).hexdigest()!=digest or d['schemaVersion']!='public-core-accepted-candidate/1' or type(d['revision']) is not int or d['revision']!=int(revision) or d['status']!='current' or d['revokedAt'] is not None or not valid_time(d,now) or d['releaseSha']!=release or d['imageDigest']!=image: fail()
+    if not exact(d['acceptance'],['decisionRef','documentRevisionId','artifactSha256','custodianChannel']) or d['acceptance']['custodianChannel']!='prod-backend-deploy' or not re.fullmatch(r'[A-Za-z0-9_.:-]{16,256}',d['acceptance']['decisionRef']) or not re.fullmatch(r'[A-Za-z0-9_.:-]{16,256}',d['acceptance']['documentRevisionId']) or not re.fullmatch(r'[0-9a-f]{64}',d['acceptance']['artifactSha256']): fail()
+    binding={'revision':int(revision),'sha256':digest,'acceptanceRef':d['acceptance']['decisionRef']}
+    runtime_bytes,runtime=read('candidate-runtime.json')
+    if d['runtime']!={'file':'candidate-runtime.json','sha256':hashlib.sha256(runtime_bytes).hexdigest()}: fail()
+    m=d['modelBinding']; profile=runtime.get('profile')
+    if not exact(m,['provider','modelId','modelRevision','catalogDigest','apiMethod','templateVersion','contextWindow','maxOutputTokens','tokenizerId','tokenizerRevision','countMethod','vocabularySha256','patternSha256']) or m['provider']!='timeweb' or m['modelId']!='openai/gpt-6-luna' or m['apiMethod']!='responses' or m['templateVersion']!='timeweb-native-responses/1' or m['countMethod']!='full_wire_json_bpe_upper_bound' or not re.fullmatch(r'[0-9a-f]{64}',m['catalogDigest']): fail()
+    if not exact(profile,['profileRef','qualification','adapterRevision','apiMethod','endpoint','modelId','modelRevision','tokenizerId','tokenizerRevision','mappingEvidenceRef','capabilityEvidenceRef','capacityEvidenceRef','contextWindow','maxOutputTokens','answerReserve','toolReserve']) or profile['qualification']!='actual' or profile['adapterRevision']!='timeweb-native-responses/1' or profile['apiMethod']!='responses' or profile['endpoint']!='https://api.timeweb.ai/v1/responses': fail()
+    if hashlib.sha256(json.dumps(profile,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()!=d['profileFingerprint']: fail()
+    for k in ['modelId','modelRevision','apiMethod','contextWindow','maxOutputTokens','tokenizerId','tokenizerRevision']:
+        if m[k]!=profile[k] or type(m[k]) is not type(profile[k]): fail()
+    for k in ['contextWindow','maxOutputTokens','answerReserve','toolReserve']:
+        if type(profile[k]) is not int or not 1<=profile[k]<=10000000: fail()
+    if not profile['maxOutputTokens']<=profile['answerReserve']<profile['contextWindow'] or profile['toolReserve']>=profile['contextWindow']-profile['answerReserve']: fail()
+    if not exact(runtime,['schemaVersion','activation','gatewayUid','gatewayGid','processorPeer','socketPath','profile','evidenceDirectory','evidence','credentialFile','tokenizerFile','tokenizerSha256','tokenizerPattern','tokenizerPatternSha256','tokenizerVocabulary','deadlineMs','maxRequests']) or runtime['schemaVersion']!='public-core-gateway-runtime/1' or runtime['activation']!='approved' or runtime['gatewayUid']!=41003 or runtime['gatewayGid']!=41003 or runtime['processorPeer']!={'uid':41002,'gid':41002,'pid':None} or runtime['socketPath']!='/run/most-public-core/gateway/gateway.sock' or runtime['credentialFile']!=ROOT+'/gateway/credential/provider-key' or runtime['tokenizerFile']!=ROOT+'/gateway/tokenizer/vocabulary.tiktoken' or runtime['tokenizerPattern']!=ROOT+'/gateway/tokenizer/pattern.txt' or runtime['tokenizerVocabulary']!=profile['tokenizerId'] or runtime['tokenizerSha256']!=m['vocabularySha256'] or runtime['tokenizerPatternSha256']!=m['patternSha256'] or type(runtime['deadlineMs']) is not int or not 12000<=runtime['deadlineMs']<=30000 or type(runtime['maxRequests']) is not int or not 1<=runtime['maxRequests']<=128: fail()
+    kinds=['catalog','method','capacity','tokenizer','key','identity','channel','egress','backendAuthority','nativeTransfer']
+    if not exact(d['evidence'],kinds) or runtime.get('evidence')!=d['evidence'] or runtime.get('evidenceDirectory')!=ROOT+'/gateway/evidence': fail()
+    for kind in kinds:
+        r=d['evidence'][kind]
+        if not exact(r,['ref','file','sha256']) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}\.json',r['file']): fail()
+        data=read_path(ROOT+'/gateway/evidence/'+r['file'],41003)
+        v=json.loads(data,object_pairs_hook=pairs)
+        if hashlib.sha256(data).hexdigest()!=r['sha256'] or not exact(v,['schemaVersion','kind','ref','status','profileFingerprint','modelId','apiMethod','issuedAt','expiresAt','details']) or v['schemaVersion']!='public-core-runtime-evidence/1' or v['kind']!=kind or v['ref']!=r['ref'] or v['status']!='verified' or v['profileFingerprint']!=d['profileFingerprint'] or v['modelId']!=d['modelBinding']['modelId'] or v['apiMethod']!='responses' or not valid_time(v,now) or v['details'].get('releaseSha')!=release or v['details'].get('imageDigest')!=image: fail()
+        if kind=='method' and (v['details'].get('endpoint')!='https://api.timeweb.ai/v1/responses' or v['details'].get('templateVersion')!='timeweb-native-responses/1'): fail()
+    for key,file,limit in [('vocabulary','vocabulary.tiktoken',16777216),('pattern','pattern.txt',32768)]:
+        t=d['tokenizer'][key]
+        if not exact(t,['file','sha256']) or t['file']!=file or hashlib.sha256(read_path(ROOT+'/gateway/tokenizer/'+file,41003,limit)).hexdigest()!=t['sha256']: fail()
+    if mode=='publication':
+        _,pub=read('publication.json'); _,q=read('qualification.json'); _,observed=read('observed-peers.json')
+        refs=['authorizationFenceEvidenceRef','identityEvidenceRef','channelEvidenceRef','egressEvidenceRef','secretEvidenceRef','activationRef']
+        if not exact(pub,['schemaVersion','releaseSha','imageDigest','expiresAt','consumersStopped','peers','acceptedReceipts','expectedOutputs','candidate']) or pub['schemaVersion']!='public-core-projection-publication/2' or pub['candidate']!=binding or pub['consumersStopped'] is not True or pub['releaseSha']!=release or pub['imageDigest']!=image or type(pub['expiresAt']) is not int or pub['expiresAt']<=now: fail()
+        if not exact(q,['schemaVersion','qualification','profileFingerprint','registryDigest']+refs) or q['schemaVersion']!='public-core-runtime-proof/1' or q['qualification']!='actual' or q['profileFingerprint']!=d['profileFingerprint'] or not re.fullmatch(r'[0-9a-f]{64}',q['registryDigest']): fail()
+        if not exact(observed,['schemaVersion','releaseSha','imageDigest','observedAt','peers']) or observed['schemaVersion']!='public-core-observed-peers/1' or observed['releaseSha']!=release or observed['imageDigest']!=image or type(observed['observedAt']) is not int or not 0<=now-observed['observedAt']<30 or observed['peers']!=pub['peers'] or not exact(observed['peers'],['processor','gateway']): fail()
+        lives={}
+        for role,uid in [('processor',41002),('gateway',41003)]:
+            v=observed['peers'][role]
+            if not exact(v,['containerId','imageDigest','service','hostPid','peer','lifetimeRef']) or v['imageDigest']!=image or v['service']!='public-core-'+role or not re.fullmatch(r'[0-9a-f]{64}',v['containerId']) or type(v['hostPid']) is not int or v['hostPid']<1 or not exact(v['peer'],['pid','uid','gid']) or type(v['peer']['pid']) is not int or v['peer']['pid']<1 or v['peer']['uid']!=uid or v['peer']['gid']!=uid: fail()
+            lives[role]=v['lifetimeRef']
+        if not exact(pub['acceptedReceipts'],refs) or type(pub['expectedOutputs']) is not dict or 'gateway/runtime.json' not in pub['expectedOutputs'] or pub['expectedOutputs']['gateway/runtime.json']!=hashlib.sha256(runtime_bytes).hexdigest(): fail()
+        for key in refs:
+            r=pub['acceptedReceipts'][key]
+            if not exact(r,['ref','file','sha256']) or r['ref']!=q[key]: fail()
+            data,v=read(r['file'])
+            if hashlib.sha256(data).hexdigest()!=r['sha256'] or not exact(v,['schemaVersion','kind','ref','status','profileFingerprint','modelId','apiMethod','issuedAt','expiresAt','details']) or v['schemaVersion']!='public-core-runtime-evidence/1' or v['kind']!=key or v['ref']!=q[key] or v['status']!='verified' or v['profileFingerprint']!=d['profileFingerprint'] or v['modelId']!=d['modelBinding']['modelId'] or v['apiMethod']!='responses' or not valid_time(v,now) or v['issuedAt']<observed['observedAt']: fail()
+            for field,value in [('releaseSha',release),('imageDigest',image),('registryDigest',q['registryDigest']),('roleLifetimes',lives),('candidate',binding)]:
+                if v['details'].get(field)!=value: fail()
+    elif mode!='candidate': fail()
+    final_now=int(time.time())
+    for path,(_,gid,limit) in list(pins.items()):
+        data=read_path(path,gid,limit)
+        if path.endswith('.json'):
+            value=json.loads(data,object_pairs_hook=pairs)
+            if 'expiresAt' in value and (type(value['expiresAt']) is not int or value['expiresAt']<=final_now): fail()
+    if d['expiresAt']<=final_now or (mode=='publication' and not 0<=final_now-observed['observedAt']<30): fail()
+except Exception:
+    sys.stderr.write('public-core: current_inputs_unavailable\n');sys.exit(1)
+PYCURRENT
+}
+
+# Read-only exact image/source gate runs before any managed store mutation.
+verify_public_core_candidate_image() {
+  local image_ref="$1" release_sha="$2" source embedded helper runtime
+  [[ "${image_ref}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] \
+    && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "${PUBLIC_CORE_HELPER_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+    && [[ "${PUBLIC_CORE_RUNTIME_SHA256}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  source="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image_ref}")" || return 1
+  [ "${source}" = "${release_sha}" ] || return 1
+  embedded="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 41003:41003 --entrypoint php "${image_ref}" -r 'echo json_decode(file_get_contents("/etc/most/release.json"), true, 8, JSON_THROW_ON_ERROR)["sha"];')" || return 1
+  [ "${embedded}" = "${release_sha}" ] || return 1
+  helper="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 41003:41003 --entrypoint php "${image_ref}" -r 'echo hash_file("sha256", "deploy/backend-runtime-allowlist.sh");')" || return 1
+  [ "${helper}" = "${PUBLIC_CORE_HELPER_SHA256}" ] || return 1
+  runtime="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 41003:41003 --entrypoint php "${image_ref}" -r 'echo hash_file("sha256", "docker/public-core/runtime.php");')" || return 1
+  [ "${runtime}" = "${PUBLIC_CORE_RUNTIME_SHA256}" ] || return 1
+}
+
+# Only the exact image's embedded source/helper can admit the externally pinned CURRENT descriptor.
+intake_public_core_current_candidate() {
+  local image_ref="$1" release_sha="$2" revision="$3" descriptor_sha="$4" result
+  [[ "${image_ref}" = ghcr.io/kamilgaraev/proexpert/prohelper@sha256:* ]] \
+    && [[ "${image_ref##*@}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  public_core_current_control_guard "${release_sha}" "${image_ref##*@}" "${revision}" "${descriptor_sha}" || return 1
+  verify_public_core_candidate_image "${image_ref}" "${release_sha}" || return 1
+  result="$(timeout --signal=TERM --kill-after=5s 20s docker run --rm --network none --read-only --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges --user 0:0 \
+    --mount type=bind,source=/etc/most/public-core,target=/etc/most/public-core --entrypoint php "${image_ref}" \
+    docker/public-core/runtime.php intake-current-candidate "${release_sha}" "${image_ref##*@}" "${revision}" "${descriptor_sha}")" || return 1
+  # No provider/output payload is echoed; acknowledgement is independently pinned.
+  python3 - "${result}" "${release_sha}" "${image_ref##*@}" "${revision}" "${descriptor_sha}" <<'PYACK' || return 1
+import json,re,sys
+try:
+    v=json.loads(sys.argv[1])
+    assert set(v)=={'status','revision','candidateSha256','releaseSha','imageDigest','profileFingerprint','publicationReady'}
+    assert v['status']=='candidate_staged' and type(v['revision']) is int and v['revision']==int(sys.argv[4]) and v['candidateSha256']==sys.argv[5]
+    assert v['releaseSha']==sys.argv[2] and v['imageDigest']==sys.argv[3] and v['publicationReady'] is False
+    assert re.fullmatch(r'[0-9a-f]{64}',v['profileFingerprint'])
+except Exception:
+    sys.stderr.write('public-core: candidate_ack_unavailable\n');sys.exit(1)
+PYACK
+  MOST_PUBLIC_CORE_CURRENT_REQUIRED=true
+  MOST_PUBLIC_CORE_CURRENT_REVISION="${revision}"; MOST_PUBLIC_CORE_CURRENT_SHA256="${descriptor_sha}"
+  MOST_PUBLIC_CORE_CURRENT_RELEASE="${release_sha}"; MOST_PUBLIC_CORE_CURRENT_IMAGE="${image_ref##*@}"
+  public_core_current_control_guard "${release_sha}" "${image_ref##*@}" "${revision}" "${descriptor_sha}"
+}
+
+stage_public_core_current_publication_inputs() {
+  # Producer writes the real checked bundle through the existing serialized custodian;
+  # this importer validates it in place. Missing output cannot be invented from observed PIDs.
+  public_core_current_control_guard "$2" "${1##*@}" "$3" "$4" publication
+}
+
+verify_public_core_current_candidate() {
+  [ "${MOST_PUBLIC_CORE_CURRENT_REQUIRED:-false}" != true ] || \
+    public_core_current_control_guard "${MOST_PUBLIC_CORE_CURRENT_RELEASE}" "${MOST_PUBLIC_CORE_CURRENT_IMAGE}" "${MOST_PUBLIC_CORE_CURRENT_REVISION}" "${MOST_PUBLIC_CORE_CURRENT_SHA256}" "${MOST_PUBLIC_CORE_CURRENT_PHASE:-candidate}"
+}
+
 # Every Docker status is checked outside test/command-substitution comparisons.
 verify_public_core_staged_containers() {
   [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ] || return 0
@@ -257,20 +417,24 @@ verify_public_core_staged_containers() {
 }
 
 verify_public_core_staged_tuple() {
-  [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ] || return 0
+  verify_public_core_current_candidate || return 1
+  if [ -z "${MOST_PUBLIC_CORE_STAGED_API:-}" ]; then
+    [ "${MOST_PUBLIC_CORE_CURRENT_REQUIRED:-false}" != true ]; return $?
+  fi
   local generation
   verify_public_core_staged_containers || return 1
   generation="$(public_core_generation_identity "${MOST_PUBLIC_CORE_STAGED_RELEASE}" "${MOST_PUBLIC_CORE_STAGED_IMAGE_REF##*@}")" || return 1
   [ "${generation}" = "${MOST_PUBLIC_CORE_STAGED_GENERATION}" ] || return 1
 }
 
-# After drain/checks only; CURRENT candidate acquisition is not implemented here.
+# After drain/checks and checked CURRENT admission only; no acquisition is performed here.
 stage_public_core_approved_runtime() {
   local image_ref="$1" release_sha="$2" api_id expected state role ids observed pid namespace lifetime source
+  verify_public_core_current_candidate || return 1
   MOST_PUBLIC_CORE_STAGED_API=''
   declare -gA MOST_PUBLIC_CORE_STAGED_IDS=() MOST_PUBLIC_CORE_STAGED_STATES=() MOST_PUBLIC_CORE_STAGED_NAMESPACES=() MOST_PUBLIC_CORE_STAGED_STARTS=() MOST_PUBLIC_CORE_STAGED_PIDS=() MOST_PUBLIC_CORE_STAGED_LIFETIMES=()
   state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
-  case "${state}" in inactive) return 0 ;; approved) ;; *) return 1 ;; esac
+  case "${state}" in inactive) [ "${MOST_PUBLIC_CORE_CURRENT_REQUIRED:-false}" != true ]; return $? ;; approved) ;; *) return 1 ;; esac
   [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
   expected="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
   [[ "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
@@ -314,9 +478,10 @@ YAML
   if ! verify_public_core_staged_containers \
     || ! observe_public_core_parked_peers "${image_ref}" "${release_sha}" \
     || ! verify_public_core_staged_containers \
-    || ! prepare_public_core_projections "${image_ref}" "${release_sha}"; then
+    || ! stage_public_core_current_publication_inputs "${image_ref}" "${release_sha}" "${MOST_PUBLIC_CORE_CURRENT_REVISION}" "${MOST_PUBLIC_CORE_CURRENT_SHA256}"     || ! prepare_public_core_projections "${image_ref}" "${release_sha}"; then
     MOST_PUBLIC_CORE_STAGED_API=''; return 1
   fi
+  MOST_PUBLIC_CORE_CURRENT_PHASE=publication
   MOST_PUBLIC_CORE_STAGED_GENERATION="$(public_core_generation_identity "${release_sha}" "${image_ref##*@}")" || { MOST_PUBLIC_CORE_STAGED_API=''; return 1; }
   [[ "${MOST_PUBLIC_CORE_STAGED_GENERATION}" =~ ^[0-9a-f]{64}$ ]] || return 1
   MOST_PUBLIC_CORE_STAGED_IMAGE_REF="${image_ref}"; MOST_PUBLIC_CORE_STAGED_RELEASE="${release_sha}"
@@ -336,6 +501,7 @@ resume_public_core_backend_writers() {
     MOST_IMAGE_REF="${image_ref}" docker compose up -d --no-deps --force-recreate ${resume_services} || return 1
     verify_public_core_staged_tuple || return 1
   else
+    [ "${MOST_PUBLIC_CORE_CURRENT_REQUIRED:-false}" != true ] || return 1
     MOST_IMAGE_REF="${image_ref}" docker compose up -d --force-recreate --remove-orphans ${backend_services} || return 1
   fi
 }
@@ -499,7 +665,7 @@ prepare_public_core_projections() {
   local -a pid_options=()
   state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
   case "${state}" in
-    inactive) return 0 ;;
+    inactive) [ "${MOST_PUBLIC_CORE_CURRENT_REQUIRED:-false}" != true ]; return $? ;;
     approved)
       api_id="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" || return 1
       [[ "${api_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -513,7 +679,7 @@ prepare_public_core_projections() {
     --security-opt no-new-privileges --user 0:0 \
     --mount type=bind,source=/etc/most/public-core,target=/etc/most/public-core \
     --tmpfs /tmp:rw,noexec,nosuid,size=16777216,mode=1777 \
-    --entrypoint php "${image_ref}" docker/public-core/runtime.php publish-projections "${release_sha}" "${image_digest}"
+    --entrypoint php "${image_ref}" docker/public-core/runtime.php publish-projections "${release_sha}" "${image_digest}" "${MOST_PUBLIC_CORE_CURRENT_REVISION}" "${MOST_PUBLIC_CORE_CURRENT_SHA256}"
 }
 
 # Empty-set deny policy: no DNS/provider calls and no modification of Docker tables.

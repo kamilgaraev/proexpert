@@ -187,8 +187,7 @@ final class ProtectedRoleFile
     /** @return array<mixed> */
     public function json(string $name): array
     {
-        $value = json_decode($this->bytes($name), true, 64, JSON_THROW_ON_ERROR);
-        if (!is_array($value)) { throw new LogicException('runtime_not_activated'); }
+        $value = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::decodeJson($this->bytes($name), 65536);
         return $value;
     }
 }
@@ -233,7 +232,7 @@ final class RoleProjection
         if ($proofs['method']['ref'] !== $v['capabilityEvidenceRef'] || $proofs['capacity']['ref'] !== $v['capacityEvidenceRef']
             || $proofs['tokenizer']['ref'] !== $v['mappingEvidenceRef']
             || ($proofs['method']['details']['endpoint'] ?? null) !== \App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender::ENDPOINT
-            || ($proofs['method']['details']['templateVersion'] ?? null) !== 'chat-completions-action/1'
+            || ($proofs['method']['details']['templateVersion'] ?? null) !== \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION
             || ($proofs['catalog']['details']['modelRevision'] ?? null) !== $v['modelRevision']
             || !is_int($proofs['capacity']['details']['contextWindow'] ?? null)
             || $v['contextWindow'] > $proofs['capacity']['details']['contextWindow']
@@ -347,7 +346,7 @@ final class GatewayProjectionSnapshot
         return $bytes;
     }
 
-    public function recheck(): void
+    public function recheck(?string $committedOutput = null): void
     {
         foreach ($this->metadata as $path => $before) {
             clearstatcache(true, $path); $after = @lstat($path);
@@ -357,13 +356,14 @@ final class GatewayProjectionSnapshot
             }
         }
         foreach ($this->inputs as $path => $bytes) {
+            if ($path === $committedOutput) { continue; }
             if ($this->bytes($path, max(strlen($bytes), 1)) !== $bytes) { throw new LogicException('profile_changed'); }
         }
     }
 
-    public function configuration(string $path): array
+    public function configuration(string $path, ?string $candidateBytes = null): array
     {
-        $configuration = json_decode($this->bytes($path, 65536), true, 64, JSON_THROW_ON_ERROR);
+        $configuration = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::decodeJson($candidateBytes ?? $this->bytes($path, 65536), 65536);
         if (! \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::hasExactKeys($configuration, [
             'schemaVersion', 'activation', 'gatewayUid', 'gatewayGid', 'processorPeer', 'socketPath',
             'profile', 'evidenceDirectory', 'evidence', 'credentialFile', 'tokenizerFile',
@@ -409,7 +409,7 @@ final class GatewayProjectionSnapshot
             if (! hash_equals($reference['sha256'], hash('sha256', $bytes))) {
                 throw new LogicException('runtime_not_activated');
             }
-            $proof = json_decode($bytes, true, 64, JSON_THROW_ON_ERROR);
+            $proof = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::decodeJson($bytes, 65536);
             if (! \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::hasExactKeys($proof, [
                 'schemaVersion', 'kind', 'ref', 'status', 'profileFingerprint', 'modelId', 'apiMethod', 'issuedAt', 'expiresAt', 'details',
             ]) || $proof['schemaVersion'] !== 'public-core-runtime-evidence/1'
@@ -428,7 +428,7 @@ final class GatewayProjectionSnapshot
             || $configuration['evidence']['capacity']['ref'] !== $settings['capacityEvidenceRef']
             || $configuration['evidence']['tokenizer']['ref'] !== $settings['mappingEvidenceRef']
             || ($proofs['method']['endpoint'] ?? null) !== \App\Services\Privacy\Gateway\GatewayPublicCoreHttpSender::ENDPOINT
-            || ($proofs['method']['templateVersion'] ?? null) !== 'chat-completions-action/1'
+            || ($proofs['method']['templateVersion'] ?? null) !== \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION
             || ($proofs['catalog']['modelRevision'] ?? null) !== $settings['modelRevision']
             || ! \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::isDigest($proofs['catalog']['catalogDigest'] ?? null)
             || ! is_int($proofs['capacity']['contextWindow'] ?? null) || $settings['contextWindow'] > $proofs['capacity']['contextWindow']
@@ -501,15 +501,169 @@ final class GatewayProjectionSnapshot
 }
 
 /** Exact-image root compiler. Publication is distinct from activation and model success. */
+/** CURRENT pointer is authenticated by the caller's accepted digest, never by JSON status alone. */
+final class CurrentCandidateSnapshot
+{
+    private readonly ProtectedRoleFile $controls;
+    private readonly GatewayProjectionSnapshot $inputs;
+    /** @var array<mixed> */
+    public readonly array $descriptor;
+    /** @var array<mixed> */
+    public readonly array $configuration;
+    public readonly string $runtimeBytes;
+
+    public function __construct(private readonly string $root, private readonly string $releaseSha,
+        private readonly string $imageDigest, private readonly int $revision, private readonly string $descriptorSha256)
+    {
+        $this->controls = new ProtectedRoleFile($root.'/control', 0);
+        $bytes = $this->controls->bytes('accepted-candidate.json');
+        $this->runtimeBytes = $this->controls->bytes('candidate-runtime.json');
+        $this->descriptor = self::admit($bytes, $this->runtimeBytes, $releaseSha, $imageDigest, $revision, $descriptorSha256, time(), $root);
+        $this->inputs = new GatewayProjectionSnapshot($root.'/gateway');
+        $this->configuration = $this->inputs->configuration($root.'/gateway/runtime.json', $this->runtimeBytes);
+        $this->inputs->roleFiles($this->configuration); // NONSECRET bytes + credential metadata only.
+        foreach ($this->configuration['evidence'] as $reference) {
+            $proof = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::decodeJson(
+                $this->inputs->bytes($this->configuration['evidenceDirectory'].'/'.$reference['file'], 65536), 65536);
+            if (($proof['details']['releaseSha'] ?? null) !== $releaseSha || ($proof['details']['imageDigest'] ?? null) !== $imageDigest) {
+                throw new LogicException('candidate_unavailable');
+            }
+        }
+        $catalog = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::decodeJson(
+            $this->inputs->bytes($this->configuration['evidenceDirectory'].'/'.$this->configuration['evidence']['catalog']['file'], 65536), 65536);
+        if (($catalog['details']['catalogDigest'] ?? null) !== $this->descriptor['modelBinding']['catalogDigest']) {
+            throw new LogicException('candidate_unavailable');
+        }
+        $this->recheck();
+    }
+
+    /** Pure admission checks are shared by source fixtures; protected byte/metadata checks remain above.
+     * @return array<mixed>
+     */
+    public static function admit(string $bytes, string $runtimeBytes, string $releaseSha, string $imageDigest,
+        int $revision, string $descriptorSha256, int $now, string $root): array
+    {
+        $request = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::class;
+        $d = $request::decodeJson($bytes, 65536); $runtime = $request::decodeJson($runtimeBytes, 65536);
+        if (!$request::isDigest($descriptorSha256) || !hash_equals($descriptorSha256, hash('sha256', $bytes))
+            || preg_match('/\A[0-9a-f]{40}\z/D', $releaseSha) !== 1 || preg_match('/\Asha256:[0-9a-f]{64}\z/D', $imageDigest) !== 1
+            || !$request::hasExactKeys($d, ['schemaVersion', 'revision', 'status', 'acceptance', 'issuedAt', 'expiresAt', 'revokedAt',
+                'releaseSha', 'imageDigest', 'runtime', 'profileFingerprint', 'modelBinding', 'evidence', 'tokenizer'])
+            || $d['schemaVersion'] !== 'public-core-accepted-candidate/1' || $revision < 1 || $d['revision'] !== $revision
+            || $d['status'] !== 'current' || $d['revokedAt'] !== null || $d['releaseSha'] !== $releaseSha || $d['imageDigest'] !== $imageDigest
+            || !is_int($d['issuedAt']) || $d['issuedAt'] < 1 || $d['issuedAt'] > $now || !is_int($d['expiresAt'])
+            || $d['expiresAt'] <= $now || $d['expiresAt'] <= $d['issuedAt']
+            || !$request::hasExactKeys($d['acceptance'], ['decisionRef', 'documentRevisionId', 'artifactSha256', 'custodianChannel'])
+            || !$request::isReference($d['acceptance']['decisionRef']) || !$request::isReference($d['acceptance']['documentRevisionId'])
+            || !$request::isDigest($d['acceptance']['artifactSha256']) || $d['acceptance']['custodianChannel'] !== 'prod-backend-deploy'
+            || !$request::hasExactKeys($d['runtime'], ['file', 'sha256']) || $d['runtime']['file'] !== 'candidate-runtime.json'
+            || !$request::isDigest($d['runtime']['sha256']) || !hash_equals($d['runtime']['sha256'], hash('sha256', $runtimeBytes))
+            || !$request::hasExactKeys($runtime, ['schemaVersion', 'activation', 'gatewayUid', 'gatewayGid', 'processorPeer', 'socketPath',
+                'profile', 'evidenceDirectory', 'evidence', 'credentialFile', 'tokenizerFile', 'tokenizerSha256', 'tokenizerPattern',
+                'tokenizerPatternSha256', 'tokenizerVocabulary', 'deadlineMs', 'maxRequests'])
+            || $runtime['schemaVersion'] !== 'public-core-gateway-runtime/1' || $runtime['activation'] !== 'approved'
+            || $runtime['gatewayUid'] !== 41003 || $runtime['gatewayGid'] !== 41003
+            || !$request::hasExactKeys($runtime['processorPeer'], ['uid', 'gid', 'pid'])
+            || $runtime['processorPeer']['uid'] !== 41002 || $runtime['processorPeer']['gid'] !== 41002 || $runtime['processorPeer']['pid'] !== null
+            || $runtime['socketPath'] !== '/run/most-public-core/gateway/gateway.sock'
+            || $runtime['evidenceDirectory'] !== $root.'/gateway/evidence' || $runtime['credentialFile'] !== $root.'/gateway/credential/provider-key'
+            || $runtime['tokenizerFile'] !== $root.'/gateway/tokenizer/vocabulary.tiktoken' || $runtime['tokenizerPattern'] !== $root.'/gateway/tokenizer/pattern.txt') {
+            throw new LogicException('candidate_unavailable');
+        }
+        $profile = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::fromArray($runtime['profile']); $v = $profile->values();
+        $m = $d['modelBinding'];
+        if (!$profile->isActualProfile() || $d['profileFingerprint'] !== $profile->fingerprint()
+            || !$request::hasExactKeys($m, ['provider', 'modelId', 'modelRevision', 'catalogDigest', 'apiMethod', 'templateVersion',
+                'contextWindow', 'maxOutputTokens', 'tokenizerId', 'tokenizerRevision', 'countMethod', 'vocabularySha256', 'patternSha256'])
+            || $m['provider'] !== 'timeweb' || $m['modelId'] !== 'openai/gpt-6-luna' || !$request::isDigest($m['catalogDigest'])
+            || $m['apiMethod'] !== 'responses' || $m['templateVersion'] !== \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::ADAPTER_REVISION
+            || $m['countMethod'] !== 'full_wire_json_bpe_upper_bound'
+            || $runtime['tokenizerVocabulary'] !== $v['tokenizerId']
+            || $m['vocabularySha256'] !== $runtime['tokenizerSha256'] || $m['patternSha256'] !== $runtime['tokenizerPatternSha256']
+            || !$request::hasExactKeys($d['tokenizer'], ['vocabulary', 'pattern'])
+            || $request::canonicalJson($d['evidence']) !== $request::canonicalJson($runtime['evidence'])) { throw new LogicException('candidate_unavailable'); }
+        foreach (['modelId', 'modelRevision', 'apiMethod', 'contextWindow', 'maxOutputTokens', 'tokenizerId', 'tokenizerRevision'] as $key) {
+            if ($m[$key] !== $v[$key]) { throw new LogicException('candidate_unavailable'); }
+        }
+        foreach (['vocabulary' => ['vocabulary.tiktoken', 'vocabularySha256'], 'pattern' => ['pattern.txt', 'patternSha256']] as $key => [$file, $digest]) {
+            if (!$request::hasExactKeys($d['tokenizer'][$key], ['file', 'sha256']) || $d['tokenizer'][$key]['file'] !== $file
+                || !$request::isDigest($d['tokenizer'][$key]['sha256']) || $d['tokenizer'][$key]['sha256'] !== $m[$digest]) {
+                throw new LogicException('candidate_unavailable');
+            }
+        }
+        $kinds = ['catalog', 'method', 'capacity', 'tokenizer', 'key', 'identity', 'channel', 'egress', 'backendAuthority', 'nativeTransfer'];
+        if (!$request::hasExactKeys($d['evidence'], $kinds)) { throw new LogicException('candidate_unavailable'); }
+        foreach ($d['evidence'] as $r) {
+            if (!$request::hasExactKeys($r, ['ref', 'file', 'sha256']) || !$request::isReference($r['ref']) || !$request::isDigest($r['sha256'])
+                || !is_string($r['file']) || preg_match('/\A[A-Za-z0-9_-]{1,128}\.json\z/D', $r['file']) !== 1) { throw new LogicException('candidate_unavailable'); }
+        }
+        return $d;
+    }
+
+    /** @return array{revision:int,sha256:string,acceptanceRef:string} */
+    public function binding(): array
+    {
+        return ['revision' => $this->revision, 'sha256' => $this->descriptorSha256, 'acceptanceRef' => $this->descriptor['acceptance']['decisionRef']];
+    }
+
+    public function recheck(): void
+    {
+        self::admit($this->controls->bytes('accepted-candidate.json'), $this->controls->bytes('candidate-runtime.json'),
+            $this->releaseSha, $this->imageDigest, $this->revision, $this->descriptorSha256, time(), $this->root);
+        $this->inputs->recheck();
+    }
+
+    /** Metadata admission alone never releases role barriers or egress. @return array<mixed> */
+    public static function stage(string $root, string $releaseSha, string $imageDigest, int $revision, string $descriptorSha256): array
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || posix_geteuid() !== 0 || posix_getegid() !== 0) { throw new LogicException('candidate_unavailable'); }
+        try { return self::stageChecked($root, $releaseSha, $imageDigest, $revision, $descriptorSha256); }
+        catch (Throwable $error) { RoleProjectionPublisher::deny($root); throw $error; }
+    }
+
+    /** @return array<mixed> */
+    private static function stageChecked(string $root, string $releaseSha, string $imageDigest, int $revision, string $descriptorSha256): array
+    {
+        $candidate = new self($root, $releaseSha, $imageDigest, $revision, $descriptorSha256);
+        $old = new ProtectedRoleFile($root.'/gateway', 41003); $prior = $old->bytes('runtime.json');
+        if (($old->json('runtime.json')['activation'] ?? null) !== 'inactive') { throw new LogicException('candidate_unavailable'); }
+        $unavailable = static function () use ($root): void {
+            foreach (['app' => 82, 'processor' => 41002, 'gateway' => 41003] as $role => $gid) {
+                if (@lstat($root.'/'.$role.'/generation.json') !== false) { throw new LogicException('candidate_unavailable'); }
+                if ($role !== 'gateway' && (new ProtectedRoleFile($root.'/'.$role, $gid))->bytes('bootstrap.php') !== "<?php return null;\n") {
+                    throw new LogicException('candidate_unavailable');
+                }
+            }
+        };
+        $unavailable(); $temp = $root.'/gateway/.candidate-'.bin2hex(random_bytes(12)); $committed = false;
+        try {
+            $stream = fopen($temp, 'x+b'); if ($stream === false) { throw new LogicException('candidate_unavailable'); }
+            try {
+                if (!chmod($temp, 0600) || fwrite($stream, $candidate->runtimeBytes) !== strlen($candidate->runtimeBytes)
+                    || !fflush($stream) || !fsync($stream) || !chgrp($temp, 41003) || !chmod($temp, 0640)) { throw new LogicException('candidate_unavailable'); }
+            } finally { fclose($stream); }
+            $candidate->recheck(); $unavailable();
+            if ($old->bytes('runtime.json') !== $prior || !rename($temp, $root.'/gateway/runtime.json')) { throw new LogicException('receipt_changed'); }
+            $committed = true;
+            if ((new ProtectedRoleFile($root.'/gateway', 41003))->bytes('runtime.json') !== $candidate->runtimeBytes) { throw new LogicException('receipt_changed'); }
+            $candidate->recheck(); $unavailable();
+            return ['status' => 'candidate_staged', 'revision' => $revision, 'candidateSha256' => $descriptorSha256,
+                'releaseSha' => $releaseSha, 'imageDigest' => $imageDigest, 'profileFingerprint' => $candidate->descriptor['profileFingerprint'], 'publicationReady' => false];
+        } catch (Throwable $error) {
+            // Denial only; never restore an earlier approved snapshot.
+            if ($committed) { RoleProjectionPublisher::deny($root); }
+            throw $error;
+        } finally { @unlink($temp); }
+    }
+}
+
 final class RoleProjectionPublisher
 {
-    public static function publish(string $root, string $releaseSha, string $imageDigest): bool
+    public static function deny(string $root): void
     {
-        try { return self::compile($root, $releaseSha, $imageDigest); }
-        catch (Throwable $error) {
-            // This operation is only called behind managed drain/park barriers.
-            // A failed preparation revokes the manifest; old active input is never restored.
-            if (PHP_OS_FAMILY === 'Linux' && posix_geteuid() === 0) {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0 || posix_getegid() !== 0) { return; }
+        foreach (['app', 'processor', 'gateway'] as $role) { @unlink($root.'/'.$role.'/generation.json'); }
+            {
                 try {
                     $snapshot = new GatewayProjectionSnapshot($root.'/gateway');
                     $path = $root.'/gateway/runtime.json'; $before = $snapshot->bytes($path, 65536);
@@ -526,21 +680,27 @@ final class RoleProjectionPublisher
                     }
                 } catch (Throwable) { /* Invalid protected metadata cannot become a valid active input. */ }
             }
-            throw $error;
-        }
     }
 
-    private static function compile(string $root, string $releaseSha, string $imageDigest): bool
+    public static function publish(string $root, string $releaseSha, string $imageDigest, int $revision = 0, string $candidateSha256 = ''): bool
+    {
+        try { return self::compile($root, $releaseSha, $imageDigest, $revision, $candidateSha256); }
+        catch (Throwable $error) { self::deny($root); throw $error; }
+    }
+
+    private static function compile(string $root, string $releaseSha, string $imageDigest, int $revision, string $candidateSha256): bool
     {
         if (PHP_OS_FAMILY !== 'Linux' || posix_geteuid() !== 0 || posix_getegid() !== 0
             || preg_match('/\A[0-9a-f]{40}\z/D', $releaseSha) !== 1
             || preg_match('/\Asha256:[0-9a-f]{64}\z/D', $imageDigest) !== 1) {
             throw new LogicException('runtime_not_activated');
         }
+        $candidate = new CurrentCandidateSnapshot($root, $releaseSha, $imageDigest, $revision, $candidateSha256);
         $snapshot = new GatewayProjectionSnapshot($root.'/gateway');
         $manifest = json_decode($snapshot->bytes($root.'/gateway/runtime.json', 65536), true, 64, JSON_THROW_ON_ERROR);
         // Missing actual inputs on ordinary main deployment never creates ready projections.
-        if (is_array($manifest) && ($manifest['activation'] ?? null) === 'inactive') { return false; }
+        if (is_array($manifest) && ($manifest['activation'] ?? null) === 'inactive') { throw new LogicException('candidate_unavailable'); }
+        if ($snapshot->bytes($root.'/gateway/runtime.json', 65536) !== $candidate->runtimeBytes) { throw new LogicException('receipt_changed'); }
         $configuration = $snapshot->configuration($root.'/gateway/runtime.json');
         $profile = \App\Services\Privacy\Gateway\Contracts\GatewayModelProfile::fromArray($configuration['profile']);
         $request = \App\Services\Privacy\Gateway\Contracts\GatewayModelRequest::class;
@@ -549,13 +709,13 @@ final class RoleProjectionPublisher
         // CI supplies real inspect/lifetime/acceptance facts; the compiler never manufactures them.
         $control = $controls->json('publication.json');
         if (!$request::hasExactKeys($control, ['schemaVersion', 'releaseSha', 'imageDigest', 'expiresAt',
-            'consumersStopped', 'peers', 'acceptedReceipts', 'expectedOutputs'])
-            || $control['schemaVersion'] !== 'public-core-projection-publication/1'
+            'consumersStopped', 'peers', 'acceptedReceipts', 'expectedOutputs', 'candidate'])
+            || $control['schemaVersion'] !== 'public-core-projection-publication/2' || !$request::hasExactKeys($control['candidate'] ?? null, ['revision', 'sha256', 'acceptanceRef']) || $request::canonicalJson($control['candidate']) !== $request::canonicalJson($candidate->binding())
             || $control['releaseSha'] !== $releaseSha || $control['imageDigest'] !== $imageDigest
             || !is_int($control['expiresAt']) || $control['expiresAt'] <= time()
             || $control['consumersStopped'] !== true || !is_array($control['expectedOutputs'])
             || !$request::hasExactKeys($control['peers'], ['processor', 'gateway'])
-            || !is_array($control['acceptedReceipts'])) { throw new LogicException('runtime_not_activated'); }
+            || !$request::hasExactKeys($control['acceptedReceipts'], ['authorizationFenceEvidenceRef', 'identityEvidenceRef', 'channelEvidenceRef', 'egressEvidenceRef', 'secretEvidenceRef', 'activationRef'])) { throw new LogicException('runtime_not_activated'); }
         $observed = $controls->json('observed-peers.json');
         if (($observed['schemaVersion'] ?? null) !== 'public-core-observed-peers/1'
             || ($observed['releaseSha'] ?? null) !== $releaseSha || ($observed['imageDigest'] ?? null) !== $imageDigest
@@ -569,7 +729,7 @@ final class RoleProjectionPublisher
             || $qualification['registryDigest'] !== \App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry::compiled()->manifestDigest()) {
             throw new LogicException('runtime_not_activated');
         }
-        $peers = []; $lifetimes = []; $expiry = $control['expiresAt'];
+        $peers = []; $lifetimes = []; $expiry = min($control['expiresAt'], $candidate->descriptor['expiresAt'], $observed['observedAt'] + 30);
         foreach (['processor' => 41002, 'gateway' => 41003] as $role => $uid) {
             $observation = $control['peers'][$role];
             if (!$request::hasExactKeys($observation, ['containerId', 'imageDigest', 'service', 'hostPid', 'peer', 'lifetimeRef'])
@@ -590,7 +750,7 @@ final class RoleProjectionPublisher
             }
             $peers[$role] = $peer; $lifetimes[$role] = $observation['lifetimeRef'];
         }
-        if ($configuration['processorPeer'] != $peers['processor']) { throw new LogicException('gateway_identity_unavailable'); }
+        if ($configuration['processorPeer']['uid'] !== 41002 || $configuration['processorPeer']['gid'] !== 41002 || $configuration['processorPeer']['pid'] !== null) { throw new LogicException('gateway_identity_unavailable'); }
         foreach (array_slice($keys, 4) as $key) {
             $ref = $qualification[$key];
             if (!$request::isReference($ref) || !isset($control['acceptedReceipts'][$key])
@@ -600,34 +760,39 @@ final class RoleProjectionPublisher
                 || !$request::isDigest($control['acceptedReceipts'][$key]['sha256'])) { throw new LogicException('runtime_not_activated'); }
             $bytes = $controls->bytes($control['acceptedReceipts'][$key]['file']);
             if (hash('sha256', $bytes) !== $control['acceptedReceipts'][$key]['sha256']) { throw new LogicException('runtime_not_activated'); }
-            $receipt = json_decode($bytes, true, 64, JSON_THROW_ON_ERROR);
+            $receipt = $request::decodeJson($bytes, 65536);
             if (!$request::hasExactKeys($receipt, ['schemaVersion', 'kind', 'ref', 'status', 'profileFingerprint', 'modelId',
                 'apiMethod', 'issuedAt', 'expiresAt', 'details']) || $receipt['schemaVersion'] !== 'public-core-runtime-evidence/1'
                 || $receipt['kind'] !== $key || $receipt['ref'] !== $ref || $receipt['status'] !== 'verified'
                 || $receipt['profileFingerprint'] !== $profile->fingerprint() || $receipt['modelId'] !== $profile->values()['modelId']
                 || $receipt['apiMethod'] !== $profile->values()['apiMethod'] || !is_int($receipt['issuedAt'])
-                || $receipt['issuedAt'] < 1 || $receipt['issuedAt'] > time() || !is_int($receipt['expiresAt'])
+                || $receipt['issuedAt'] < $observed['observedAt'] || $receipt['issuedAt'] > time() || !is_int($receipt['expiresAt'])
                 || $receipt['expiresAt'] <= time() || $receipt['expiresAt'] <= $receipt['issuedAt']
                 || !is_array($receipt['details']) || ($receipt['details']['releaseSha'] ?? null) !== $releaseSha
                 || ($receipt['details']['imageDigest'] ?? null) !== $imageDigest
                 || ($receipt['details']['registryDigest'] ?? null) !== $qualification['registryDigest']
-                || ($receipt['details']['roleLifetimes'] ?? null) !== $lifetimes) { throw new LogicException('runtime_not_activated'); }
+                || ($receipt['details']['roleLifetimes'] ?? null) !== $lifetimes
+                || !$request::hasExactKeys($receipt['details']['candidate'] ?? null, ['revision', 'sha256', 'acceptanceRef'])
+                || $request::canonicalJson($receipt['details']['candidate']) !== $request::canonicalJson($candidate->binding())) { throw new LogicException('runtime_not_activated'); }
             $expiry = min($expiry, $receipt['expiresAt']);
         }
         foreach ($configuration['evidence'] as $kind => $ref) {
             $proof = json_decode($common[$kind.'.json'], true, 64, JSON_THROW_ON_ERROR);
             $expiry = min($expiry, $proof['expiresAt']);
         }
+        // Bind only after genuine CURRENT qualification/receipts and observed lifetime checks.
+        $configuration['processorPeer'] = $peers['processor'];
+        $runtimeOutput = json_encode($configuration, JSON_THROW_ON_ERROR);
         $files = ['app' => array_diff_key($common, array_flip(['vocabulary.tiktoken', 'pattern.txt'])) +
-            ['processor-peer.json' => json_encode($peers['processor'], JSON_THROW_ON_ERROR), 'gateway-peer.json' => json_encode($peers['gateway'], JSON_THROW_ON_ERROR)],
-            'processor' => $common + ['qualification.json' => json_encode($qualification, JSON_THROW_ON_ERROR),
-                'gateway-peer.json' => json_encode($peers['gateway'], JSON_THROW_ON_ERROR)], 'gateway' => []];
+            ['bootstrap.php' => self::bootstrapBytes('app'), 'processor-peer.json' => json_encode($peers['processor'], JSON_THROW_ON_ERROR), 'gateway-peer.json' => json_encode($peers['gateway'], JSON_THROW_ON_ERROR)],
+            'processor' => $common + ['bootstrap.php' => self::bootstrapBytes('processor'), 'qualification.json' => json_encode($qualification, JSON_THROW_ON_ERROR),
+                'gateway-peer.json' => json_encode($peers['gateway'], JSON_THROW_ON_ERROR)], 'gateway' => ['runtime.json' => $runtimeOutput]];
         $expected = $control['expectedOutputs']; $names = [];
         foreach ($files as $role => $outputs) {
             foreach ($outputs + ['generation.json' => ''] as $name => $_) { $names[] = $role.'/'.$name; }
         }
         if (!$request::hasExactKeys($expected, $names)) { throw new LogicException('receipt_changed'); }
-        $temps = []; $invalidated = false;
+        $temps = []; $generationBytes = []; $invalidated = false;
         try {
             foreach ($files as $role => $outputs) {
                 $gid = match ($role) { 'app' => 82, 'processor' => 41002, default => 41003 }; $directory = $root.'/'.$role;
@@ -636,10 +801,10 @@ final class RoleProjectionPublisher
                     || ($stat['mode'] & 0170000) !== 0040000 || ($stat['mode'] & 0777) !== 0750) { throw new LogicException('runtime_not_activated'); }
                 $reader = new ProtectedRoleFile($directory, $gid); $digests = [];
                 foreach ($outputs as $name => $bytes) { $digests[$name] = hash('sha256', $bytes); }
-                if ($role === 'gateway') { $digests['runtime.json'] = hash('sha256', $snapshot->bytes($root.'/gateway/runtime.json', 65536)); }
                 $outputs['generation.json'] = json_encode(['schemaVersion' => 'public-core-projection-generation/1',
                     'releaseSha' => $releaseSha, 'imageDigest' => $imageDigest, 'expiresAt' => $expiry,
                     'profileFingerprint' => $profile->fingerprint(), 'files' => $digests, 'roleLifetimes' => $lifetimes], JSON_THROW_ON_ERROR);
+                $generationBytes[$role] = $outputs['generation.json'];
                 foreach ($outputs as $name => $bytes) {
                     self::comparePrior($reader, $directory, $name, $expected[$role.'/'.$name]);
                     $temporary = $directory.'/.publication-'.bin2hex(random_bytes(12));
@@ -659,10 +824,10 @@ final class RoleProjectionPublisher
                 $invalidated = true;
                 if (is_file($directory.'/generation.json') && !unlink($directory.'/generation.json')) { throw new LogicException('runtime_not_activated'); }
             }
-            $snapshot->recheck(); $controls->json('publication.json'); $controls->json('qualification.json'); $controls->json('observed-peers.json');
+            $candidate->recheck(); $snapshot->recheck(); $controls->json('publication.json'); $controls->json('qualification.json'); $controls->json('observed-peers.json');
             foreach ($control['acceptedReceipts'] as $ref) { $controls->bytes($ref['file']); }
             foreach ($peers as $role => $peer) { if (ProcessIdentity::lifetime($peer) !== $lifetimes[$role]) { throw new LogicException('gateway_identity_unavailable'); } }
-            if ($expiry <= time()) { throw new LogicException('expired'); }
+            self::assertPublicationWindow($expiry, $observed['observedAt']);
             foreach ($temps as $relative => $temporary) {
                 if (str_ends_with($relative, '/generation.json')) { continue; }
                 [$role, $name] = explode('/', $relative); $gid = match ($role) { 'app' => 82, 'processor' => 41002, default => 41003 };
@@ -677,13 +842,21 @@ final class RoleProjectionPublisher
                 $reader = new ProtectedRoleFile($root.'/'.$role, match ($role) { 'app' => 82, 'processor' => 41002, default => 41003 });
                 foreach ($outputs as $name => $bytes) { if ($reader->bytes($name, max(strlen($bytes), 1)) !== $bytes) { throw new LogicException('receipt_changed'); } }
             }
-            $snapshot->recheck();
+            $candidate->recheck(); $snapshot->recheck($root.'/gateway/runtime.json');
+            $controls->json('publication.json'); $controls->json('qualification.json'); $controls->json('observed-peers.json');
+            foreach ($control['acceptedReceipts'] as $ref) { $controls->bytes($ref['file']); }
             foreach ($peers as $role => $peer) { if (ProcessIdentity::lifetime($peer) !== $lifetimes[$role]) { throw new LogicException('gateway_identity_unavailable'); } }
-            if ($expiry <= time()) { throw new LogicException('expired'); }
+            self::assertPublicationWindow($expiry, $observed['observedAt']);
             foreach (['app', 'processor', 'gateway'] as $role) {
                 $relative = $role.'/generation.json';
                 if (@lstat($root.'/'.$relative) !== false || !rename($temps[$relative], $root.'/'.$relative)) { throw new LogicException('receipt_changed'); }
                 unset($temps[$relative]);
+            }
+            $candidate->recheck();
+            self::assertPublicationWindow($expiry, $observed['observedAt']);
+            foreach ($peers as $role => $peer) { if (ProcessIdentity::lifetime($peer) !== $lifetimes[$role]) { throw new LogicException('gateway_identity_unavailable'); } }
+            foreach (['app' => 82, 'processor' => 41002, 'gateway' => 41003] as $role => $gid) {
+                if ((new ProtectedRoleFile($root.'/'.$role, $gid))->bytes('generation.json') !== $generationBytes[$role]) { throw new LogicException('receipt_changed'); }
             }
             return true;
         } catch (Throwable $error) {
@@ -691,6 +864,24 @@ final class RoleProjectionPublisher
             if ($invalidated) { foreach (['app', 'processor', 'gateway'] as $role) { @unlink($root.'/'.$role.'/generation.json'); } }
             throw $error;
         } finally { foreach ($temps as $temporary) { @unlink($temporary); } }
+    }
+
+    /** @phpstan-impure */
+    private static function assertPublicationWindow(int $expiry, int $observedAt): void
+    {
+        $now = time();
+        if ($expiry <= $now || $observedAt > $now || $now - $observedAt >= 30) { throw new LogicException('expired'); }
+    }
+
+    /** Exact existing managed wrappers; installed only in the publication output CAS. */
+    public static function bootstrapBytes(string $role): string
+    {
+        $sha = hash_file('sha256', __FILE__);
+        if (!is_string($sha) || !in_array($role, ['app', 'processor'], true)) { throw new LogicException('runtime_not_activated'); }
+        $prefix = "<?php\ndeclare(strict_types=1);\nif (!hash_equals('".$sha."', hash_file('sha256', '/var/www/html/docker/public-core/runtime.php'))) { return null; }\nrequire_once '/var/www/html/docker/public-core/runtime.php';\n";
+        return $prefix.($role === 'app'
+            ? 'return static function ($app, $configure) { \\Most\\PublicCore\\AppRuntimeBootstrap::configureProtected($app, $configure); };'."\n"
+            : 'return \\Most\\PublicCore\\ProcessorRuntimeBootstrap::protectedListener();'."\n");
     }
 
     private static function comparePrior(ProtectedRoleFile $reader, string $directory, string $name, mixed $expected): void
@@ -1359,10 +1550,10 @@ final class ProcessorRuntimeBootstrap
 if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     $command = $argv[1] ?? '--help';
     if ($command === '--help') {
-        fwrite(STDOUT, "Usage: php docker/public-core/runtime.php metadata|gateway|processor [protected-role-config]\n       php docker/public-core/runtime.php describe-model-input RELEASE_SHA (read-only staged store; never actual qualification)\n       php docker/public-core/runtime.php provision-credentials RELEASE_SHA (exact-image main CI only)\n       php docker/public-core/runtime.php publish-projections RELEASE_SHA IMAGE_DIGEST (root, parked roles, checked inputs only)\n       php docker/public-core/runtime.php parked-gateway|parked-processor (bounded 30-second same-PID wait)\n");
+        fwrite(STDOUT, "Usage: php docker/public-core/runtime.php metadata|gateway|processor [protected-role-config]\n       php docker/public-core/runtime.php describe-model-input RELEASE_SHA (read-only staged store; never actual qualification)\n       php docker/public-core/runtime.php provision-credentials RELEASE_SHA (exact-image main CI only)\n       php docker/public-core/runtime.php publish-projections RELEASE_SHA IMAGE_DIGEST CURRENT_REVISION DESCRIPTOR_SHA256 (root, CURRENT parked receipts only)\n       php docker/public-core/runtime.php intake-current-candidate RELEASE_SHA IMAGE_DIGEST CURRENT_REVISION DESCRIPTOR_SHA256 (metadata only; unavailable until publication)\n       php docker/public-core/runtime.php parked-gateway|parked-processor (bounded 30-second same-PID wait)\n");
         exit(0);
     }
-    if (! in_array($command, ['metadata', 'gateway', 'processor', 'provision-credentials', 'describe-model-input', 'publish-projections', 'parked-gateway', 'parked-processor'], true) || count($argv) > 4) {
+    if (! in_array($command, ['metadata', 'gateway', 'processor', 'provision-credentials', 'describe-model-input', 'publish-projections', 'intake-current-candidate', 'parked-gateway', 'parked-processor'], true) || count($argv) > 6) {
         fwrite(STDERR, "public-core: invalid_command\n");
         exit(64);
     }
@@ -1375,10 +1566,16 @@ if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE
                 JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)."\n");
             exit(0);
         }
+        if ($command === 'intake-current-candidate') {
+            $release = json_decode(file_get_contents('/etc/most/release.json'), true, 8, JSON_THROW_ON_ERROR);
+            if (count($argv) !== 6 || ($release['sha'] ?? null) !== $argv[2] || preg_match('/\A[1-9][0-9]{0,8}\z/D', $argv[4]) !== 1) { throw new LogicException('candidate_unavailable'); }
+            fwrite(STDOUT, json_encode(CurrentCandidateSnapshot::stage('/etc/most/public-core', $argv[2], $argv[3], (int)$argv[4], $argv[5]), JSON_THROW_ON_ERROR)."\n");
+            exit(0);
+        }
         if ($command === 'publish-projections') {
             $release = json_decode(file_get_contents('/etc/most/release.json'), true, 8, JSON_THROW_ON_ERROR);
-            if (count($argv) !== 4 || ($release['sha'] ?? null) !== $argv[2]) { throw new LogicException('runtime_not_activated'); }
-            $published = RoleProjectionPublisher::publish('/etc/most/public-core', $argv[2], $argv[3]);
+            if (count($argv) !== 6 || ($release['sha'] ?? null) !== $argv[2] || preg_match('/\A[1-9][0-9]{0,8}\z/D', $argv[4]) !== 1) { throw new LogicException('runtime_not_activated'); }
+            $published = RoleProjectionPublisher::publish('/etc/most/public-core', $argv[2], $argv[3], (int)$argv[4], $argv[5]);
             fwrite(STDOUT, $published ? "public-core: projections_prepared_not_activated\n" : "public-core: inactive_inputs_unavailable\n");
             exit(0);
         }
