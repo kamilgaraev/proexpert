@@ -26,7 +26,7 @@ class PurchaseReceiptResource extends JsonResource
             'notes' => $this->notes,
             'metadata' => $this->metadata,
             'procurement_chain_summary' => app(ProcurementChainService::class)
-                ->forPurchaseReceipt($this->resource, $request->user())
+                ->forPurchaseReceipt($this->resource, $request->user(), includePermissions: false)
                 ->compact()
                 ->toArray(),
             'warehouse' => $this->whenLoaded('warehouse', fn () => $this->warehouse ? [
