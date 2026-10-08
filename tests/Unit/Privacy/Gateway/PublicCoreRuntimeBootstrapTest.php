@@ -121,7 +121,12 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         $first = Request::create('/public-core-one');
         $second = Request::create('/public-core-two');
         $app->instance('request', $first);
+        $serviceClass = \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRequestService::class;
+        $app->instance(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class,
+            new \App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker());
+        $service = $app->make($serviceClass);
         $runtime = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertSame($runtime, (new \ReflectionProperty($service, 'runtime'))->getValue($service));
         $origin = (new \ReflectionProperty($runtime, 'originSource'))->getValue($runtime);
         self::assertSame($first, $origin());
         $app->instance('request', $second);
@@ -129,13 +134,26 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         $runtimeFence = (new \ReflectionProperty($runtime, 'sourceFence'))->getValue($runtime);
         self::assertNotSame($fence, $runtimeFence);
         (new \ReflectionProperty($runtimeFence, 'sourceHeld'))->setValue($runtimeFence, ['held' => true]);
+        (new \ReflectionProperty($runtime, 'sourceDeliveries'))->setValue($runtime, ['old' => ['delivered' => true]]);
+        (new \ReflectionProperty($runtime, 'sourcePublications'))->setValue($runtime, ['old' => ['pending' => true]]);
         $app->forgetScopedInstances();
         $next = $app->make(PublicCoreAssistantRuntime::class);
         self::assertNotSame($runtime, $next);
+        $nextService = $app->make($serviceClass);
+        self::assertNotSame($service, $nextService);
+        self::assertSame($next, (new \ReflectionProperty($nextService, 'runtime'))->getValue($nextService));
+        $nextOrigin = (new \ReflectionProperty($next, 'originSource'))->getValue($next);
+        $third = Request::create('/public-core-three');
+        $app->instance('request', $third);
+        self::assertSame($third, $nextOrigin());
         $nextFence = (new \ReflectionProperty($next, 'sourceFence'))->getValue($next);
         self::assertNotSame($runtimeFence, $nextFence);
         self::assertNull((new \ReflectionProperty($nextFence, 'sourceHeld'))->getValue($nextFence));
         self::assertFalse($nextFence->available());
+        self::assertSame([], (new \ReflectionProperty($next, 'sourceDeliveries'))->getValue($next));
+        self::assertSame([], (new \ReflectionProperty($next, 'sourcePublications'))->getValue($next));
+        // A prior-scope delivery cannot be reused after reset, even with a retained callback.
+        self::assertNull($next->sourcePublicationCallback('old', null)([], new \stdClass(), static fn (): array => []));
         self::assertSame(0, $nativeCalls);
     }
 
@@ -224,24 +242,217 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         $projection->profile();
     }
 
-    public function testSemanticGateAcceptsOnlyEvidenceBoundCanonicalText(): void
+    public function testSemanticGateSupportsSevenRegisteredSelectorsWithoutTrustingModelText(): void
     {
-        $provenance = ['unitRef' => 'unit', 'sourceGenerationRef' => 'generation'];
-        $facts = [
-            ['kind' => 'text', 'value' => ['utf8Text' => 'Бетон товарный В25 М350'],
-                'provenance' => $provenance + ['fragmentVersion' => 'synthetic-material-field/title/1']],
-            ['kind' => 'price', 'decimal' => '7800.00', 'currency' => 'RUB', 'perUnit' => 'm3', 'provenance' => $provenance],
-        ];
-        $value = ['text' => 'Бетон товарный В25 М350 стоит 7800.00 RUB за м³.',
-            'claims' => [['value' => '7800.00', 'currency' => 'RUB', 'unit' => 'm3']]];
+        $registry = \App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry::compiled();
         $gate = \Most\PublicCore\ProcessorRuntimeBootstrap::semanticVerdict(...);
-        self::assertSame(['status' => 'valid', 'reason' => 'none'], $gate($value, [], [['envelope' => ['facts' => $facts]]]));
-        foreach (['Чужая цена 1 RUB.', $value['text'].' Частный телефон: +7...'] as $text) {
-            self::assertSame('repair', $gate(array_replace($value, ['text' => $text]), [], [['envelope' => ['facts' => $facts]]])['status']);
+        foreach ($registry->catalog() as $selection) {
+            $payload = ['currentRef' => 'current', 'messages' => [
+                ['role' => 'user', 'ref' => 'current', 'content' => $selection['display_text'], 'sourceRefs' => ['question-source']],
+            ]];
+            $value = ['text' => '', 'claims' => [], 'sourceRefs' => ['source'],
+                'claimScope' => ['kind' => 'selected_entity', 'unitRefs' => ['transcript']]];
+            $evidence = [];
+            if ($selection['fixture_id'] === 'public-photo-metadata-v1') {
+                $transcript = $registry->records($selection['fixture_id'], $selection['fixture_version'])[0]['text'];
+                array_unshift($payload['messages'], ['role' => 'user', 'ref' => 'transcript', 'content' => $transcript, 'sourceRefs' => ['source']]);
+                $value['text'] = $selection['input_id'] === 'photo-explain' ? $transcript
+                    : 'Второй пункт учебной расшифровки — арматурный каркас. Это текстовая расшифровка, не проверка пикселей изображения.';
+            } else {
+                $corpus = \App\BusinessModules\Features\AIAssistant\Services\Rag\MaterialSearch\SyntheticMaterialSearchCorpus::registered(
+                    $selection['fixture_id'], $selection['fixture_version'], $selection['input_id']);
+                $rows = $corpus->records();
+                $rows = $selection['input_id'] === 'no-results' ? [] : [$rows[$selection['input_id'] === 'cement-price' ? 5 : 0]];
+                $result = \App\BusinessModules\Features\AIAssistant\Services\Rag\MaterialSearch\MaterialSearchResult::fromRecords('search', $corpus, $rows, [], $corpus->context());
+                $envelope = $result->localEnvelope();
+                $scope = ['kind' => 'search_subset', 'scopeRef' => 'alias-scope', 'sourceGenerationRef' => 'alias-generation', 'unitRefs' => ['alias-unit']];
+                $value['claimScope'] = $scope;
+                $evidence = [['envelope' => $envelope, 'modelMetadata' => ['claimScope' => $scope]]];
+                if ($selection['input_id'] === 'no-results') {
+                    $value['text'] = 'В учебном каталоге по выбранному запросу ничего не найдено.';
+                } else {
+                    $record = $rows[0];
+                    $quote = $selection['input_id'] === 'quote-12m3';
+                    $value['claims'] = [['value' => $quote ? '93600.00' : $record->decimal, 'currency' => 'RUB',
+                        'unit' => $quote ? null : $record->priceBasisUnit, 'sourceRefs' => ['source']]];
+                    $value['text'] = $quote ? 'Стоимость 12 м³ '.$record->title.' по учебному каталогу: 93600.00 RUB.'
+                        : $record->title.' стоит '.$record->decimal.' RUB за '.($record->priceBasisUnit === 'm3' ? 'м³' : 'кг').'.';
+                }
+            }
+            // Exercise the original committed context + response validator, including its
+            // alias provenance and derived-currency gate; these remain offline fixtures.
+            $context = new \Tests\Unit\AIAssistant\Context\OfflineContextFixtures(0);
+            $context->addArtifact('current', 'user', $selection['display_text']);
+            if ($selection['fixture_id'] === 'public-photo-metadata-v1') {
+                $context->addArtifact('transcript', 'user', $transcript);
+                $context->snapshot['conversation']['historyRefs'][] = 'transcript';
+            } else {
+                $context->addArtifact('tool-result', 'tool', json_encode($envelope, JSON_THROW_ON_ERROR));
+                $context->snapshot['conversation']['historyRefs'][] = 'tool-result';
+            }
+            $prepared = $context->service()->prepare('offline', $context->request());
+            self::assertSame('READY', $prepared['status']);
+            $receipt = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantContextReceipt::consume($prepared,
+                ['snapshot' => $context->snapshot, 'profile' => $context->profile, 'lineage' => $context->lineage,
+                    'stored' => $context->receipts[$prepared['payload']['contextRef']], 'artifacts' => $context->artifacts], 'offline');
+            $checked = $value;
+            $results = [];
+            $artifact = $selection['fixture_id'] === 'public-photo-metadata-v1' ? 'transcript' : 'tool-result';
+            foreach ($receipt->privateBinding()['receipt']['aliases'] as $alias) {
+                if ($alias['artifactRef'] === $artifact) { $checked['sourceRefs'] = $alias['sourceRefs']; }
+            }
+            if ($selection['fixture_id'] === 'public-photo-metadata-v1') {
+                $checked['claimScope'] = $receipt->contextScope();
+            } else {
+                $map = [];
+                foreach ($envelope['coverage']['claimScope']['unitRefs'] as $ref) { $map['ref_'.bin2hex(random_bytes(16))] = $ref; }
+                $tool = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantToolResult::projected($envelope,
+                    ['artifactRef' => 'tool-result', 'referenceMap' => $map], [], 'material.search', [], $corpus->context());
+                $results = [$tool];
+                $checked['claimScope'] = $tool->modelMetadata()['claimScope'];
+                foreach ($checked['claims'] as &$claim) { $claim['sourceRefs'] = $checked['sourceRefs']; }
+                unset($claim);
+            }
+            $validator = \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreContextBindings::processorResponseValidator($gate);
+            $checked['type'] = 'final';
+            $parse = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction::parse(...);
+            self::assertSame('valid', $validator->validate($parse($checked), $receipt, $results, static fn (): null => null)['status'], $selection['input_id']);
+            $wrong = $checked;
+            $wrong['sourceRefs'] = ['ref_'.str_repeat('f', 32)];
+            self::assertSame('provenance_invalid', $validator->validate($parse($wrong), $receipt, $results, static fn (): null => null)['reason']);
+            if ($checked['claims'] !== []) {
+                $wrong = $checked;
+                $wrong['claims'][0]['value'] = '1.00';
+                self::assertSame('claims_invalid', $validator->validate($parse($wrong), $receipt, $results, static fn (): null => null)['reason']);
+            }
+            self::assertSame('valid', $gate($value, $payload, $evidence)['status'], $selection['input_id']);
+            self::assertSame('repair', $gate(array_replace($value, ['text' => $value['text'].' Чужой телефон.']), $payload, $evidence)['status']);
+            $foreign = $payload;
+            $foreign['messages'][array_key_last($foreign['messages'])]['content'] = 'Незарегистрированный вопрос';
+            self::assertSame('repair', $gate($value, $foreign, $evidence)['status']);
+            if ($selection['fixture_id'] === 'public-photo-metadata-v1') {
+                $foreign = $payload;
+                $foreign['messages'][0]['sourceRefs'] = ['foreign'];
+                self::assertSame('repair', $gate($value, $foreign, $evidence)['status']);
+                $foreign = $value;
+                $foreign['claimScope']['unitRefs'] = ['current'];
+                self::assertSame('repair', $gate($foreign, $payload, $evidence)['status']);
+            } else {
+                $foreign = $evidence;
+                $foreign[0]['envelope']['resultGenerationRef'] = 'foreign';
+                self::assertSame('repair', $gate($value, $payload, $foreign)['status']);
+                if ($value['claims'] !== []) {
+                    $wrong = $value;
+                    $wrong['claims'][0]['value'] = '1.00';
+                    self::assertSame('repair', $gate($wrong, $payload, $evidence)['status']);
+                    $foreign = $evidence;
+                    $foreign[0]['envelope']['facts'][0]['provenance']['unitRef'] = 'foreign';
+                    self::assertSame('repair', $gate($value, $payload, $foreign)['status']);
+                } else {
+                    $foreign = $evidence;
+                    $foreign[0]['envelope']['coverage']['status'] = 'partial';
+                    self::assertSame('repair', $gate($value, $payload, $foreign)['status']);
+                }
+            }
         }
-        $facts[0]['provenance']['unitRef'] = 'other';
-        self::assertSame('repair', $gate($value, [], [['envelope' => ['facts' => $facts]]])['status']);
-        self::assertSame('repair', $gate($value, [], [])['status']);
+        self::assertCount(7, $registry->catalog());
+    }
+
+    public function testDockerDiscoveryErrorsNeverReachProjectionOrPolicyMutation(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Bash discovery mocks need Linux; no actual Docker or policy calls.'); }
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/discovery-'.bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory, 0755));
+        $source = dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh';
+        $harness = <<<'BASH'
+source "$1"
+mode="$2"
+work="$3"
+entry="$4"
+counter() { local n=0; [ ! -f "$work/$1" ] || read -r n < "$work/$1"; n=$((n+1)); printf '%s\n' "$n" > "$work/$1"; printf '%s' "$n"; }
+docker() {
+  local format="$3" n
+  case "$1:$2" in
+    ps:*)
+      [ "$mode" != ps ] || return 73
+      [ "$mode" != empty ] || return 0
+      if [[ "$*" == *service=public-core-gateway* ]]; then printf '%s' aaaaaaaaaaaa; else printf '%s' cccccccccccc; fi ;;
+    stop:*) return 0 ;;
+    network:ls)
+      n=$(counter list)
+      [ "$mode" != list ] || return 74
+      [ "$mode" != prepare-list ] || [ "$n" -ne 2 ] || return 74
+      [ "$mode" != empty ] || return 0
+      printf '%s' bbbbbbbbbbbb ;;
+    network:disconnect) return 0 ;;
+    network:inspect)
+      format="$4"
+      case "$format" in
+        *bridge.name*)
+          read -r n < "$work/list"
+          [ "$mode" != collision ] || [ "$n" -ne 2 ] || return 75
+          printf '%s' br-most-pc ;;
+        *compose.project*) printf '%s' prohelper ;;
+        *compose.network*) printf '%s' public-core-gateway ;;
+        *.Containers*)
+          n=$(counter members)
+          [ "$mode" != initial-member ] || [ "$n" -ne 1 ] || return 76
+          [ "$mode" != final-member ] || [ "$n" -ne 2 ] || return 77
+          [ "$mode" != prepare-member ] || [ "$n" -ne 3 ] || return 78
+          [ "$n" -ne 1 ] || printf '%s' aaaaaaaaaaaa ;;
+        *) return 91 ;;
+      esac ;;
+    inspect:*)
+      case "$format" in
+        *compose.project*) printf '%s' prohelper; [ "$mode" != label ] || return 79 ;;
+        *compose.service*)
+          if [ "${@: -1}" = cccccccccccc ]; then printf '%s' public-core-processor; else printf '%s' public-core-gateway; fi
+          [ "$mode" != service-label ] || return 82 ;;
+        '{{.State.Pid}}') printf '%s' 0; [ "$mode" != pid ] || return 83 ;;
+        *NetworkMode*) printf '%s' none; [ "$mode" != network-mode ] || return 84 ;;
+        *State.Running*) printf '%s' false:0:no; [ "$mode" != state ] || return 80 ;;
+        *EndpointID*) [ "$mode" != endpoint ] || return 81 ;;
+        *) return 91 ;;
+      esac ;;
+    *) return 91 ;;
+  esac
+}
+ip() { return 1; }
+nft() { [ "$1" = list ] || { printf '%s' POLICY_MUTATION > "$work/policy-mutation"; return 93; }; printf '%s' 'comment "most-public-core:gateway-only/1"'; }
+invalidate_public_core_projections() { printf '%s' MUTATION; return 92; }
+if "$entry"; then printf '%s' ACCEPTED; else exit "$?"; fi
+BASH;
+        try {
+            foreach (['ps', 'list', 'initial-member', 'final-member', 'endpoint', 'label', 'service-label', 'pid', 'network-mode', 'state', 'prepare-list', 'collision', 'prepare-member', 'empty', 'normal'] as $mode) {
+                foreach (glob($directory.'/*') ?: [] as $file) { unlink($file); }
+                $process = proc_open(['bash', '-c', $harness, 'fixture', $source, $mode, $directory, 'prepare_public_core_deny_policy'],
+                    [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                self::assertIsResource($process);
+                fclose($pipes[0]); $out = stream_get_contents($pipes[1]); fclose($pipes[1]);
+                $err = stream_get_contents($pipes[2]); fclose($pipes[2]); $exit = proc_close($process);
+                if (in_array($mode, ['empty', 'normal'], true)) {
+                    self::assertSame(1, $exit, $mode.': '.$err);
+                    self::assertSame('MUTATION', $out, $mode);
+                } else {
+                    self::assertSame(1, $exit, $mode.': '.$err);
+                    self::assertFileDoesNotExist($directory.'/policy-mutation');
+                    self::assertSame('', $out, $mode); // Includes no projection invalidation and no nft refresh.
+                }
+            }
+            foreach (['empty', 'normal'] as $mode) {
+                foreach (glob($directory.'/*') ?: [] as $file) { unlink($file); }
+                $process = proc_open(['bash', '-c', $harness, 'fixture', $source, $mode, $directory, 'quiesce_public_core_gateway_route'],
+                    [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                self::assertIsResource($process); fclose($pipes[0]);
+                $out = stream_get_contents($pipes[1]); fclose($pipes[1]);
+                $err = stream_get_contents($pipes[2]); fclose($pipes[2]);
+                self::assertSame(0, proc_close($process), $err);
+                self::assertSame('ACCEPTED', $out);
+            }
+        } finally {
+            foreach (glob($directory.'/*') ?: [] as $file) { unlink($file); }
+            rmdir($directory);
+        }
     }
 
     public function testRootCustodyParserCreatesOnlyRoleFilesAndRefusesRotationOrAmbiguity(): void

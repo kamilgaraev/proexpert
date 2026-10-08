@@ -108,7 +108,7 @@ class AIAssistantServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(PublicCoreAssistantRuntime::class);
-        $this->app->singleton(PublicCoreRequestService::class);
+        $this->app->scoped(PublicCoreRequestService::class);
         $this->app->booted(static function (\Illuminate\Foundation\Application $app): void {
             $bootstrap = dirname(__DIR__, 4).'/docker/public-core/runtime.php';
             if (! is_file($bootstrap)) {
