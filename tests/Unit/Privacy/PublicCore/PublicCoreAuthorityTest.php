@@ -1814,6 +1814,13 @@ final class PublicCoreAuthorityTest extends TestCase
             self::assertSame('Публичный каталог материалов', $result['sources'][0]['label']);
         } else { self::assertCount(2, $result['sources']); }
         self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+        foreach (['execute_owned', 'lookup_owned', 'execute_owned'] as $replay) {
+            $published = $processor->handle($replay, ['viewer_ticket_ref' => 'ref_server_viewer_ticket',
+                'request_ref' => $opened['request_ref']], $peer);
+            self::assertSame('public-core-result-publication/1', $published['schemaVersion']);
+            self::assertArrayNotHasKey('reply', $published);
+            self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+        }
         $this->viewer['authorized'] = false;
         self::assertSame('authorization_changed', $processor->handle('lookup_owned', [
             'viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref'],
