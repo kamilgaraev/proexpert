@@ -25,6 +25,8 @@ final class PublicCoreProcessor
     private ?PublicCoreDispatchAuthority $normalAuthority = null;
     private array $normalOperations = [];
     private bool $normalViolated = false;
+    private readonly ?Closure $finalPublication;
+    private readonly ?Closure $publicationBounds;
 
     public function __construct(
         private readonly RegisteredPublicFixtureRegistry $registry,
@@ -35,10 +37,12 @@ final class PublicCoreProcessor
         private readonly ?Closure $viewerBindingSource = null,
         private readonly ?Closure $nativeComposition = null,
         private readonly ?Closure $currentRuntimeSource = null,
-        private readonly ?Closure $finalPublication = null,
-        private readonly ?Closure $publicationBounds = null,
+        ?Closure $finalPublication = null,
+        ?Closure $publicationBounds = null,
     ) {
         $this->processRef = 'ref_' . bin2hex(random_bytes(16));
+        $this->finalPublication = $finalPublication ?? $this->publishNormalResult(...);
+        $this->publicationBounds = $publicationBounds ?? $this->normalPublicationBounds(...);
     }
 
     public function handle(string $command, array $payload, array $verifiedPeer): array
@@ -122,6 +126,11 @@ final class PublicCoreProcessor
             $this->normalViolated = true;
             return self::blocked('runtime_not_activated');
         }
+        return $this->executeOwnedInput($requestRef);
+    }
+
+    private function executeOwnedInput(string $requestRef): array
+    {
         if ($this->gatewayTransfer !== null) {
             return self::blocked('receipt_changed');
         }
@@ -402,13 +411,7 @@ final class PublicCoreProcessor
             return self::blocked('receipt_changed');
         }
         if ($command === 'readiness') {
-            $output = $this->readinessDto();
-            $output['status'] = 'unavailable';
-            $output['reason_code'] = 'runtime_not_activated';
-            $output['actual_model'] = null;
-            $output['model_enabled'] = false;
-            $output['capabilities'] = ['text' => false, 'tools' => false, 'vision' => false];
-            return $output;
+            return $this->readinessDto();
         }
         $binding = ['viewerTicketRef' => $input['viewer_ticket_ref']];
         $viewer = $this->currentNormalViewer($binding);
@@ -455,13 +458,14 @@ final class PublicCoreProcessor
         if ($command === 'lookup_owned' && ($request['execution'] ?? null) === null) {
             return ['status' => 'accepted', 'reasonCode' => 'none', 'request_ref' => $request['requestRef'], 'transportAllowed' => false];
         }
-        return self::blocked('runtime_not_activated') + ['request_ref' => $request['requestRef']];
+        return $command === 'execute_owned' ? $this->executeOwnedInput($request['requestRef'])
+            : $this->lookupOwned($binding, $request['requestRef']);
     }
 
     public function dispatchGateway(PublicCoreDispatchAuthority $authority, AuthenticatedPublicCoreChannel $channel,
         GatewayModelRequest $packet): GatewayModelResponse
     {
-        if ($this->normalOperation !== null) {
+        if ($this->normalOperation !== null && !$this->normalOwnsPacket($packet)) {
             $this->normalViolated = true;
             return GatewayModelResponse::unavailable($packet, 'runtime_not_activated');
         }
@@ -584,7 +588,132 @@ final class PublicCoreProcessor
             return null;
         }
         $this->gatewayTransfer['completionIssued'] = true;
-        return 'ref_' . bin2hex(random_bytes(16));
+        $this->gatewayTransfer['completionRef'] = 'ref_' . bin2hex(random_bytes(16));
+        return $this->gatewayTransfer['completionRef'];
+    }
+
+    private function normalPublicationBounds(array $request, Closure $callback): ?array
+    {
+        $scope = $this->normalOperation;
+        $profile = $this->readiness->qualifiedProfile();
+        if ($scope === null || $scope['phase'] !== 'NORMAL_RUNNING' || $this->normalViolated
+            || !in_array($scope['frame']['command'], ['execute_owned', 'lookup_owned'], true)
+            || $scope['frame']['requestRef'] !== $request['requestRef'] || $callback !== $this->finalPublication
+            || $profile?->isActualProfile() !== true || time() >= $scope['frame']['expiresAt']
+            || $scope['frame']['expiresAt'] > $request['expiresAt']) { return null; }
+        return ['qualification' => 'actual-publication-guard', 'profileFingerprint' => $profile->fingerprint(),
+            'guardEvidenceRef' => $scope['frame']['attemptRef'],
+            'maxDurationMs' => min(30000, ($scope['frame']['expiresAt'] - time()) * 1000),
+            'genuineExpiresAt' => $request['expiresAt']];
+    }
+
+    private function publishNormalResult(array $input, object $runtime, Closure $prepare): ?array
+    {
+        $scope = $this->normalOperation;
+        $binding = $input['resultBinding'] ?? null;
+        if ($scope === null || $this->normalViolated || $scope['phase'] !== 'NORMAL_RUNNING' || !is_array($binding)
+            || !in_array($scope['frame']['command'], ['execute_owned', 'lookup_owned'], true)
+            || ($binding['requestRef'] ?? null) !== $scope['frame']['requestRef']
+            || ($input['viewerBinding'] ?? null) !== ['viewerTicketRef' => $scope['frame']['payload']['input']['viewer_ticket_ref']]
+            || ($binding['processRef'] ?? null) !== $this->processRef
+            || ($this->runtimes[$binding['sessionRef'] ?? ''] ?? null) !== $runtime
+            || ($this->runtimeInstances[$binding['sessionRef'] ?? '']['instanceRef'] ?? null) !== ($binding['runtimeInstanceRef'] ?? null)) { return null; }
+        $candidate = $prepare();
+        if ($candidate === null || $this->normalViolated || time() >= $scope['frame']['expiresAt']) { return null; }
+        $this->normalOperation['phase'] = 'PUBLICATION';
+        try {
+            $scope = $this->normalOperation;
+            $scope['channel']->send('result', $scope['frame']['requestRef'], $scope['frame']['attemptRef'],
+                ['schemaVersion' => 'public-core-app-publication-stage/1', 'operation' => $input, 'candidate' => $candidate], $scope['frame']['expiresAt']);
+            $reply = $scope['channel']->receive();
+            if ($scope['channel']->peer() !== $scope['peer'] || $reply['channelRef'] !== $scope['channel']->channelRef()
+                || $reply['sequence'] !== $scope['receivedSequence'] + 1 || $reply['command'] !== 'result'
+                || $reply['requestRef'] !== $scope['frame']['requestRef'] || $reply['attemptRef'] !== $scope['frame']['attemptRef']
+                || $reply['expiresAt'] !== $scope['frame']['expiresAt']) { throw new \LogicException('receipt_changed'); }
+            $this->normalOperation['receivedSequence'] = $reply['sequence'];
+            return $reply['payload'];
+        } catch (Throwable) {
+            $this->normalViolated = true;
+            return null;
+        } finally { $this->normalOperation['phase'] = 'NORMAL_RUNNING'; }
+    }
+
+    public function gatewayCustody(PublicCoreDispatchAuthority $authority, GatewayModelRequest $packet,
+        array $event, ?string $completionRef = null): ?array
+    {
+        if (!$this->ownsGatewayTransfer($authority, $packet) || $this->gatewayTransfer['qualification'] !== 'actual-native'
+            || $this->readGatewayLifecycle($authority, $packet) !== $event
+            || ($completionRef === null ? $event['event'] !== 'pending'
+                : (!in_array($event['event'], ['uploaded', 'stopped'], true)
+                    || !$this->gatewayTransfer['completionIssued'] || ($this->gatewayTransfer['completionRef'] ?? null) !== $completionRef))) {
+            return null;
+        }
+        return ['schemaVersion' => 'public-core-native-upload-custody/1', 'qualification' => 'actual-native',
+            'channelRef' => $event['channelRef'], 'gatewayPeer' => $this->gatewayTransfer['channel']->peer(),
+            'transferRef' => $event['transferRef'], 'requestRef' => $packet->requestRef, 'attemptRef' => $packet->attemptRef,
+            'projectionDigest' => $packet->projectionDigest, 'event' => $event['event'],
+            'eventSequence' => $this->gatewayTransfer['eventSequence'], 'completionRef' => $completionRef];
+    }
+
+    private function normalOwnsPacket(GatewayModelRequest $packet): bool
+    {
+        $scope = $this->normalOperation;
+        return $scope !== null && !$this->normalViolated && $scope['phase'] === 'NORMAL_RUNNING'
+            && $scope['frame']['command'] === 'execute_owned' && $scope['frame']['requestRef'] === $packet->requestRef
+            && time() < $scope['frame']['expiresAt'] && $packet->expiresAt <= $scope['frame']['expiresAt'];
+    }
+
+    public function normalGatewayPins(AuthenticatedPublicCoreChannel $gateway): ?array
+    {
+        $scope = $this->normalOperation;
+        if ($scope === null || $this->normalViolated || $scope['phase'] !== 'NORMAL_RUNNING'
+            || $scope['frame']['command'] !== 'execute_owned' || time() >= $scope['frame']['expiresAt']
+            || $scope['channel']->peer() !== $scope['peer'] || $scope['channel']->channelRef() === $gateway->channelRef()
+            || $scope['peer'] === $gateway->peer()) { return null; }
+        return ['appPeer' => $scope['peer'], 'appChannelRef' => $scope['channel']->channelRef(),
+            'gatewayPeer' => $gateway->peer(), 'gatewayChannelRef' => $gateway->channelRef()];
+    }
+
+    public function normalDispatchExpiry(): ?int
+    {
+        return $this->normalOperation !== null && !$this->normalViolated
+            && $this->normalOperation['phase'] === 'NORMAL_RUNNING' && $this->normalOperation['frame']['command'] === 'execute_owned'
+            ? $this->normalOperation['frame']['expiresAt'] : null;
+    }
+
+    public function normalControlSequence(PublicCoreDispatchAuthority $authority, GatewayModelRequest $packet): ?int
+    {
+        return $this->normalOwnsPacket($packet) && $this->ownsGatewayTransfer($authority, $packet)
+            ? $this->normalOperation['receivedSequence'] : null;
+    }
+
+    public function exchangeNormalControl(string $command, array $payload, ?GatewayModelRequest $packet, int $expiresAt): array
+    {
+        $transfer = $this->gatewayTransfer;
+        if ($packet === null || $transfer === null || !$this->normalOwnsPacket($packet)
+            || !$this->ownsGatewayTransfer($transfer['authority'], $packet) || $expiresAt !== $packet->expiresAt
+            || !in_array($command, ['check_binding', 'authorize_write', 'upload_complete'], true)) {
+            throw new \LogicException('receipt_changed');
+        }
+        $scope = $this->normalOperation;
+        $this->normalOperation['phase'] = 'UPLOAD_CONTROL';
+        try {
+            $scope['channel']->send($command, $packet->requestRef, $packet->attemptRef, $payload, $expiresAt);
+            $frame = $scope['channel']->receive();
+            if ($scope['channel']->peer() !== $scope['peer'] || $frame['channelRef'] !== $scope['channel']->channelRef()
+                || $frame['sequence'] !== $scope['receivedSequence'] + 1 || $frame['expiresAt'] !== $expiresAt
+                || $frame['requestRef'] !== $packet->requestRef || $frame['attemptRef'] !== $packet->attemptRef
+                || $frame['command'] !== match ($command) {
+                    'check_binding' => 'binding', 'authorize_write' => 'write_authorized', 'upload_complete' => 'uploaded',
+                }) { throw new \LogicException('receipt_changed'); }
+            $this->normalOperation['receivedSequence'] = $frame['sequence'];
+            return ['frame' => $frame, 'peer' => $scope['peer']];
+        } catch (Throwable $error) {
+            $this->normalViolated = true;
+            throw $error;
+        } finally {
+            $this->normalOperation['phase'] = 'NORMAL_RUNNING';
+        }
     }
 
     public function acceptsGatewayCleanupFrame(PublicCoreDispatchAuthority $authority, GatewayModelRequest $packet, array $frame): bool

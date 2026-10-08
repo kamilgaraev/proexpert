@@ -47,6 +47,7 @@ final class PublicCoreDispatchAuthority
         private readonly ?Closure $uploadBounds = null,
         private readonly ?array $controlPins = null,
         private readonly ?Closure $bootstrapExpiry = null,
+        private readonly ?Closure $dispatchExpiry = null,
     ) {
     }
 
@@ -103,6 +104,10 @@ final class PublicCoreDispatchAuthority
                         return $this->unavailable('receipt_changed');
                     }
                 }
+                $outerExpiry = $this->dispatchExpiry === null ? $request['expiresAt'] : ($this->dispatchExpiry)();
+                if (!is_int($outerExpiry) || $outerExpiry <= $now || $outerExpiry > $request['expiresAt']) {
+                    return $this->unavailable('expired');
+                }
                 $v = $profile->values();
                 $body = GatewayModelRequest::canonicalJson(['model' => $v['modelId'], 'messages' => [
                     ['role' => 'system', 'content' => 'Return one JSON action for assistant-loop-input/1. Use only supplied public context and tools. '
@@ -118,7 +123,7 @@ final class PublicCoreDispatchAuthority
                     'contextReceiptRef' => $contextRef, 'corePayloadDigest' => $authority['receipt']['payloadDigest'],
                     'coreReceiptDigest' => $authority['expected']['receiptDigest'], 'projectionRef' => self::reference(),
                     'projectionDigest' => hash('sha256', $body), 'profileRef' => $v['profileRef'], 'profileFingerprint' => $profile->fingerprint(),
-                    'purpose' => GatewayModelRequest::PURPOSE, 'expiresAt' => min($request['expiresAt'], $now + 30), 'bodyBytes' => $body,
+                    'purpose' => GatewayModelRequest::PURPOSE, 'expiresAt' => min($outerExpiry, $now + 30), 'bodyBytes' => $body,
                 ]);
                 $reason = (new GatewayPublicCoreRequestValidator())->validate($packet, $profile, $now);
                 if ($reason !== null) {
@@ -291,7 +296,13 @@ final class PublicCoreDispatchAuthority
             }
             $tuple = $this->appTuple($packet);
             $started = $this->mono();
-            $reply = $this->appRpc('authorize_write', ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $tuple],
+            $acquire = ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $tuple];
+            if ($this->nativeProcessor !== null && $this->readiness->qualifiedProfile()?->isActualProfile()) {
+                $acquire = ['schemaVersion' => 'public-core-app-upload-acquire/2', 'binding' => $tuple,
+                    'custody' => $this->nativeProcessor->gatewayCustody($this, $packet, $native)];
+                if ($acquire['custody'] === null) { return ['reasonCode' => 'gateway_channel_unavailable']; }
+            }
+            $reply = $this->appRpc('authorize_write', $acquire,
                 'write_authorized', $packet, $packet->expiresAt);
             if (($reply['schemaVersion'] ?? null) === 'public-core-app-control-denial/1') {
                 return ['reasonCode' => $reply['reasonCode']];
@@ -404,8 +415,14 @@ final class PublicCoreDispatchAuthority
         $this->phase = 'RELEASE_PENDING';
         try {
             $tuple = $this->appTuple($packet);
-            $reply = $this->appRpc('upload_complete', ['schemaVersion' => 'public-core-app-upload-release/1', 'binding' => $tuple,
-                'guardRef' => $guard['guardRef'], 'completionRef' => $completionRef], 'uploaded', $packet, $packet->expiresAt);
+            $release = ['schemaVersion' => 'public-core-app-upload-release/1', 'binding' => $tuple,
+                'guardRef' => $guard['guardRef'], 'completionRef' => $completionRef];
+            if ($this->nativeProcessor !== null && $this->readiness->qualifiedProfile()?->isActualProfile()) {
+                $release['schemaVersion'] = 'public-core-app-upload-release/2';
+                $release['custody'] = $this->nativeProcessor->gatewayCustody($this, $packet, $event, $completionRef);
+                if ($release['custody'] === null) { throw new \LogicException('receipt_unavailable'); }
+            }
+            $reply = $this->appRpc('upload_complete', $release, 'uploaded', $packet, $packet->expiresAt);
             if (!GatewayModelRequest::hasExactKeys($reply, ['schemaVersion', 'binding', 'guardRef'])
                 || $reply['schemaVersion'] !== 'public-core-app-upload-released/1' || $reply['binding'] !== $tuple || $reply['guardRef'] !== $guard['guardRef']) {
                 $this->phase = 'RELEASE_UNCONFIRMED';
@@ -592,6 +609,10 @@ final class PublicCoreDispatchAuthority
     {
         if ($this->appControl === null || !$this->validPins()) {
             throw new \LogicException('gateway_channel_unavailable');
+        }
+        if ($this->nativeProcessor !== null) {
+            $sequence = $this->nativeProcessor->normalControlSequence($this, $packet);
+            if ($sequence !== null) { $this->sequences['app'] = $sequence; }
         }
         $result = ($this->appControl)($command, $payload, $packet, $expiresAt);
         if (!GatewayModelRequest::hasExactKeys($result, ['frame', 'peer']) || !is_array($result['frame']) || !is_array($result['peer'])

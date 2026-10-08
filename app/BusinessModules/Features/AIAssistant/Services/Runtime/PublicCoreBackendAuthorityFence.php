@@ -48,7 +48,13 @@ class PublicCoreBackendAuthorityFence
 
     public function available(): bool
     {
-        return false;
+        try {
+            $this->assertTicketStore();
+            if ($this->connection === null || $this->logging === null) { return false; }
+            $this->assertDatasource($this->connection);
+            $this->assertTopology($this->connection);
+            return true;
+        } catch (Throwable) { return false; }
     }
 
     public function withCurrent(array $ownedTicket, Closure $operation): mixed
@@ -88,6 +94,16 @@ class PublicCoreBackendAuthorityFence
         $reference = $payload['viewerTicketRef'];
         $record = $this->ownedViewerTicket($reference);
         if ($frameExpiresAt <= time() || $frameExpiresAt > $record['expiresAt']) { throw new LogicException('expired'); }
+        if ($this->sourceHeld !== null) {
+            $held = $this->sourceHeld;
+            if ($held['binding']['viewerTicketRef'] !== $reference || $held['scope']['snapshot']['actorId'] !== $record['actorId']
+                || $held['scope']['snapshot']['organizationId'] !== $record['organizationId'] || $frameExpiresAt > $held['expiresAt']) {
+                throw new LogicException('authorization_changed');
+            }
+            $this->assertSourceScopeCurrent($held['scope']);
+            return ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $reference,
+                'currentViewer' => $this->sourceCurrentViewer($held['scope']['snapshot'])];
+        }
         $actor = User::query()->find($record['actorId']);
         if (!$actor instanceof User) { throw new LogicException('authorization_changed'); }
         $origin = Request::create('/public-core/owned-viewer', 'GET', [], [], [], ['REMOTE_ADDR' => $record['originIp']]);
@@ -120,6 +136,87 @@ class PublicCoreBackendAuthorityFence
         if (!$this->tickets->forget('ai-public-core:viewer:'.$reference)) {
             throw new LogicException('authorization_changed');
         }
+    }
+
+    public function ownedRequest(string $reference, ?User $viewer = null, ?int $organizationId = null): array
+    {
+        $this->assertTicketStore();
+        if (!\App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource::opaqueRef($reference)) {
+            throw new LogicException('authorization_changed');
+        }
+        $value = $this->tickets->get('ai-public-core:owned-request:'.$reference);
+        if (!is_array($value) || count($value) !== 2 || !is_array($value['record'] ?? null) || !is_string($value['mac'] ?? null)) {
+            throw new LogicException('authorization_changed');
+        }
+        $row = $value['record'];
+        if (array_keys($row) !== ['schemaVersion', 'viewerTicketRef', 'actorId', 'organizationId', 'selection', 'requestRef',
+            'public_session_ref', 'process_ref', 'expiresAt'] || $row['schemaVersion'] !== 'public-core-app-owned-request/1'
+            || $row['requestRef'] !== $reference || !is_int($row['expiresAt']) || $row['expiresAt'] <= time()
+            || !hash_equals($this->ownedRequestMac($row), $value['mac'])
+            || ($viewer !== null && $viewer->id !== $row['actorId'])
+            || ($organizationId !== null && $organizationId !== $row['organizationId'])) { throw new LogicException('authorization_changed'); }
+        $ticket = $this->ownedViewerTicket($row['viewerTicketRef']);
+        if ($ticket['actorId'] !== $row['actorId'] || $ticket['organizationId'] !== $row['organizationId'] || $row['expiresAt'] > $ticket['expiresAt']) {
+            throw new LogicException('authorization_changed');
+        }
+        $this->viewerTicketBinding(['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => $row['viewerTicketRef']], $row['expiresAt']);
+        return $row;
+    }
+
+    public function findOwnedSelection(User $viewer, int $organizationId, array $selection): ?array
+    {
+        $this->assertTicketStore();
+        $reference = $this->tickets->get($this->selectionKey($viewer->id, $organizationId, $selection));
+        if ($reference === null) { return null; }
+        if (!is_string($reference)) { throw new LogicException('receipt_changed'); }
+        $owned = $this->ownedRequest($reference, $viewer, $organizationId);
+        if ($owned['selection'] !== $selection) { throw new LogicException('receipt_changed'); }
+        return $owned;
+    }
+
+    public function reserveOwnedSelection(User $viewer, int $organizationId, array $selection): string
+    {
+        $this->assertTicketStore();
+        $key = $this->selectionKey($viewer->id, $organizationId, $selection).':opening';
+        if (!$this->tickets->add($key, true, 30)) { throw new LogicException('receipt_changed'); }
+        return $key;
+    }
+
+    public function rememberOwnedRequest(string $ticketRef, array $selection, array $opened): array
+    {
+        $ticket = $this->ownedViewerTicket($ticketRef);
+        foreach (['request_ref', 'public_session_ref', 'process_ref'] as $key) {
+            if (!\App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource::opaqueRef($opened[$key] ?? null)) {
+                throw new LogicException('receipt_changed');
+            }
+        }
+        if (($opened['status'] ?? null) !== 'accepted' || !is_int($opened['original_expires_at'] ?? null)
+            || $opened['original_expires_at'] <= time() || $opened['original_expires_at'] > $ticket['expiresAt']) { throw new LogicException('expired'); }
+        $row = ['schemaVersion' => 'public-core-app-owned-request/1', 'viewerTicketRef' => $ticketRef,
+            'actorId' => $ticket['actorId'], 'organizationId' => $ticket['organizationId'], 'selection' => $selection,
+            'requestRef' => $opened['request_ref'], 'public_session_ref' => $opened['public_session_ref'],
+            'process_ref' => $opened['process_ref'], 'expiresAt' => $opened['original_expires_at']];
+        $ttl = $row['expiresAt'] - time();
+        if ($ttl <= 0 || !$this->tickets->add('ai-public-core:owned-request:'.$row['requestRef'],
+            ['record' => $row, 'mac' => $this->ownedRequestMac($row)], $ttl)
+            || !$this->tickets->add($this->selectionKey($ticket['actorId'], $ticket['organizationId'], $selection), $row['requestRef'], $ttl)) {
+            throw new LogicException('receipt_changed');
+        }
+        return $this->ownedRequest($row['requestRef']);
+    }
+
+    private function selectionKey(int $actorId, int $organizationId, array $selection): string
+    {
+        $uuid = $selection['request_id'] ?? null;
+        if (!is_string($uuid) || preg_match('/\A[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\z/D', $uuid) !== 1) {
+            throw new LogicException('receipt_changed');
+        }
+        return 'ai-public-core:selection:'.hash_hmac('sha256', $actorId.':'.$organizationId.':'.$uuid, $this->ownedTicketKey());
+    }
+
+    private function ownedRequestMac(array $record): string
+    {
+        return hash_hmac('sha256', json_encode(['public-core-owned-request', $record], JSON_THROW_ON_ERROR), $this->ownedTicketKey());
     }
 
     private function ownedViewerTicket(string $reference): array
@@ -247,11 +344,12 @@ class PublicCoreBackendAuthorityFence
 
     public function acquireSourceGuard(array $frame, PublicCoreContextBindings $port): array
     {
-        if ($this->sourceHeld !== null || !$port->sourceOnly()) { throw new LogicException('authorization_changed'); }
+        if ($this->sourceHeld !== null) { throw new LogicException('authorization_changed'); }
         $binding = $frame['payload']['binding'] ?? null;
         if (!is_array($binding)) { throw new LogicException('authorization_changed'); }
         $attempt = $this->ownedSourceAttempt($binding);
-        $payload = $port->consumeSourceFrame($frame, 'authorize_write', $binding, $attempt['expiresAt']);
+        $payload = $port->sourceOnly() ? $port->consumeSourceFrame($frame, 'authorize_write', $binding, $attempt['expiresAt'])
+            : $port->consumeNativeControlFrame($frame, 'authorize_write', $binding, $attempt['expiresAt']);
         if (count($payload) !== 2 || array_diff(array_keys($payload), ['schemaVersion', 'binding']) !== []
             || ($payload['schemaVersion'] ?? null) !== 'public-core-app-upload-acquire/1' || $payload['binding'] !== $binding) {
             throw new LogicException('authorization_changed');
@@ -292,9 +390,10 @@ class PublicCoreBackendAuthorityFence
     public function checkSourceBinding(array $frame, PublicCoreContextBindings $port): array
     {
         $binding = $frame['payload']['binding'] ?? null;
-        if (!is_array($binding) || !$port->sourceOnly()) { throw new LogicException('authorization_changed'); }
+        if (!is_array($binding)) { throw new LogicException('authorization_changed'); }
         $attempt = $this->ownedSourceAttempt($binding);
-        $payload = $port->consumeSourceFrame($frame, 'check_binding', $binding, $attempt['expiresAt']);
+        $payload = $port->sourceOnly() ? $port->consumeSourceFrame($frame, 'check_binding', $binding, $attempt['expiresAt'])
+            : $port->consumeNativeControlFrame($frame, 'check_binding', $binding, $attempt['expiresAt']);
         if (count($payload) !== 2 || array_diff(array_keys($payload), ['schemaVersion', 'binding']) !== []
             || ($payload['schemaVersion'] ?? null) !== 'public-core-app-viewer-check/1' || $payload['binding'] !== $binding) {
             throw new LogicException('authorization_changed');
@@ -331,8 +430,15 @@ class PublicCoreBackendAuthorityFence
     public function releaseSourceGuard(array $frame, PublicCoreContextBindings $port): array
     {
         $held = $this->sourceHeld;
-        if ($held === null || $held['port'] !== $port || !$port->sourceOnly()) {
+        if ($held === null || $held['port'] !== $port) {
             throw new LogicException('authorization_changed');
+        }
+        if (!$port->sourceOnly()) {
+            $payload = $port->consumeNativeControlFrame($frame, 'upload_complete', $held['binding'], $held['expiresAt']);
+            if (!$port->nativeTerminalProof($payload, $held['binding'], $held['guardRef'])) { throw new LogicException('receipt_unavailable'); }
+            $this->connection->rollBack();
+            $this->sourceHeld = null;
+            return ['schemaVersion' => 'public-core-app-upload-released/1', 'binding' => $held['binding'], 'guardRef' => $held['guardRef']];
         }
         $payload = $port->consumeSourceReleaseFrame($frame, $held['binding'], $held['expiresAt']);
         if (count($payload) !== 4 || array_diff(array_keys($payload), ['schemaVersion', 'binding', 'guardRef', 'completionRef']) !== []

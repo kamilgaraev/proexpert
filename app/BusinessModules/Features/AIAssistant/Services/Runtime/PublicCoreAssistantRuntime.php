@@ -11,6 +11,8 @@ use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
 use LogicException;
+use Illuminate\Http\Request;
+use Throwable;
 
 class PublicCoreAssistantRuntime
 {
@@ -22,7 +24,8 @@ class PublicCoreAssistantRuntime
     private bool $sourcePreparing = false;
     private bool $sourceReentered = false;
 
-    public function __construct(private readonly ?PublicCoreBackendAuthorityFence $sourceFence = null)
+    public function __construct(private readonly ?PublicCoreBackendAuthorityFence $sourceFence = null,
+        private readonly ?Closure $nativePortFactory = null, private readonly ?Closure $originSource = null)
     {
         $this->registry = RegisteredPublicFixtureRegistry::compiled();
     }
@@ -43,10 +46,10 @@ class PublicCoreAssistantRuntime
     }
 
     public function callNormalSource(PublicCoreContextBindings $port, string $command, array $input,
-        int $rpcExpiresAt, ?int $requestOriginalExpiresAt = null): array
+        int $rpcExpiresAt, ?int $requestOriginalExpiresAt = null, ?array $ownedContext = null): array
     {
         if ($this->sourceFence === null) { throw new LogicException('runtime_not_activated'); }
-        return $port->callNormalSource($command, $input, $rpcExpiresAt, $this->sourceFence, $requestOriginalExpiresAt);
+        return $port->callNormalSource($command, $input, $rpcExpiresAt, $this->sourceFence, $requestOriginalExpiresAt, $ownedContext);
     }
 
     public function openSourceDelivery(array $context): string
@@ -176,7 +179,21 @@ class PublicCoreAssistantRuntime
             $fixtures[$id]['inputs'][] = ['input_id' => $row['input_id'], 'label' => $row['display_text']];
         }
         $state['fixtures'] = array_values($fixtures);
-
+        if ($this->nativePortFactory !== null && $this->originSource !== null && $this->sourceFence?->available()) {
+            try {
+                $origin = ($this->originSource)();
+                if (!$origin instanceof Request) { throw new LogicException('authorization_changed'); }
+                $this->sourceFence->inspectSourceCandidate($viewer, $organizationId, $origin, static fn (): null => null);
+                $expiry = time() + 25;
+                $port = $this->nativePort($expiry);
+                try { $native = $this->callNormalSource($port, 'readiness', [], $expiry); }
+                finally { $port->closeNative(); }
+                $native['fixtures'] = $state['fixtures'];
+                $native['capabilities'] = $native['status'] === 'ready' ? ['text', 'material_search'] : [];
+                $native['source_contract_version'] = PublicCoreRuntimeResource::CONTRACT;
+                return $native;
+            } catch (Throwable) { return $state; }
+        }
         return $state;
     }
 
@@ -188,17 +205,84 @@ class PublicCoreAssistantRuntime
             return PublicCoreRuntimeResource::blocked('source_unavailable');
         }
 
-        return PublicCoreRuntimeResource::blocked();
+        if ($this->nativePortFactory === null || $this->originSource === null || !$this->sourceFence?->available()) {
+            return PublicCoreRuntimeResource::blocked();
+        }
+        try {
+            if (array_diff(array_keys($command), ['fixture_id', 'fixture_version', 'input_id', 'request_id', 'public_session_ref']) !== []
+                || !is_string($command['request_id'] ?? null)) { throw new LogicException('source_unavailable'); }
+            $command = ['fixture_id' => $command['fixture_id'], 'fixture_version' => $command['fixture_version'],
+                'input_id' => $command['input_id'], 'request_id' => strtolower($command['request_id']),
+                'public_session_ref' => $command['public_session_ref'] ?? null];
+            $owned = $this->sourceFence->findOwnedSelection($viewer, $organizationId, $command);
+            if ($owned === null) {
+                $this->sourceFence->reserveOwnedSelection($viewer, $organizationId, $command);
+                $origin = ($this->originSource)();
+                if (!$origin instanceof Request) { throw new LogicException('authorization_changed'); }
+                $ticket = $this->sourceFence->issueViewerTicket($viewer, $organizationId, $origin, time() + 150);
+                $expiry = time() + 25;
+                $port = $this->nativePort($expiry);
+                try { $opened = $this->callNormalSource($port, 'open_or_resume', ['viewer_ticket_ref' => $ticket] + $command, $expiry); }
+                finally { $port->closeNative(); }
+                if (($opened['status'] ?? null) !== 'accepted') { return PublicCoreRuntimeResource::blocked($opened['reasonCode'] ?? 'receipt_unavailable'); }
+                $owned = $this->sourceFence->rememberOwnedRequest($ticket, $command, $opened);
+            }
+            return $this->acceptedOwned($owned);
+        } catch (Throwable $error) { return PublicCoreRuntimeResource::blocked($this->safeReason($error)); }
+
     }
 
     public function poll(User $viewer, int $organizationId, string $requestRef): array|JsonResponse
     {
-        return PublicCoreRuntimeResource::blocked();
+        if ($this->nativePortFactory === null || !$this->sourceFence?->available()) { return PublicCoreRuntimeResource::blocked(); }
+        try {
+            $owned = $this->sourceFence->ownedRequest($requestRef, $viewer, $organizationId);
+            [$port, $output] = $this->ownedOperation($owned, 'lookup_owned');
+            if (($output['schemaVersion'] ?? null) === 'public-core-result-publication/1') {
+                return $port->nativePublicationResponse($output, $this->sourceFence) ?? PublicCoreRuntimeResource::blocked('receipt_unavailable');
+            }
+            return ($output['status'] ?? null) === 'accepted' ? $this->acceptedOwned($owned)
+                : PublicCoreRuntimeResource::blocked($output['reasonCode'] ?? 'receipt_unavailable');
+        } catch (Throwable $error) { return PublicCoreRuntimeResource::blocked($this->safeReason($error)); }
     }
 
     public function dispatchOwnedRequest(string $requestRef): void
     {
-        throw new LogicException('runtime_not_activated');
+        if ($this->nativePortFactory === null || !$this->sourceFence?->available()) { throw new LogicException('runtime_not_activated'); }
+        $owned = $this->sourceFence->ownedRequest($requestRef);
+        [, $output] = $this->ownedOperation($owned, 'execute_owned');
+        if (($output['status'] ?? null) === 'blocked') { throw new LogicException($output['reasonCode']); }
+    }
+
+    private function ownedOperation(array $owned, string $command): array
+    {
+        $expiry = min($owned['expiresAt'], time() + 25);
+        $port = $this->nativePort($expiry);
+        try { $output = $this->callNormalSource($port, $command, ['viewer_ticket_ref' => $owned['viewerTicketRef'],
+            'request_ref' => $owned['requestRef']], $expiry, $owned['expiresAt'], $owned); }
+        finally { $port->closeNative(); }
+        return [$port, $output];
+    }
+
+    private function nativePort(int $expiresAt): PublicCoreContextBindings
+    {
+        $port = $this->nativePortFactory === null ? null : ($this->nativePortFactory)($expiresAt);
+        if (!$port instanceof PublicCoreContextBindings || $port->sourceOnly()) { throw new LogicException('gateway_identity_unavailable'); }
+        return $port;
+    }
+
+    private function acceptedOwned(array $owned): array
+    {
+        return ['schema_version' => 'public-core-runtime-api/1', 'mode' => 'public_core_test',
+            'data_scope' => 'registered_public_fixture', 'status' => 'accepted', 'reason_code' => 'none'] + ['request_ref' => $owned['requestRef'],
+            'public_session_ref' => $owned['public_session_ref'], 'reply' => null, 'actual_model' => null,
+            'tools' => [], 'sources' => [], 'trace' => []];
+    }
+
+    private function safeReason(Throwable $error): string
+    {
+        return in_array($error->getMessage(), PublicCoreRuntimeResource::REASONS, true) && $error->getMessage() !== 'none'
+            ? $error->getMessage() : 'authorization_changed';
     }
 
     private function registryAccepted(): bool

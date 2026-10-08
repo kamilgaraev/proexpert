@@ -31,13 +31,16 @@ final readonly class PublicCoreContextBindings
     {
     }
 
-    public static function sourceNormalAppPort(AuthenticatedPublicCoreChannel $channel, string $identityFile): self
+    public static function sourceNormalAppPort(AuthenticatedPublicCoreChannel $channel, string $identityFile,
+        ?GatewayModelProfile $expectedProfile = null, ?array $gatewayPeer = null): self
     {
         static $channels;
         $channels ??= new \WeakMap();
         if (isset($channels[$channel])) { throw new LogicException('receipt_changed'); }
         $identity = self::appProcessorIdentity($identityFile, $channel);
-        $normal = (object) ['active' => false, 'phase' => 'IDLE', 'violated' => false, 'lastSequence' => null, 'used' => []];
+        $normal = (object) ['active' => false, 'phase' => 'IDLE', 'violated' => false, 'lastSequence' => null, 'used' => [],
+            'profile' => $expectedProfile, 'gatewayPeer' => $gatewayPeer, 'control' => null, 'attempts' => [],
+            'custody' => [], 'publications' => [], 'owner' => null];
         $channels[$channel] = $normal;
         return new self($channel->channelRef(), 'Processor', static fn (): null => null,
             (object) ['next' => null, 'bootstrap' => null, 'replied' => true], null, $channel, $identityFile, $identity['digest'],
@@ -45,7 +48,7 @@ final readonly class PublicCoreContextBindings
     }
 
     public function callNormalSource(string $command, array $input, int $rpcExpiresAt,
-        PublicCoreBackendAuthorityFence $viewerSource, ?int $requestOriginalExpiresAt = null): array
+        PublicCoreBackendAuthorityFence $viewerSource, ?int $requestOriginalExpiresAt = null, ?array $ownedContext = null): array
     {
         if ($this->normalState === null || $this->nativeChannel === null) { throw new LogicException('receipt_unavailable'); }
         if ($this->normalState->active) {
@@ -65,21 +68,44 @@ final readonly class PublicCoreContextBindings
         $this->normalState->active = true;
         $this->normalState->phase = 'NORMAL_RUNNING';
         $this->normalState->violated = false;
+        $this->normalState->owner = $ownedContext;
+        $this->normalState->operation = $operation;
         try {
             $this->nativeChannel->send($command, $requestRef, $operation,
                 ['schemaVersion' => 'public-core-processor-operation/1-proposal', 'operationRef' => $operation, 'input' => $input], $rpcExpiresAt);
             while (true) {
                 $frame = $this->nativeChannel->receive();
                 if ($this->normalState->phase !== 'NORMAL_RUNNING' || $this->normalState->violated || $this->nativeChannel->peer() !== $peer || $rpcExpiresAt <= time()
-                    || $frame['channelRef'] !== $this->sourceChannelRef || $frame['expiresAt'] !== $rpcExpiresAt
+                    || $frame['channelRef'] !== $this->sourceChannelRef || $frame['expiresAt'] > $rpcExpiresAt
                     || ($this->normalState->lastSequence !== null && $frame['sequence'] !== $this->normalState->lastSequence + 1)) {
                     throw new LogicException('receipt_changed');
                 }
                 $this->normalState->lastSequence = $frame['sequence'];
                 $this->assertNativeIdentity();
+                if (in_array($frame['command'], ['check_binding', 'authorize_write', 'upload_complete'], true)
+                    && $frame['requestRef'] !== null && $frame['attemptRef'] !== null) {
+                    if ($command !== 'execute_owned' || $frame['requestRef'] !== $input['request_ref']
+                        || $requestOriginalExpiresAt === null || $frame['expiresAt'] > $requestOriginalExpiresAt) {
+                        throw new LogicException('authorization_changed');
+                    }
+                    $reply = $this->handleNativeControl($frame, $input['viewer_ticket_ref'], $viewerSource);
+                    $this->nativeChannel->send(match ($frame['command']) {
+                        'check_binding' => 'binding', 'authorize_write' => 'write_authorized', 'upload_complete' => 'uploaded',
+                    }, $frame['requestRef'], $frame['attemptRef'], $reply, $frame['expiresAt']);
+                    continue;
+                }
+                if ($frame['command'] === 'result' && ($frame['payload']['schemaVersion'] ?? null) === 'public-core-app-publication-stage/1') {
+                    if (!in_array($command, ['execute_owned', 'lookup_owned'], true) || $frame['requestRef'] !== $requestRef
+                        || $frame['attemptRef'] !== $operation || $frame['expiresAt'] !== $rpcExpiresAt) {
+                        throw new LogicException('receipt_changed');
+                    }
+                    $receipt = $this->stageNativePublication($frame['payload'], $input, $viewerSource, $requestOriginalExpiresAt);
+                    $this->nativeChannel->send('result', $requestRef, $operation, $receipt, $rpcExpiresAt);
+                    continue;
+                }
                 if ($frame['command'] === 'check_binding') {
                     $check = $frame['payload'];
-                    if ($command === 'readiness' || $frame['requestRef'] !== null || $frame['attemptRef'] !== null
+                    if ($frame['expiresAt'] !== $rpcExpiresAt || $command === 'readiness' || $frame['requestRef'] !== null || $frame['attemptRef'] !== null
                         || !GatewayModelRequest::hasExactKeys($check, ['schemaVersion', 'viewerTicketRef'])
                         || $check['schemaVersion'] !== 'public-core-app-viewer-ticket-check/1'
                         || $check['viewerTicketRef'] !== $input['viewer_ticket_ref']) { throw new LogicException('authorization_changed'); }
@@ -102,7 +128,19 @@ final readonly class PublicCoreContextBindings
                     || $frame['payload']['operationRef'] !== $operation || !is_array($frame['payload']['output'])) {
                     throw new LogicException('receipt_changed');
                 }
-                return self::normalOutput($command, $input, $frame['payload']['output'], $rpcExpiresAt, $requestOriginalExpiresAt);
+                if ($frame['expiresAt'] !== $rpcExpiresAt) { throw new LogicException('expired'); }
+                $output = $frame['payload']['output'];
+                if (($output['schemaVersion'] ?? null) === 'public-core-result-publication/1') {
+                    $record = $this->normalState->publications[$output['publicationRef'] ?? ''] ?? null;
+                    if ($record === null || $record['receipt'] !== $output || $record['delivered'] || $record['rpcOperation'] !== $operation) { throw new LogicException('receipt_changed'); }
+                    return $output;
+                }
+                $output = self::normalOutput($command, $input, $output, $rpcExpiresAt, $requestOriginalExpiresAt);
+                if ($command === 'readiness' && $output['status'] === 'ready'
+                    && ($this->normalState->profile?->isActualProfile() !== true || !self::kernelPeer($this->normalState->gatewayPeer))) {
+                    throw new LogicException('model_profile_unqualified');
+                }
+                return $output;
             }
         } catch (\Throwable $failure) {
             $this->nativeChannel->close();
@@ -110,7 +148,167 @@ final readonly class PublicCoreContextBindings
         } finally {
             $this->normalState->active = false;
             $this->normalState->phase = 'IDLE';
+            $this->normalState->control = null;
+            $this->normalState->owner = null;
         }
+    }
+
+    public function closeNative(): void
+    {
+        if ($this->normalState?->active) { $this->normalState->violated = true; throw new LogicException('receipt_changed'); }
+        $this->nativeChannel?->close();
+    }
+
+    private static function kernelPeer(mixed $peer): bool
+    {
+        return GatewayModelRequest::hasExactKeys($peer, ['pid', 'uid', 'gid']) && is_int($peer['pid']) && $peer['pid'] > 0
+            && is_int($peer['uid']) && $peer['uid'] >= 0 && is_int($peer['gid']) && $peer['gid'] >= 0;
+    }
+
+    public static function nativeCustodyMatches(array $value, array $binding, array $gatewayPeer,
+        ?array $pending = null, ?string $completionRef = null): bool
+    {
+        $keys = ['schemaVersion', 'qualification', 'channelRef', 'gatewayPeer', 'transferRef', 'requestRef', 'attemptRef',
+            'projectionDigest', 'event', 'eventSequence', 'completionRef'];
+        if (!GatewayModelRequest::hasExactKeys($value, $keys) || $value['schemaVersion'] !== 'public-core-native-upload-custody/1'
+            || $value['qualification'] !== 'actual-native' || !self::kernelPeer($gatewayPeer) || $value['gatewayPeer'] !== $gatewayPeer
+            || !GatewayModelRequest::isReference($value['channelRef']) || !GatewayModelRequest::isReference($value['transferRef'])
+            || $value['requestRef'] !== ($binding['requestRef'] ?? null) || $value['attemptRef'] !== ($binding['attemptRef'] ?? null)
+            || $value['projectionDigest'] !== ($binding['projectionDigest'] ?? null)) { return false; }
+        if ($pending === null) {
+            return $completionRef === null && $value['event'] === 'pending' && $value['eventSequence'] === null && $value['completionRef'] === null;
+        }
+        if (!self::nativeCustodyMatches($pending, $binding, $gatewayPeer)
+            || $value['channelRef'] !== $pending['channelRef'] || $value['transferRef'] !== $pending['transferRef']
+            || !GatewayModelRequest::isReference($completionRef) || $value['completionRef'] !== $completionRef
+            || !is_int($value['eventSequence']) || $value['eventSequence'] < 2 || $value['eventSequence'] > 1024
+            || !in_array($value['event'], ['uploaded', 'stopped'], true)) { return false; }
+        return true;
+    }
+
+    private function handleNativeControl(array $frame, string $ticket, PublicCoreBackendAuthorityFence $fence): array
+    {
+        $profile = $this->normalState->profile;
+        $binding = $frame['payload']['binding'] ?? null;
+        if (!$profile instanceof GatewayModelProfile || !$profile->isActualProfile() || !self::kernelPeer($this->normalState->gatewayPeer)
+            || !is_array($binding) || ($binding['viewerTicketRef'] ?? null) !== $ticket
+            || ($binding['requestRef'] ?? null) !== $frame['requestRef'] || ($binding['attemptRef'] ?? null) !== $frame['attemptRef']
+            || ($binding['profileFingerprint'] ?? null) !== $profile->fingerprint()
+            || ($binding['registryDigest'] ?? null) !== RegisteredPublicFixtureRegistry::compiled()->manifestDigest()) {
+            throw new LogicException('authorization_changed');
+        }
+        $attempt = $binding['attemptRef'];
+        if (!isset($this->normalState->attempts[$attempt])) {
+            if ($frame['command'] === 'upload_complete' || count($this->normalState->attempts) >= 12) { throw new LogicException('receipt_changed'); }
+            $fence->registerSourceAttempt($binding, $frame['expiresAt']);
+            $this->normalState->attempts[$attempt] = ['binding' => $binding, 'expiresAt' => $frame['expiresAt']];
+        }
+        if ($this->normalState->attempts[$attempt] !== ['binding' => $binding, 'expiresAt' => $frame['expiresAt']]) {
+            throw new LogicException('receipt_changed');
+        }
+        $this->normalState->control = $frame;
+        try {
+            return match ($frame['command']) {
+                'check_binding' => $fence->checkSourceBinding($frame, $this),
+                'authorize_write' => $fence->acquireSourceGuard($frame, $this),
+                'upload_complete' => $fence->releaseSourceGuard($frame, $this),
+            };
+        } finally { $this->normalState->control = null; }
+    }
+
+    public function consumeNativeControlFrame(array $frame, string $command, array $binding, int $expiresAt): array
+    {
+        if ($this->nativeChannel === null || $this->normalState === null || !$this->normalState->active
+            || $this->normalState->phase !== 'NORMAL_RUNNING' || $this->normalState->violated
+            || $this->normalState->control !== $frame || $frame['command'] !== $command || $frame['expiresAt'] !== $expiresAt
+            || $frame['channelRef'] !== $this->nativeChannel->channelRef() || $frame['sequence'] !== $this->normalState->lastSequence
+            || $frame['requestRef'] !== $binding['requestRef'] || $frame['attemptRef'] !== $binding['attemptRef']) {
+            throw new LogicException('authorization_changed');
+        }
+        $this->assertNativeIdentity();
+        $payload = $frame['payload'];
+        if ($command === 'authorize_write') {
+            if (!GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'custody'])
+                || $payload['schemaVersion'] !== 'public-core-app-upload-acquire/2'
+                || $payload['binding'] !== $binding || !is_array($payload['custody'])
+                || isset($this->normalState->custody[$binding['attemptRef']])
+                || !self::nativeCustodyMatches($payload['custody'], $binding, $this->normalState->gatewayPeer)) {
+                throw new LogicException('receipt_unavailable');
+            }
+            foreach ($this->normalState->custody as $prior) {
+                if ($prior['pending']['transferRef'] === $payload['custody']['transferRef']) { throw new LogicException('receipt_changed'); }
+            }
+            $this->normalState->custody[$binding['attemptRef']] = ['pending' => $payload['custody'], 'released' => false];
+            $payload = ['schemaVersion' => 'public-core-app-upload-acquire/1', 'binding' => $binding];
+        }
+        $this->normalState->control = null;
+        return $payload;
+    }
+
+    public function nativeTerminalProof(array $payload, array $binding, string $guardRef): bool
+    {
+        $held = $this->normalState?->custody[$binding['attemptRef']] ?? null;
+        if ($this->nativeChannel === null || $held === null || $held['released']
+            || !GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'binding', 'guardRef', 'completionRef', 'custody'])
+            || $payload['schemaVersion'] !== 'public-core-app-upload-release/2' || $payload['binding'] !== $binding
+            || $payload['guardRef'] !== $guardRef || !is_array($payload['custody'])
+            || !self::nativeCustodyMatches($payload['custody'], $binding, $this->normalState->gatewayPeer,
+                $held['pending'], $payload['completionRef'])) { return false; }
+        $this->normalState->custody[$binding['attemptRef']]['released'] = true;
+        return true;
+    }
+
+    private function stageNativePublication(array $payload, array $input, PublicCoreBackendAuthorityFence $fence, ?int $originalExpiry): array
+    {
+        $owner = $this->normalState->owner;
+        if (!GatewayModelRequest::hasExactKeys($payload, ['schemaVersion', 'operation', 'candidate']) || !is_array($payload['operation'])
+            || !is_array($payload['candidate']) || !is_array($owner) || $originalExpiry === null
+            || count($this->normalState->publications) >= 64) { throw new LogicException('receipt_unavailable'); }
+        $operation = $payload['operation'];
+        $candidate = $payload['candidate'];
+        $binding = $operation['resultBinding'] ?? null;
+        if (!GatewayModelRequest::hasExactKeys($operation, ['schemaVersion', 'operationRef', 'viewerBinding', 'resultBinding', 'genuineExpiresAt', 'maxDurationMs'])
+            || $operation['schemaVersion'] !== 'public-core-publication-operation/1' || !GatewayModelRequest::isReference($operation['operationRef'])
+            || $operation['viewerBinding'] !== ['viewerTicketRef' => $input['viewer_ticket_ref']]
+            || $operation['genuineExpiresAt'] !== $originalExpiry || $originalExpiry <= time()
+            || !is_int($operation['maxDurationMs']) || $operation['maxDurationMs'] < 1 || $operation['maxDurationMs'] > 30000
+            || !is_array($binding) || ($binding['requestRef'] ?? null) !== $input['request_ref']
+            || ($binding['sessionRef'] ?? null) !== $owner['public_session_ref'] || ($binding['processRef'] ?? null) !== $owner['process_ref']
+            || ($binding['profileFingerprint'] ?? null) !== $this->normalState->profile?->fingerprint()
+            || !GatewayModelRequest::hasExactKeys($candidate, ['binding', 'resultBytes', 'resultDigest'])
+            || $candidate['binding'] !== $binding || $candidate['resultDigest'] !== ($binding['resultDigest'] ?? null)
+            || !is_string($candidate['resultBytes'])) { throw new LogicException('receipt_changed'); }
+        foreach ($this->normalState->publications as $prior) {
+            if ($prior['operation'] === $operation['operationRef']) { throw new LogicException('receipt_changed'); }
+        }
+        $start = hrtime(true);
+        $check = ['schemaVersion' => 'public-core-app-viewer-ticket-check/1', 'viewerTicketRef' => $input['viewer_ticket_ref']];
+        $before = $fence->viewerTicketBinding($check, $originalExpiry);
+        $core = json_decode($candidate['resultBytes'], true, 64, JSON_THROW_ON_ERROR);
+        if (($core['actual_model'] ?? null) !== $this->normalState->profile?->values()['modelId']) { throw new LogicException('invalid_model_output'); }
+        $stage = PublicCoreRuntimeResource::stageCoreCompletedEnvelope($candidate['resultBytes'], $binding);
+        $after = $fence->viewerTicketBinding($check, $originalExpiry);
+        $this->assertNativeIdentity();
+        if ($before !== $after || $this->normalState->violated || $originalExpiry <= time()
+            || hrtime(true) - $start >= $operation['maxDurationMs'] * 1000000) { throw new LogicException('authorization_changed'); }
+        $reference = 'publication_'.bin2hex(random_bytes(24));
+        $receipt = ['schemaVersion' => 'public-core-result-publication/1', 'binding' => $binding, 'publicationRef' => $reference];
+        $this->normalState->publications[$reference] = ['receipt' => $receipt, 'bodyBytes' => $stage['bodyBytes'],
+            'envelopeDigest' => $stage['envelopeDigest'], 'expiresAt' => $originalExpiry, 'viewer' => $after,
+            'operation' => $operation['operationRef'], 'rpcOperation' => $this->normalState->operation, 'delivered' => false];
+        return $receipt;
+    }
+
+    public function nativePublicationResponse(array $receipt, PublicCoreBackendAuthorityFence $fence): ?\Illuminate\Http\JsonResponse
+    {
+        $record = $this->normalState?->publications[$receipt['publicationRef'] ?? ''] ?? null;
+        if ($this->nativeChannel === null || $record === null || $record['delivered'] || $record['receipt'] !== $receipt || time() >= $record['expiresAt']) { return null; }
+        $current = $fence->viewerTicketBinding(['schemaVersion' => 'public-core-app-viewer-ticket-check/1',
+            'viewerTicketRef' => $record['viewer']['viewerTicketRef']], $record['expiresAt']);
+        if ($current !== $record['viewer']) { return null; }
+        $response = PublicCoreRuntimeResource::committedEnvelopeResponse($record['bodyBytes'], $record['envelopeDigest']);
+        $this->normalState->publications[$receipt['publicationRef']]['delivered'] = true;
+        return $response;
     }
 
     private static function normalOwnedRef(mixed $value): bool
@@ -159,11 +357,13 @@ final readonly class PublicCoreContextBindings
                 'capabilities', 'free_input_enabled', 'uploads_enabled', 'actions_enabled', 'private_ready', 'fixtures'];
             if (!GatewayModelRequest::hasExactKeys($output, $keys) || $output['schema_version'] !== 'public-core-runtime-api/1'
                 || $output['mode'] !== 'public_core_test' || $output['data_scope'] !== 'registered_public_fixture'
-                || $output['status'] !== 'unavailable' || $output['reason_code'] !== 'runtime_not_activated'
+                || !in_array($output['status'], ['unavailable', 'ready'], true)
+                || $output['reason_code'] !== ($output['status'] === 'ready' ? 'none' : 'runtime_not_activated')
                 || $output['source_contract_version'] !== 'public-core-authority/0.7-candidate'
-                || $output['actual_model'] !== null || $output['model_enabled'] !== false
+                || $output['actual_model'] !== null || $output['model_enabled'] !== ($output['status'] === 'ready')
                 || !GatewayModelRequest::hasExactKeys($output['capabilities'], ['text', 'tools', 'vision'])
-                || $output['capabilities']['text'] !== false || $output['capabilities']['tools'] !== false || $output['capabilities']['vision'] !== false
+                || $output['capabilities']['text'] !== ($output['status'] === 'ready')
+                || $output['capabilities']['tools'] !== ($output['status'] === 'ready') || $output['capabilities']['vision'] !== false
                 || $output['free_input_enabled'] !== false || $output['uploads_enabled'] !== false || $output['actions_enabled'] !== false
                 || $output['private_ready'] !== false || !is_array($output['fixtures'])
                 || GatewayModelRequest::canonicalJson($output['fixtures']) !== GatewayModelRequest::canonicalJson(RegisteredPublicFixtureRegistry::compiled()->catalog())) {
@@ -179,7 +379,7 @@ final readonly class PublicCoreContextBindings
                 || ($originalExpiresAt !== null && $output['original_expires_at'] !== $originalExpiresAt)) { throw new LogicException('receipt_changed'); }
             return $output;
         }
-        if ($command !== 'lookup_owned' || !GatewayModelRequest::hasExactKeys($output, ['status', 'reasonCode', 'request_ref', 'transportAllowed'])
+        if (!in_array($command, ['execute_owned', 'lookup_owned'], true) || !GatewayModelRequest::hasExactKeys($output, ['status', 'reasonCode', 'request_ref', 'transportAllowed'])
             || $output['status'] !== 'accepted' || $output['reasonCode'] !== 'none' || $output['transportAllowed'] !== false
             || $output['request_ref'] !== $input['request_ref']) { throw new LogicException('receipt_changed'); }
         return $output;

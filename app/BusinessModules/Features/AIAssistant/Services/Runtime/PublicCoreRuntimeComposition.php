@@ -23,6 +23,9 @@ use App\Services\Privacy\PublicCore\PublicCoreRuntimeReadiness;
 use App\Services\Privacy\PublicCore\PublicCoreSessionAuthority;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use Closure;
+use App\Services\Privacy\PublicCore\PublicCoreProcessor;
+use App\Services\Privacy\PublicCore\PublicCoreDispatchAuthority;
+use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use LogicException;
 
 final class PublicCoreRuntimeComposition
@@ -46,6 +49,44 @@ final class PublicCoreRuntimeComposition
     public function __construct(private readonly Closure $driverFactory, private readonly Closure $semanticValidator)
     {
         $this->generation = 'ref_'.bin2hex(random_bytes(16));
+    }
+
+    public static function nativeProcessor(PublicCoreReceiptStore $store, PublicCoreRuntimeReadiness $readiness,
+        Closure $peerSource, Closure $gatewayChannelFactory, Closure $uploadBounds, Closure $semanticValidator): PublicCoreProcessor
+    {
+        $registry = RegisteredPublicFixtureRegistry::compiled();
+        $processor = null;
+        $viewerSource = static function (array $binding) use (&$processor): ?array { return $processor?->currentNormalViewer($binding); };
+        $sessions = new PublicCoreSessionAuthority($registry, $store, $viewerSource);
+        $factory = static function (GatewayModelProfile $profile, PublicCoreReceiptStore $publisher, array $request,
+            array $viewer, Closure $sourceState, Closure $privateBinding) use (&$processor, $sessions, $readiness,
+            $gatewayChannelFactory, $uploadBounds): PublicCoreGatewayModelDriver {
+            if ($processor === null || !$profile->isActualProfile()) { throw new LogicException('runtime_not_activated'); }
+            $attemptFactory = static function (GatewayModelProfile $profile) use (&$processor, $publisher, $request, $viewer,
+                $sourceState, $sessions, $readiness, $gatewayChannelFactory, $uploadBounds): array {
+                $expiry = $processor->normalDispatchExpiry();
+                if ($expiry === null || $expiry <= time() || $readiness->currentProfileFingerprint() !== $profile->fingerprint()) {
+                    throw new LogicException('profile_changed');
+                }
+                $channel = $gatewayChannelFactory($profile, $request, $expiry);
+                if (!$channel instanceof AuthenticatedPublicCoreChannel) { throw new LogicException('gateway_identity_unavailable'); }
+                try {
+                    $pins = $processor->normalGatewayPins($channel);
+                    if ($pins === null || $expiry > $channel->deadlineExpiresAt()) { throw new LogicException('gateway_identity_unavailable'); }
+                    $authority = new PublicCoreDispatchAuthority($publisher, $readiness, $sessions, $viewer, $request['requestRef'],
+                        $sourceState, $processor->exchangeNormalControl(...), null, null, null, $uploadBounds, $pins,
+                        $processor->normalDispatchExpiry(...), $processor->normalDispatchExpiry(...));
+                    return ['dispatch' => $authority, 'channel' => $channel];
+                } catch (\Throwable $failure) { $channel->close(); throw $failure; }
+            };
+            return new PublicCoreGatewayModelDriver($profile, null, null, $privateBinding, $processor, null, $attemptFactory);
+        };
+        $composition = new self($factory, $semanticValidator);
+        $processor = new PublicCoreProcessor($registry, $store, $sessions, $readiness, $peerSource,
+            static function (array $input, array $peer, string $command): ?array {
+                return isset($input['viewer_ticket_ref']) ? ['viewerTicketRef' => $input['viewer_ticket_ref']] : null;
+            }, $composition(...), $composition->currentRuntime(...));
+        return $processor;
     }
 
     public function __invoke(array $request, array $viewer, PublicCoreReceiptStore $store,

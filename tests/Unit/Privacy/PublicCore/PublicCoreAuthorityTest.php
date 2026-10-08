@@ -507,12 +507,20 @@ final class PublicCoreAuthorityTest extends TestCase
             'gatewayPeer' => ['pid' => 222, 'uid' => 1002, 'gid' => 1002], 'gatewayChannelRef' => 'channel_gateway_source_test'];
     }
 
+    private array $nativeAppCustody = [];
+
     private function appControlSource(): \Closure
     {
         return $this->withAssertions(function (string $command, array $payload, ?GatewayModelRequest $packet, int $expiresAt): array {
             $this->controlCalls[] = $command;
             $tuple = $payload['binding'] ?? null;
             if ($command === 'authorize_write') {
+                if ($payload['schemaVersion'] === 'public-core-app-upload-acquire/2') {
+                    self::assertSame(['schemaVersion', 'binding', 'custody'], array_keys($payload));
+                    self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreContextBindings::nativeCustodyMatches(
+                        $payload['custody'], $tuple, $this->controlPins()['gatewayPeer']));
+                    $this->nativeAppCustody[$packet->attemptRef] = $payload['custody'];
+                } else { self::assertSame('public-core-app-upload-acquire/1', $payload['schemaVersion']); }
                 $disk = json_decode(file_get_contents($this->directory . '/authority.json'), true, flags: JSON_THROW_ON_ERROR);
                 self::assertSame('consumed', $disk['state']['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['status']);
                 $this->appHeld = true;
@@ -520,6 +528,13 @@ final class PublicCoreAuthorityTest extends TestCase
                     'guardRef' => 'ref_simulated_upload_guard', 'coverageEvidenceRef' => 'ref_simulated_guard_coverage', 'uploadTimeoutMs' => $this->grantBudget];
                 $replyCommand = 'write_authorized';
             } elseif ($command === 'upload_complete') {
+                if ($payload['schemaVersion'] === 'public-core-app-upload-release/2') {
+                    self::assertSame(['schemaVersion', 'binding', 'guardRef', 'completionRef', 'custody'], array_keys($payload));
+                    self::assertArrayHasKey($packet->attemptRef, $this->nativeAppCustody);
+                    self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreContextBindings::nativeCustodyMatches(
+                        $payload['custody'], $tuple, $this->controlPins()['gatewayPeer'], $this->nativeAppCustody[$packet->attemptRef], $payload['completionRef']));
+                    self::assertSame('ref_simulated_upload_guard', $payload['guardRef']);
+                } else { self::assertSame('public-core-app-upload-release/1', $payload['schemaVersion']); }
                 if ($this->nativePins === null) {
                     self::assertContains($this->nativeEvent, ['uploaded', 'stopped']);
                 } else {

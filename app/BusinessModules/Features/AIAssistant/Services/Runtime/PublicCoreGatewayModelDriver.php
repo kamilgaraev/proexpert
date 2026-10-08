@@ -20,11 +20,14 @@ use Throwable;
 final class PublicCoreGatewayModelDriver
 {
     private ?string $observedModel = null;
+    private bool $attemptActive = false;
+    private int $attemptCount = 0;
 
     public function __construct(private readonly GatewayModelProfile $profile,
         private readonly ?PublicCoreDispatchAuthority $dispatch = null, private readonly ?GatewayModelTransport $transport = null,
         private readonly ?Closure $privateBindingSource = null, private readonly ?PublicCoreProcessor $nativeProcessor = null,
-        private readonly ?AuthenticatedPublicCoreChannel $nativeChannel = null)
+        private readonly ?AuthenticatedPublicCoreChannel $nativeChannel = null,
+        private readonly ?Closure $nativeAttemptFactory = null)
     {
     }
 
@@ -85,6 +88,25 @@ final class PublicCoreGatewayModelDriver
     public function __invoke(array $input): array
     {
         $this->observedModel = null;
+        if ($this->nativeAttemptFactory !== null) {
+            if ($this->attemptActive || $this->attemptCount >= 12 || !$this->profile->isActualProfile()
+                || $this->nativeProcessor === null || $this->privateBindingSource === null || $this->transport !== null
+                || !AuthenticatedPublicCoreChannel::isNativeAvailable()) { throw new LogicException('gateway_identity_unavailable'); }
+            $this->attemptActive = true;
+            $this->attemptCount++;
+            $channel = null;
+            try {
+                $attempt = ($this->nativeAttemptFactory)($this->profile);
+                if (!GatewayModelRequest::hasExactKeys($attempt, ['dispatch', 'channel'])
+                    || !$attempt['dispatch'] instanceof PublicCoreDispatchAuthority
+                    || !$attempt['channel'] instanceof AuthenticatedPublicCoreChannel) { throw new LogicException('gateway_identity_unavailable'); }
+                $channel = $attempt['channel'];
+                $driver = new self($this->profile, $attempt['dispatch'], null, $this->privateBindingSource, $this->nativeProcessor, $channel);
+                $action = $driver($input);
+                $this->observedModel = $driver->actualModel();
+                return $action;
+            } finally { $channel?->close(); $this->attemptActive = false; }
+        }
         if ($this->dispatch === null || $this->privateBindingSource === null) {
             throw new LogicException('receipt_unavailable');
         }

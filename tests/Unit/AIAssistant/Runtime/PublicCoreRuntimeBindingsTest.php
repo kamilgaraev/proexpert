@@ -42,6 +42,7 @@ use Illuminate\Translation\Translator;
 use Illuminate\Validation\Factory;
 use Illuminate\Validation\ValidationException;
 use LogicException;
+use Closure;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -85,6 +86,112 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         Facade::setFacadeApplication($app);
 
         return $app;
+    }
+
+    public function testNativeTerminalCustodyKeepsKernelChannelTransferAndProjectionTuple(): void
+    {
+        $binding = ['requestRef' => 'ref_'.str_repeat('a', 32), 'attemptRef' => 'ref_'.str_repeat('b', 32), 'projectionDigest' => str_repeat('c', 64)];
+        $peer = ['pid' => 123, 'uid' => 1001, 'gid' => 1001];
+        $pending = ['schemaVersion' => 'public-core-native-upload-custody/1', 'qualification' => 'actual-native',
+            'channelRef' => 'ref_'.str_repeat('d', 32), 'gatewayPeer' => $peer, 'transferRef' => 'ref_'.str_repeat('e', 32),
+            'requestRef' => $binding['requestRef'], 'attemptRef' => $binding['attemptRef'], 'projectionDigest' => $binding['projectionDigest'],
+            'event' => 'pending', 'eventSequence' => null, 'completionRef' => null];
+        $completion = 'ref_'.str_repeat('f', 32);
+        self::assertTrue(PublicCoreContextBindings::nativeCustodyMatches($pending, $binding, $peer));
+        foreach (['uploaded', 'stopped'] as $event) {
+            $terminal = array_replace($pending, ['event' => $event, 'eventSequence' => 4, 'completionRef' => $completion]);
+            self::assertTrue(PublicCoreContextBindings::nativeCustodyMatches($terminal, $binding, $peer, $pending, $completion));
+            $changes = ['schemaVersion' => 'legacy', 'qualification' => 'local-source-test', 'channelRef' => 'ref_'.str_repeat('1', 32),
+                'transferRef' => 'ref_'.str_repeat('2', 32), 'requestRef' => 'ref_'.str_repeat('3', 32), 'attemptRef' => 'ref_'.str_repeat('4', 32),
+                'projectionDigest' => str_repeat('5', 64), 'gatewayPeer' => ['pid' => 124, 'uid' => 1001, 'gid' => 1001],
+                'event' => 'pending', 'eventSequence' => null, 'completionRef' => 'ref_'.str_repeat('6', 32)];
+            foreach ($changes as $key => $value) {
+                self::assertFalse(PublicCoreContextBindings::nativeCustodyMatches(array_replace($terminal, [$key => $value]), $binding, $peer, $pending, $completion), $key);
+                $missing = $terminal; unset($missing[$key]);
+                self::assertFalse(PublicCoreContextBindings::nativeCustodyMatches($missing, $binding, $peer, $pending, $completion), 'missing '.$key);
+            }
+            foreach ([1, 1025, '4', -1] as $sequence) {
+                self::assertFalse(PublicCoreContextBindings::nativeCustodyMatches(array_replace($terminal, ['eventSequence' => $sequence]), $binding, $peer, $pending, $completion));
+            }
+            self::assertFalse(PublicCoreContextBindings::nativeCustodyMatches($terminal + ['manualProof' => true], $binding, $peer, $pending, $completion));
+            self::assertFalse(PublicCoreContextBindings::nativeCustodyMatches($terminal, $binding, $peer, array_replace($pending, ['event' => 'uploaded']), $completion));
+        }
+    }
+
+    public function testNativeGuardConsumerCannotTurnSourceOnlyReaderIntoTerminalProof(): void
+    {
+        $binding = ['requestRef' => 'ref_'.str_repeat('a', 32), 'attemptRef' => 'ref_'.str_repeat('b', 32)];
+        $port = PublicCoreContextBindings::sourceAppControlPort('ref_'.str_repeat('c', 32), 'Processor',
+            static fn (): array => ['terminal' => 'uploaded']);
+        self::assertTrue($port->sourceOnly());
+        self::assertFalse($port->nativeTerminalProof([], $binding, 'ref_'.str_repeat('d', 32)));
+        self::assertNull($port->nativePublicationResponse([], new PublicCoreBackendAuthorityFence()));
+        $this->expectExceptionMessage('authorization_changed');
+        $port->consumeNativeControlFrame([], 'authorize_write', $binding, time() + 60);
+    }
+
+    public function testNativeProcessorSourceFactoryRemainsClosedWithoutProtectedReadersAndActiveOperation(): void
+    {
+        $called = 0;
+        $deny = static function () use (&$called): never { $called++; throw new LogicException('unconfigured source'); };
+        $processor = \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRuntimeComposition::nativeProcessor(
+            new PublicCoreReceiptStore(), new PublicCoreRuntimeReadiness(RegisteredPublicFixtureRegistry::compiled()),
+            $deny, $deny, $deny, $deny);
+        self::assertNull($processor->normalDispatchExpiry());
+        self::assertSame('runtime_not_activated', $processor->executeOwned('ref_'.str_repeat('a', 32))['reasonCode']);
+        self::assertSame(0, $called);
+        $this->expectExceptionMessage('receipt_changed');
+        $processor->exchangeNormalControl('upload_complete', ['terminal' => 'uploaded'], null, time() + 20);
+    }
+
+    public function testSignedOwnedRequestCacheRechecksWorkerViewerUuidTenantAndMac(): void
+    {
+        $cache = new \Illuminate\Cache\Repository(new \Illuminate\Cache\ArrayStore());
+        $fence = new class($cache) extends PublicCoreBackendAuthorityFence {
+            public bool $revoked = false;
+            public int $freshChecks = 0;
+            public function __construct(\Illuminate\Contracts\Cache\Repository $cache) { parent::__construct(null, null, $cache, str_repeat('fixture-control-key', 3)); }
+            public function inspectSourceCandidate(User $actor, int $organizationId, Request $origin, Closure $inspect): mixed { return $inspect([]); }
+            public function viewerTicketBinding(array $payload, int $frameExpiresAt): array {
+                $this->freshChecks++;
+                if ($this->revoked) { throw new LogicException('authorization_changed'); }
+                return ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $payload['viewerTicketRef'],
+                    'currentViewer' => ['authorized' => true, 'viewerRef' => 'fixture-only-actor', 'organizationRef' => 'fixture-only-tenant',
+                        'authorizationRevision' => 'fixture-auth/1', 'policyRevision' => 'fixture-policy/1']];
+            }
+        };
+        $viewer = new User(); $viewer->setRawAttributes(['id' => 7]);
+        $foreign = new User(); $foreign->setRawAttributes(['id' => 8]);
+        $selection = self::command() + ['public_session_ref' => null];
+        $ticket = $fence->issueViewerTicket($viewer, 11, Request::create('/', 'GET', server: ['REMOTE_ADDR' => '127.0.0.1']), time() + 150);
+        $opened = ['status' => 'accepted', 'request_ref' => 'ref_'.str_repeat('a', 32), 'public_session_ref' => 'ref_'.str_repeat('b', 32),
+            'process_ref' => 'ref_'.str_repeat('c', 32), 'original_expires_at' => time() + 60];
+        $row = $fence->rememberOwnedRequest($ticket, $selection, $opened);
+        self::assertSame($row, $fence->findOwnedSelection($viewer, 11, $selection));
+        self::assertSame($row, $fence->ownedRequest($row['requestRef']));
+        self::assertSame($row, $fence->ownedRequest($row['requestRef'], $viewer, 11));
+        self::assertGreaterThanOrEqual(4, $fence->freshChecks);
+        foreach ([[$foreign, 11], [$viewer, 12]] as [$user, $tenant]) {
+            try { $fence->ownedRequest($row['requestRef'], $user, $tenant); self::fail('Owner/tenant mismatch must deny'); }
+            catch (LogicException $error) { self::assertSame('authorization_changed', $error->getMessage()); }
+        }
+        try { $fence->findOwnedSelection($viewer, 11, array_replace($selection, ['input_id' => 'different-input'])); self::fail('UUID cannot change selectors'); }
+        catch (LogicException $error) { self::assertSame('receipt_changed', $error->getMessage()); }
+        $fence->revoked = true;
+        try { $fence->ownedRequest($row['requestRef']); self::fail('Worker must recheck current revocation'); }
+        catch (LogicException $error) { self::assertSame('authorization_changed', $error->getMessage()); }
+        $fence->revoked = false;
+        $key = 'ai-public-core:owned-request:'.$row['requestRef'];
+        $original = $cache->get($key);
+        foreach (['actorId' => 8, 'organizationId' => 12, 'expiresAt' => time() + 600, 'process_ref' => 'ref_'.str_repeat('d', 32)] as $field => $value) {
+            $changed = $original; $changed['record'][$field] = $value; $cache->put($key, $changed, 60);
+            try { $fence->ownedRequest($row['requestRef']); self::fail('Unsigned mutation cannot grant ownership'); }
+            catch (LogicException $error) { self::assertSame('authorization_changed', $error->getMessage()); }
+        }
+        $cache->put($key, $original, 60);
+        $cache->forget('ai-public-core:viewer:'.$ticket);
+        $this->expectExceptionMessage('authorization_changed');
+        $fence->ownedRequest($row['requestRef']);
     }
 
     public function testAppViewerBootstrapFrameRequiresOwnedChannelSequencePhaseAndRole(): void
