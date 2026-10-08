@@ -3,6 +3,8 @@
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseRequestListItem;
+use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
@@ -14,15 +16,18 @@ class PurchaseRequestResource extends JsonResource
 {
     private readonly bool $useLoadedSupplierState;
 
+    private readonly ?ProcurementLifecycleSummary $workflowSummary;
+
     public function __construct(mixed $resource, mixed $useLoadedSupplierState = false)
     {
-        parent::__construct($resource);
-        $this->useLoadedSupplierState = $useLoadedSupplierState === true;
+        $this->workflowSummary = $resource instanceof PurchaseRequestListItem ? $resource->workflowSummary : null;
+        $this->useLoadedSupplierState = $resource instanceof PurchaseRequestListItem || $useLoadedSupplierState === true;
+        parent::__construct($resource instanceof PurchaseRequestListItem ? $resource->purchaseRequest : $resource);
     }
 
     public function toArray(Request $request): array
     {
-        $workflowSummary = app(ProcurementLifecycleService::class)
+        $workflowSummary = $this->workflowSummary ?? app(ProcurementLifecycleService::class)
             ->forPurchaseRequest($this->resource);
         $chainSummary = app(ProcurementChainService::class)
             ->forPurchaseRequest($this->resource, $request->user(), includePermissions: false);

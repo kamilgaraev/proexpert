@@ -7,7 +7,6 @@ namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 use App\BusinessModules\Features\Procurement\Http\Requests\StorePurchaseRequestRequest;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseRequestResource;
-use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Services\PurchaseRequestService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -38,12 +37,10 @@ class PurchaseRequestController extends Controller
                 'sort_dir',
             ]);
 
-            $requests = $this->service->paginate($organizationId, $perPage, $filters);
+            $requests = $this->service->paginateForListView($organizationId, $perPage, $filters);
 
             return AdminResponse::paginated(
-                PurchaseRequestResource::collection($requests->getCollection()->map(
-                    fn (PurchaseRequest $purchaseRequest) => new PurchaseRequestResource($purchaseRequest, useLoadedSupplierState: true)
-                )),
+                PurchaseRequestResource::collection($requests->getCollection()),
                 [
                     'current_page' => $requests->currentPage(),
                     'per_page' => $requests->perPage(),

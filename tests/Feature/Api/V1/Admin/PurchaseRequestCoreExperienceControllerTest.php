@@ -33,6 +33,92 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_purchase_request_list_batches_orders_across_parents_after_expiry_and_keeps_detail_payloads(): void
+    {
+        Event::fake();
+        $this->freezeTime();
+
+        $context = AdminApiTestContext::create();
+        $ids = [];
+        $expired = null;
+        for ($index = 0; $index < 4; $index++) {
+            $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+            $supplier = $this->createSupplierRequest($purchaseRequest, $index === 0 ? 'sent' : 'draft', $index === 0 ? now()->subMinute() : null);
+            if ($index === 0) {
+                $expired = $supplier;
+            }
+            PurchaseOrder::query()->create([
+                'organization_id' => $context->organization->id,
+                'purchase_request_id' => $purchaseRequest->id,
+                'order_number' => 'PO-PAGE-'.$purchaseRequest->id,
+                'order_date' => now()->toDateString(),
+                'status' => 'draft',
+                'total_amount' => 100,
+                'currency' => 'RUB',
+            ]);
+            $ids[] = $purchaseRequest->id;
+        }
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $expected = [];
+        foreach ($ids as $id) {
+            $detail = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/procurement/purchase-requests/{$id}");
+            $detail->assertOk();
+            $expected[] = $detail->json('data');
+        }
+        SupplierRequest::query()->whereKey($expired?->id)->update(['status' => 'sent']);
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $list = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20&sort_by=id&sort_dir=asc');
+            $parentQueries = count(array_filter(DB::getQueryLog(), static fn (array $query): bool => preg_match('/\\bfrom\\s+"?purchase_requests\\b/i', $query['query']) === 1));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $list->assertOk();
+        $this->assertSame($ids, collect($list->json('data'))->pluck('id')->all());
+        $this->assertLessThanOrEqual(6, $parentQueries);
+        $this->assertDatabaseHas('supplier_requests', ['id' => $expired?->id, 'status' => 'expired']);
+        foreach ($expected as $index => $payload) {
+            $this->assertSame($payload, $list->json("data.{$index}"));
+        }
+    }
+
+    public function test_pending_request_with_expiring_supplier_keeps_lazy_order_graph_and_original_payload(): void
+    {
+        Event::fake();
+        $this->freezeTime();
+
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::PENDING);
+        $supplier = $this->createSupplierRequest($purchaseRequest, 'sent', now()->subMinute());
+        PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'order_number' => 'PO-EXPIRY-'.$purchaseRequest->id,
+            'order_date' => now()->toDateString(),
+            'status' => 'draft',
+            'total_amount' => 100,
+            'currency' => 'RUB',
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $before = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}");
+        $before->assertOk();
+        SupplierRequest::query()->whereKey($supplier->id)->update(['status' => 'sent']);
+        $list = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20');
+
+        $list->assertOk();
+        $this->assertSame($before->json('data'), $list->json('data.0'));
+        $this->assertDatabaseHas('supplier_requests', ['id' => $supplier->id, 'status' => 'expired']);
+    }
+
     public function test_raw_resource_collections_accept_keys_and_keep_default_fresh_supplier_state(): void
     {
         Event::fake();
