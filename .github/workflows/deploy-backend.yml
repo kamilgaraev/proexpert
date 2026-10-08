@@ -101,7 +101,12 @@ jobs:
           # Values must be installed by the checked managed acceptance handoff, never dispatch inputs.
           [[ "$CURRENT_CANDIDATE_REVISION" =~ ^[1-9][0-9]{0,8}$ ]]
           [[ "$CURRENT_CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$ACCEPTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] && test "$ACCEPTED_MAIN_SHA" = "$GITHUB_SHA"
+          if ! [[ "$ACCEPTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 1
+          fi
+          if [ "$ACCEPTED_MAIN_SHA" != "$GITHUB_SHA" ]; then
+            exit 1
+          fi
           test "$GITHUB_REF" = refs/heads/main
           test "$REQUESTED_MODE" != qualification-only
           case "$GITHUB_EVENT_NAME" in
