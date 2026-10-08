@@ -230,6 +230,22 @@ YAML
   MOST_PUBLIC_CORE_STAGED_API="${api_id}"
 }
 
+# Preserve the freshly published API/protected PID tuple while resuming other writers.
+resume_public_core_backend_writers() {
+  local image_ref="$1" backend_services="$2" resume_services="${2}" service
+  if [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ]; then
+    resume_services=''
+    for service in "${MOST_COMPOSE_WRITER_SERVICES[@]}"; do
+      [ "${service}" = api ] || resume_services="${resume_services} ${service}"
+    done
+    # Never --remove-orphans: it could remove the parked-command overrides.
+    MOST_IMAGE_REF="${image_ref}" docker compose up -d --no-deps --force-recreate ${resume_services} || return 1
+    [ "$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" = "${MOST_PUBLIC_CORE_STAGED_API}" ] || return 1
+  else
+    MOST_IMAGE_REF="${image_ref}" docker compose up -d --force-recreate --remove-orphans ${backend_services} || return 1
+  fi
+}
+
 # Managed lifecycle only. Keep the old deny barrier until roles and endpoints are gone.
 # Out-of-band privileged table deletion is outside this interface and remains unqualified.
 quiesce_public_core_gateway_route() {

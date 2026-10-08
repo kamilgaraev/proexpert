@@ -543,18 +543,7 @@ jobs:
             # All drain/migrations and broad checks are complete before the 30s park window.
             MOST_PUBLIC_CORE_STAGED_API=''
             stage_public_core_approved_runtime "${IMAGE_REF}" "${RELEASE_SHA}"
-            RESUME_SERVICES="${BACKEND_SERVICES}"
-            if [ -n "${MOST_PUBLIC_CORE_STAGED_API}" ]; then
-              RESUME_SERVICES=''
-              for service in "${MOST_COMPOSE_WRITER_SERVICES[@]}"; do
-                [ "${service}" = api ] || RESUME_SERVICES="${RESUME_SERVICES} ${service}"
-              done
-              # Never --remove-orphans here: it could remove the parked-command overrides.
-              MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${RESUME_SERVICES}
-              test "$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" = "${MOST_PUBLIC_CORE_STAGED_API}"
-            else
-              MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
-            fi
+            resume_public_core_backend_writers "${IMAGE_REF}" "${BACKEND_SERVICES}"
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
             if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
               docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
