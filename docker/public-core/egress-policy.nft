@@ -1,0 +1,27 @@
+# No provider addresses are invented. Empty/expired sets deny the Gateway.
+# The internal Docker network remains a second fail-closed boundary until
+# the separate release owner qualifies actual hooks/removal/reboot behaviour.
+table inet most_public_core {
+    comment "most-public-core:gateway-only/1"
+    set provider4 {
+        type ipv4_addr
+        flags timeout
+        timeout 5m
+    }
+    # IPv6 is disabled on this network/role and denied in both directions.
+    chain gateway_forward {
+        type filter hook forward priority -200; policy accept;
+        iifname "br-most-pc" ip daddr @provider4 tcp dport 443 ct state { new, established } accept
+        oifname "br-most-pc" ip saddr @provider4 tcp sport 443 ct state established accept
+        iifname "br-most-pc" drop
+        oifname "br-most-pc" drop
+    }
+    chain gateway_host_input {
+        type filter hook input priority -200; policy accept;
+        iifname "br-most-pc" drop
+    }
+    chain gateway_host_output {
+        type filter hook output priority -200; policy accept;
+        oifname "br-most-pc" drop
+    }
+}

@@ -40,6 +40,11 @@ services:
         bind:
           create_host_path: false
       - type: bind
+        source: /run/most-public-core/app
+        target: /run/most-public-core/app
+        bind:
+          create_host_path: false
+      - type: bind
         source: /run/most-public-core/processor
         target: /run/most-public-core/processor
         bind:
@@ -96,6 +101,11 @@ services:
         source: /etc/most/public-core/app
         target: /etc/most/public-core/app
         read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /run/most-public-core/app
+        target: /run/most-public-core/app
         bind:
           create_host_path: false
       - type: bind
@@ -247,6 +257,11 @@ services:
         target: /run/most-public-core/gateway
         bind:
           create_host_path: false
+      - type: bind
+        source: /var/lib/most/public-core/processor
+        target: /var/lib/most/public-core/processor
+        bind:
+          create_host_path: false
     logging: *json-logging
 
   public-core-gateway:
@@ -266,6 +281,10 @@ services:
     mem_limit: 512m
     tmpfs: ["/tmp:rw,noexec,nosuid,size=16777216,mode=1777"]
     networks: [public-core-gateway]
+    # Docker embedded DNS is not a permitted provider fallback.
+    dns: [127.0.0.1]
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
     volumes:
       - type: bind
         source: /etc/most/public-core/gateway
@@ -393,7 +412,11 @@ services:
 
 networks:
   public-core-gateway:
+    enable_ipv6: false
     internal: true
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-most-pc
   prohelper-network:
     driver: bridge
 

@@ -217,4 +217,111 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
             rmdir($directory);
         }
     }
+    public function testMissingProjectionCannotQualifyAProfileOrStartBuiltinReaders(): void
+    {
+        $projection = new \Most\PublicCore\RoleProjection('/absent/public-core/role');
+        $this->expectException(LogicException::class);
+        $projection->profile();
+    }
+
+    public function testSemanticGateAcceptsOnlyEvidenceBoundCanonicalText(): void
+    {
+        $provenance = ['unitRef' => 'unit', 'sourceGenerationRef' => 'generation'];
+        $facts = [
+            ['kind' => 'text', 'value' => ['utf8Text' => 'Бетон товарный В25 М350'],
+                'provenance' => $provenance + ['fragmentVersion' => 'synthetic-material-field/title/1']],
+            ['kind' => 'price', 'decimal' => '7800.00', 'currency' => 'RUB', 'perUnit' => 'm3', 'provenance' => $provenance],
+        ];
+        $value = ['text' => 'Бетон товарный В25 М350 стоит 7800.00 RUB за м³.',
+            'claims' => [['value' => '7800.00', 'currency' => 'RUB', 'unit' => 'm3']]];
+        $gate = \Most\PublicCore\ProcessorRuntimeBootstrap::semanticVerdict(...);
+        self::assertSame(['status' => 'valid', 'reason' => 'none'], $gate($value, [], [['envelope' => ['facts' => $facts]]]));
+        foreach (['Чужая цена 1 RUB.', $value['text'].' Частный телефон: +7...'] as $text) {
+            self::assertSame('repair', $gate(array_replace($value, ['text' => $text]), [], [['envelope' => ['facts' => $facts]]])['status']);
+        }
+        $facts[0]['provenance']['unitRef'] = 'other';
+        self::assertSame('repair', $gate($value, [], [['envelope' => ['facts' => $facts]]])['status']);
+        self::assertSame('repair', $gate($value, [], [])['status']);
+    }
+
+    public function testRootCustodyParserCreatesOnlyRoleFilesAndRefusesRotationOrAmbiguity(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0) {
+            self::markTestSkipped('Needs isolated root-owned Linux fixture files, not production credentials.');
+        }
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/custody-'.bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory, 0755));
+        foreach (['app' => 82, 'processor' => 41002, 'gateway' => 41003, 'gateway/credential' => 41003] as $role => $gid) {
+            self::assertTrue(mkdir($directory.'/'.$role, 0750));
+            self::assertTrue(chgrp($directory.'/'.$role, $gid));
+        }
+        $file = $directory.'/environment';
+        $write = static function (string $bytes) use ($file): void { file_put_contents($file, $bytes); chmod($file, 0600); };
+        $provision = \Most\PublicCore\RoleCredentialProvisioner::provision(...);
+        try {
+            $write("OTHER_KEY=unrelated\n");
+            self::assertSame(['providerCredential' => false, 'controlKeys' => false], $provision($file, $directory));
+            self::assertFileDoesNotExist($directory.'/app/control-key');
+            $write("APP_KEY='".str_repeat('fixture-key-', 4)."'\nTIMEWEB_AI_API_KEY=fixture-provider-value\nTIMEWEB_API_KEY=lower-priority-fixture\n");
+            self::assertSame(['providerCredential' => true, 'controlKeys' => true], $provision($file, $directory));
+            self::assertSame('fixture-provider-value', file_get_contents($directory.'/gateway/credential/provider-key'));
+            self::assertFileDoesNotExist($directory.'/app/provider-key');
+            self::assertFileDoesNotExist($directory.'/processor/provider-key');
+            self::assertNotSame(file_get_contents($directory.'/app/control-key'), file_get_contents($directory.'/processor/control-key'));
+            foreach (['app/control-key' => 82, 'processor/control-key' => 41002, 'gateway/credential/provider-key' => 41003] as $name => $gid) {
+                clearstatcache(true, $directory.'/'.$name);
+                self::assertSame($gid, filegroup($directory.'/'.$name));
+                self::assertSame(0640, fileperms($directory.'/'.$name) & 0777);
+            }
+            $before = hash_file('sha256', $directory.'/gateway/credential/provider-key');
+            foreach (["TIMEWEB_AI_API_KEY=fixture-rotation\n", "TIMEWEB_AI_API_KEY=a\nTIMEWEB_AI_API_KEY=b\n",
+                'TIMEWEB_AI_API_KEY=${OTHER_KEY}', "APP_KEY=short\n", 'TIMEWEB_AI_API_KEY="unterminated'] as $invalid) {
+                $write($invalid);
+                try { $provision($file, $directory); self::fail('Invalid custody input accepted'); }
+                catch (\Throwable $failure) { self::assertNotInstanceOf(\PHPUnit\Framework\AssertionFailedError::class, $failure); }
+                self::assertSame($before, hash_file('sha256', $directory.'/gateway/credential/provider-key'));
+            }
+            $write("TIMEWEB_AI_API_KEY=fixture-provider-value\n"); chmod($file, 0644);
+            try { $provision($file, $directory); self::fail('World-readable environment accepted'); }
+            catch (LogicException) { self::assertSame($before, hash_file('sha256', $directory.'/gateway/credential/provider-key')); }
+        } finally {
+            foreach (['app/control-key', 'processor/control-key', 'gateway/credential/provider-key', 'environment'] as $name) { @unlink($directory.'/'.$name); }
+            foreach (['gateway/credential', 'gateway', 'processor', 'app'] as $role) { rmdir($directory.'/'.$role); }
+            rmdir($directory);
+        }
+    }
+
+    public function testProtectedProjectionPinsAnInodeAndBytesAndRejectsReplacements(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0) {
+            self::markTestSkipped('Needs isolated Linux protected file metadata.');
+        }
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/projection-'.bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory, 0750));
+        $file = $directory.'/profile.json';
+        file_put_contents($file, '{"safe":true}'); chmod($file, 0640);
+        try {
+            $reader = new \Most\PublicCore\ProtectedRoleFile($directory);
+            self::assertSame(['safe' => true], $reader->json('profile.json'));
+            file_put_contents($directory.'/replacement', '{"safe":true}'); chmod($directory.'/replacement', 0640);
+            rename($directory.'/replacement', $file);
+            $this->expectException(LogicException::class);
+            $this->expectExceptionMessage('profile_changed');
+            $reader->json('profile.json');
+        } finally { unlink($file); rmdir($directory); }
+    }
+
+    public function testProcessLifetimeUsesCurrentKernelIdentityAndRejectsGuessedRole(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid')) {
+            self::markTestSkipped('Linux proc identity metadata required.');
+        }
+        $peer = ['pid' => (int)getmypid(), 'uid' => posix_geteuid(), 'gid' => posix_getegid()];
+        $reference = \Most\PublicCore\ProcessIdentity::lifetime($peer);
+        self::assertMatchesRegularExpression('/\Aref_[0-9a-f]{32}\z/D', $reference);
+        self::assertSame($reference, \Most\PublicCore\ProcessIdentity::lifetime($peer));
+        $this->expectException(LogicException::class);
+        \Most\PublicCore\ProcessIdentity::lifetime(array_replace($peer, ['uid' => $peer['uid'] + 1]));
+    }
+
 }
