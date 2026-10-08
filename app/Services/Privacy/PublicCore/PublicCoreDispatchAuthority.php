@@ -12,6 +12,9 @@ use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 use App\Services\Privacy\Gateway\GatewayPublicCoreRequestValidator;
 use App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel;
 use Closure;
+use LogicException;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreGatewayModelDriver;
+use App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantToolResult;
 use Throwable;
 
 final class PublicCoreDispatchAuthority
@@ -65,8 +68,8 @@ final class PublicCoreDispatchAuthority
             return $this->unavailable();
         }
         try {
-            if (!GatewayModelRequest::hasExactKeys($coreInput, ['schemaVersion', 'context', 'contextScope', 'tools', 'toolReferences', 'repair'])
-                || $coreInput['schemaVersion'] !== 'assistant-loop-input/1' || !is_array($coreInput['context'])
+            if (!GatewayModelRequest::hasExactKeys($coreInput, ['schemaVersion', 'context', 'contextScope', 'tools', 'toolReferences', 'repair', 'nativeHistory'])
+                || $coreInput['schemaVersion'] !== 'assistant-loop-input/2' || !is_array($coreInput['context'])
                 || !GatewayModelRequest::hasExactKeys($committedPrivateBinding, ['snapshot', 'profile', 'lineage', 'stored', 'artifacts', 'receipt'])) {
                 return $this->unavailable('receipt_changed');
             }
@@ -109,14 +112,10 @@ final class PublicCoreDispatchAuthority
                     return $this->unavailable('expired');
                 }
                 $v = $profile->values();
-                $body = GatewayModelRequest::canonicalJson(['model' => $v['modelId'], 'messages' => [
-                    ['role' => 'system', 'content' => 'Return one JSON action for assistant-loop-input/1. Use only supplied public context and tools. '
-                        . 'Actions: plan(type,plan); tool(type,tool,arguments); refine or summary(type,ref); '
-                        . 'final(type,text,claims,sourceRefs,claimScope). Use current opaque references. '
-                        . 'Each claim contains value,unit,currency,sourceRefs. Copy supplied claimScope exactly.'],
-                    ['role' => 'user', 'content' => AssistantContextSourceBinding::canonical($coreInput)],
-                ], 'stream' => false, 'store' => false, 'max_completion_tokens' => $v['maxOutputTokens'],
-                    'response_format' => ['type' => 'json_object']]);
+                if (GatewayModelRequest::canonicalJson($coreInput['nativeHistory']) !== GatewayModelRequest::canonicalJson($this->nativeHistory($request, $profile))) {
+                    return $this->unavailable('receipt_changed');
+                }
+                $body = PublicCoreGatewayModelDriver::nativeBodyBytes($profile, $coreInput);
                 $packet = GatewayModelRequest::fromArray([
                     'schemaVersion' => GatewayModelRequest::SCHEMA_VERSION, 'contractVersion' => GatewayModelRequest::CONTRACT_VERSION,
                     'requestRef' => $request['requestRef'], 'attemptRef' => self::reference(), 'publicAdmissionRef' => self::reference(),
@@ -132,6 +131,9 @@ final class PublicCoreDispatchAuthority
                 }
                 $state['requests'][$this->requestRef]['dispatchAttempts'][$packet->attemptRef] = [
                     'status' => 'prepared', 'binding' => $packet->binding(), 'source' => ($this->sourceState)(),
+                    'nativeHistoryDigest' => hash('sha256', GatewayModelRequest::canonicalJson($coreInput['nativeHistory'])),
+                    'coreProfileFingerprint' => $committedPrivateBinding['receipt']['profileFingerprint'],
+                    'scope' => $committedPrivateBinding['receipt']['scope'], 'lineage' => $committedPrivateBinding['receipt']['lineage'],
                 ];
                 return ['status' => 'prepared'];
             });
@@ -140,6 +142,95 @@ final class PublicCoreDispatchAuthority
         } catch (Throwable) {
             return $this->unavailable('receipt_changed');
         }
+    }
+
+    private function nativeHistory(array $request, GatewayModelProfile $profile, ?string $except = null): array
+    {
+        $history = [];
+        $ids = [];
+        $calls = [];
+        foreach ($request['dispatchAttempts'] ?? [] as $ref => $attempt) {
+            if ($ref === $except || $attempt['status'] !== 'consumed') { continue; }
+            if (($attempt['resultStatus'] ?? null) !== 'completed' || !isset($attempt['nativeItems'], $attempt['nativeItemsDigest'])
+                || $attempt['binding']['profileFingerprint'] !== $profile->fingerprint()
+                || ($attempt['nativeActualModel'] ?? null) !== $profile->values()['modelId']
+                || $attempt['source'] !== ($this->sourceState)()
+                || hash('sha256', GatewayModelRequest::canonicalJson($attempt['nativeItems'])) !== $attempt['nativeItemsDigest']) {
+                throw new LogicException('receipt_changed');
+            }
+            foreach ($attempt['nativeItems'] as $item) {
+                if (isset($ids[$item['id']])) { throw new LogicException('receipt_changed'); }
+                $ids[$item['id']] = true;
+                $history[] = $item;
+                if ($item['type'] === 'function_call') {
+                    if (isset($calls[$item['call_id']])) { throw new LogicException('receipt_changed'); }
+                    $calls[$item['call_id']] = true;
+                }
+            }
+            $call = array_values(array_filter($attempt['nativeItems'], static fn (array $item): bool => $item['type'] === 'function_call'));
+            if ($call !== []) {
+                $output = $attempt['nativeToolOutput'] ?? null;
+                if (!is_array($output) || $output['call_id'] !== $call[0]['call_id']
+                    || hash('sha256', GatewayModelRequest::canonicalJson($output)) !== ($attempt['nativeToolOutputDigest'] ?? null)) {
+                    throw new LogicException('receipt_changed');
+                }
+                $history[] = $output;
+            }
+        }
+        return $history;
+    }
+
+    public function commitNativeToolResult(GatewayModelRequest $packet, AssistantToolResult $result, AssistantContextReceipt $receipt): bool
+    {
+        try {
+            $accepted = $this->receipts->transaction(function (array &$state) use ($packet, $result, $receipt): array {
+                $request = $this->sessions?->currentRequest($state, $this->viewerBinding, $packet->requestRef);
+                $profile = $this->readiness->qualifiedProfile();
+                $attempt = $request['dispatchAttempts'][$packet->attemptRef] ?? null;
+                $binding = $receipt->privateBinding();
+                $current = $this->receipts->authorityFromLockedState($state, $binding['receipt']['contextRef']);
+                $evidence = $result->evidence();
+                $callBinding = $evidence['callBinding'];
+                if ($request === null || $profile === null || $current === null || $attempt === null
+                    || $packet->requestRef !== $this->requestRef || $attempt['binding'] !== $packet->binding()
+                    || $attempt['status'] !== 'consumed' || ($attempt['resultStatus'] ?? null) !== 'completed'
+                    || isset($attempt['nativeToolOutput']) || !$this->sourceCurrent($request)
+                    || $attempt['source'] !== ($this->sourceState)() || $packet->profileFingerprint !== $profile->fingerprint()
+                    || $current['receipt'] !== $binding['receipt']
+                    || $current['binding']['snapshotHash'] !== AssistantContextSourceBinding::snapshotHash($binding['snapshot'])
+                    || $current['binding']['trustedModelProfile'] !== $this->readiness->coreProfile()
+                    || $attempt['scope'] !== $binding['receipt']['scope']
+                    || $attempt['lineage'] !== $binding['receipt']['lineage']
+                    || $callBinding['contextRef'] !== $packet->contextReceiptRef || $callBinding['payloadDigest'] !== $packet->corePayloadDigest
+                    || $callBinding['profileFingerprint'] !== $attempt['coreProfileFingerprint']
+                    || !GatewayModelResponse::opaqueRef($callBinding['callRef'])
+                    || !in_array($result->artifactRef(), $binding['snapshot']['conversation']['historyRefs'], true)
+                    || !isset($binding['artifacts'][$result->artifactRef()])) { return []; }
+                $items = GatewayModelResponse::outputItems(GatewayModelRequest::canonicalJson($attempt['nativeItems']));
+                $calls = array_values(array_filter($items, static fn (array $item): bool => $item['type'] === 'function_call'));
+                if (count($calls) !== 1 || $calls[0]['call_id'] === $callBinding['callRef']) { return []; }
+                $call = $result->privateCall();
+                $args = GatewayModelResponse::functionArguments($calls[0]['name'], $calls[0]['arguments']);
+                if ($calls[0]['name'] === 'material_read_selected') {
+                    $mapped = null;
+                    foreach ($request['dispatchAttempts'] as $previous) {
+                        if (isset($previous['nativeSelectionMap'][$args['ref']])) { $mapped = $previous['nativeSelectionMap'][$args['ref']]; }
+                    }
+                    if ($mapped === null) { return []; }
+                    $args['ref'] = $mapped;
+                }
+                if ($call['tool'] !== ($calls[0]['name'] === 'material_search' ? 'material.search' : 'material.read_selected')
+                    || GatewayModelRequest::canonicalJson($call['arguments']) !== GatewayModelRequest::canonicalJson($args)) { return []; }
+                $output = ['type' => 'function_call_output', 'call_id' => $calls[0]['call_id'],
+                    'output' => GatewayModelRequest::canonicalJson($result->modelMetadata())];
+                $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeToolOutput'] = $output;
+                $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeToolOutputDigest'] = hash('sha256', GatewayModelRequest::canonicalJson($output));
+                $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeSelectionMap'] = $evidence['projection']['referenceMap'];
+                $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeInternalCallRef'] = $callBinding['callRef'];
+                return ['committed' => true];
+            });
+            return $accepted === ['committed' => true];
+        } catch (Throwable) { return false; }
     }
 
     public function withDispatchFence(GatewayModelRequest $packet, Closure $operation): GatewayModelResponse
@@ -191,6 +282,20 @@ final class PublicCoreDispatchAuthority
                 $attempt = $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef] ?? null;
                 if (!is_array($attempt) || $attempt['binding'] !== $packet->binding()) {
                     return [];
+                }
+                if ($response->status === 'completed') {
+                    $profile = $this->readiness->qualifiedProfile();
+                    if ($profile === null || $response->actualModel !== $profile->values()['modelId']
+                        || (new GatewayPublicCoreRequestValidator())->validateOutput($packet->bodyBytes, $response->outputItemsBytes) !== null
+                        || (new GatewayPublicCoreRequestValidator())->validateUsage($profile, $response->usage) !== null) {
+                        $response = GatewayModelResponse::blocked($packet, 'invalid_model_output');
+                    } else {
+                        $items = GatewayModelResponse::outputItems($response->outputItemsBytes);
+                        $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeItems'] = $items;
+                        $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeProviderResponseId'] = $response->providerResponseId;
+                        $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeActualModel'] = $response->actualModel;
+                        $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['nativeItemsDigest'] = hash('sha256', $response->outputItemsBytes);
+                    }
                 }
                 $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]['resultStatus'] = $response->status;
                 return $response->values();
@@ -766,6 +871,11 @@ final class PublicCoreDispatchAuthority
         if ($profile === null || $packet->profileFingerprint !== $profile->fingerprint()) {
             return 'profile_changed';
         }
+        try {
+            if (($saved['nativeHistoryDigest'] ?? null) !== hash('sha256', GatewayModelRequest::canonicalJson($this->nativeHistory($request, $profile, $packet->attemptRef)))) {
+                return 'receipt_changed';
+            }
+        } catch (Throwable) { return 'receipt_changed'; }
         $authority = $this->receipts->authorityFromLockedState($this->heldState, $packet->contextReceiptRef);
         if ($authority === null || $authority['receipt']['payloadDigest'] !== $packet->corePayloadDigest
             || $authority['expected']['receiptDigest'] !== $packet->coreReceiptDigest

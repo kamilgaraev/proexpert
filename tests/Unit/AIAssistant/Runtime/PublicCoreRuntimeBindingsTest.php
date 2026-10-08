@@ -88,6 +88,17 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         return $app;
     }
 
+    private static function nativeItems(array $action): array
+    {
+        return \Tests\Unit\AIAssistant\Loop\AssistantLocalLoopTest::nativeItems($action);
+    }
+
+    private static function nativeProvider(GatewayModelProfile $profile, array $action): array
+    {
+        return ['outputItemsBytes' => GatewayModelRequest::canonicalJson(self::nativeItems($action)),
+            'providerResponseId' => 'resp_source_fixture', 'usage' => null, 'actualModel' => $profile->values()['modelId']];
+    }
+
     public function testNativeTerminalCustodyKeepsKernelChannelTransferAndProjectionTuple(): void
     {
         $binding = ['requestRef' => 'ref_'.str_repeat('a', 32), 'attemptRef' => 'ref_'.str_repeat('b', 32), 'projectionDigest' => str_repeat('c', 64)];
@@ -789,7 +800,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         $loop = PublicCoreContextBindings::processorLoop($context,
             static fn (?string $ref): array => $fixture->authority($ref), $tokenizer,
             static function (array $input) use ($fixture): array {
-                return $fixture->driverCalls++ === 0 ? OfflineLoopFixtures::searchAction() : OfflineLoopFixtures::priceAnswer($input);
+                return self::nativeItems($fixture->driverCalls++ === 0 ? OfflineLoopFixtures::searchAction() : OfflineLoopFixtures::priceAnswer($input));
             }, $fixture->adapter(), $fixture->validator(), static fn (): int => $fixture->now,
             static function (array $binding, array $conditions, array $evidence) use ($fixture): ?array {
                 if (!$fixture->gateAllowed || $fixture->corpus->guard($fixture->corpus->context()) !== null) { return null; }
@@ -1138,7 +1149,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         self::assertArrayNotHasKey('mappingEvidenceRef', $mapped);
         self::assertFalse($gateway->isActualProfile());
         $this->expectExceptionMessage('receipt_unavailable');
-        (new PublicCoreGatewayModelDriver($gateway))(['schemaVersion' => 'assistant-loop-input/1']);
+        (new PublicCoreGatewayModelDriver($gateway))(['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [], 'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []]);
     }
 
     public function testUnqualifiedGatewayProfileCannotProduceCoreProfileOrBody(): void
@@ -1156,15 +1167,16 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         $profile = self::gatewayProfile();
         $driver = new PublicCoreGatewayModelDriver($profile);
-        $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => ['currentRef' => 'ref_'.str_repeat('a', 32)],
+        $input = ['schemaVersion' => 'assistant-loop-input/2', 'context' => ['currentRef' => 'ref_'.str_repeat('a', 32)],
             'contextScope' => ['kind' => 'selected_entity'], 'tools' => [['name' => 'material.search']],
-            'toolReferences' => null, 'repair' => ['reason' => 'claims_invalid']];
+            'toolReferences' => null, 'repair' => ['reason' => 'claims_invalid'], 'nativeHistory' => []];
         $body = $driver->bodyBytes($input);
         $decoded = json_decode($body, true, 64, JSON_THROW_ON_ERROR);
-        self::assertSame(GatewayModelRequest::canonicalJson($input), $decoded['messages'][1]['content']);
+        $withoutHistory = $input; unset($withoutHistory['nativeHistory']);
+        self::assertSame(GatewayModelRequest::canonicalJson($withoutHistory), $decoded['input'][1]['content'][0]['text']);
         self::assertFalse($decoded['stream']);
         self::assertFalse($decoded['store']);
-        self::assertSame($profile->values()['maxOutputTokens'], $decoded['max_completion_tokens']);
+        self::assertSame($profile->values()['maxOutputTokens'], $decoded['max_output_tokens']);
         $request = self::gatewayRequest($profile, $body);
         self::assertNull((new GatewayPublicCoreRequestValidator())->validate($request, $profile, 1000));
         self::assertSame(hash('sha256', $body), $request->projectionDigest);
@@ -1208,7 +1220,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                     self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($state->packet));
                     self::assertFalse((new \ReflectionProperty($fixture, 'appHeld'))->getValue($fixture));
 
-                    return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Выбрать материал.']), 'usage' => null];
+                    return self::nativeProvider($current, ['type' => 'plan', 'plan' => 'Выбрать материал.']);
                 });
             $transport = new class($gateway, $state) implements GatewayModelTransport {
                 public function __construct(private GatewayModelTransport $gateway, private object $state) {}
@@ -1227,13 +1239,14 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                     return $mode !== 'binding-unavailable' && $contextRef === $binding['receipt']['contextRef'] ? $binding : null;
                 });
             try {
-                $action = $driver($input);
+                $action = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction::native($driver($input))->values();
                 self::assertNull($reason);
                 self::assertEquals(['type' => 'plan', 'plan' => 'Выбрать материал.'], $action);
                 self::assertSame(1, $state->writes);
                 self::assertInstanceOf(GatewayModelRequest::class, $state->packet);
                 self::assertSame(hash('sha256', $state->packet->bodyBytes), $state->packet->projectionDigest);
-                self::assertEquals($input, json_decode(json_decode($state->packet->bodyBytes, true, 64, JSON_THROW_ON_ERROR)['messages'][1]['content'], true, 64, JSON_THROW_ON_ERROR));
+                $withoutHistory = $input; unset($withoutHistory['nativeHistory']);
+                self::assertEquals($withoutHistory, json_decode(json_decode($state->packet->bodyBytes, true, 64, JSON_THROW_ON_ERROR)['input'][1]['content'][0]['text'], true, 64, JSON_THROW_ON_ERROR));
             } catch (LogicException $error) {
                 self::assertNotNull($reason, $error->getMessage());
                 self::assertSame($reason, $error->getMessage());
@@ -1302,9 +1315,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                 }
                 file_put_contents($directory.'/body', $body);
                 if ($mode === 'stopped') { fclose($connection); exit(0); }
-                $payload = GatewayModelRequest::canonicalJson(['id' => 'local-source-native-fence', 'object' => 'chat.completion',
-                    'created' => time(), 'model' => 'source-fixture-model', 'choices' => [['index' => 0,
-                        'message' => ['role' => 'assistant', 'content' => '{"type":"plan","plan":"Read public facts."}'], 'finish_reason' => 'stop']]]);
+                $payload = GatewayModelRequest::canonicalJson(['id' => 'local-source-native-fence', 'object' => 'response', 'created_at' => time(), 'status' => 'completed', 'model' => 'source-fixture-model', 'output' => self::nativeItems(['type' => 'plan', 'plan' => 'Read public facts.'])]);
                 fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ".strlen($payload)."\r\nConnection: close\r\n\r\n".$payload);
                 fclose($connection);
                 exit(0);
@@ -1371,7 +1382,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                 }, $processor, $channel);
             self::assertSame('source-fixture-model', $profile->values()['modelId']);
             try {
-                $action = $driver($input);
+                $action = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction::native($driver($input))->values();
                 self::assertSame('valid', $mode);
                 self::assertEquals(['type' => 'plan', 'plan' => 'Read public facts.'], $action);
             } catch (LogicException $failure) {
@@ -1473,48 +1484,44 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
 
     public function testDriverDecodesExactCanonicalActionAndRejectsForeignResponseBindings(): void
     {
-        $profile = self::gatewayProfile();
-        $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
-        $action = ['type' => 'plan', 'plan' => 'Выбрать разрешённый инструмент.'];
-        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson($action), null);
-        self::assertSame(json_decode(GatewayModelRequest::canonicalJson($action), true, 64, JSON_THROW_ON_ERROR), $driver->action($request, $response));
+        $profile = self::gatewayProfile(); $driver = new PublicCoreGatewayModelDriver($profile);
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(self::emptyNativeInput()));
+        $items = self::nativeItems(['type' => 'plan', 'plan' => 'Выбрать разрешённый инструмент.']);
+        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson($items), 'resp_fixture', null, $profile->values()['modelId']);
+        self::assertSame(GatewayModelRequest::decodeJson(GatewayModelRequest::canonicalJson($items)), $driver->action($request, $response));
+        self::assertNull($driver->actualModel());
         $other = GatewayModelResponse::fromArray(array_replace($response->values(), ['attemptRef' => 'attempt_'.str_repeat('d', 32)]));
-        $this->expectExceptionMessage('profile_changed');
-        $driver->action($request, $other);
+        $this->expectExceptionMessage('profile_changed'); $driver->action($request, $other);
+    }
+
+    private static function emptyNativeInput(): array
+    {
+        return ['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [],
+            'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []];
     }
 
     public function testDriverCannotPublishGuessedOrStaleActualModelEvidence(): void
     {
         $profile = GatewayModelProfile::fromArray(array_replace(self::gatewayProfile()->values(), [
-            'qualification' => 'actual', 'apiMethod' => 'chat_completions', 'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
-            'modelId' => 'source-fixture-model', 'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
+            'qualification' => 'actual', 'adapterRevision' => GatewayModelProfile::ADAPTER_REVISION, 'apiMethod' => 'responses',
+            'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT, 'modelId' => 'source-fixture-model',
+            'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
         ]));
-        $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
+        $driver = new PublicCoreGatewayModelDriver($profile); $request = self::gatewayRequest($profile, $driver->bodyBytes(self::emptyNativeInput()));
         $ref = 'ref_'.str_repeat('a', 32);
         $final = ['type' => 'final', 'text' => 'Публичный ответ.', 'claims' => [], 'sourceRefs' => [$ref],
             'claimScope' => ['kind' => 'selected_entity', 'scopeRef' => $ref, 'sourceGenerationRef' => $ref, 'unitRefs' => [$ref]]];
-        $bytes = GatewayModelRequest::canonicalJson($final);
-        $model = $profile->values()['modelId'];
+        $items = self::nativeItems($final); $bytes = GatewayModelRequest::canonicalJson($items); $model = $profile->values()['modelId'];
         $usage = ['inputTokens' => 10, 'outputTokens' => 10, 'totalTokens' => 20];
-        self::assertSame(json_decode($bytes, true, flags: JSON_THROW_ON_ERROR), $driver->action($request, GatewayModelResponse::completed($request, $bytes, $usage, $model)));
+        self::assertSame(GatewayModelRequest::decodeJson($bytes), $driver->action($request, GatewayModelResponse::completed($request, $bytes, 'resp_fixture', $usage, $model)));
         self::assertSame($model, $driver->actualModel());
         self::assertSame('public-gateway-actual', PublicCoreContextBindings::coreProfile($profile)['qualification']);
-        foreach ([null, 'wrong-provider-model'] as $invalid) {
-            try {
-                $driver->action($request, GatewayModelResponse::completed($request, $bytes, $usage, $invalid));
-                self::fail('Profile identity cannot replace observed response model');
-            } catch (LogicException $error) {
-                self::assertSame('invalid_model_output', $error->getMessage());
-                self::assertNull($driver->actualModel());
-            }
-        }
-        $stub = self::gatewayProfile();
-        $local = new PublicCoreGatewayModelDriver($stub);
-        $packet = self::gatewayRequest($stub, $local->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
-        $this->expectExceptionMessage('invalid_model_output');
-        $local->action($packet, GatewayModelResponse::completed($packet, $bytes, null, $model));
+        try { $driver->action($request, GatewayModelResponse::completed($request, $bytes, 'resp_fixture', $usage, 'wrong-model')); self::fail('No requested-model fallback'); }
+        catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); self::assertNull($driver->actualModel()); }
+        try { GatewayModelResponse::fromArray(array_replace(GatewayModelResponse::completed($request, $bytes, 'resp_fixture', $usage, $model)->values(), ['actualModel' => null])); self::fail('Missing observed model denied'); }
+        catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        $local = new PublicCoreGatewayModelDriver(self::gatewayProfile()); $packet = self::gatewayRequest(self::gatewayProfile(), $local->bodyBytes(self::emptyNativeInput()));
+        $this->expectExceptionMessage('invalid_model_output'); $local->action($packet, GatewayModelResponse::completed($packet, $bytes, 'resp_fixture', null, $model));
     }
 
     public function testReadyResourceCannotUseProfileGuessAsObservedResponseModel(): void
@@ -1531,7 +1538,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         $profile = self::gatewayProfile();
         $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [], 'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []]));
         $this->expectExceptionMessage('runtime_not_activated');
         $driver->action($request, GatewayModelResponse::unavailable($request, 'runtime_not_activated'));
     }
@@ -1540,9 +1547,9 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         $profile = self::gatewayProfile();
         $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
-        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Шаг']),
-            ['inputTokens' => 1, 'outputTokens' => 257, 'totalTokens' => 258]);
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [], 'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []]));
+        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson(self::nativeItems(['type' => 'plan', 'plan' => 'Шаг'])), 'resp_fixture',
+            ['inputTokens' => 1, 'outputTokens' => 257, 'totalTokens' => 258], $profile->values()['modelId']);
         $this->expectExceptionMessage('budget_exceeded');
         $driver->action($request, $response);
     }
@@ -1586,7 +1593,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         return GatewayModelProfile::fromArray([
             'profileRef' => 'profile_'.str_repeat('a', 32), 'qualification' => 'local-stub',
-            'adapterRevision' => 'unit-public-adapter/1', 'apiMethod' => 'local_action', 'endpoint' => 'local://public-core-stub',
+            'adapterRevision' => 'unit-public-adapter/1', 'apiMethod' => 'responses', 'endpoint' => 'local://public-core-stub',
             'modelId' => 'local-action-stub', 'modelRevision' => 'unit/1', 'tokenizerId' => 'unit-tokenizer', 'tokenizerRevision' => 'unit/1',
             'mappingEvidenceRef' => 'mapping_'.str_repeat('b', 32), 'capabilityEvidenceRef' => 'capability_'.str_repeat('b', 32),
             'capacityEvidenceRef' => 'capacity_'.str_repeat('b', 32), 'contextWindow' => 32768,

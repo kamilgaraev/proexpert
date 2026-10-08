@@ -32,6 +32,17 @@ require_once __DIR__ . '/../../AIAssistant/Context/OfflineContextFixtures.php';
 
 final class PublicCoreAuthorityTest extends TestCase
 {
+    private static function nativeItems(array $action): array
+    {
+        return \Tests\Unit\AIAssistant\Loop\AssistantLocalLoopTest::nativeItems($action);
+    }
+
+    private static function nativeProvider(GatewayModelProfile $profile, array $action): array
+    {
+        return ['outputItemsBytes' => GatewayModelRequest::canonicalJson(self::nativeItems($action)),
+            'providerResponseId' => 'resp_source_fixture', 'usage' => null, 'actualModel' => $profile->values()['modelId']];
+    }
+
     private string $directory;
     private RegisteredPublicFixtureRegistry $registry;
     private PublicCoreReceiptStore $store;
@@ -104,9 +115,9 @@ final class PublicCoreAuthorityTest extends TestCase
             'input_id' => $input, 'request_id' => $requestId];
     }
 
-    private function open(): array
+    private function open(string $requestId = 'cc5b0d36-5c63-4a8c-bcfa-53c41e43ed0c'): array
     {
-        $opened = $this->sessions->openOrResume(['credential' => 'server-ticket'], $this->selection());
+        $opened = $this->sessions->openOrResume(['credential' => 'server-ticket'], $this->selection(requestId: $requestId));
         self::assertSame('accepted', $opened['status']);
         self::assertFalse($opened['transportAllowed']);
         return $opened;
@@ -413,7 +424,7 @@ final class PublicCoreAuthorityTest extends TestCase
     {
         $profile = $selected ?? GatewayModelProfile::fromArray([
             'profileRef' => 'ref_source_test_profile', 'qualification' => 'local-stub', 'adapterRevision' => 'fixture-adapter/1',
-            'apiMethod' => 'local_action', 'endpoint' => 'local://public-core-stub', 'modelId' => 'local-action-stub',
+            'apiMethod' => 'responses', 'endpoint' => 'local://public-core-stub', 'modelId' => 'local-action-stub',
             'modelRevision' => 'source/1', 'tokenizerId' => 'local-byte-counter', 'tokenizerRevision' => 'source/1',
             'mappingEvidenceRef' => 'ref_source_mapping_evidence', 'capabilityEvidenceRef' => 'ref_source_capability_evidence',
             'capacityEvidenceRef' => 'ref_source_capacity_evidence', 'contextWindow' => 100000,
@@ -432,11 +443,11 @@ final class PublicCoreAuthorityTest extends TestCase
                 'mappingEvidenceRef' => $current->values()['mappingEvidenceRef']]);
     }
 
-    private function dispatchPreparation(?GatewayModelProfile $selected = null): array
+    private function dispatchPreparation(?GatewayModelProfile $selected = null, string $requestId = 'cc5b0d36-5c63-4a8c-bcfa-53c41e43ed0c'): array
     {
         $readiness = $this->qualifiedReadiness($selected);
         $profile = $readiness->qualifiedProfile();
-        $opened = $this->open();
+        $opened = $this->open($requestId);
         $request = $this->sessions->lookup(['credential' => 'server-ticket'], $opened['request_ref']);
         $corpus = SyntheticMaterialSearchCorpus::named('material-search-v1');
         $this->runtimeSource = ['registryDigest' => $this->registry->manifestDigest(),
@@ -448,11 +459,14 @@ final class PublicCoreAuthorityTest extends TestCase
         });
         $fixture = new OfflineContextFixtures(0);
         $fixture->profile = $readiness->coreProfile();
+        $fixture->snapshot['adapterRevision'] = $fixture->profile['adapterRevision'];
         $fixture->snapshot['conversation']['ref'] = $request['conversationRef'];
         $fixture->snapshot['sources'] = [];
         $fixture->artifacts = [];
         $fixture->addArtifact('system', 'system', 'Answer using only registered public facts.');
         $fixture->addArtifact('current', 'user', $request['registered']['display_text']);
+        foreach ($fixture->artifacts as &$artifact) { $artifact['adapterRevision'] = $fixture->profile['adapterRevision']; }
+        unset($artifact);
         $aliases = [];
         $sources = [];
         $publisher = $this->sessions->publisher(['credential' => 'server-ticket'], $request['requestRef'],
@@ -482,14 +496,14 @@ final class PublicCoreAuthorityTest extends TestCase
                 return $publisher->publish($event, $data, $expected);
             });
         $prepared = $service->prepare($fixture->profile['profileRef'], $fixture->request());
-        self::assertSame('READY', $prepared['status']);
+        self::assertSame('READY', $prepared['status'], json_encode($prepared, JSON_THROW_ON_ERROR));
         $saved = $publisher->authority($prepared['payload']['contextRef']);
         $authority = ['snapshot' => $fixture->snapshot, 'profile' => $fixture->profile, 'lineage' => $saved['binding']['lineage'],
             'stored' => ['status' => 'committed', 'receipt' => $saved['receipt'], 'digest' => $saved['expected']['receiptDigest']],
             'artifacts' => $fixture->artifacts];
         $native = AssistantContextReceipt::consume($prepared, $authority, $fixture->profile['profileRef']);
-        $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => $native->payload(), 'contextScope' => $native->contextScope(),
-            'tools' => [], 'toolReferences' => null, 'repair' => null];
+        $input = ['schemaVersion' => 'assistant-loop-input/2', 'context' => $native->payload(), 'contextScope' => $native->contextScope(),
+            'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []];
         $dispatch = new PublicCoreDispatchAuthority($publisher, $readiness, $this->sessions, ['viewerTicketRef' => 'ref_server_viewer_ticket'],
             $request['requestRef'], fn (): array => $this->runtimeSource,
             $this->appControlSource(), fn (): int => $this->now, fn (): int => $this->nativePins === null ? $this->monoMs : intdiv(hrtime(true), 1000000),
@@ -623,6 +637,46 @@ final class PublicCoreAuthorityTest extends TestCase
         return $dispatch->withDispatchFence($packet, $this->withAssertions($operation));
     }
 
+    public function testNativeReplayMustEqualOwningConsumedAttemptItemsAndCurrentSource(): void
+    {
+        [$dispatch, $packet, $readiness, , $input, $binding] = $this->dispatchPreparation();
+        $response = $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            self::assertSame('public-core-gateway-upload-grant/1', $dispatch->authorizeWrite($packet)['schemaVersion']);
+            $this->nativeEvent = 'uploaded'; self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
+            return $this->planResponse($packet);
+        });
+        self::assertSame('completed', $response->status);
+        $input['nativeHistory'] = GatewayModelResponse::outputItems($response->outputItemsBytes);
+        $next = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile());
+        self::assertInstanceOf(GatewayModelRequest::class, $next);
+        self::assertSame(PublicCoreGatewayModelDriver::nativeBodyBytes($readiness->qualifiedProfile(), $input), $next->bodyBytes);
+        foreach (['omit', 'alter', 'duplicate', 'orphan'] as $mode) {
+            $bad = $input;
+            if ($mode === 'omit') { $bad['nativeHistory'] = []; }
+            if ($mode === 'alter') { $bad['nativeHistory'][0]['id'] .= '_foreign'; }
+            if ($mode === 'duplicate') { $bad['nativeHistory'][] = $bad['nativeHistory'][0]; }
+            if ($mode === 'orphan') { $bad['nativeHistory'][] = ['type' => 'function_call_output', 'call_id' => 'foreign', 'output' => '{}']; }
+            self::assertIsArray($dispatch->projectForDispatch($bad, $binding, $readiness->qualifiedProfile()), $mode);
+        }
+        [$other, , $otherReadiness, , $otherInput, $otherBinding] = $this->dispatchPreparation(requestId: '68e92b44-17f1-4265-85be-10e13bd9abf8');
+        $otherInput['nativeHistory'] = $input['nativeHistory'];
+        self::assertIsArray($other->projectForDispatch($otherInput, $otherBinding, $otherReadiness->qualifiedProfile()));
+        $this->runtimeSource['runtimeGenerationRef'] = 'ref_changed_native_generation';
+        self::assertIsArray($dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()));
+    }
+
+    public function testNativeReplayPreparedBeforeCommittedResponseCannotExecuteStaleHistory(): void
+    {
+        [$dispatch, $packet, $readiness, , $input, $binding] = $this->dispatchPreparation();
+        $stale = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile()); self::assertInstanceOf(GatewayModelRequest::class, $stale);
+        self::assertSame('completed', $this->runDispatch($dispatch, $packet, function () use ($dispatch, $packet): GatewayModelResponse {
+            $dispatch->authorizeWrite($packet); $this->nativeEvent = 'uploaded'; $dispatch->uploadComplete($packet); return $this->planResponse($packet);
+        })->status);
+        $entered = 0;
+        self::assertNotSame('completed', $this->runDispatch($dispatch, $stale, function () use (&$entered, $stale): GatewayModelResponse { $entered++; return $this->planResponse($stale); })->status);
+        self::assertSame(0, $entered);
+    }
+
     public function testNativeCommittedProjectionUsesSeparateGatewayFingerprintAndSingleDurableAttempt(): void
     {
         [$dispatch, $packet, $readiness] = $this->dispatchPreparation();
@@ -643,7 +697,7 @@ final class PublicCoreAuthorityTest extends TestCase
             self::assertNotNull($this->store->transaction(static fn (): array => ['released' => true]));
             $this->monoMs += 3000;
             $this->now += 3;
-            return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Find the public price using material.search.']), 'usage' => null];
+            return self::nativeProvider($profile, ['type' => 'plan', 'plan' => 'Find the public price using material.search.']);
         });
         self::assertSame('completed', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
         self::assertSame('blocked', $this->runDispatch($dispatch, $packet, $gateway->send(...))->status);
@@ -704,7 +758,7 @@ final class PublicCoreAuthorityTest extends TestCase
     private function nativeFixtureProfile(): GatewayModelProfile
     {
         return GatewayModelProfile::fromArray(array_replace($this->qualifiedReadiness()->qualifiedProfile()->values(), [
-            'qualification' => 'actual', 'apiMethod' => 'chat_completions', 'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
+            'qualification' => 'actual', 'adapterRevision' => GatewayModelProfile::ADAPTER_REVISION, 'apiMethod' => 'responses', 'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
             'modelId' => 'source-fixture-model', 'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
         ]));
     }
@@ -771,9 +825,7 @@ final class PublicCoreAuthorityTest extends TestCase
                 if ($mode === 'full') {
                     file_put_contents($this->directory . '/body', $received);
                     usleep(2300000);
-                    $payload = GatewayModelRequest::canonicalJson(['id' => 'source-fixture-completion', 'object' => 'chat.completion',
-                        'created' => time(), 'model' => 'source-fixture-model', 'choices' => [['index' => 0,
-                            'message' => ['role' => 'assistant', 'content' => '{"type":"plan","plan":"Read public facts."}'], 'finish_reason' => 'stop']]]);
+                    $payload = GatewayModelRequest::canonicalJson(['id' => 'source-fixture-completion', 'object' => 'response', 'created_at' => time(), 'status' => 'completed', 'model' => 'source-fixture-model', 'output' => self::nativeItems(['type' => 'plan', 'plan' => 'Read public facts.'])]);
                     fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " . strlen($payload) . "\r\nConnection: close\r\n\r\n" . $payload);
                 }
                 fclose($connection);
@@ -1330,7 +1382,7 @@ final class PublicCoreAuthorityTest extends TestCase
 
     private function planResponse(GatewayModelRequest $packet): GatewayModelResponse
     {
-        return GatewayModelResponse::completed($packet, GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Read public facts.']), null);
+        return GatewayModelResponse::completed($packet, GatewayModelRequest::canonicalJson(self::nativeItems(['type' => 'plan', 'plan' => 'Read public facts.'])), 'resp_source_fixture', null, $this->currentGatewayProfile->values()['modelId']);
     }
 
     public function testGrantSubtractsFullRpcAndProcessingWithoutShorteningGenuineResponseExpiry(): void
@@ -1646,7 +1698,7 @@ final class PublicCoreAuthorityTest extends TestCase
             return $this->planResponse($packet);
         });
         self::assertSame('authorization_changed', $response->reasonCode);
-        self::assertNull($response->actionBytes);
+        self::assertNull($response->outputItemsBytes);
     }
 
     public function testExpiredStoppedControlDoesNotEnterUndeclaredCleanupFallback(): void
@@ -1722,6 +1774,8 @@ final class PublicCoreAuthorityTest extends TestCase
             self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($packet));
             return $this->planResponse($packet);
         })->status);
+        $record = $this->store->transaction(fn (array &$state): array => $state['requests'][$packet->requestRef]['dispatchAttempts'][$packet->attemptRef]);
+        $input['nativeHistory'] = $record['nativeItems'];
         $next = $dispatch->projectForDispatch($input, $binding, $readiness->qualifiedProfile());
         self::assertInstanceOf(GatewayModelRequest::class, $next);
         $this->nativeEvent = 'pending';
@@ -1760,7 +1814,7 @@ final class PublicCoreAuthorityTest extends TestCase
                     $held = (new \ReflectionProperty($dispatch, 'heldPacket'))->getValue($dispatch);
                     self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($held));
                     $body = json_decode($bytes, true, flags: JSON_THROW_ON_ERROR);
-                    $input = json_decode($body['messages'][1]['content'], true, flags: JSON_THROW_ON_ERROR);
+                    $input = json_decode($body['input'][1]['content'][0]['text'], true, flags: JSON_THROW_ON_ERROR);
                     if ($mode === 'revoked') { $this->viewer['authorized'] = false; }
                     if ($mode === 'tenant_changed') { $this->viewer['organizationRef'] = 'other-current-organization'; }
                     if ($mode === 'bounded') {
@@ -1774,6 +1828,9 @@ final class PublicCoreAuthorityTest extends TestCase
                             'claims' => [], 'sourceRefs' => $sources, 'claimScope' => $input['contextScope']];
                     } elseif ($input['toolReferences'] === null) {
                         $action = ['type' => 'tool', 'tool' => 'material.search', 'arguments' => ['query' => 'бетон', 'limit' => 1]];
+                    } elseif ($mode === 'read_selected' && $calls === 2) {
+                        $action = ['type' => 'tool', 'tool' => 'material.read_selected',
+                            'arguments' => ['ref' => $input['toolReferences']['selectionRefs'][0]]];
                     } else {
                         $sources = [];
                         foreach ($input['context']['messages'] as $message) { if ($message['role'] === 'tool') { $sources = $message['sourceRefs']; } }
@@ -1781,7 +1838,7 @@ final class PublicCoreAuthorityTest extends TestCase
                             'claims' => [['value' => '7800.00', 'unit' => 'm3', 'currency' => 'RUB', 'sourceRefs' => $sources]],
                             'sourceRefs' => $sources, 'claimScope' => $input['toolReferences']['claimScope']];
                     }
-                    return ['actionBytes' => GatewayModelRequest::canonicalJson($action), 'usage' => null];
+                    return self::nativeProvider($profile, $action);
                 });
                 return new PublicCoreGatewayModelDriver($profile, $dispatch, $gateway,
                     function (string $ref) use ($privateBinding): array { $this->nativeEvent = 'pending'; return $privateBinding($ref); });
@@ -1807,31 +1864,47 @@ final class PublicCoreAuthorityTest extends TestCase
         $result = $record['execution']['result'];
         self::assertSame('completed', $result['status']);
         self::assertNull($result['actual_model']);
-        self::assertCount($mode === 'photo' ? 0 : 1, $result['tools']);
+        self::assertCount($mode === 'photo' ? 0 : ($mode === 'read_selected' ? 2 : 1), $result['tools']);
         if ($mode !== 'photo') {
+            $first = array_values($record['dispatchAttempts'])[0];
+            self::assertSame('function_call', $first['nativeItems'][0]['type']);
+            self::assertSame($first['nativeItems'][0]['call_id'], $first['nativeToolOutput']['call_id']);
+            self::assertSame(hash('sha256', GatewayModelRequest::canonicalJson($first['nativeItems'])), $first['nativeItemsDigest']);
+            self::assertSame(hash('sha256', GatewayModelRequest::canonicalJson($first['nativeToolOutput'])), $first['nativeToolOutputDigest']);
+            self::assertNotSame($first['nativeItems'][0]['call_id'], $first['nativeInternalCallRef']);
+            self::assertSame($first['nativeInternalCallRef'], $result['tools'][0]['call_ref']);
+            self::assertStringNotContainsString('PRIVATE', $first['nativeToolOutput']['output']);
             self::assertSame('Поиск публичных материалов', $result['tools'][0]['label']);
+            if ($mode === 'read_selected') {
+                $second = array_values($record['dispatchAttempts'])[1];
+                self::assertSame('material_read_selected', $second['nativeItems'][0]['name']);
+                self::assertSame($second['nativeItems'][0]['call_id'], $second['nativeToolOutput']['call_id']);
+                self::assertSame('Чтение выбранного публичного материала', $result['tools'][1]['label']);
+                self::assertSame($second['nativeInternalCallRef'], $result['tools'][1]['call_ref']);
+                self::assertStringNotContainsString('PRIVATE', $second['nativeToolOutput']['output']);
+            }
             self::assertCount(1, $result['sources']);
             self::assertSame('Публичный каталог материалов', $result['sources'][0]['label']);
         } else { self::assertCount(2, $result['sources']); }
-        self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+        self::assertSame($mode === 'photo' ? 1 : ($mode === 'read_selected' ? 3 : 2), $calls);
         foreach (['execute_owned', 'lookup_owned', 'execute_owned'] as $replay) {
             $published = $processor->handle($replay, ['viewer_ticket_ref' => 'ref_server_viewer_ticket',
                 'request_ref' => $opened['request_ref']], $peer);
             self::assertSame('public-core-result-publication/1', $published['schemaVersion']);
             self::assertArrayNotHasKey('reply', $published);
-            self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+            self::assertSame($mode === 'photo' ? 1 : ($mode === 'read_selected' ? 3 : 2), $calls);
         }
         $this->viewer['authorized'] = false;
         self::assertSame('authorization_changed', $processor->handle('lookup_owned', [
             'viewer_ticket_ref' => 'ref_server_viewer_ticket', 'request_ref' => $opened['request_ref'],
         ], $peer)['reasonCode']);
-        self::assertSame($mode === 'photo' ? 1 : 2, $calls);
+        self::assertSame($mode === 'photo' ? 1 : ($mode === 'read_selected' ? 3 : 2), $calls);
     }
 
     public static function registeredCompositionCases(): array
     {
-        return array_combine(['search', 'photo', 'revoked', 'tenant_changed', 'bounded'],
-            array_map(static fn (string $mode): array => [$mode], ['search', 'photo', 'revoked', 'tenant_changed', 'bounded']));
+        return array_combine(['search', 'read_selected', 'photo', 'revoked', 'tenant_changed', 'bounded'],
+            array_map(static fn (string $mode): array => [$mode], ['search', 'read_selected', 'photo', 'revoked', 'tenant_changed', 'bounded']));
     }
 
     private function processor(?\Closure $composition = null, ?\Closure $currentRuntimeSource = null, bool $withRuntimeReader = true,
