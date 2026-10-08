@@ -67,7 +67,7 @@ prepare_public_core_inactive_runtime() {
 
 # Existing exact-image main route only. Never start a role or generate a proof.
 prepare_public_core_image_inputs() {
-  local image_ref="$1" release_sha="$2" role gid wrapper current expected_source source_sha
+  local image_ref="$1" release_sha="$2" previous_release_sha="${3:-}" role gid wrapper current expected_source source_sha previous_source= old_wrapper_hash
   [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
   for role in gateway/credential app processor; do
     case "${role}" in gateway/credential) gid=41003 ;; app) gid=82 ;; processor) gid=41002 ;; esac
@@ -100,14 +100,20 @@ prepare_public_core_image_inputs() {
     --entrypoint php "${image_ref}" docker/public-core/runtime.php provision-credentials "${release_sha}" || return 1
   source_sha="$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)"
   [[ "${source_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  if [ -n "${previous_release_sha}" ]; then
+    [[ "${previous_release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
+    previous_source="$(set -o pipefail; git show "${previous_release_sha}:docker/public-core/runtime.php" | sha256sum | cut -d' ' -f1)" || return 1
+    [[ "${previous_source}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  fi
   for role in app processor; do
     case "${role}" in app) gid=82 ;; processor) gid=41002 ;; esac
     wrapper="/etc/most/public-core/${role}/bootstrap.php"
     [ ! -L "${wrapper}" ] && [ "$(stat -c '%u:%g:%a' "${wrapper}")" = "0:${gid}:640" ] || return 1
-    # Replace only our exact inactive placeholder, never root-managed active code.
+    # Accept only the inactive placeholder or a pinned generated bootstrap wrapper.
     expected_source="$(printf '<?php return null;\n' | sha256sum | cut -d' ' -f1)"
     current="$(sha256sum "${wrapper}" | cut -d' ' -f1)"
-    [ "${current}" = "${expected_source}" ] || continue
+    # Only the exact inactive placeholder or our exact previous-source generated wrapper may upgrade.
+    # An independently root-managed executable is never guessed or overwritten.
     local temporary
     temporary="$(mktemp "/etc/most/public-core/${role}/.bootstrap.XXXXXXXX")" || return 1
     {
@@ -120,11 +126,108 @@ prepare_public_core_image_inputs() {
         printf 'return \\Most\\PublicCore\\ProcessorRuntimeBootstrap::protectedListener();\n'
       fi
     } > "${temporary}"
+    if [ "${current}" != "${expected_source}" ]; then
+      old_wrapper_hash="$(sha256sum "${temporary}" | cut -d' ' -f1)" || { rm -f -- "${temporary}"; return 1; }
+      if [ "${current}" = "${old_wrapper_hash}" ]; then rm -f -- "${temporary}"; continue; fi
+      [ -n "${previous_source}" ] || { rm -f -- "${temporary}"; return 1; }
+      old_wrapper_hash="$(sed "s/${source_sha}/${previous_source}/" "${temporary}" | sha256sum | cut -d' ' -f1)" || { rm -f -- "${temporary}"; return 1; }
+      [ "${current}" = "${old_wrapper_hash}" ] || { rm -f -- "${temporary}"; return 1; }
+    fi
     chown "root:${gid}" "${temporary}" && chmod 0640 "${temporary}" || { rm -f -- "${temporary}"; return 1; }
-    # Refuse concurrent root mutation of the expected inactive wrapper.
-    [ "$(sha256sum "${wrapper}" | cut -d' ' -f1)" = "${expected_source}" ] \
+    # Refuse concurrent root mutation of the exact accepted old bytes.
+    [ "$(sha256sum "${wrapper}" | cut -d' ' -f1)" = "${current}" ] \
       && mv -T -- "${temporary}" "${wrapper}" || { rm -f -- "${temporary}"; return 1; }
   done
+}
+
+# Future separately reviewed input-only mode. Read-only store mount, no provision/publish.
+describe_managed_model_input() {
+  local image_ref="$1" release_sha="$2" expected_runtime="$3" observed image_id output
+  [[ "${image_ref}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] \
+    && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] && [[ "${expected_runtime}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [ "$(git rev-parse HEAD)" = "${release_sha}" ] && git diff --quiet -- docker/public-core/runtime.php deploy/backend-runtime-allowlist.sh || return 1
+  [ "$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)" = "${expected_runtime}" ] || return 1
+  image_id="$(docker image inspect --format '{{.Id}}' "${image_ref}" 2>/dev/null)" || return 1
+  [[ "${image_id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  observed="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image_ref}" 2>/dev/null)" || return 1
+  [ "${observed}" = "${release_sha}" ] || return 1
+  observed="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image_ref}" -r \
+    '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
+  [ "${observed}" = "${release_sha}|${expected_runtime}" ] || return 1
+  output="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+    --security-opt no-new-privileges --user 0:0 --log-driver none \
+    --mount type=bind,source=/var/www/prohelper/.env,target=/run/most-ci/environment,readonly \
+    --entrypoint php "${image_ref}" docker/public-core/runtime.php describe-model-input "${release_sha}" 2>/dev/null)" || return 1
+  [ "${#output}" -le 16384 ] || return 1
+  # Never emit rejected output. Fixed schema/enums guard even a malformed export.
+  printf '%s' "${output}" | python3 -c '
+import json,sys,re
+try:
+ d=json.load(sys.stdin)
+ keys="schemaVersion releaseSha sourceConfigDigest sourcePolicyDigest observationKind provider baseUri apiMethod modelId defaultProfile profiles credentialReference fieldOrigins effectiveRuntimeSettingsObserved actualModelQualified activationAuthorized".split()
+ assert set(d)==set(keys) and d["schemaVersion"]=="existing-model-route-input/1" and d["releaseSha"]==sys.argv[1]
+ assert d["sourceConfigDigest"]==sys.argv[2] and d["sourcePolicyDigest"]==sys.argv[3]
+ assert d["observationKind"]=="managed_deployment_input" and d["provider"] in ["timeweb","openai"]
+ assert d["baseUri"] in ["https://api.timeweb.ai/v1","unavailable"] and d["apiMethod"] in ["responses","unavailable"]
+ assert d["modelId"] in ["openai/gpt-6-luna","unavailable"] and d["defaultProfile"] in ["assistant","json","fast","premium","unavailable"]
+ assert d["credentialReference"] in ["TIMEWEB_AI_API_KEY","TIMEWEB_API_KEY","TIMEWEB_AI_PROXY_KEY","unavailable"]
+ assert all(d[k] is False for k in ["effectiveRuntimeSettingsObserved","actualModelQualified","activationAuthorized"])
+ assert set(d["profiles"])==set(["assistant","json","fast","premium"])
+ for p in d["profiles"].values():
+  assert set(p)==set(["maxOutputTokens","timeout"]) and type(p["maxOutputTokens"]) is int and 1<=p["maxOutputTokens"]<=10000000 and type(p["timeout"]) is int and 1<=p["timeout"]<=120
+ allowed=set("apiMethod modelId LLM_PROVIDER TIMEWEB_AI_BASE_URI TIMEWEB_AI_DEFAULT_PROFILE TIMEWEB_AI_MAX_TOKENS TIMEWEB_AI_TIMEOUT TIMEWEB_AI_ASSISTANT_MAX_TOKENS TIMEWEB_AI_ASSISTANT_TIMEOUT TIMEWEB_AI_JSON_MAX_TOKENS TIMEWEB_AI_JSON_TIMEOUT TIMEWEB_AI_FAST_MAX_TOKENS TIMEWEB_AI_FAST_TIMEOUT TIMEWEB_AI_PREMIUM_MAX_TOKENS TIMEWEB_AI_PREMIUM_TIMEOUT".split())
+ assert set(d["fieldOrigins"])==allowed and all(v in ["default","managed_store","source_policy"] for v in d["fieldOrigins"].values())
+ print(json.dumps(d,separators=(",",":")))
+except Exception: sys.exit(1)
+' "${release_sha}" "$(sha256sum app/BusinessModules/Features/AIAssistant/config/ai-assistant.php | cut -d' ' -f1)" "$(sha256sum app/Support/AI/LunaModelPolicy.php | cut -d' ' -f1)"
+}
+
+# After writer drain/migrations only. The API is staged once before pinned peers.
+# Parked processes retain their IDs/PIDs; publication releases those same processes.
+stage_public_core_approved_runtime() {
+  local image_ref="$1" release_sha="$2" api_id api_pid expected actual state
+  state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
+  case "${state}" in inactive) return 0 ;; approved) ;; *) return 1 ;; esac
+  [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
+  MOST_IMAGE_REF="${image_ref}" docker compose up -d --no-deps --force-recreate api || return 1
+  api_id="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" || return 1
+  [[ "${api_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  api_pid="$(docker inspect --format '{{.State.Pid}}' "${api_id}")" || return 1
+  [[ "${api_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+  expected="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
+  actual="$(docker inspect --format '{{.Image}}' "${api_id}")" || return 1
+  [[ "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]] && [ "${actual}" = "${expected}" ] || return 1
+  MOST_IMAGE_REF="${image_ref}" docker compose -f docker-compose.yml -f - --profile public-core up -d --no-deps public-core-processor public-core-gateway <<'YAML' || return 1
+services:
+  public-core-processor:
+    command: [php, docker/public-core/runtime.php, parked-processor]
+  public-core-gateway:
+    command: [php, docker/public-core/runtime.php, parked-gateway]
+YAML
+  local role ids mode peer_pid
+  local -A parked_ids=() parked_pids=()
+  for role in processor gateway; do
+    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=public-core-${role}")" || return 1
+    [[ "${ids}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    mode="$(docker inspect --format '{{.HostConfig.PidMode}}' "${ids}")" || return 1
+    [ "${mode}" = "container:${api_id}" ] || return 1
+    peer_pid="$(docker inspect --format '{{.State.Pid}}' "${ids}")" || return 1
+    [[ "${peer_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+    parked_ids[$role]="${ids}"; parked_pids[$role]="${peer_pid}"
+  done
+  observe_public_core_parked_peers "${image_ref}" "${release_sha}" || return 1
+  prepare_public_core_projections "${image_ref}" "${release_sha}" || return 1
+  [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${api_id}")" = "true:${api_pid}:${expected}" ] || return 1
+  [ "$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" = "${api_id}" ] || return 1
+  for role in processor gateway; do
+    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=public-core-${role}")" || return 1
+    [ "${ids}" = "${parked_ids[$role]}" ] || return 1
+    [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${ids}")" = "true:${parked_pids[$role]}:${expected}" ] || return 1
+    [ "$(docker inspect --format '{{.HostConfig.PidMode}}' "${ids}")" = "container:${api_id}" ] || return 1
+  done
+  # The caller must exclude api/protected roles from all subsequent recreation.
+  MOST_PUBLIC_CORE_STAGED_API="${api_id}"
 }
 
 # Managed lifecycle only. Keep the old deny barrier until roles and endpoints are gone.
@@ -286,7 +389,7 @@ prepare_public_core_projections() {
   local -a pid_options=()
   state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
   case "${state}" in
-    inactive) ;;
+    inactive) return 0 ;;
     approved)
       api_id="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" || return 1
       [[ "${api_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -296,7 +399,7 @@ prepare_public_core_projections() {
       pid_options=(--pid "container:${api_id}") ;;
     *) return 1 ;;
   esac
-  docker run --rm "${pid_options[@]}" --network none --read-only --cap-drop ALL --cap-add CHOWN \
+  timeout --signal=TERM --kill-after=5s 20s docker run --rm "${pid_options[@]}" --network none --read-only --cap-drop ALL --cap-add CHOWN \
     --security-opt no-new-privileges --user 0:0 \
     --mount type=bind,source=/etc/most/public-core,target=/etc/most/public-core \
     --tmpfs /tmp:rw,noexec,nosuid,size=16777216,mode=1777 \

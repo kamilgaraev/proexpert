@@ -34,9 +34,14 @@ on:
         type: choice
         required: true
         default: release
-        options: [release, qualification-only]
+        options: [release, qualification-only, input-only]
       expected_source_sha:
-        description: Full exact source SHA required for qualification-only mode
+        description: Full exact source SHA required for qualification-only or input-only mode
+        type: string
+        required: false
+        default: ''
+      input_image_ref:
+        description: Existing exact-source immutable image for input-only; no build or pull
         type: string
         required: false
         default: ''
@@ -48,11 +53,13 @@ jobs:
     permissions: {}
     outputs:
       allowed: ${{ steps.guard.outputs.allowed }}
+      input_allowed: ${{ steps.guard.outputs.input_allowed }}
     steps:
       - name: Select literal main release without credentials
         id: guard
         env:
           REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -63,7 +70,12 @@ jobs:
               workflow_dispatch) if [ "$REQUESTED_MODE" = release ]; then allowed=true; fi ;;
             esac
           fi
-          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
+          input_allowed=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$REQUESTED_MODE" = input-only ] \
+            && [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] && [ "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA" ]; then
+            input_allowed=true
+          fi
+          printf 'allowed=%s\ninput_allowed=%s\n' "$allowed" "$input_allowed" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: release_mode
@@ -481,8 +493,7 @@ jobs:
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE_REF}"
             prepare_public_core_deny_policy
-            prepare_public_core_image_inputs "${IMAGE_REF}" "${RELEASE_SHA}"
-            prepare_public_core_projections "${IMAGE_REF}" "${RELEASE_SHA}"
+            prepare_public_core_image_inputs "${IMAGE_REF}" "${RELEASE_SHA}" "${PREVIOUS_RELEASE_SHA}"
 
             upsert_env MOST_IMAGE_REF "${IMAGE_REF}"
             upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
@@ -529,7 +540,21 @@ jobs:
             assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
-            MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            # All drain/migrations and broad checks are complete before the 30s park window.
+            MOST_PUBLIC_CORE_STAGED_API=''
+            stage_public_core_approved_runtime "${IMAGE_REF}" "${RELEASE_SHA}"
+            RESUME_SERVICES="${BACKEND_SERVICES}"
+            if [ -n "${MOST_PUBLIC_CORE_STAGED_API}" ]; then
+              RESUME_SERVICES=''
+              for service in "${MOST_COMPOSE_WRITER_SERVICES[@]}"; do
+                [ "${service}" = api ] || RESUME_SERVICES="${RESUME_SERVICES} ${service}"
+              done
+              # Never --remove-orphans here: it could remove the parked-command overrides.
+              MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${RESUME_SERVICES}
+              test "$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" = "${MOST_PUBLIC_CORE_STAGED_API}"
+            else
+              MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            fi
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
             if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
               docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
@@ -560,6 +585,71 @@ jobs:
             docker compose logs --tail=200 horizon
             docker compose logs --tail=200 geometry-worker
             exit 1
+
+  model_input:
+    needs: release_mode
+    if: needs.release_mode.outputs.input_allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'input-only'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Validate literal main input-only before managed credentials
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          INPUT_IMAGE_REF: ${{ inputs.input_image_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$REQUESTED_MODE" = input-only
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA"
+          [[ "$INPUT_IMAGE_REF" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
+      - name: Checkout exact input source without persisted credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin existing input helper source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'allowlist=%s\n' "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          printf 'runtime=%s\n' "$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Describe staged model input through existing managed custodian
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          INPUT_SHA: ${{ github.sha }}
+          INPUT_IMAGE_REF: ${{ inputs.input_image_ref }}
+          INPUT_ALLOWLIST_SHA: ${{ steps.source.outputs.allowlist }}
+          INPUT_RUNTIME_SHA: ${{ steps.source.outputs.runtime }}
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          envs: INPUT_SHA,INPUT_IMAGE_REF,INPUT_ALLOWLIST_SHA,INPUT_RUNTIME_SHA
+          command_timeout: 120s
+          script_stop: true
+          script: |
+            set -euo pipefail
+            [[ "${INPUT_SHA}" =~ ^[0-9a-f]{40}$ ]]
+            [[ "${INPUT_ALLOWLIST_SHA}" =~ ^[0-9a-f]{64}$ ]]
+            [[ "${INPUT_RUNTIME_SHA}" =~ ^[0-9a-f]{64}$ ]]
+            [[ "${INPUT_IMAGE_REF}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
+            cd /var/www/prohelper
+            test "$(git rev-parse HEAD)" = "${INPUT_SHA}"
+            git diff --quiet -- deploy/backend-runtime-allowlist.sh docker/public-core/runtime.php
+            test "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" = "${INPUT_ALLOWLIST_SHA}"
+            source deploy/backend-runtime-allowlist.sh
+            describe_managed_model_input "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_RUNTIME_SHA}"
 
   qualification:
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'qualification-only' && startsWith(github.ref, 'refs/heads/')

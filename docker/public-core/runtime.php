@@ -824,14 +824,14 @@ final class ProcessIdentity
 }
 
 /** Exact-image main CI only; no Laravel boot, network, eval or secret output. */
-final class RoleCredentialProvisioner
+/** Shared protected literal intake. Never evaluates values or exports private parser errors. */
+final class ManagedLiteralEnvironment
 {
-    /** @return array{providerCredential: bool, controlKeys: bool} */
-    public static function provision(string $environment, string $root): array
+    /** @param list<string> $names @return array<string, string> */
+    public static function read(string $environment, array $names): array
     {
-        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0
-            || !str_starts_with($root, '/') || realpath($root) !== $root) {
-            throw new LogicException('runtime_not_activated');
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0) {
+            throw new LogicException('model_input_unavailable');
         }
         clearstatcache(true, $environment);
         $stat = @lstat($environment);
@@ -857,21 +857,137 @@ final class RoleCredentialProvisioner
                 }
             }
         } finally { fclose($stream); }
-        $entries = (new \Dotenv\Parser\Parser())->parse($bytes);
-        $selected = [];
-        foreach ($entries as $entry) {
-            $name = $entry->getName();
-            if (!in_array($name, ['APP_KEY', 'TIMEWEB_AI_API_KEY', 'TIMEWEB_API_KEY', 'TIMEWEB_AI_PROXY_KEY'], true)) { continue; }
-            if (array_key_exists($name, $selected)) { throw new LogicException('runtime_not_activated'); }
-            $value = $entry->getValue()->get();
-            // No variable lookup (including APP_KEY); the existing custody input must be literal.
-            if ($value->getVars() !== []) { throw new LogicException('runtime_not_activated'); }
-            $selected[$name] = $value->getChars();
+        return self::parse($bytes, $names);
+    }
+
+    /** @param list<string> $names @return array<string, string> */
+    public static function parse(string $bytes, array $names): array
+    {
+        try {
+            $selected = [];
+            foreach ((new \Dotenv\Parser\Parser())->parse($bytes) as $entry) {
+                $name = $entry->getName();
+                if (!in_array($name, $names, true)) { continue; }
+                $value = $entry->getValue()->get();
+                if (array_key_exists($name, $selected) || $value->getVars() !== []) {
+                    throw new LogicException('model_input_unavailable');
+                }
+                $selected[$name] = $value->getChars();
+            }
+            $pattern = implode('|', array_map(static fn (string $name): string => preg_quote($name, '/'), $names));
+            preg_match_all('/^\s*(?:export\s+)?('.$pattern.')\s*(?:=|$)/m', $bytes, $declared);
+            if (count($declared[1]) !== count($selected)) { throw new LogicException('model_input_unavailable'); }
+            return $selected;
+        } catch (Throwable) { throw new LogicException('model_input_unavailable'); }
+    }
+}
+
+/** Source/staged store description only. No model receipt, cache, Laravel or network access. */
+final class ModelInputDescription
+{
+    public const NAMES = ['LLM_PROVIDER', 'TIMEWEB_AI_BASE_URI', 'TIMEWEB_AI_DEFAULT_PROFILE',
+        'TIMEWEB_AI_MAX_TOKENS', 'TIMEWEB_AI_TIMEOUT', 'TIMEWEB_AI_ASSISTANT_MAX_TOKENS',
+        'TIMEWEB_AI_ASSISTANT_TIMEOUT', 'TIMEWEB_AI_JSON_MAX_TOKENS', 'TIMEWEB_AI_JSON_TIMEOUT',
+        'TIMEWEB_AI_FAST_MAX_TOKENS', 'TIMEWEB_AI_FAST_TIMEOUT', 'TIMEWEB_AI_PREMIUM_MAX_TOKENS',
+        'TIMEWEB_AI_PREMIUM_TIMEOUT', 'TIMEWEB_AI_API_KEY', 'TIMEWEB_API_KEY', 'TIMEWEB_AI_PROXY_KEY'];
+    private const SOURCE_PINS = [
+        'app/BusinessModules/Features/AIAssistant/config/ai-assistant.php' => '7afc6f452c5718253e1946b7d90ceb8f3300d6ce373e1fe52c395140ca8c4598',
+        'app/Support/AI/LunaModelPolicy.php' => '760ee3e64cd96c173e9e743024f957188fcc2312998f8682c6b5daaeea507fd9',
+        'app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php' => 'd9a8f1ffb0de9867c733a7f07a0dc7c73b19a86d497f39d667a1a331a77796af',
+    ];
+
+    /** Mirrors config ENV ?? SERVER ?? getenv, then empty/default, without ambient lookup in tests.
+     * @param array<string, mixed> $env
+     * @param array<string, mixed> $server
+     * @param array<string, mixed> $process
+     */
+    public static function selected(array $env, array $server, array $process, string $name, mixed $default): mixed
+    {
+        $value = $env[$name] ?? $server[$name] ?? $process[$name] ?? false;
+        return $value === false || $value === '' ? $default : $value;
+    }
+
+    /** @param array<string, mixed> $store @return array<string, mixed> */
+    public static function describe(array $store, string $releaseSha): array
+    {
+        if (preg_match('/\A[0-9a-f]{40}\z/D', $releaseSha) !== 1 || array_diff(array_keys($store), self::NAMES) !== []) {
+            throw new LogicException('model_input_unavailable');
         }
-        // Dotenv permits unfinished multiline entries to wait for another line.
-        // A custody declaration must actually have produced one complete literal entry.
-        preg_match_all('/^\s*(?:export\s+)?(APP_KEY|TIMEWEB_AI_API_KEY|TIMEWEB_API_KEY|TIMEWEB_AI_PROXY_KEY)\s*(?:=|$)/m', $bytes, $declared);
-        if (count($declared[1]) !== count($selected)) { throw new LogicException('runtime_not_activated'); }
+        foreach ($store as $value) { if (!is_string($value)) { throw new LogicException('model_input_unavailable'); } }
+        foreach (self::SOURCE_PINS as $path => $digest) {
+            if (!hash_equals($digest, hash_file('sha256', dirname(__DIR__, 2).'/'.$path))) {
+                throw new LogicException('model_input_unavailable');
+            }
+        }
+        $origins = ['apiMethod' => 'source_policy', 'modelId' => 'source_policy'];
+        $select = static function (string $name, mixed $default) use ($store, &$origins): mixed {
+            $value = self::selected($store, [], [], $name, $default);
+            $origins[$name] = isset($store[$name]) && $store[$name] !== '' ? 'managed_store' : 'default';
+            return $value;
+        };
+        $provider = strtolower($select('LLM_PROVIDER', 'timeweb'));
+        if (!in_array($provider, ['timeweb', 'openai'], true)) { throw new LogicException('model_input_unavailable'); }
+        $base = $select('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1');
+        $profile = $select('TIMEWEB_AI_DEFAULT_PROFILE', 'assistant');
+        if ($base !== 'https://api.timeweb.ai/v1' || !in_array($profile, ['assistant', 'json', 'fast', 'premium'], true)) {
+            throw new LogicException('model_input_unavailable');
+        }
+        $bounded = static function (mixed $value, int $maximum): int {
+            if (!(is_int($value) || (is_string($value) && preg_match('/\A[0-9]{1,8}\z/D', $value) === 1))
+                || (int)$value < 1 || (int)$value > $maximum) { throw new LogicException('model_input_unavailable'); }
+            return (int)$value;
+        };
+        // Constructor options are distinct from profile output bounds/context capacity.
+        $bounded($select('TIMEWEB_AI_MAX_TOKENS', 2000), 10000000);
+        $timeout = $bounded($select('TIMEWEB_AI_TIMEOUT', 25), 120);
+        $profiles = [];
+        foreach (['assistant' => [2048, $timeout], 'json' => [2048, 20], 'fast' => [1024, 12], 'premium' => [4096, 35]] as $name => [$tokens, $seconds]) {
+            $prefix = 'TIMEWEB_AI_'.strtoupper($name);
+            $profiles[$name] = ['maxOutputTokens' => $bounded($select($prefix.'_MAX_TOKENS', $tokens), 10000000),
+                'timeout' => $bounded($select($prefix.'_TIMEOUT', $seconds), 120)];
+        }
+        $credential = 'unavailable';
+        foreach (['TIMEWEB_AI_API_KEY', 'TIMEWEB_API_KEY', 'TIMEWEB_AI_PROXY_KEY'] as $name) {
+            $value = $store[$name] ?? '';
+            if ($value === '') { continue; }
+            if (strlen($value) > 4096 || preg_match('/[\x00-\x20\x7f]/', $value) !== 0) { throw new LogicException('model_input_unavailable'); }
+            $credential = $name; break;
+        }
+        $output = ['schemaVersion' => 'existing-model-route-input/1', 'releaseSha' => $releaseSha,
+            'sourceConfigDigest' => array_values(self::SOURCE_PINS)[0], 'sourcePolicyDigest' => array_values(self::SOURCE_PINS)[1],
+            'observationKind' => 'managed_deployment_input', 'provider' => $provider,
+            'baseUri' => $provider === 'timeweb' ? $base : 'unavailable', 'apiMethod' => $provider === 'timeweb' ? 'responses' : 'unavailable',
+            'modelId' => $provider === 'timeweb' ? \App\Support\AI\LunaModelPolicy::TIMEWEB : 'unavailable',
+            'defaultProfile' => $provider === 'timeweb' ? $profile : 'unavailable', 'profiles' => $profiles,
+            'credentialReference' => $provider === 'timeweb' ? $credential : 'unavailable', 'fieldOrigins' => $origins,
+            'effectiveRuntimeSettingsObserved' => false, 'actualModelQualified' => false, 'activationAuthorized' => false];
+        if (strlen(json_encode($output, JSON_THROW_ON_ERROR)) > 16384) { throw new LogicException('model_input_unavailable'); }
+        return $output;
+    }
+
+    /** @return array<string, mixed> */
+    public static function read(string $environment, string $releaseSha): array
+    {
+        // A staged store is not current cached/process settings. Reject ambient selected overrides.
+        foreach (self::NAMES as $name) {
+            if (isset($_ENV[$name]) || isset($_SERVER[$name]) || getenv($name) !== false) {
+                throw new LogicException('model_input_unavailable');
+            }
+        }
+        return self::describe(ManagedLiteralEnvironment::read($environment, self::NAMES), $releaseSha);
+    }
+}
+
+final class RoleCredentialProvisioner
+{
+    /** @return array{providerCredential: bool, controlKeys: bool} */
+    public static function provision(string $environment, string $root): array
+    {
+        if (PHP_OS_FAMILY !== 'Linux' || !function_exists('posix_geteuid') || posix_geteuid() !== 0
+            || !str_starts_with($root, '/') || realpath($root) !== $root) {
+            throw new LogicException('runtime_not_activated');
+        }
+        $selected = ManagedLiteralEnvironment::read($environment, ['APP_KEY', 'TIMEWEB_AI_API_KEY', 'TIMEWEB_API_KEY', 'TIMEWEB_AI_PROXY_KEY']);
         $provider = '';
         foreach (['TIMEWEB_AI_API_KEY', 'TIMEWEB_API_KEY', 'TIMEWEB_AI_PROXY_KEY'] as $name) {
             $value = $selected[$name] ?? '';
@@ -956,24 +1072,47 @@ final class AppRuntimeBootstrap
             if (! $bootstrap instanceof \Closure) {
                 return false; // Missing/inactive readers preserve the unavailable binding.
             }
-            $inputs = null;
-            $calls = 0;
-            $bootstrap($app, static function (
-                \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreBackendAuthorityFence $fence,
-                \Closure $nativePortFactory,
-            ) use (&$inputs, &$calls): void {
-                if (++$calls !== 1 || get_class($fence) !== \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreBackendAuthorityFence::class) {
-                    throw new LogicException('runtime_not_activated');
-                }
-                $inputs = [$fence, $nativePortFactory];
+            // API workers may boot before publication in the final PID namespace.
+            // Re-read the protected wrapper/profile and build a fresh fence at scope resolution.
+            return self::defer($app, static function () use ($path): \Closure {
+                $current = ProtectedRoleBootstrap::load($path);
+                if (!$current instanceof \Closure) { throw new LogicException('runtime_not_activated'); }
+                return $current;
             });
-            if ($calls !== 1 || $inputs === null) {
-                return false;
+        } catch (Throwable) { return false; }
+    }
+
+    /** Trusted protected-reader resolver only; no model/provider resolution during worker boot. */
+    public static function defer(\Illuminate\Foundation\Application $app, \Closure $reader): bool
+    {
+        $class = \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime::class;
+        if ($app->resolved($class)) { return false; }
+        $app->scoped($class, static function () use ($app, $reader): object {
+            try {
+                $inputs = null; $calls = 0; $bootstrap = $reader();
+                if (!$bootstrap instanceof \Closure) { throw new LogicException('runtime_not_activated'); }
+                $bootstrap($app, static function (
+                    \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreBackendAuthorityFence $fence,
+                    \Closure $nativePortFactory,
+                ) use (&$inputs, &$calls): void {
+                    if (++$calls !== 1 || get_class($fence) !== \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreBackendAuthorityFence::class) {
+                        throw new LogicException('runtime_not_activated');
+                    }
+                    $inputs = [clone $fence, $nativePortFactory];
+                });
+                if ($calls !== 1 || $inputs === null) { throw new LogicException('runtime_not_activated'); }
+                $origin = static function () use ($app): \Illuminate\Http\Request {
+                    $request = $app->make('request');
+                    if (!$request instanceof \Illuminate\Http\Request) { throw new LogicException('authorization_changed'); }
+                    return $request;
+                };
+                return new \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime(
+                    $inputs[0], $inputs[1], $origin);
+            } catch (Throwable) {
+                return new \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime();
             }
-            return self::bind($app, $inputs[0], $inputs[1]);
-        } catch (Throwable) {
-            return false;
-        }
+        });
+        return true;
     }
 
     public static function configureProtected(\Illuminate\Foundation\Application $app, \Closure $configure): void
@@ -1220,15 +1359,22 @@ final class ProcessorRuntimeBootstrap
 if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     $command = $argv[1] ?? '--help';
     if ($command === '--help') {
-        fwrite(STDOUT, "Usage: php docker/public-core/runtime.php metadata|gateway|processor [protected-role-config]\n       php docker/public-core/runtime.php provision-credentials RELEASE_SHA (exact-image main CI only)\n       php docker/public-core/runtime.php publish-projections RELEASE_SHA IMAGE_DIGEST (root, parked roles, checked inputs only)\n       php docker/public-core/runtime.php parked-gateway|parked-processor (bounded 30-second same-PID wait)\n");
+        fwrite(STDOUT, "Usage: php docker/public-core/runtime.php metadata|gateway|processor [protected-role-config]\n       php docker/public-core/runtime.php describe-model-input RELEASE_SHA (read-only staged store; never actual qualification)\n       php docker/public-core/runtime.php provision-credentials RELEASE_SHA (exact-image main CI only)\n       php docker/public-core/runtime.php publish-projections RELEASE_SHA IMAGE_DIGEST (root, parked roles, checked inputs only)\n       php docker/public-core/runtime.php parked-gateway|parked-processor (bounded 30-second same-PID wait)\n");
         exit(0);
     }
-    if (! in_array($command, ['metadata', 'gateway', 'processor', 'provision-credentials', 'publish-projections', 'parked-gateway', 'parked-processor'], true) || count($argv) > 4) {
+    if (! in_array($command, ['metadata', 'gateway', 'processor', 'provision-credentials', 'describe-model-input', 'publish-projections', 'parked-gateway', 'parked-processor'], true) || count($argv) > 4) {
         fwrite(STDERR, "public-core: invalid_command\n");
         exit(64);
     }
     try {
         require_once dirname(__DIR__, 2).'/vendor/autoload.php';
+        if ($command === 'describe-model-input') {
+            $release = json_decode(file_get_contents('/etc/most/release.json'), true, 8, JSON_THROW_ON_ERROR);
+            if (count($argv) !== 3 || ($release['sha'] ?? null) !== $argv[2]) { throw new LogicException('model_input_unavailable'); }
+            fwrite(STDOUT, json_encode(ModelInputDescription::read('/run/most-ci/environment', $argv[2]),
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)."\n");
+            exit(0);
+        }
         if ($command === 'publish-projections') {
             $release = json_decode(file_get_contents('/etc/most/release.json'), true, 8, JSON_THROW_ON_ERROR);
             if (count($argv) !== 4 || ($release['sha'] ?? null) !== $argv[2]) { throw new LogicException('runtime_not_activated'); }
