@@ -99,9 +99,9 @@ final class ProcurementChainService
         return $this->build($this->resolver->fromPaymentDocument($paymentDocument), 'payment-documents', $paymentDocument->id, $actor);
     }
 
-    public function forPurchaseReceipt(PurchaseReceipt $purchaseReceipt, ?User $actor = null): ProcurementChainSummary
+    public function forPurchaseReceipt(PurchaseReceipt $purchaseReceipt, ?User $actor = null, bool $includePermissions = true): ProcurementChainSummary
     {
-        return $this->build($this->resolver->fromPurchaseReceipt($purchaseReceipt), 'purchase-receipts', $purchaseReceipt->id, $actor);
+        return $this->build($this->resolver->fromPurchaseReceipt($purchaseReceipt), 'purchase-receipts', $purchaseReceipt->id, $actor, $includePermissions);
     }
 
     /**

@@ -623,6 +623,52 @@ final class ProcurementChainServiceTest extends TestCase
         self::assertSame($full->toArray(), $explicit->resolve($request)['procurement_chain']);
     }
 
+    public function test_compact_receipt_summary_skips_unused_map_and_preserves_denied_action_and_resource(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $receipt = $this->createReceipt($order);
+        $order->update(['status' => PurchaseOrderStatusEnum::DELIVERED]);
+        $checked = [];
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, string $permission, array $context) use (&$checked, $user, $organization): bool {
+            self::assertSame($user, $actor);
+            self::assertSame(['organization_id' => $organization->id], $context);
+            $checked[] = $permission;
+
+            return false;
+        });
+        $service = new ProcurementChainService(
+            app(\App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver::class),
+            new \App\BusinessModules\Features\Procurement\Services\ProcurementChainActionResolver($authorization),
+        );
+        $compact = $service->forPurchaseReceipt($receipt, $user, includePermissions: false);
+        $actionChecks = count($checked);
+        self::assertGreaterThan(0, $actionChecks);
+        self::assertSame([], $compact->permissions);
+        self::assertFalse($compact->nextAction?->isEnabled);
+        self::assertContains($compact->nextAction?->requiredPermission, $checked);
+        $full = $service->forPurchaseReceipt($receipt, $user);
+        self::assertNotEmpty($full->permissions);
+        self::assertGreaterThan($actionChecks, count($checked) - $actionChecks);
+        self::assertSame($full->compact()->toArray(), $compact->compact()->toArray());
+        self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
+        $this->app->instance(ProcurementChainService::class, $service);
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/procurement/purchase-receipts', 'GET');
+        $request->setUserResolver(fn () => $user);
+        $resource = new \App\BusinessModules\Features\Procurement\Http\Resources\PurchaseReceiptResource($receipt);
+        self::assertSame($full->compact()->toArray(), $resource->resolve($request)['procurement_chain_summary']);
+        $this->createPaymentDocument($order, PaymentDocumentStatus::PAID, 500);
+        $order->update(['status' => PurchaseOrderStatusEnum::CONFIRMED]);
+        $warehouse = $service->forPurchaseReceipt($receipt->fresh(), $user, includePermissions: false);
+        self::assertSame('warehouse_posted', $warehouse->currentStage->key);
+        self::assertSame('warehouse.view', $warehouse->nextAction?->requiredPermission);
+        self::assertFalse($warehouse->nextAction?->isEnabled);
+        self::assertContains('warehouse.view', $checked);
+    }
+
     private function createSiteRequest(Organization $organization): SiteRequest
     {
         $project = Project::factory()->create(['organization_id' => $organization->id]);
