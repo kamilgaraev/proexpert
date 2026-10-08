@@ -540,7 +540,6 @@ jobs:
             assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
-            # All drain/migrations and broad checks are complete before the 30s park window.
             MOST_PUBLIC_CORE_STAGED_API=''
             stage_public_core_approved_runtime "${IMAGE_REF}" "${RELEASE_SHA}"
             resume_public_core_backend_writers "${IMAGE_REF}" "${BACKEND_SERVICES}"
