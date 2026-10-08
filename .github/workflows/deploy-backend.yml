@@ -2,11 +2,6 @@ name: Deploy Backend to Production
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: prod-backend-deploy
-  cancel-in-progress: false
 
 on:
   push:
@@ -33,12 +28,69 @@ on:
       - 'routes/**'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Release from main, or credential-free image qualification only
+        type: choice
+        required: true
+        default: release
+        options: [release, qualification-only]
+      expected_source_sha:
+        description: Full exact source SHA required for qualification-only mode
+        type: string
+        required: false
+        default: ''
 
 jobs:
+  release_mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.guard.outputs.allowed }}
+    steps:
+      - name: Select literal main release without credentials
+        id: guard
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$REQUESTED_MODE" != qualification-only ]; then
+            case "$GITHUB_EVENT_NAME" in
+              push) allowed=true ;;
+              workflow_dispatch) if [ "$REQUESTED_MODE" = release ]; then allowed=true; fi ;;
+            esac
+          fi
+          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: release_mode
+    if: needs.release_mode.outputs.allowed == 'true' && github.ref == 'refs/heads/main' && inputs.mode != 'qualification-only' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release'))
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      - name: Enforce exact main release mode before credentials
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$REQUESTED_MODE" != qualification-only
+          case "$GITHUB_EVENT_NAME" in
+            push) ;;
+            workflow_dispatch) test "$REQUESTED_MODE" = release ;;
+            *) exit 1 ;;
+          esac
+
       - name: Checkout exact release
         uses: actions/checkout@v7
 
@@ -508,3 +560,268 @@ jobs:
             docker compose logs --tail=200 horizon
             docker compose logs --tail=200 geometry-worker
             exit 1
+
+  qualification:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'qualification-only' && startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: backend-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+      cancel-in-progress: false
+    env:
+      QUALIFICATION_IMAGE: most-backend-qualification:${{ github.sha }}
+    steps:
+      - name: Initialize own runner temporary directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'QUALIFICATION_DIR=%s/most-qualification-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Checkout exact qualification source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          set-safe-directory: false
+
+      - name: Validate source and create tracked build context
+        id: source
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$QUALIFICATION_DIR/evidence" "$QUALIFICATION_DIR/context"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile
+          root = pathlib.Path(os.environ['QUALIFICATION_DIR'])
+          evidence = root / 'evidence'
+          receipt = {'qualification': 'NEEDS_EVIDENCE', 'status': 'rejected'}
+          try:
+              sha = os.environ['GITHUB_SHA']
+              expected = os.environ['EXPECTED_SOURCE_SHA']
+              if os.environ['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or os.environ['REQUESTED_MODE'] != 'qualification-only' or not os.environ['GITHUB_REF'].startswith('refs/heads/'):
+                  raise ValueError('qualification_mode_required')
+              if re.fullmatch(r'[0-9a-f]{40}', expected) is None or expected != sha:
+                  raise ValueError('expected_source_sha_mismatch')
+              if subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() != sha:
+                  raise ValueError('checkout_sha_mismatch')
+              if subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], text=True).strip():
+                  raise ValueError('unclean_context')
+              archive = root / 'source.tar'
+              subprocess.run(['git', 'archive', '--format=tar', '--output', str(archive), sha], check=True)
+              context = root / 'context'
+              with tarfile.open(archive) as tar:
+                  for member in tar.getmembers():
+                      path = pathlib.PurePosixPath(member.name)
+                      name = path.name
+                      if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir() or member.issym()):
+                          raise ValueError('unsafe_archive_member')
+                      if (name == '.env' or (name.startswith('.env.') and name != '.env.example') or name in ['.npmrc', '.netrc', 'auth.json', 'id_rsa', 'id_ed25519'] or path.suffix.lower() in ['.pem', '.key', '.p12', '.pfx']):
+                          raise ValueError('credential_path_in_context')
+                      if member.issym() and not (context / path.parent / member.linkname).resolve().is_relative_to(context.resolve()):
+                          raise ValueError('external_context_symlink')
+              subprocess.run(['tar', '-xf', str(archive), '-C', str(context)], check=True)
+              patterns = (context / '.dockerignore').read_text().splitlines()
+              if not set(['/.git', '/.env', '/.env.*', '/vendor', '/node_modules', '/storage/*.key']).issubset(patterns):
+                  raise ValueError('dockerignore_boundary_missing')
+              digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+              receipt.update(status='accepted_source_only', sourceSha=sha, sourceArchiveSha256=digest(archive), dockerfileSha256=digest(context / 'Dockerfile.prod'), dockerignoreSha256=digest(context / '.dockerignore'), context='tracked exact SHA archive, no checkout credentials/untracked files')
+          except Exception:
+              receipt['reason'] = 'source_or_context_validation_failed'
+              raise
+          finally:
+              (evidence / 'source.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+
+      - name: Build exact qualification image without registry push
+        id: build
+        timeout-minutes: 30
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: 'false'
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          builder: default
+          context: ${{ env.QUALIFICATION_DIR }}/context
+          file: ${{ env.QUALIFICATION_DIR }}/context/Dockerfile.prod
+          push: false
+          load: true
+          provenance: false
+          sbom: false
+          github-token: ''
+          build-args: MOST_RELEASE_SHA=${{ github.sha }}
+          tags: ${{ env.QUALIFICATION_IMAGE }}
+
+      - name: Record build outcome without private metadata
+        if: always() && steps.source.conclusion == 'success'
+        env:
+          BUILD_CONCLUSION: ${{ steps.build.conclusion }}
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          digest = lambda value: value if re.fullmatch(r'sha256:[0-9a-f]{64}', value) else None
+          receipt = {'sourceSha': os.environ['GITHUB_SHA'], 'buildConclusion': os.environ['BUILD_CONCLUSION'], 'imageId': digest(os.environ['BUILD_IMAGE_ID']), 'buildDigest': digest(os.environ['BUILD_DIGEST']), 'registryPush': False, 'actualRuntimeVerified': False}
+          pathlib.Path(os.environ['QUALIFICATION_DIR'], 'evidence', 'build.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+
+      - name: Verify immutable image ID and embedded source SHA
+        id: mapping
+        if: success() && steps.build.conclusion == 'success'
+        timeout-minutes: 1
+        env:
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          observed_id="$(docker image inspect --format '{{.Id}}' "$QUALIFICATION_IMAGE")"
+          revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$BUILD_IMAGE_ID")"
+          image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$BUILD_IMAGE_ID")"
+          test "$observed_id" = "$BUILD_IMAGE_ID"
+          test "$revision" = "$GITHUB_SHA"
+          test "$image_platform" = linux/amd64
+          embedded_sha="$(timeout --signal=TERM --kill-after=5s 20s docker run --rm \
+            --name "most-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-mapping" \
+            --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --user 82:82 \
+            --entrypoint php "$BUILD_IMAGE_ID" -r 'echo json_decode(file_get_contents("/etc/most/release.json"), true, 8, JSON_THROW_ON_ERROR)["sha"];')"
+          test "$embedded_sha" = "$GITHUB_SHA"
+          printf '{"sourceSha":"%s","imageId":"%s","embeddedReleaseSha":"%s","imagePlatform":"%s","sourceImageVerified":true,"actualRuntimeVerified":false}\n' "$GITHUB_SHA" "$BUILD_IMAGE_ID" "$embedded_sha" "$image_platform" > "$QUALIFICATION_DIR/evidence/mapping.json"
+
+      - name: Inspect bounded native capability and unavailable guards
+        id: native
+        if: success() && steps.mapping.conclusion == 'success'
+        timeout-minutes: 2
+        env:
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cat > "$QUALIFICATION_DIR/native.php" <<'PHP'
+          <?php
+          declare(strict_types=1);
+          require '/var/www/html/vendor/autoload.php';
+          require '/var/www/html/docker/public-core/runtime.php';
+          use Most\PublicCore\ProcessIdentity;
+          use Most\PublicCore\ParkedRoleBootstrap;
+          use Most\PublicCore\GatewayRuntimeBootstrap;
+          $role = getenv('PROBE_ROLE');
+          $expectedUid = ['app' => 82, 'processor' => 41002, 'gateway' => 41003][$role];
+          $result = ['qualification' => 'native_fixture_only', 'actualRuntimeVerified' => false, 'actualModelVerified' => false, 'role' => $role, 'php' => PHP_VERSION];
+          try {
+              foreach (['sockets', 'pcntl', 'posix'] as $extension) {
+                  $result[$extension] = extension_loaded($extension);
+                  if (!$result[$extension]) { throw new LogicException('capability_missing'); }
+              }
+              $result['SO_PASSCRED'] = defined('SO_PASSCRED');
+              $result['SCM_CREDENTIALS'] = defined('SCM_CREDENTIALS');
+              $result['nativeChannelAvailable'] = App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel::isNativeAvailable();
+              if (!$result['nativeChannelAvailable']) { throw new LogicException('capability_missing'); }
+              $peer = ['pid' => getmypid(), 'uid' => posix_geteuid(), 'gid' => posix_getegid()];
+              $result['peer'] = $peer;
+              if ($peer['uid'] !== $expectedUid || $peer['gid'] !== $expectedUid) { throw new LogicException('identity_mismatch'); }
+              $result['embeddedReleaseSha'] = json_decode(file_get_contents('/etc/most/release.json'), true, 8, JSON_THROW_ON_ERROR)['sha'];
+              if ($result['embeddedReleaseSha'] !== getenv('EXPECTED_SOURCE_SHA')) { throw new LogicException('source_mismatch'); }
+              $lifetime = ProcessIdentity::lifetime($peer);
+              $result['lifetimeStable'] = hash_equals($lifetime, ProcessIdentity::lifetime($peer));
+              $result['wrongUidDenied'] = false;
+              try { ProcessIdentity::lifetime(array_replace($peer, ['uid' => 0])); } catch (LogicException) { $result['wrongUidDenied'] = true; }
+              $pair = [];
+              if (!socket_create_pair(AF_UNIX, SOCK_DGRAM, 0, $pair) || !socket_set_option($pair[0], SOL_SOCKET, SO_PASSCRED, 1) || !socket_set_option($pair[0], SOL_SOCKET, SO_RCVTIMEO, ['sec' => 2, 'usec' => 0])) { throw new LogicException('socket_unavailable'); }
+              $child = pcntl_fork();
+              if ($child === -1) { throw new LogicException('fork_unavailable'); }
+              if ($child === 0) { socket_close($pair[0]); exit(socket_sendmsg($pair[1], ['iov' => ['x']], 0) === 1 ? 0 : 1); }
+              socket_close($pair[1]);
+              $message = ['buffer_size' => 1, 'controllen' => socket_cmsg_space(SOL_SOCKET, SCM_CREDENTIALS)];
+              $received = socket_recvmsg($pair[0], $message, 0);
+              socket_close($pair[0]);
+              pcntl_waitpid($child, $status);
+              $control = $message['control'][0] ?? [];
+              $result['kernelCredentialMatch'] = $received === 1 && count($message['control'] ?? []) === 1 && ($control['level'] ?? null) === SOL_SOCKET && ($control['type'] ?? null) === SCM_CREDENTIALS && ($control['data'] ?? null) === ['pid' => $child, 'uid' => $expectedUid, 'gid' => $expectedUid] && pcntl_wifexited($status) && pcntl_wexitstatus($status) === 0;
+              if ($role === 'app') {
+                  $result['inactiveBootstrap'] = (require '/etc/most/public-core/app/bootstrap.php') === null;
+              } else {
+                  if ($role === 'gateway') {
+                      $result['inactiveManifest'] = GatewayRuntimeBootstrap::configurationState(GatewayRuntimeBootstrap::DEFAULT_CONFIGURATION) === 'inactive';
+                  } else {
+                      $result['inactiveBootstrap'] = (require '/etc/most/public-core/processor/bootstrap.php') === null;
+                  }
+                  $start = hrtime(true);
+                  $result['parkedUnavailable'] = false;
+                  try { ParkedRoleBootstrap::wait($role, 100); } catch (LogicException $error) { $result['parkedUnavailable'] = $error->getMessage() === 'runtime_not_activated'; }
+                  $result['parkedMilliseconds'] = (hrtime(true) - $start) / 1000000;
+                  $result['samePid'] = getmypid() === $peer['pid'];
+                  if (!$result['parkedUnavailable'] || !$result['samePid'] || $result['parkedMilliseconds'] < 100 || $result['parkedMilliseconds'] > 2000) { throw new LogicException('parked_guard_failed'); }
+              }
+              if (!$result['lifetimeStable'] || !$result['wrongUidDenied'] || !$result['kernelCredentialMatch'] || !($result['inactiveBootstrap'] ?? $result['inactiveManifest'] ?? false)) { throw new LogicException('native_guard_failed'); }
+              $result['status'] = 'passed_fixture_only';
+          } catch (Throwable) { $result['status'] = 'failed'; }
+          echo json_encode($result, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT)."\n";
+          exit($result['status'] === 'passed_fixture_only' ? 0 : 1);
+          PHP
+          chmod 0644 "$QUALIFICATION_DIR/native.php"
+          native_exit=0
+          for role in app processor gateway; do
+            case "$role" in app) uid=82 ;; processor) uid=41002 ;; gateway) uid=41003 ;; esac
+            probe_exit=0
+            timeout --signal=TERM --kill-after=5s 20s docker run --rm \
+              --name "most-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${role}" \
+              --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 \
+              --user "${uid}:${uid}" --mount "type=bind,source=${QUALIFICATION_DIR}/native.php,target=/probe.php,readonly" \
+              --env "EXPECTED_SOURCE_SHA=${GITHUB_SHA}" --env "PROBE_ROLE=${role}" \
+              --entrypoint php "$BUILD_IMAGE_ID" /probe.php > "$QUALIFICATION_DIR/evidence/${role}.json" || probe_exit=$?
+            printf '{"exit":%s}\n' "$probe_exit" > "$QUALIFICATION_DIR/evidence/${role}-exit.json"
+            test "$probe_exit" -eq 0 || native_exit=1
+          done
+          exit "$native_exit"
+
+      - name: Save exact image within repository qualification artifact
+        if: always() && steps.mapping.conclusion == 'success'
+        timeout-minutes: 5
+        env:
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          NATIVE_CONCLUSION: ${{ steps.native.conclusion }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image save "$BUILD_IMAGE_ID" | gzip -1 > "$QUALIFICATION_DIR/image.tar.gz.partial"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['QUALIFICATION_DIR'], 'evidence')
+          digest = hashlib.sha256()
+          archive = pathlib.Path(os.environ['QUALIFICATION_DIR'], 'image.tar.gz.partial')
+          with archive.open('rb') as stream:
+              for block in iter(lambda: stream.read(1048576), b''): digest.update(block)
+          archive.replace(root / 'image.tar.gz')
+          (root / 'image.json').write_text(json.dumps({'sourceSha': os.environ['GITHUB_SHA'], 'imageId': os.environ['BUILD_IMAGE_ID'], 'imageArchiveSha256': digest.hexdigest(), 'registryDigest': None, 'qualification': 'source_image_only', 'nativeConclusion': os.environ['NATIVE_CONCLUSION'], 'actualRuntimeVerified': False}, indent=2) + '\n')
+          PY
+
+      - name: Remove only own disposable probes
+        if: always()
+        shell: bash
+        run: |
+          for role in mapping app processor gateway; do
+            name="most-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${role}"
+            if docker container inspect "$name" >/dev/null 2>&1; then docker rm --force "$name" >/dev/null; fi
+          done
+
+      - name: Upload bounded qualification evidence and image
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-qualification-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.QUALIFICATION_DIR }}/evidence/*.json
+            ${{ env.QUALIFICATION_DIR }}/evidence/image.tar.gz
+          if-no-files-found: ignore
+          include-hidden-files: false
+          compression-level: 0
+          retention-days: 3
