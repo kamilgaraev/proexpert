@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -27,12 +28,15 @@ class PurchaseRequestResource extends JsonResource
 
     public function toArray(Request $request): array
     {
+        $renderStartedAt = hrtime(true);
         $workflowSummary = $this->workflowSummary ?? app(ProcurementLifecycleService::class)
             ->forPurchaseRequest($this->resource);
+        $phaseStartedAt = hrtime(true);
         $chainSummary = app(ProcurementChainService::class)
             ->forPurchaseRequest($this->resource, $request->user(), includePermissions: false);
+        ApiQueryMetrics::recordProcessingPhase($request, 'request_chain', $phaseStartedAt);
 
-        return [
+        $data = [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
             'site_request_id' => $this->site_request_id,
@@ -91,5 +95,8 @@ class PurchaseRequestResource extends JsonResource
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];
+        ApiQueryMetrics::recordProcessingPhase($request, 'request_render', $renderStartedAt);
+
+        return $data;
     }
 }

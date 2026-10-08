@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseRequestResou
 use App\BusinessModules\Features\Procurement\Services\PurchaseRequestService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -37,9 +38,12 @@ class PurchaseRequestController extends Controller
                 'sort_dir',
             ]);
 
+            $phaseStartedAt = hrtime(true);
             $requests = $this->service->paginateForListView($organizationId, $perPage, $filters);
+            ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', $phaseStartedAt);
 
-            return AdminResponse::paginated(
+            $phaseStartedAt = hrtime(true);
+            $response = AdminResponse::paginated(
                 PurchaseRequestResource::collection($requests->getCollection()),
                 [
                     'current_page' => $requests->currentPage(),
@@ -48,6 +52,9 @@ class PurchaseRequestController extends Controller
                     'last_page' => $requests->lastPage(),
                 ]
             );
+            ApiQueryMetrics::recordProcessingPhase($request, 'list_encode', $phaseStartedAt);
+
+            return $response;
         } catch (\Exception $e) {
             Log::error('procurement.purchase_requests.index.error', [
                 'user_id' => auth()->id(),
