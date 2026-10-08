@@ -183,21 +183,104 @@ except Exception: sys.exit(1)
 ' "${release_sha}" "$(sha256sum app/BusinessModules/Features/AIAssistant/config/ai-assistant.php | cut -d' ' -f1)" "$(sha256sum app/Support/AI/LunaModelPolicy.php | cut -d' ' -f1)"
 }
 
-# After writer drain/migrations only. The API is staged once before pinned peers.
-# Parked processes retain their IDs/PIDs; publication releases those same processes.
+# Source preparation never restores a revoked runtime candidate. A checked CURRENT
+# candidate intake contract is still required before this approved-only path.
+public_core_monotonic_ns() {
+  python3 -c 'import time; print(time.monotonic_ns())'
+}
+
+# Kernel start time + boot identity is stable across PID reuse; no env/cmdline reads.
+public_core_process_lifetime() {
+  timeout --signal=TERM --kill-after=1s 2s python3 - "$1" <<'PYLIFETIME'
+import sys,pathlib,hashlib
+pid=sys.argv[1]; assert pid.isdigit() and int(pid)>0
+p=pathlib.Path('/proc')/pid/'stat'
+a=p.read_bytes(); assert len(a)<=65536
+boot=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(); assert boot
+start=a[a.rfind(b')')+1:].split()[19]; assert start.isdigit()
+b=p.read_bytes(); assert b[b.rfind(b')')+1:].split()[19]==start
+print(hashlib.sha256(boot.encode()+b':'+pid.encode()+b':'+start).hexdigest())
+PYLIFETIME
+}
+
+# Selected immutable generation metadata only; expiry is checked on EVERY read.
+public_core_generation_identity() {
+  python3 - "$1" "$2" <<'PYGENERATION'
+import sys,pathlib,os,stat,json,hashlib,time,re
+release,image=sys.argv[1:]; hashes=[]; profiles=[]; lifetimes=[]
+def stable(v): return (v.st_dev,v.st_ino,v.st_mode,v.st_uid,v.st_gid,v.st_size,v.st_mtime_ns,v.st_ctime_ns)
+for role,gid in [('app',82),('processor',41002),('gateway',41003)]:
+ p=pathlib.Path('/etc/most/public-core')/role/'generation.json'
+ assert str(p.resolve(strict=True))==str(p)
+ parent=p.parent.stat(); assert stat.S_ISDIR(parent.st_mode) and parent.st_uid==0 and parent.st_gid==gid and stat.S_IMODE(parent.st_mode)==0o750
+ before=p.lstat(); assert stat.S_ISREG(before.st_mode) and before.st_uid==0 and before.st_gid==gid and stat.S_IMODE(before.st_mode)==0o640 and 0<before.st_size<=65536
+ with p.open('rb') as f:
+  opened=os.fstat(f.fileno()); assert stable(opened)==stable(before)
+  raw=f.read(65537)
+ assert len(raw)==before.st_size and stable(p.lstat())==stable(before)
+ d=json.loads(raw); assert set(d)=={'schemaVersion','releaseSha','imageDigest','expiresAt','profileFingerprint','files','roleLifetimes'}
+ assert d['schemaVersion']=='public-core-projection-generation/1' and d['releaseSha']==release and d['imageDigest']==image
+ assert type(d['expiresAt']) is int and d['expiresAt']>time.time()
+ assert re.fullmatch('[0-9a-f]{64}',d['profileFingerprint'])
+ assert set(d['roleLifetimes'])=={'processor','gateway'} and all(re.fullmatch('ref_[0-9a-f]{32}',v) for v in d['roleLifetimes'].values())
+ assert isinstance(d['files'],dict) and d['files'] and all(isinstance(k,str) and re.fullmatch('[0-9a-f]{64}',v) for k,v in d['files'].items())
+ profiles.append(d['profileFingerprint']); lifetimes.append(d['roleLifetimes']); hashes.append(hashlib.sha256(raw).hexdigest())
+assert len(set(profiles))==1 and all(v==lifetimes[0] for v in lifetimes)
+print(hashlib.sha256(json.dumps(hashes,separators=(',',':')).encode()).hexdigest())
+PYGENERATION
+}
+
+# Every Docker status is checked outside test/command-substitution comparisons.
+verify_public_core_staged_containers() {
+  [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ] || return 0
+  local role ids observed lifetime now generation source
+  now="$(public_core_monotonic_ns)" || return 1
+  [[ "${now}" =~ ^[0-9]{1,19}$ ]] && [ "${now}" -ge "${MOST_PUBLIC_CORE_STAGED_AT}" ] \
+    && [ "$((now - MOST_PUBLIC_CORE_STAGED_AT))" -lt 30000000000 ] || return 1
+  source="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${MOST_PUBLIC_CORE_STAGED_IMAGE_REF}")" || return 1
+  [ "${source}" = "${MOST_PUBLIC_CORE_STAGED_RELEASE}" ] || return 1
+  for role in api processor gateway; do
+    local service="${role}"
+    [ "${role}" = api ] || service="public-core-${role}"
+    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${service}")" || return 1
+    [ "${ids}" = "${MOST_PUBLIC_CORE_STAGED_IDS[$role]}" ] || return 1
+    observed="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${ids}")" || return 1
+    [ "${observed}" = "${MOST_PUBLIC_CORE_STAGED_STATES[$role]}" ] || return 1
+    observed="$(docker inspect --format '{{.HostConfig.PidMode}}' "${ids}")" || return 1
+    [ "${observed}" = "${MOST_PUBLIC_CORE_STAGED_NAMESPACES[$role]}" ] || return 1
+    observed="$(docker inspect --format '{{.State.Restarting}}:{{.RestartCount}}:{{.State.StartedAt}}' "${ids}")" || return 1
+    [ "${observed}" = "${MOST_PUBLIC_CORE_STAGED_STARTS[$role]}" ] || return 1
+    lifetime="$(public_core_process_lifetime "${MOST_PUBLIC_CORE_STAGED_PIDS[$role]}")" || return 1
+    [ "${lifetime}" = "${MOST_PUBLIC_CORE_STAGED_LIFETIMES[$role]}" ] || return 1
+  done
+  return 0
+}
+
+verify_public_core_staged_tuple() {
+  [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ] || return 0
+  local generation
+  verify_public_core_staged_containers || return 1
+  generation="$(public_core_generation_identity "${MOST_PUBLIC_CORE_STAGED_RELEASE}" "${MOST_PUBLIC_CORE_STAGED_IMAGE_REF##*@}")" || return 1
+  [ "${generation}" = "${MOST_PUBLIC_CORE_STAGED_GENERATION}" ] || return 1
+}
+
+# After drain/checks only; CURRENT candidate acquisition is not implemented here.
 stage_public_core_approved_runtime() {
-  local image_ref="$1" release_sha="$2" api_id api_pid expected actual state
+  local image_ref="$1" release_sha="$2" api_id expected state role ids observed pid namespace lifetime source
+  MOST_PUBLIC_CORE_STAGED_API=''
+  declare -gA MOST_PUBLIC_CORE_STAGED_IDS=() MOST_PUBLIC_CORE_STAGED_STATES=() MOST_PUBLIC_CORE_STAGED_NAMESPACES=() MOST_PUBLIC_CORE_STAGED_STARTS=() MOST_PUBLIC_CORE_STAGED_PIDS=() MOST_PUBLIC_CORE_STAGED_LIFETIMES=()
   state="$(python3 -c 'import json; print(json.load(open("/etc/most/public-core/gateway/runtime.json"))["activation"])')" || return 1
   case "${state}" in inactive) return 0 ;; approved) ;; *) return 1 ;; esac
   [[ "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]] && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] || return 1
+  expected="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
+  [[ "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  source="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image_ref}")" || return 1
+  [ "${source}" = "${release_sha}" ] || return 1
+  MOST_PUBLIC_CORE_STAGED_AT="$(public_core_monotonic_ns)" || return 1
+  [[ "${MOST_PUBLIC_CORE_STAGED_AT}" =~ ^[0-9]{1,19}$ ]] || return 1
   MOST_IMAGE_REF="${image_ref}" docker compose up -d --no-deps --force-recreate api || return 1
   api_id="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" || return 1
   [[ "${api_id}" =~ ^[0-9a-f]{64}$ ]] || return 1
-  api_pid="$(docker inspect --format '{{.State.Pid}}' "${api_id}")" || return 1
-  [[ "${api_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
-  expected="$(docker image inspect --format '{{.Id}}' "${image_ref}")" || return 1
-  actual="$(docker inspect --format '{{.Image}}' "${api_id}")" || return 1
-  [[ "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]] && [ "${actual}" = "${expected}" ] || return 1
   MOST_IMAGE_REF="${image_ref}" docker compose -f docker-compose.yml -f - --profile public-core up -d --no-deps public-core-processor public-core-gateway <<'YAML' || return 1
 services:
   public-core-processor:
@@ -205,42 +288,53 @@ services:
   public-core-gateway:
     command: [php, docker/public-core/runtime.php, parked-gateway]
 YAML
-  local role ids mode peer_pid
-  local -A parked_ids=() parked_pids=()
-  for role in processor gateway; do
-    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=public-core-${role}")" || return 1
+  for role in api processor gateway; do
+    local service="${role}"
+    [ "${role}" = api ] || service="public-core-${role}"
+    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${service}")" || return 1
     [[ "${ids}" =~ ^[0-9a-f]{64}$ ]] || return 1
-    mode="$(docker inspect --format '{{.HostConfig.PidMode}}' "${ids}")" || return 1
-    [ "${mode}" = "container:${api_id}" ] || return 1
-    peer_pid="$(docker inspect --format '{{.State.Pid}}' "${ids}")" || return 1
-    [[ "${peer_pid}" =~ ^[1-9][0-9]*$ ]] || return 1
-    parked_ids[$role]="${ids}"; parked_pids[$role]="${peer_pid}"
+    [ "${role}" != api ] || [ "${ids}" = "${api_id}" ] || return 1
+    pid="$(docker inspect --format '{{.State.Pid}}' "${ids}")" || return 1
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+    observed="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${ids}")" || return 1
+    [ "${observed}" = "true:${pid}:${expected}" ] || return 1
+    MOST_PUBLIC_CORE_STAGED_STATES[$role]="${observed}"
+    namespace="$(docker inspect --format '{{.HostConfig.PidMode}}' "${ids}")" || return 1
+    if [ "${role}" = api ]; then [ -z "${namespace}" ] || return 1; else [ "${namespace}" = "container:${api_id}" ] || return 1; fi
+    observed="$(docker inspect --format '{{.State.Restarting}}:{{.RestartCount}}:{{.State.StartedAt}}' "${ids}")" || return 1
+    [[ "${observed}" =~ ^false:[0-9]+:.+ ]] || return 1
+    lifetime="$(public_core_process_lifetime "${pid}")" || return 1
+    [[ "${lifetime}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    MOST_PUBLIC_CORE_STAGED_IDS[$role]="${ids}"; MOST_PUBLIC_CORE_STAGED_PIDS[$role]="${pid}"
+    MOST_PUBLIC_CORE_STAGED_NAMESPACES[$role]="${namespace}"; MOST_PUBLIC_CORE_STAGED_STARTS[$role]="${observed}"
+    MOST_PUBLIC_CORE_STAGED_LIFETIMES[$role]="${lifetime}"
   done
-  observe_public_core_parked_peers "${image_ref}" "${release_sha}" || return 1
-  prepare_public_core_projections "${image_ref}" "${release_sha}" || return 1
-  [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${api_id}")" = "true:${api_pid}:${expected}" ] || return 1
-  [ "$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" = "${api_id}" ] || return 1
-  for role in processor gateway; do
-    ids="$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=public-core-${role}")" || return 1
-    [ "${ids}" = "${parked_ids[$role]}" ] || return 1
-    [ "$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.Image}}' "${ids}")" = "true:${parked_pids[$role]}:${expected}" ] || return 1
-    [ "$(docker inspect --format '{{.HostConfig.PidMode}}' "${ids}")" = "container:${api_id}" ] || return 1
-  done
-  # The caller must exclude api/protected roles from all subsequent recreation.
+  MOST_PUBLIC_CORE_STAGED_IMAGE_REF="${image_ref}"; MOST_PUBLIC_CORE_STAGED_RELEASE="${release_sha}"
   MOST_PUBLIC_CORE_STAGED_API="${api_id}"
+  if ! verify_public_core_staged_containers \
+    || ! observe_public_core_parked_peers "${image_ref}" "${release_sha}" \
+    || ! verify_public_core_staged_containers \
+    || ! prepare_public_core_projections "${image_ref}" "${release_sha}"; then
+    MOST_PUBLIC_CORE_STAGED_API=''; return 1
+  fi
+  MOST_PUBLIC_CORE_STAGED_GENERATION="$(public_core_generation_identity "${release_sha}" "${image_ref##*@}")" || { MOST_PUBLIC_CORE_STAGED_API=''; return 1; }
+  [[ "${MOST_PUBLIC_CORE_STAGED_GENERATION}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  MOST_PUBLIC_CORE_STAGED_IMAGE_REF="${image_ref}"; MOST_PUBLIC_CORE_STAGED_RELEASE="${release_sha}"
+  MOST_PUBLIC_CORE_STAGED_API="${api_id}"
+  verify_public_core_staged_tuple || { MOST_PUBLIC_CORE_STAGED_API=''; return 1; }
 }
 
-# Preserve the freshly published API/protected PID tuple while resuming other writers.
 resume_public_core_backend_writers() {
   local image_ref="$1" backend_services="$2" resume_services="${2}" service
   if [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ]; then
+    [ "${image_ref}" = "${MOST_PUBLIC_CORE_STAGED_IMAGE_REF}" ] || return 1
+    verify_public_core_staged_tuple || return 1
     resume_services=''
     for service in "${MOST_COMPOSE_WRITER_SERVICES[@]}"; do
-      [ "${service}" = api ] || resume_services="${resume_services} ${service}"
+      case "${service}" in api|public-core-processor|public-core-gateway) ;; *) resume_services="${resume_services} ${service}" ;; esac
     done
-    # Never --remove-orphans: it could remove the parked-command overrides.
     MOST_IMAGE_REF="${image_ref}" docker compose up -d --no-deps --force-recreate ${resume_services} || return 1
-    [ "$(docker ps -q --no-trunc --filter label=com.docker.compose.project=prohelper --filter label=com.docker.compose.service=api)" = "${MOST_PUBLIC_CORE_STAGED_API}" ] || return 1
+    verify_public_core_staged_tuple || return 1
   else
     MOST_IMAGE_REF="${image_ref}" docker compose up -d --force-recreate --remove-orphans ${backend_services} || return 1
   fi

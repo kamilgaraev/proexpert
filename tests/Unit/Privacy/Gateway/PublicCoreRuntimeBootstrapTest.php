@@ -109,46 +109,113 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         }
     }
 
-    public function testApprovedStageRequiresFreshPublicationAndPreservesNamespace(): void
+    public function testApprovedTupleRejectsFinalErrorsAndResumeDrift(): void
     {
-        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Offline Bash lifecycle mocks need Linux, no Docker calls.'); }
-        $harness = <<<'LIFECYCLE_BASH'
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Offline Bash tuple mocks need Linux, no Docker calls.'); }
+        // All authority/generation/lifetime values below are synthetic source fixtures.
+        $harness = <<<'TUPLE_BASH'
 source "$1"
 fixture_mode="$2"; scratch="$3"
-api=$(printf '%064d' 1); processor=$(printf '%064d' 2); gateway=$(printf '%064d' 3); image=sha256:$(printf '%064d' 4)
+api=$(printf '%064d' 1); processor=$(printf '%064d' 2); gateway=$(printf '%064d' 3); image=sha256:$(printf '%064d' 4); release=$(printf '%040d' 5)
 python3() { [ "$fixture_mode" != inactive ] && printf approved || printf inactive; }
+public_core_monotonic_ns() { if [[ "$fixture_mode" == expired* ]] && [ -e "$scratch/${fixture_mode#expired_}" ]; then printf 31000000000; else printf 1000000000; fi; }
+public_core_process_lifetime() {
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = lifetime_error ]; then printf '%064d' 6; return 17; fi
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = lifetime_drift ]; then printf '%064d' 7; else printf '%064d' 6; fi
+}
+public_core_generation_identity() {
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = generation_expired ]; then return 17; fi
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = generation_error ]; then printf '%064d' 8; return 17; fi
+  if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = generation_drift ]; then printf '%064d' 9; else printf '%064d' 8; fi
+}
 observe_public_core_parked_peers() { printf observe >> "$scratch/events"; [ "$fixture_mode" != observation ]; }
-prepare_public_core_projections() { printf publish >> "$scratch/events"; touch "$scratch/published"; [ "$fixture_mode" != expired ] && [ "$fixture_mode" != missing_proof ]; }
+prepare_public_core_projections() { printf publish >> "$scratch/events"; touch "$scratch/published"; [ "$fixture_mode" != missing_proof ]; }
+MOST_COMPOSE_WRITER_SERVICES=(api queue-worker scheduler)
 docker() {
   case "$1" in
-    compose) printf compose >> "$scratch/events" ;;
-    ps)
-      if [[ "$*" == *service=public-core-processor* ]]; then
-        if [ "$fixture_mode" = recreated_peer ] && [ -e "$scratch/published" ]; then printf '%064d' 9; else printf '%s' "$processor"; fi
-      elif [[ "$*" == *service=public-core-gateway* ]]; then printf '%s' "$gateway"
-      else
-        [ "$fixture_mode" != missing_api ] || return 0
-        if [ "$fixture_mode" = recreated_api ] && [ -e "$scratch/published" ]; then printf '%064d' 8; else printf '%s' "$api"; fi
+    compose)
+      printf compose >> "$scratch/events"
+      if [[ "$*" == *queue-worker* ]]; then
+        if [ -n "${MOST_PUBLIC_CORE_STAGED_API:-}" ]; then
+          [[ "$*" != *api* ]] && [[ "$*" != *public-core-* ]] && [[ "$*" != *remove-orphans* ]] || return 87
+        fi
+        touch "$scratch/resumed"
+      fi
+      ;;
+    image)
+      if [ "$4" = '{{.Id}}' ]; then printf '%s' "$image"; else
+        if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = source_drift ]; then printf '%040d' 9; else printf '%s' "$release"; fi
+        [ "$fixture_mode" != source_error ] || return 17
+        if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = resumed_source_error ]; then return 17; fi
       fi ;;
-    image) printf '%s' "$image" ;;
+    ps)
+      local role=api cid="$api"
+      if [[ "$*" == *service=public-core-processor* ]]; then role=processor; cid="$processor"
+      elif [[ "$*" == *service=public-core-gateway* ]]; then role=gateway; cid="$gateway"; fi
+      [ "$fixture_mode" != missing_api ] || [ "$role" != api ] || return 0
+      if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_id_drift" ]; then printf '%064d' 9; else printf '%s' "$cid"; fi
+      if [ -e "$scratch/published" ] && [ ! -e "$scratch/resumed" ] && [ "$fixture_mode" = "final_${role}_ps" ]; then return 17; fi
+      if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "resume_${role}_ps" ]; then return 17; fi
+      ;;
     inspect)
+      local role=api pid=100
+      if [ "$4" = "$processor" ]; then role=processor; pid=101
+      elif [ "$4" = "$gateway" ]; then role=gateway; pid=102; fi
       case "$3" in
-        '{{.Image}}') [ "$fixture_mode" != wrong_image ] && printf '%s' "$image" || printf 'sha256:bad' ;;
-        '{{.State.Pid}}') case "$4" in "$api") printf 100 ;; "$processor") printf 101 ;; *) printf 102 ;; esac ;;
-        '{{.HostConfig.PidMode}}') [ "$fixture_mode" != wrong_namespace ] && printf 'container:%s' "$api" || printf host ;;
-        '{{.State.Running}}:{{.State.Pid}}:{{.Image}}') case "$4" in "$api") printf 'true:100:%s' "$image" ;; "$processor") printf 'true:101:%s' "$image" ;; *) printf 'true:102:%s' "$image" ;; esac ;;
+        '{{.State.Pid}}') printf '%s' "$pid" ;;
+        '{{.State.Running}}:{{.State.Pid}}:{{.Image}}')
+          local running=true current_image="$image"
+          if [ -e "$scratch/resumed" ]; then
+            [ "$fixture_mode" != "${role}_pid_drift" ] || pid=999
+            [ "$fixture_mode" != "${role}_death" ] || running=false
+            [ "$fixture_mode" != "${role}_image_drift" ] || current_image=sha256:bad
+          fi
+          [ "$fixture_mode" != wrong_image ] || current_image=sha256:bad
+          printf '%s:%s:%s' "$running" "$pid" "$current_image"
+          if [ -e "$scratch/published" ] && [ ! -e "$scratch/resumed" ] && [ "$fixture_mode" = "final_${role}_state" ]; then return 17; fi
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "resume_${role}_state" ]; then return 17; fi
+          ;;
+        '{{.HostConfig.PidMode}}')
+          if [ "$role" = api ] && [ -e "$scratch/resumed" ] && [ "$fixture_mode" = api_namespace_drift ]; then printf host; fi
+          if [ "$role" != api ]; then
+            if [ "$fixture_mode" = wrong_namespace ] || { [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_namespace_drift" ]; }; then printf host; else printf 'container:%s' "$api"; fi
+          fi
+          if [ -e "$scratch/published" ] && [ ! -e "$scratch/resumed" ] && [ "$fixture_mode" = "final_${role}_namespace" ]; then return 17; fi
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "resume_${role}_namespace" ]; then return 17; fi
+          ;;
+        '{{.State.Restarting}}:{{.RestartCount}}:{{.State.StartedAt}}')
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_restart" ]; then printf false:1:changed; else printf false:0:unchanged; fi
+          if [ -e "$scratch/resumed" ] && [ "$fixture_mode" = "${role}_start_error" ]; then return 17; fi
+          ;;
         *) return 86 ;;
       esac ;;
     *) return 87 ;;
   esac
 }
-stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@$image" "$(printf '%040d' 5)"
-LIFECYCLE_BASH;
-        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/lifecycle-'.bin2hex(random_bytes(6));
+# Conditional call intentionally disables inherited errexit: all checks must handle status.
+if stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@$image" "$release"; then
+  resume_public_core_backend_writers "ghcr.io/kamilgaraev/proexpert/prohelper@$image" 'api queue-worker scheduler'
+else exit 1; fi
+TUPLE_BASH;
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/tuple-'.bin2hex(random_bytes(6));
         mkdir($directory, 0755);
+        $modes = ['inactive', 'normal', 'missing_api', 'wrong_image', 'wrong_namespace', 'observation', 'missing_proof',
+            'final_api_state', 'final_api_ps', 'final_processor_state', 'final_gateway_state',
+            'final_processor_namespace', 'final_gateway_namespace', 'resume_api_ps',
+            'expired_published', 'expired_resumed', 'generation_expired', 'generation_drift', 'lifetime_drift', 'lifetime_error', 'source_error', 'source_drift', 'resumed_source_error', 'generation_error'];
+        foreach (['api', 'processor', 'gateway'] as $role) {
+            foreach (['pid_drift', 'id_drift', 'death', 'image_drift', 'restart', 'start_error', 'namespace_drift'] as $change) {
+                $modes[] = $role.'_'.$change;
+            }
+            $modes[] = 'final_'.$role.'_ps';
+            $modes[] = 'final_'.$role.'_namespace';
+            $modes[] = 'resume_'.$role.'_ps';
+            $modes[] = 'resume_'.$role.'_state';
+            $modes[] = 'resume_'.$role.'_namespace';
+        }
         try {
-            foreach (['inactive', 'normal', 'missing_api', 'wrong_image', 'wrong_namespace', 'observation', 'expired', 'missing_proof', 'recreated_api', 'recreated_peer'] as $mode) {
-                @unlink($directory.'/events'); @unlink($directory.'/published');
+            foreach ($modes as $mode) {
+                foreach (['events', 'published', 'resumed'] as $file) { @unlink($directory.'/'.$file); }
                 $process = proc_open(['bash', '-c', $harness, 'fixture', dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh', $mode, $directory],
                     [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
                 fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
@@ -156,10 +223,72 @@ LIFECYCLE_BASH;
                 self::assertSame('', $err, $mode);
                 self::assertSame('', $out, $mode);
                 self::assertSame(in_array($mode, ['inactive', 'normal'], true), $exit === 0, $mode);
-                if ($mode === 'inactive') { self::assertFileDoesNotExist($directory.'/events'); }
-                if ($mode === 'normal') { self::assertSame('composecomposeobservepublish', file_get_contents($directory.'/events')); }
+                if ($mode === 'normal') { self::assertSame('composecomposeobservepublishcompose', file_get_contents($directory.'/events')); }
+                if ($mode === 'inactive') { self::assertSame('compose', file_get_contents($directory.'/events')); }
             }
-        } finally { @unlink($directory.'/events'); @unlink($directory.'/published'); rmdir($directory); }
+        } finally {
+            foreach (['events', 'published', 'resumed'] as $file) { @unlink($directory.'/'.$file); }
+            rmdir($directory);
+        }
+    }
+
+    public function testFullInvalidationRemainsUnavailableWithoutCurrentCandidateIntake(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Scratch-only invalidation regression needs Linux Bash.'); }
+        // Reuses AR5-1 reviewer reproduction; no accepted input is invented after revoke.
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/invalidate-'.bin2hex(random_bytes(6));
+        mkdir($directory, 0755);
+        $allowlist = file_get_contents(dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh');
+        file_put_contents($directory.'/allowlist.sh', str_replace('/etc/most/public-core', $directory.'/root', $allowlist));
+        foreach (['app', 'processor', 'gateway'] as $role) {
+            mkdir($directory.'/root/'.$role, 0755, true);
+            file_put_contents($directory.'/root/'.$role.'/generation.json', '{}');
+            if ($role !== 'gateway') { file_put_contents($directory.'/root/'.$role.'/bootstrap.php', '<?php return null;'."\n"); }
+        }
+        file_put_contents($directory.'/root/gateway/runtime.json', '{"activation":"approved"}');
+        $harness = <<<'INVALIDATE_BASH'
+set -eu
+cd "$2"
+source "$1/allowlist.sh"
+scratch="$1"
+stat() { local gid=0; case "${@: -1}" in */app|*/app/*) gid=82 ;; */processor|*/processor/*) gid=41002 ;; */gateway|*/gateway/*) gid=41003 ;; esac; [ -d "${@: -1}" ] && printf '0:%s:750' "$gid" || printf '0:%s:640' "$gid"; }
+chown() { :; }
+install() { shift 6; cp -- "$1" "$2"; }
+quiesce_public_core_gateway_route() { printf quiesce >> "$scratch/events"; }
+ip() { return 1; }
+nft() {
+  if [ "$1" = list ]; then
+    [ -e "$scratch/nft_applied" ] || return 1
+    printf 'comment "most-public-core:gateway-only/1" br-most-pc'; return 0
+  fi
+  if [ "$1" = -j ]; then printf '{"nftables":[{"set":{"elem":[]}}]}'; return 0; fi
+  printf deny >> "$scratch/events"; touch "$scratch/nft_applied"
+}
+docker() { if [ "$1" = network ]; then return 0; fi; printf UNEXPECTED_DOCKER_CALL; return 88; }
+prepare_public_core_deny_policy
+printf drain >> "$scratch/events"
+stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@sha256:$(printf '%064d' 4)" "$(printf '%040d' 5)"
+test -z "$MOST_PUBLIC_CORE_STAGED_API"
+python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))["activation"]=="inactive"' "$scratch/root/gateway/runtime.json"
+for role in app processor gateway; do test ! -e "$scratch/root/$role/generation.json"; done
+INVALIDATE_BASH;
+        try {
+            $process = proc_open(['bash', '-c', $harness, 'fixture', $directory, dirname(__DIR__, 4)],
+                [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+            fclose($pipes[1]); fclose($pipes[2]); $exit = proc_close($process);
+            self::assertSame('', $out); self::assertSame('', $err); self::assertSame(0, $exit);
+            self::assertSame('quiescedenydenydrain', file_get_contents($directory.'/events'));
+            // This proves revoke/unavailable, NOT the missing accepted restage→publication path.
+        } finally {
+            foreach (['app', 'processor', 'gateway'] as $role) {
+                foreach (['generation.json', 'bootstrap.php', 'runtime.json'] as $file) { @unlink($directory.'/root/'.$role.'/'.$file); }
+                rmdir($directory.'/root/'.$role);
+            }
+            rmdir($directory.'/root');
+            foreach (['allowlist.sh', 'events', 'nft_applied'] as $file) { @unlink($directory.'/'.$file); }
+            rmdir($directory);
+        }
     }
 
     public function testInactiveManifestCannotStartGateway(): void
