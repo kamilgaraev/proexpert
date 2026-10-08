@@ -62,6 +62,10 @@ final class AssistantStatusSnapshotTest extends TestCase
         $source = RagSource::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
             'identity_part_key' => '', 'title' => 'Project', 'checksum' => hash('sha256', 'snapshot')])->refresh();
+        $otherOrganization = Organization::factory()->create();
+        $otherSource = RagSource::query()->create(['organization_id' => $otherOrganization->id, 'project_id' => null,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => 'other-source',
+            'identity_part_key' => '', 'title' => 'Other project', 'checksum' => hash('sha256', 'other-snapshot')]);
         $generation = '59c9320d-a413-4510-8d0c-858d28a40910';
         \App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource::query()->create(['organization_id' => $organization->id,
             'project_id' => $project->id, 'identity_project_id' => $source->identity_project_id,
@@ -114,6 +118,13 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame(1, $status['source_count']);
         self::assertSame(1, $status['expected_source_count']);
         self::assertFalse((bool) preg_grep('/COUNT\(\*\) AS stored_count/i', $queries));
+        $otherSource->forceFill(['checksum' => hash('sha256', 'other-updated'), 'metadata' => ['assistant_public_schema_revision' => 'changed']])->save();
+        DB::table('ai_rag_status_sources')->where('id', $otherSource->id)->update(['chunk_count' => 3, 'indexed_chunk_count' => 3]);
+        $stateStore->markIndexChanged((int) $otherOrganization->id);
+        $unchanged = $service->status($organization->id, $actor, 'sources');
+        self::assertTrue($unchanged['status_available']);
+        self::assertSame(1, $unchanged['source_count']);
+        self::assertSame('valid', $metrics->summary()['assistant_snapshot_epoch']['phase']);
         $permissions->denied = ['projects.view'];
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         self::assertSame('snapshot_rejected', $metrics->summary()['assistant_snapshot']['phase']);

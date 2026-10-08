@@ -128,7 +128,7 @@ final class AssistantIndexStatusService
                     && $inputs->isUnexpired($snapshot['valid_until'] ?? null)
                     && $age !== null
                     && ($snapshot['projection_generation'] ?? null) === $this->currentProjectionGeneration($organizationId)
-                    && $epoch->isValid($snapshot['epoch'], self::SNAPSHOT_TTL_SECONDS)
+                    && $epoch->isValid($snapshot['epoch'], self::SNAPSHOT_TTL_SECONDS, $organizationId)
                     && $inputs->decisionsMatch($snapshot['decisions'], $currentActor, $authorization)
                     && $this->access->withCurrentChecks($currentActor, $organizationId,
                         static fn (AuthorizationService $current): bool => $current === $authorization)) {
