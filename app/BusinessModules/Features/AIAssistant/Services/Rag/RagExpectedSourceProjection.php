@@ -79,7 +79,11 @@ final class RagExpectedSourceProjection
             if ($collectProof) {
                 $query->leftJoin('ai_rag_sources as matched_sources', $joinIdentity);
             } else {
-                $matchedSources = DB::table('ai_rag_sources')->leftJoin('ai_rag_status_sources as matched_status_cache', 'matched_status_cache.id', '=', 'ai_rag_sources.id')
+                $matchedSources = DB::table('ai_rag_sources')->leftJoin('ai_rag_status_sources as matched_status_cache', static function (JoinClause $join): void {
+                    $join->on('matched_status_cache.id', '=', 'ai_rag_sources.id')
+                        ->on('matched_status_cache.organization_id', '=', 'ai_rag_sources.organization_id')
+                        ->whereRaw('matched_status_cache.project_id IS NOT DISTINCT FROM ai_rag_sources.project_id');
+                })
                     ->where('ai_rag_sources.organization_id', $organizationId)->whereIn('ai_rag_sources.source_type', $batchTypes ?? $types)
                     ->select(['ai_rag_sources.id', 'ai_rag_sources.organization_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_project_id', 'ai_rag_sources.identity_part_key',
                         'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id', 'ai_rag_sources.checksum', 'matched_status_cache.indexed_chunk_count']);
@@ -154,7 +158,7 @@ final class RagExpectedSourceProjection
             $query->orderBy($column);
         }
         $deleted = $this->deleteBatches($organizationId, $query, $maxRows, $deadline ?? microtime(true) + 40, $cursorColumns);
-        if (! $query->exists()) {
+        if ((clone $query)->reorder('generation')->toBase()->selectRaw('1 AS remaining')->first() === null) {
             $pending = (array) Cache::get($key, []);
             unset($pending[$generation]);
             if ($pending === []) {

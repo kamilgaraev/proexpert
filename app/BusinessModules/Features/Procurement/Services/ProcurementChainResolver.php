@@ -17,6 +17,33 @@ use Illuminate\Support\Collection;
 
 final class ProcurementChainResolver
 {
+    public const PURCHASE_REQUEST_RELATIONS = [
+        'siteRequest',
+        'lines',
+        'supplierRequests.proposals',
+        'supplierRequests.proposalDecision.winningProposal',
+        'purchaseOrders.items',
+        'purchaseOrders.receipts.lines',
+        'purchaseOrders.acceptedSupplierProposal',
+        'siteRequest.materialDeliveries.latestEvent',
+    ];
+
+    public const PURCHASE_ORDER_RELATIONS = [
+        'purchaseRequest.siteRequest',
+        'purchaseRequest.lines',
+        'purchaseRequest.supplierRequests.proposals',
+        'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
+        'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
+        'items',
+        'receipts.lines',
+        'receipts.warehouse',
+        'acceptedSupplierProposal',
+        'supplier',
+        'externalSupplierContact',
+        'supplierParty',
+        'contract',
+    ];
+
     public const SITE_REQUEST_RELATIONS = [
         'purchaseRequests.lines',
         'purchaseRequests.supplierRequests.proposals',
@@ -51,16 +78,7 @@ final class ProcurementChainResolver
      */
     public function fromPurchaseRequest(PurchaseRequest $purchaseRequest): array
     {
-        $purchaseRequest->loadMissing([
-            'siteRequest',
-            'lines',
-            'supplierRequests.proposals',
-            'supplierRequests.proposalDecision.winningProposal',
-            'purchaseOrders.items',
-            'purchaseOrders.receipts.lines',
-            'purchaseOrders.acceptedSupplierProposal',
-            'siteRequest.materialDeliveries.latestEvent',
-        ]);
+        $purchaseRequest->loadMissing(self::PURCHASE_REQUEST_RELATIONS);
 
         return $this->graph($purchaseRequest->siteRequest, $purchaseRequest);
     }
@@ -70,21 +88,7 @@ final class ProcurementChainResolver
      */
     public function fromPurchaseOrder(PurchaseOrder $purchaseOrder): array
     {
-        $purchaseOrder->loadMissing([
-            'purchaseRequest.siteRequest',
-            'purchaseRequest.lines',
-            'purchaseRequest.supplierRequests.proposals',
-            'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
-            'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
-            'items',
-            'receipts.lines',
-            'receipts.warehouse',
-            'acceptedSupplierProposal',
-            'supplier',
-            'externalSupplierContact',
-            'supplierParty',
-            'contract',
-        ]);
+        $purchaseOrder->loadMissing(self::PURCHASE_ORDER_RELATIONS);
 
         return $this->graph($purchaseOrder->purchaseRequest?->siteRequest, $purchaseOrder->purchaseRequest, $purchaseOrder);
     }

@@ -16,6 +16,54 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_processing_phases_are_numeric_closed_request_local_and_opt_in(): void
+    {
+        $request = Request::create('/api/v1/admin/procurement/purchase-requests', 'GET');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        ApiQueryMetrics::recordProcessingPhase($request, 'private-secret-phase', hrtime(true));
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', -1);
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', PHP_INT_MAX);
+        self::assertSame([], $metrics->summary()['processing_phases']);
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', hrtime(true));
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_prepare', hrtime(true));
+        $phase = $metrics->summary()['processing_phases']['list_prepare'];
+        self::assertSame(2, $phase['count']);
+        self::assertGreaterThanOrEqual(0, $phase['total_ms']);
+        self::assertGreaterThanOrEqual(0, $phase['max_ms']);
+        self::assertLessThanOrEqual($phase['total_ms'], $phase['max_ms']);
+        self::assertStringNotContainsString('private-secret-phase', json_encode($metrics->summary(), JSON_THROW_ON_ERROR));
+        $other = new ApiQueryMetrics;
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $other);
+        ApiQueryMetrics::recordProcessingPhase($request, 'list_encode', hrtime(true));
+        self::assertArrayNotHasKey('processing_phases', $other->summary());
+        self::assertSame(0, $metrics->summary()['sql_count']);
+    }
+
+    public function test_snapshot_metadata_accepts_only_the_closed_schema(): void
+    {
+        $metrics = new ApiQueryMetrics;
+        $metrics->recordAssistantSnapshot(['phase' => 'private-value', 'section' => 'sources']);
+        self::assertArrayNotHasKey('assistant_snapshot', $metrics->summary());
+        $metrics->recordAssistantSnapshot(['phase' => 'snapshot_missing', 'section' => 'sources',
+            'key_hash' => 'private-key', 'release_sha' => str_repeat('a', 40), 'age_seconds' => -1,
+            'refresh_queued' => 'private-flag', 'actor_id' => 42, 'secret' => 'private-secret']);
+        $snapshot = $metrics->summary()['assistant_snapshot'];
+        self::assertNull($snapshot['key_hash']);
+        self::assertNull($snapshot['age_seconds']);
+        self::assertNull($snapshot['refresh_queued']);
+        self::assertSame(str_repeat('a', 40), $snapshot['release_sha']);
+        self::assertCount(8, $snapshot);
+        self::assertStringNotContainsString('private-', json_encode($snapshot, JSON_THROW_ON_ERROR));
+        self::assertArrayNotHasKey('actor_id', $snapshot);
+        $metrics->recordAssistantSnapshotEpoch('private-phase', 'private-data');
+        self::assertArrayNotHasKey('assistant_snapshot_epoch', $metrics->summary());
+        $metrics->recordAssistantSnapshotEpoch('relation_mutation_present', 'ai_rag_sources');
+        self::assertSame(['phase' => 'relation_mutation_present', 'relation' => 'ai_rag_sources'], $metrics->summary()['assistant_snapshot_epoch']);
+        $metrics->recordAssistantSnapshotEpoch('schema_rejected', 'personal@example.test');
+        self::assertSame(['phase' => 'schema_rejected', 'relation' => null], $metrics->summary()['assistant_snapshot_epoch']);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

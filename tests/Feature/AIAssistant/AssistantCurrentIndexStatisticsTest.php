@@ -14,6 +14,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
@@ -179,8 +180,8 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
             'identity_project_id' => $source->identity_project_id, 'identity_part_key' => $source->identity_part_key,
             'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
             'generation' => $generation, 'checksum' => $source->checksum, 'pending_since' => now()->subMinute()]);
-        Cache::put($this->coverageKey($organization->id), ['projection_generation' => $generation, 'eligible_count_known' => true,
-            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project']]], 300);
+        $this->publishProjection((int) $organization->id, ['projection_generation' => $generation, 'eligible_count_known' => true,
+            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project']]]);
         DB::flushQueryLog();
         DB::enableQueryLog();
         try {
@@ -195,6 +196,17 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
         $this->assertSame(1, $status['indexed_source_count']);
         $this->assertTrue($status['coverage_complete']);
         $this->assertSame([], array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'identity_proof')));
+        $otherOrganization = Organization::factory()->create();
+        foreach ([['organization_id' => $otherOrganization->id], ['project_id' => null]] as $malformedScope) {
+            DB::table('ai_rag_status_sources')->where('id', $source->id)->update($malformedScope);
+            DB::table('ai_rag_status_sources')->where('id', $source->id)->update(['chunk_count' => 9, 'indexed_chunk_count' => 9]);
+            $mismatched = $service->status($organization->id, $actor);
+            $this->assertSame(1, $mismatched['expected_source_count']);
+            $this->assertSame(0, $mismatched['indexed_source_count']);
+            $this->assertSame(1, $mismatched['pending_source_count']);
+            DB::table('ai_rag_status_sources')->where('id', $source->id)->update(['organization_id' => $organization->id, 'project_id' => $project->id]);
+            $this->assertSame(1, $service->status($organization->id, $actor)['indexed_source_count']);
+        }
         $expected->update(['checksum' => hash('sha256', 'new generation content')]);
         $status = $service->status($organization->id, $actor);
         $this->assertSame(0, $status['indexed_source_count']);
@@ -244,8 +256,8 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
                 'source_type' => $source->source_type, 'entity_type' => $source->entity_type, 'entity_id' => $source->entity_id,
                 'generation' => $generation, 'checksum' => $source->checksum, 'pending_since' => now()->subMinute()]);
         }
-        Cache::put($this->coverageKey($organization->id), ['projection_generation' => $generation, 'eligible_count_known' => true,
-            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project'], ['type' => 'file_document']]], 300);
+        $this->publishProjection((int) $organization->id, ['projection_generation' => $generation, 'eligible_count_known' => true,
+            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project'], ['type' => 'file_document']]]);
         DB::flushQueryLog();
         DB::enableQueryLog();
         try {
@@ -494,6 +506,13 @@ final class AssistantCurrentIndexStatisticsTest extends TestCase
     private function coverageKey(int $organizationId): string
     {
         return 'ai-rag-coverage:'.$organizationId.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
+    }
+
+    private function publishProjection(int $organizationId, array $projection): void
+    {
+        $store = app(RagCoverageStateStore::class);
+        $store->publish($organizationId, $store->revision($organizationId), $projection);
+        Cache::put($this->coverageKey($organizationId), $projection, 300);
     }
 
     private function service(array $types = ['project']): AssistantIndexStatusService

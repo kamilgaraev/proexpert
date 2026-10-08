@@ -28,6 +28,8 @@ final class RecordApiResponseTime
             'api/v1/admin/ai-assistant/conversations',
             'api/v1/admin/ai-assistant/rag/status',
             'api/v1/admin/projects/*/contracts',
+            'api/v1/admin/project-command-center',
+            'api/v1/admin/procurement/purchase-requests',
         ));
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;

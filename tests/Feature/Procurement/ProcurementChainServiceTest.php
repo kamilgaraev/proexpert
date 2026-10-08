@@ -551,6 +551,124 @@ final class ProcurementChainServiceTest extends TestCase
         $this->assertSame('payment_document_missing', $summary->blockers->first()?->key);
     }
 
+    public function test_compact_purchase_request_summary_skips_unused_permission_map_but_checks_the_action(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $checked = [];
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, string $permission, array $context) use (&$checked, $user, $organization): bool {
+            self::assertSame($user, $actor);
+            self::assertSame(['organization_id' => $organization->id], $context);
+            $checked[] = $permission;
+
+            return false;
+        });
+        $service = new ProcurementChainService(
+            app(\App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver::class),
+            new \App\BusinessModules\Features\Procurement\Services\ProcurementChainActionResolver($authorization),
+        );
+        $compact = $service->forPurchaseRequest($purchaseRequest, $user, includePermissions: false);
+        $actionChecks = count($checked);
+        self::assertGreaterThan(0, $actionChecks);
+        self::assertSame([], $compact->permissions);
+        self::assertFalse($compact->nextAction?->isEnabled);
+        self::assertContains($compact->nextAction?->requiredPermission, $checked);
+        $full = $service->forPurchaseRequest($purchaseRequest, $user);
+        self::assertNotEmpty($full->permissions);
+        self::assertGreaterThan($actionChecks, count($checked) - $actionChecks);
+        self::assertSame($full->compact()->toArray(), $compact->compact()->toArray());
+        self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
+    }
+
+    public function test_compact_order_summary_checks_action_and_keeps_explicit_full_resource_payload(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::DRAFT);
+        $checked = [];
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, string $permission, array $context) use (&$checked, $user, $organization): bool {
+            self::assertSame($user, $actor);
+            self::assertSame(['organization_id' => $organization->id], $context);
+            $checked[] = $permission;
+
+            return false;
+        });
+        $service = new ProcurementChainService(
+            app(\App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver::class),
+            new \App\BusinessModules\Features\Procurement\Services\ProcurementChainActionResolver($authorization),
+        );
+        $compact = $service->forPurchaseOrder($order, $user, includePermissions: false);
+        $actionChecks = count($checked);
+        self::assertGreaterThan(0, $actionChecks);
+        self::assertSame([], $compact->permissions);
+        self::assertFalse($compact->nextAction?->isEnabled);
+        self::assertContains($compact->nextAction?->requiredPermission, $checked);
+        $full = $service->forPurchaseOrder($order, $user);
+        self::assertNotEmpty($full->permissions);
+        self::assertGreaterThan($actionChecks, count($checked) - $actionChecks);
+        self::assertSame($full->compact()->toArray(), $compact->compact()->toArray());
+        self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
+        $this->app->instance(ProcurementChainService::class, $service);
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/procurement/purchase-orders', 'GET');
+        $request->setUserResolver(fn () => $user);
+        $resource = new \App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource($order);
+        $payload = $resource->resolve($request);
+        self::assertSame($full->compact()->toArray(), $payload['procurement_chain_summary']);
+        self::assertArrayNotHasKey('procurement_chain', $payload);
+        $explicit = new \App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource($order, $full);
+        self::assertSame($full->toArray(), $explicit->resolve($request)['procurement_chain']);
+    }
+
+    public function test_compact_receipt_summary_skips_unused_map_and_preserves_denied_action_and_resource(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $order = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $receipt = $this->createReceipt($order);
+        $order->update(['status' => PurchaseOrderStatusEnum::DELIVERED]);
+        $checked = [];
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static function ($actor, string $permission, array $context) use (&$checked, $user, $organization): bool {
+            self::assertSame($user, $actor);
+            self::assertSame(['organization_id' => $organization->id], $context);
+            $checked[] = $permission;
+
+            return false;
+        });
+        $service = new ProcurementChainService(
+            app(\App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver::class),
+            new \App\BusinessModules\Features\Procurement\Services\ProcurementChainActionResolver($authorization),
+        );
+        $compact = $service->forPurchaseReceipt($receipt, $user, includePermissions: false);
+        $actionChecks = count($checked);
+        self::assertGreaterThan(0, $actionChecks);
+        self::assertSame([], $compact->permissions);
+        self::assertFalse($compact->nextAction?->isEnabled);
+        self::assertContains($compact->nextAction?->requiredPermission, $checked);
+        $full = $service->forPurchaseReceipt($receipt, $user);
+        self::assertNotEmpty($full->permissions);
+        self::assertGreaterThan($actionChecks, count($checked) - $actionChecks);
+        self::assertSame($full->compact()->toArray(), $compact->compact()->toArray());
+        self::assertSame($full->nextAction?->toArray(), $compact->nextAction?->toArray());
+        $this->app->instance(ProcurementChainService::class, $service);
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/procurement/purchase-receipts', 'GET');
+        $request->setUserResolver(fn () => $user);
+        $resource = new \App\BusinessModules\Features\Procurement\Http\Resources\PurchaseReceiptResource($receipt);
+        self::assertSame($full->compact()->toArray(), $resource->resolve($request)['procurement_chain_summary']);
+        $this->createPaymentDocument($order, PaymentDocumentStatus::PAID, 500);
+        $order->update(['status' => PurchaseOrderStatusEnum::CONFIRMED]);
+        $warehouse = $service->forPurchaseReceipt($receipt->fresh(), $user, includePermissions: false);
+        self::assertSame('warehouse_posted', $warehouse->currentStage->key);
+        self::assertSame('warehouse.view', $warehouse->nextAction?->requiredPermission);
+        self::assertFalse($warehouse->nextAction?->isEnabled);
+        self::assertContains('warehouse.view', $checked);
+    }
+
     private function createSiteRequest(Organization $organization): SiteRequest
     {
         $project = Project::factory()->create(['organization_id' => $organization->id]);

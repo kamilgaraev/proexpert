@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Middleware;
 
 use App\Http\Responses\AdminResponse;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Closure;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,7 +18,17 @@ class NormalizeAdminResponse
     public function handle(Request $request, Closure $next): Response
     {
         $response = $next($request);
+        $phaseStartedAt = hrtime(true);
 
+        try {
+            return $this->normalizeResponse($response);
+        } finally {
+            ApiQueryMetrics::recordProcessingPhase($request, 'response_normalize', $phaseStartedAt);
+        }
+    }
+
+    private function normalizeResponse(Response $response): Response
+    {
         if (
             $response instanceof BinaryFileResponse
             || $response instanceof StreamedResponse

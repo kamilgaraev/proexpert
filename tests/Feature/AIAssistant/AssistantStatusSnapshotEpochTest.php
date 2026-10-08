@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotEpoch;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -108,12 +109,16 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     public function test_unrelated_relation_mutation_preserves_a_scoped_proof(): void
     {
+        $metrics = new ApiQueryMetrics;
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $state = $this->capture();
         DB::statement("UPDATE public.assistant_snapshot_epoch_unrelated_test SET payload = 'request-metrics'");
         self::assertSame(1, DB::table(AssistantStatusSnapshotEpoch::CHANGE_TABLE)->count());
         self::assertTrue($this->valid($state));
+        self::assertSame(['phase' => 'valid', 'relation' => null], $metrics->summary()['assistant_snapshot_epoch']);
         DB::statement('UPDATE public.assistant_snapshot_epoch_auth_test SET is_active = false');
         self::assertFalse($this->valid($state));
+        self::assertSame(['phase' => 'relation_mutation_present', 'relation' => 'assistant_snapshot_epoch_auth_test'], $metrics->summary()['assistant_snapshot_epoch']);
     }
 
     public function test_nullable_delete_truncate_hidden_parent_and_auth_mutations_invalidate_proofs(): void
