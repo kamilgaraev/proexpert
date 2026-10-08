@@ -141,6 +141,13 @@ jobs:
       - name: Deploy exact image digest
         uses: appleboy/ssh-action@v1.0.3
         env:
+          RELEASE_SHA: ${{ steps.meta.outputs.release_sha }}
+          IMAGE_REPO: ${{ steps.meta.outputs.image_repo }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          REVERB_APP_KEY: ${{ secrets.REVERB_APP_KEY }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        env:
           YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}
           YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}
           YOOKASSA_TEST_ORGANIZATION_IDS: ${{ secrets.YOOKASSA_TEST_ORGANIZATION_IDS }}
@@ -151,14 +158,11 @@ jobs:
           timeout: 3h
           command_timeout: 3h
           envs: YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS
+          envs: RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,GITHUB_ACTOR
           script: |
             set -euo pipefail
             umask 077
-            RELEASE_SHA="${{ steps.meta.outputs.release_sha }}"
-            IMAGE_REPO="${{ steps.meta.outputs.image_repo }}"
-            IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
-            REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"
 
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
             [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -490,7 +494,7 @@ jobs:
               upsert_env YOOKASSA_MODE disabled
             fi
 
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
             docker pull "${IMAGE_REF}"
             prepare_public_core_deny_policy
             prepare_public_core_image_inputs "${IMAGE_REF}" "${RELEASE_SHA}" "${PREVIOUS_RELEASE_SHA}"
