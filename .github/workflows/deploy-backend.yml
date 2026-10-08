@@ -42,8 +42,32 @@ on:
         default: ''
 
 jobs:
+  release_mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.guard.outputs.allowed }}
+    steps:
+      - name: Select literal main release without credentials
+        id: guard
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed=false
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$REQUESTED_MODE" != qualification-only ]; then
+            case "$GITHUB_EVENT_NAME" in
+              push) allowed=true ;;
+              workflow_dispatch) if [ "$REQUESTED_MODE" = release ]; then allowed=true; fi ;;
+            esac
+          fi
+          printf 'allowed=%s\n' "$allowed" >> "$GITHUB_OUTPUT"
+
   deploy:
-    if: github.ref == 'refs/heads/main' && inputs.mode != 'qualification-only' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release'))
+    needs: release_mode
+    if: needs.release_mode.outputs.allowed == 'true' && github.ref == 'refs/heads/main' && inputs.mode != 'qualification-only' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release'))
     permissions:
       contents: read
       packages: write
