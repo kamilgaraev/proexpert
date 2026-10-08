@@ -26,6 +26,142 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         return dirname(__DIR__, 4).'/deploy/public-core-runtime.json.example';
     }
 
+    public function testModelInputExportUsesOnlyStagedLiteralSourcePolicyAndRedactsPrivateValues(): void
+    {
+        $class = \Most\PublicCore\ModelInputDescription::class;
+        $parse = \Most\PublicCore\ManagedLiteralEnvironment::parse(...);
+        $sha = str_repeat('a', 40);
+        $description = $class::describe($parse("TIMEWEB_AI_API_KEY=\nTIMEWEB_API_KEY=fixture-secret-do-not-output\nTIMEWEB_AI_TIMEOUT=29\nTIMEWEB_AI_FAST_MAX_TOKENS=777\nTIMEWEB_AI_MODEL=untrusted-model\nAPP_KEY=private-not-selected\n", $class::NAMES), $sha);
+        self::assertSame('TIMEWEB_API_KEY', $description['credentialReference']);
+        self::assertSame('responses', $description['apiMethod']);
+        self::assertNotSame('chat_completions', $description['apiMethod']);
+        self::assertSame('openai/gpt-6-luna', $description['modelId']);
+        self::assertSame(29, $description['profiles']['assistant']['timeout']);
+        self::assertSame(777, $description['profiles']['fast']['maxOutputTokens']);
+        self::assertSame('managed_store', $description['fieldOrigins']['TIMEWEB_AI_FAST_MAX_TOKENS']);
+        self::assertSame('default', $description['fieldOrigins']['TIMEWEB_AI_PREMIUM_MAX_TOKENS']);
+        self::assertSame('source_policy', $description['fieldOrigins']['modelId']);
+        $json = json_encode($description, JSON_THROW_ON_ERROR);
+        foreach (['fixture-secret-do-not-output', 'private-not-selected', 'untrusted-model', 'APP_KEY', 'modelRevision', 'contextWindow', 'tokenizerSha256'] as $forbidden) {
+            self::assertStringNotContainsString($forbidden, $json);
+        }
+        self::assertLessThanOrEqual(16384, strlen($json));
+        foreach (['effectiveRuntimeSettingsObserved', 'actualModelQualified', 'activationAuthorized'] as $flag) { self::assertFalse($description[$flag]); }
+        self::assertSame('unavailable', $class::describe([], $sha)['credentialReference']);
+        self::assertSame('assistant', $class::describe(['TIMEWEB_AI_DEFAULT_PROFILE' => ''], $sha)['defaultProfile']);
+        self::assertSame('openai', $class::describe(['LLM_PROVIDER' => 'OPENAI'], $sha)['provider']);
+        self::assertSame('unavailable', $class::describe(['LLM_PROVIDER' => 'openai'], $sha)['apiMethod']);
+    }
+
+    public function testModelInputLiteralPrecedenceAndAmbiguityFailWithFixedErrorOnly(): void
+    {
+        $class = \Most\PublicCore\ModelInputDescription::class;
+        self::assertSame('env', $class::selected(['X' => 'env'], ['X' => 'server'], ['X' => 'process'], 'X', 'default'));
+        self::assertSame('server', $class::selected([], ['X' => 'server'], ['X' => 'process'], 'X', 'default'));
+        self::assertSame('process', $class::selected([], [], ['X' => 'process'], 'X', 'default'));
+        self::assertSame('default', $class::selected(['X' => ''], ['X' => 'server'], [], 'X', 'default'));
+        foreach (["LLM_PROVIDER=timeweb\nLLM_PROVIDER=openai\n", 'TIMEWEB_AI_API_KEY="${PRIVATE_VALUE}"', 'TIMEWEB_AI_TIMEOUT="unfinished'] as $bytes) {
+            try { \Most\PublicCore\ManagedLiteralEnvironment::parse($bytes, $class::NAMES); self::fail('Ambiguous selected literal accepted'); }
+            catch (LogicException $error) { self::assertSame('model_input_unavailable', $error->getMessage()); }
+        }
+        foreach ([['LLM_PROVIDER' => 'secret-unknown-provider'], ['TIMEWEB_AI_BASE_URI' => 'https://secret:key@example.test/?private'],
+            ['TIMEWEB_AI_DEFAULT_PROFILE' => 'secret-unknown-profile'], ['TIMEWEB_AI_FAST_TIMEOUT' => 'bad-private-value'],
+            ['TIMEWEB_AI_MAX_TOKENS' => '0'], ['UNLISTED' => 'private']] as $store) {
+            try { $class::describe($store, str_repeat('a', 40)); self::fail('Invalid selected metadata accepted'); }
+            catch (LogicException $error) { self::assertSame('model_input_unavailable', $error->getMessage()); }
+        }
+    }
+
+    public function testDeferredAppReaderDoesNotBindBeforePublicationAndRechecksEachScope(): void
+    {
+        $app = $this->application(); $published = false; $reads = 0;
+        $reader = static function () use (&$published, &$reads): \Closure {
+            $reads++;
+            return static function ($app, $configure) use (&$published): void {
+                if (!$published) { throw new LogicException('runtime_not_activated'); }
+                $configure(new PublicCoreBackendAuthorityFence(), static fn (int $expiry): null => null);
+            };
+        };
+        self::assertTrue(AppRuntimeBootstrap::defer($app, $reader));
+        self::assertSame(0, $reads); // Worker boot performs no DB/native/provider preparation.
+        $first = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNull((new \ReflectionProperty($first, 'nativePortFactory'))->getValue($first));
+        $published = true; $app->forgetScopedInstances();
+        $second = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNotSame($first, $second);
+        self::assertInstanceOf(\Closure::class, (new \ReflectionProperty($second, 'nativePortFactory'))->getValue($second));
+        $published = false; $app->forgetScopedInstances();
+        $third = $app->make(PublicCoreAssistantRuntime::class);
+        self::assertNull((new \ReflectionProperty($third, 'nativePortFactory'))->getValue($third));
+        self::assertSame(3, $reads);
+        self::assertFalse(AppRuntimeBootstrap::defer($app, $reader)); // Already resolved scope cannot be swapped.
+    }
+
+    public function testDeferredAppReaderRejectsEmptyAndDuplicateConfiguration(): void
+    {
+        foreach ([0, 2] as $count) {
+            $app = $this->application();
+            AppRuntimeBootstrap::defer($app, static fn (): \Closure => static function ($app, $configure) use ($count): void {
+                for ($i = 0; $i < $count; $i++) { $configure(new PublicCoreBackendAuthorityFence(), static fn (): null => null); }
+            });
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
+        }
+    }
+
+    public function testApprovedStageRequiresFreshPublicationAndPreservesNamespace(): void
+    {
+        if (PHP_OS_FAMILY !== 'Linux') { self::markTestSkipped('Offline Bash lifecycle mocks need Linux, no Docker calls.'); }
+        $harness = <<<'LIFECYCLE_BASH'
+source "$1"
+fixture_mode="$2"; scratch="$3"
+api=$(printf '%064d' 1); processor=$(printf '%064d' 2); gateway=$(printf '%064d' 3); image=sha256:$(printf '%064d' 4)
+python3() { [ "$fixture_mode" != inactive ] && printf approved || printf inactive; }
+observe_public_core_parked_peers() { printf observe >> "$scratch/events"; [ "$fixture_mode" != observation ]; }
+prepare_public_core_projections() { printf publish >> "$scratch/events"; touch "$scratch/published"; [ "$fixture_mode" != expired ] && [ "$fixture_mode" != missing_proof ]; }
+docker() {
+  case "$1" in
+    compose) printf compose >> "$scratch/events" ;;
+    ps)
+      if [[ "$*" == *service=public-core-processor* ]]; then
+        if [ "$fixture_mode" = recreated_peer ] && [ -e "$scratch/published" ]; then printf '%064d' 9; else printf '%s' "$processor"; fi
+      elif [[ "$*" == *service=public-core-gateway* ]]; then printf '%s' "$gateway"
+      else
+        [ "$fixture_mode" != missing_api ] || return 0
+        if [ "$fixture_mode" = recreated_api ] && [ -e "$scratch/published" ]; then printf '%064d' 8; else printf '%s' "$api"; fi
+      fi ;;
+    image) printf '%s' "$image" ;;
+    inspect)
+      case "$3" in
+        '{{.Image}}') [ "$fixture_mode" != wrong_image ] && printf '%s' "$image" || printf 'sha256:bad' ;;
+        '{{.State.Pid}}') case "$4" in "$api") printf 100 ;; "$processor") printf 101 ;; *) printf 102 ;; esac ;;
+        '{{.HostConfig.PidMode}}') [ "$fixture_mode" != wrong_namespace ] && printf 'container:%s' "$api" || printf host ;;
+        '{{.State.Running}}:{{.State.Pid}}:{{.Image}}') case "$4" in "$api") printf 'true:100:%s' "$image" ;; "$processor") printf 'true:101:%s' "$image" ;; *) printf 'true:102:%s' "$image" ;; esac ;;
+        *) return 86 ;;
+      esac ;;
+    *) return 87 ;;
+  esac
+}
+stage_public_core_approved_runtime "ghcr.io/kamilgaraev/proexpert/prohelper@$image" "$(printf '%040d' 5)"
+LIFECYCLE_BASH;
+        $directory = getenv('PAPERCLIP_RUN_SCRATCH_DIR').'/lifecycle-'.bin2hex(random_bytes(6));
+        mkdir($directory, 0755);
+        try {
+            foreach (['inactive', 'normal', 'missing_api', 'wrong_image', 'wrong_namespace', 'observation', 'expired', 'missing_proof', 'recreated_api', 'recreated_peer'] as $mode) {
+                @unlink($directory.'/events'); @unlink($directory.'/published');
+                $process = proc_open(['bash', '-c', $harness, 'fixture', dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh', $mode, $directory],
+                    [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                fclose($pipes[0]); $out = stream_get_contents($pipes[1]); $err = stream_get_contents($pipes[2]);
+                fclose($pipes[1]); fclose($pipes[2]); $exit = proc_close($process);
+                self::assertSame('', $err, $mode);
+                self::assertSame('', $out, $mode);
+                self::assertSame(in_array($mode, ['inactive', 'normal'], true), $exit === 0, $mode);
+                if ($mode === 'inactive') { self::assertFileDoesNotExist($directory.'/events'); }
+                if ($mode === 'normal') { self::assertSame('composecomposeobservepublish', file_get_contents($directory.'/events')); }
+            }
+        } finally { @unlink($directory.'/events'); @unlink($directory.'/published'); rmdir($directory); }
+    }
+
     public function testInactiveManifestCannotStartGateway(): void
     {
         $this->expectException(LogicException::class);
@@ -207,7 +343,7 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                 file_put_contents($file, $bytes);
                 chmod($file, 0640);
                 $app = $this->application();
-                self::assertFalse(AppRuntimeBootstrap::register($app, $file));
+                self::assertSame(str_contains($bytes, 'static function'), AppRuntimeBootstrap::register($app, $file));
                 $runtime = $app->make(PublicCoreAssistantRuntime::class);
                 self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             }
