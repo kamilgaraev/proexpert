@@ -68,6 +68,41 @@ final class RagProjectionRetentionTest extends TestCase
         }
     }
 
+    public function test_cleanup_pages_both_uuid_ranges_without_crossing_scope_or_safety_boundaries(): void
+    {
+        $this->travelTo(now()->startOfSecond());
+        $organization = Organization::factory()->create();
+        $foreign = Organization::factory()->create();
+        $previous = '10000000-0000-4000-8000-000000000001';
+        $active = '80000000-0000-4000-8000-000000000001';
+        $next = 'f0000000-0000-4000-8000-000000000001';
+        $fresh = 'f0000000-0000-4000-8000-000000000002';
+        $boundary = 'f0000000-0000-4000-8000-000000000003';
+        $this->rows($organization->id, $previous, 600, now()->subHours(4));
+        $this->rows($organization->id, $next, 600, now()->subHours(4));
+        $this->rows($organization->id, $active, 2, now()->subHours(4));
+        $this->rows($organization->id, $fresh, 2, now()->subHours(2));
+        $this->rows($organization->id, $boundary, 2, now()->subHours(3));
+        $this->rows($foreign->id, $next, 2, now()->subHours(4));
+        $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, ['projection_generation' => $active], 300);
+        $deleteBatchSizes = [];
+        DB::listen(static function ($event) use (&$deleteBatchSizes): void {
+            if (str_starts_with(strtolower($event->sql), 'delete') && str_contains($event->sql, 'ai_rag_expected_sources')) {
+                $deleteBatchSizes[] = count($event->bindings) - 1;
+            }
+        });
+
+        $this->assertSame(1005, $this->projection()->pruneOrganization($organization->id, 1005)['deleted']);
+        $this->assertSame([1000, 5], $deleteBatchSizes);
+        $this->assertSame(195, $this->projection()->pruneOrganization($organization->id)['deleted']);
+        $this->assertSame(0, RagExpectedSource::query()->where('organization_id', $organization->id)->whereIn('generation', [$previous, $next])->count());
+        $this->assertSame(2, RagExpectedSource::query()->where('organization_id', $organization->id)->where('generation', $active)->count());
+        $this->assertSame(2, RagExpectedSource::query()->where('generation', $fresh)->count());
+        $this->assertSame(2, RagExpectedSource::query()->where('generation', $boundary)->count());
+        $this->assertSame(2, RagExpectedSource::query()->where('organization_id', $foreign->id)->count());
+    }
+
     public function test_cleanup_serializes_with_another_cleanup_for_the_same_organization(): void
     {
         $organization = Organization::factory()->create();

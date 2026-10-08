@@ -210,7 +210,9 @@ final class RagExpectedSourceProjection
     {
         $query = RagExpectedSource::query()->where('organization_id', $organizationId)
             ->where('created_at', '<', now()->subHours(self::ORPHAN_GRACE_HOURS))
-            ->when($active !== null, static fn (Builder $query): Builder => $query->where('generation', '<>', $active))
+            ->when($active !== null, static fn (Builder $query): Builder => $query->where(
+                static fn (Builder $generations): Builder => $generations->where('generation', '<', $active)->orWhere('generation', '>', $active)
+            ))
             ->orderBy('created_at')->orderBy('id');
 
         return $this->deleteBatches($organizationId, $query, $maxRows, $deadline, ['created_at', 'id']);
