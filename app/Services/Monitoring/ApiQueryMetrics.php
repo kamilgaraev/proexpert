@@ -87,6 +87,7 @@ final class ApiQueryMetrics
         if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
             'list_prepare', 'list_encode', 'request_render', 'request_chain',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
+            'admin_authorize', 'purchase_authorize', 'interface_access', 'procurement_modules', 'response_normalize',
         ], true)) {
             return;
         }
