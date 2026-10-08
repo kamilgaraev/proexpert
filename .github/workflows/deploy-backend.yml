@@ -571,9 +571,14 @@ jobs:
       group: backend-qualification-${{ github.run_id }}-${{ github.run_attempt }}
       cancel-in-progress: false
     env:
-      QUALIFICATION_DIR: ${{ runner.temp }}/most-qualification-${{ github.run_id }}-${{ github.run_attempt }}
       QUALIFICATION_IMAGE: most-backend-qualification:${{ github.sha }}
     steps:
+      - name: Initialize own runner temporary directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'QUALIFICATION_DIR=%s/most-qualification-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
       - name: Checkout exact qualification source
         uses: actions/checkout@v7
         with:
