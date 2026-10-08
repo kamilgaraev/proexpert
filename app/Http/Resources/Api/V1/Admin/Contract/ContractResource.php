@@ -44,15 +44,20 @@ class ContractResource extends JsonResource
         // Рассчитываем итоговую сумму контракта с учетом допсоглашений
         // Если контракт использует Event Sourcing, считаем из активных событий
         // Иначе используем старый способ (sum change_amount)
-        if ($this->usesEventSourcing()) {
+        $loadedEvents = $this->relationLoaded('stateEvents') ? $this->stateEvents : null;
+        if ($loadedEvents !== null ? $loadedEvents->isNotEmpty() : $this->usesEventSourcing()) {
             try {
                 $stateEventService = app(\App\Services\Contract\ContractStateEventService::class);
-                $currentState = $stateEventService->getCurrentState($this->resource);
+                $currentState = $loadedEvents !== null
+                    ? $stateEventService->getCurrentStateFromLoadedEvents($this->resource, $loadedEvents)
+                    : $stateEventService->getCurrentState($this->resource);
                 $calculatedTotalAmount = $currentState['total_amount'] ?? 0;
 
                 // Получаем все события и фильтруем только активные
-                $allEvents = $stateEventService->getTimeline($this->resource);
-                $activeEventsOnly = $allEvents->filter(fn ($e) => $e->isActive())->values();
+                $allEvents = $loadedEvents ?? $stateEventService->getTimeline($this->resource);
+                $activeEventsOnly = $allEvents->filter(fn ($e) => array_key_exists('superseded_by_events_exists', $e->getAttributes())
+                    ? ! (bool) $e->getAttribute('superseded_by_events_exists')
+                    : $e->isActive())->values();
 
                 // БАЗОВАЯ СУММА - используем поле base_amount из БД (источник истины)
                 // Это поле устанавливается при создании контракта и обновляется только при изменении базы (не ДС)

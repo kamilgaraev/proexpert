@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
-use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Models\Organization;
-use App\Models\Project;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
+use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
@@ -27,10 +27,15 @@ final class AssistantReferenceBatchTest extends TestCase
     use RefreshDatabase;
 
     private AssistantDataAccessPolicy $policy;
+
     private AssistantSourceReferenceGuard $guard;
+
     private Organization $organization;
+
     private User $actor;
+
     private ?\Closure $duringPermission = null;
+
     private array $deniedModules = [];
 
     protected function setUp(): void
@@ -39,6 +44,7 @@ final class AssistantReferenceBatchTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(function (User $actor, string $permission, array $context = []): bool {
             $this->duringPermission?->__invoke($permission, $context);
+
             return true;
         });
         $authorization->shouldReceive('forCurrentChecks')->andReturnUsing(fn () => clone $authorization);
@@ -113,7 +119,9 @@ final class AssistantReferenceBatchTest extends TestCase
         $project = $this->project(true);
         $freshResult = null;
         $this->duringPermission = function (string $permission) use ($project, &$freshResult): void {
-            if ($permission !== 'probe.current-row') { return; }
+            if ($permission !== 'probe.current-row') {
+                return;
+            }
             $this->actor->assignedProjects()->updateExistingPivot($project->id, ['is_active' => false]);
             $freshResult = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
                 fn (): bool => $this->policy->canReadEntity($this->actor, $this->organization->id, 'project', $project->id), true);
@@ -161,6 +169,7 @@ final class AssistantReferenceBatchTest extends TestCase
         $reader = new class(function () use ($hidden, &$observed): bool {
             return $observed = $this->policy->canReadEntity($this->actor, $this->organization->id, 'project', $hidden->id);
         }) {
+
             public int $calls = 0;
 
             public function __construct(private \Closure $read) {}
@@ -168,6 +177,7 @@ final class AssistantReferenceBatchTest extends TestCase
             public function matchesReference(User $actor, int $organizationId, array $reference): bool
             {
                 $this->calls++;
+
                 return ($this->read)();
             }
         };
@@ -182,7 +192,9 @@ final class AssistantReferenceBatchTest extends TestCase
     {
         $project = $this->project(true);
         $this->duringPermission = static function (string $permission): void {
-            if ($permission === 'probe.throw') { throw new RuntimeException('reference_batch_probe'); }
+            if ($permission === 'probe.throw') {
+                throw new RuntimeException('reference_batch_probe');
+            }
         };
         $protected = $this->reference($project) + ['content_scope' => 'structured', 'checked_fields' => ['name'],
             'required_permissions' => ['probe.throw'], 'required_domains' => ['projects']];
@@ -246,7 +258,9 @@ final class AssistantReferenceBatchTest extends TestCase
         $reference = $this->reference($project) + ['source_id' => $source->id];
         $observed = null;
         $this->duringPermission = function (string $permission) use ($source, $reference, &$observed): void {
-            if ($permission !== 'probe.current-source') { return; }
+            if ($permission !== 'probe.current-source') {
+                return;
+            }
             $source->delete();
             $observed = $this->policy->canReadReference($this->actor, $this->organization->id, $reference);
         };
@@ -286,9 +300,14 @@ final class AssistantReferenceBatchTest extends TestCase
             $sets[0][0] += ['content_scope' => 'structured', 'checked_fields' => ['name'],
                 'required_permissions' => ['probe.mutate-next'], 'required_domains' => ['projects']];
             $this->duringPermission = static function (string $permission) use ($sources, $operation): void {
-                if ($permission !== 'probe.mutate-next') { return; }
-                if ($operation === 'delete') { $sources[1]->delete(); }
-                else { $sources[1]->update(['entity_id' => '999999999']); }
+                if ($permission !== 'probe.mutate-next') {
+                    return;
+                }
+                if ($operation === 'delete') {
+                    $sources[1]->delete();
+                } else {
+                    $sources[1]->update(['entity_id' => '999999999']);
+                }
             };
             $decisions = $this->policy->withCurrentChecks($this->actor, $this->organization->id,
                 fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, $sets), fresh: true);
@@ -303,7 +322,9 @@ final class AssistantReferenceBatchTest extends TestCase
         [$estimate, $item, $resource, $refs] = $this->estimateReferences();
         $sets = [];
         for ($index = 0; $index < 10; $index++) {
-            foreach ($refs as $type => $reference) { $sets[$type.$index] = [$reference]; }
+            foreach ($refs as $type => $reference) {
+                $sets[$type.$index] = [$reference];
+            }
         }
         $sets['wrong_project'] = [array_replace($refs['estimate'], ['project_id' => $this->project(false)->id])];
         $sets['wrong_parent'] = [array_replace($refs['item'], ['parent_work_id' => $item->id])];
@@ -329,6 +350,8 @@ final class AssistantReferenceBatchTest extends TestCase
         self::assertCount(3, $nativeBatches);
         $financialReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'financial_reference_candidates'));
         self::assertCount(2, $financialReads);
+        $schemaReads = array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'pg_attribute'));
+        self::assertCount(1, $schemaReads, implode("\n", array_column($schemaReads, 'query')));
         $this->policy->withCurrentChecks($this->actor, $this->organization->id, function () use ($estimate, $item, $resource, $refs): void {
             $read = fn (): array => $this->policy->canReadReferenceSets($this->actor, $this->organization->id, array_map(static fn (array $ref): array => [$ref], $refs));
             self::assertSame(['estimate' => true, 'item' => true, 'resource' => true], $read());
@@ -342,13 +365,81 @@ final class AssistantReferenceBatchTest extends TestCase
         }, fresh: true);
     }
 
+    public function test_reference_schema_prefetch_covers_payment_and_parent_tables_in_one_read(): void
+    {
+        $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+        $types = ['project', 'estimate', 'estimate_item', 'schedule', 'schedule_task', 'payment_document', 'not_a_declared_type'];
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $metadata->prefetchForEntities($types);
+            $definitions = \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions();
+            foreach (['project', 'estimate', 'estimate_item', 'schedule', 'schedule_task', 'payment_document', 'contract', 'performance_act', 'completed_work'] as $type) {
+                $model = (new \ReflectionClass($definitions[$type][1]))->newInstanceWithoutConstructor();
+                self::assertContains('id', $metadata->columns($model->getTable()), $type.' schema');
+            }
+            self::assertCount(1, DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
+    public function test_reference_schema_prefetch_does_not_hide_a_later_created_optional_table(): void
+    {
+        $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+        $table = 'assistant_reference_schema_late_test';
+        $metadata->prefetch(['probe' => ['probe', AssistantReferenceLateSchemaModel::class, 'probe']], cacheMissing: false);
+        self::assertSame([], $metadata->columns($table));
+        try {
+            \Illuminate\Support\Facades\Schema::create($table, static function (\Illuminate\Database\Schema\Blueprint $blueprint): void {
+                $blueprint->id();
+                $blueprint->unsignedBigInteger('organization_id');
+            });
+            self::assertContains('organization_id', $metadata->columns($table));
+        } finally {
+            \Illuminate\Support\Facades\Schema::dropIfExists($table);
+        }
+    }
+
+    public function test_partial_schema_batches_can_extend_and_do_not_block_full_prefetch(): void
+    {
+        $metadata = new \App\BusinessModules\Features\AIAssistant\Services\AssistantEntitySchemaMetadata;
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $metadata->prefetchForEntities(['project']);
+            self::assertCount(1, DB::getQueryLog());
+            DB::flushQueryLog();
+            $metadata->prefetchForEntities(['project']);
+            self::assertCount(0, DB::getQueryLog());
+            $metadata->prefetchForEntities(['estimate_item']);
+            self::assertContains('id', $metadata->columns('estimates'));
+            self::assertContains('id', $metadata->columns('estimate_items'));
+            self::assertCount(1, DB::getQueryLog());
+            DB::flushQueryLog();
+            $metadata->prefetch(\App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions());
+            $definitions = \App\BusinessModules\Features\AIAssistant\Services\AssistantEntityAccessCatalog::entityDefinitions();
+            foreach (['project', 'contract', 'schedule', 'payment_document'] as $type) {
+                $model = (new \ReflectionClass($definitions[$type][1]))->newInstanceWithoutConstructor();
+                self::assertContains('id', $metadata->columns($model->getTable()), $type.' full schema');
+            }
+            self::assertCount(1, DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
     public function test_later_reference_callback_cannot_leave_an_earlier_deleted_estimate_visible(): void
     {
         $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);
         [$estimate, , , $refs] = $this->estimateReferences();
         $project = Project::query()->findOrFail($estimate->project_id);
         $this->duringPermission = static function (string $permission) use ($estimate): void {
-            if ($permission === 'probe.delete-earlier-estimate') { $estimate->delete(); }
+            if ($permission === 'probe.delete-earlier-estimate') {
+                $estimate->delete();
+            }
         };
         $later = $this->reference($project) + ['content_scope' => 'structured', 'checked_fields' => ['name'],
             'required_permissions' => ['probe.delete-earlier-estimate'], 'required_domains' => ['projects']];
@@ -365,6 +456,7 @@ final class AssistantReferenceBatchTest extends TestCase
         $reader = new class(function () use ($hidden, &$observed): bool {
             return $observed = $this->policy->canReadEntity($this->actor, $this->organization->id, 'project', $hidden->id);
         }) {
+
             public function __construct(private \Closure $read) {}
 
             public function canReadReference(User $actor, int $organizationId, array $reference): bool
@@ -481,7 +573,10 @@ final class AssistantReferenceBatchTest extends TestCase
     private function project(bool $assigned): Project
     {
         $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id, 'is_archived' => false]));
-        if ($assigned) { $this->actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']); }
+        if ($assigned) {
+            $this->actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+
         return $project;
     }
 
@@ -489,4 +584,9 @@ final class AssistantReferenceBatchTest extends TestCase
     {
         return ['entity_type' => 'project', 'entity_id' => (string) $project->id];
     }
+}
+
+final class AssistantReferenceLateSchemaModel extends \Illuminate\Database\Eloquent\Model
+{
+    protected $table = 'assistant_reference_schema_late_test';
 }

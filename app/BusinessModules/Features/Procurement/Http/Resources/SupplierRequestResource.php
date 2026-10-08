@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -12,9 +13,17 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /** @mixin SupplierRequest */
 class SupplierRequestResource extends JsonResource
 {
+    private readonly ?ProcurementLifecycleSummary $workflowSummary;
+
+    public function __construct(mixed $resource, mixed $workflowSummary = null)
+    {
+        parent::__construct($resource);
+        $this->workflowSummary = $workflowSummary instanceof ProcurementLifecycleSummary ? $workflowSummary : null;
+    }
+
     public function toArray(Request $request): array
     {
-        $workflowSummary = app(ProcurementLifecycleService::class)
+        $workflowSummary = $this->workflowSummary ?? app(ProcurementLifecycleService::class)
             ->forSupplierRequest($this->resource);
 
         return [

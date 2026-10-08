@@ -532,10 +532,28 @@ final class PublicCoreGatewayTest extends TestCase
         self::assertSame(0, $this->writes);
     }
 
+    public function test_observed_model_is_bounded_and_survives_strict_response_roundtrip(): void
+    {
+        $response = GatewayModelResponse::completed($this->request(), $this->actionBytes(), null, 'observed-provider-model');
+        self::assertSame('observed-provider-model', GatewayModelResponse::fromArray($response->values())->actualModel);
+        self::assertNull(GatewayModelResponse::completed($this->request(), $this->actionBytes(), null)->actualModel);
+        foreach (['', str_repeat('m', 129), "model\nprivate", 'model secret', ['model']] as $invalid) {
+            try {
+                GatewayModelResponse::fromArray(array_replace($response->values(), ['actualModel' => $invalid]));
+                self::fail('Unsafe model identity accepted');
+            } catch (LogicException $error) {
+                self::assertSame('invalid_model_output', $error->getMessage());
+            }
+        }
+        self::assertSame('invalid_model_output', $this->transport(['sender' => fn (): array => [
+            'actionBytes' => $this->actionBytes(), 'usage' => null, 'actualModel' => 'fabricated-real-model',
+        ]])->send($this->request())->reasonCode);
+    }
+
     public function test_response_cannot_carry_action_on_blocked_or_foreign_fields(): void
     {
         $base = GatewayModelResponse::blocked($this->request(), 'expired')->values();
-        foreach ([['actionBytes' => $this->actionBytes()], ['reasonCode' => 'secret'], ['usage' => []], ['rawProviderBody' => 'private']] as $change) {
+        foreach ([['actualModel' => 'model-response-evidence'], ['actionBytes' => $this->actionBytes()], ['reasonCode' => 'secret'], ['usage' => []], ['rawProviderBody' => 'private']] as $change) {
             try {
                 GatewayModelResponse::fromArray(array_replace($base, $change));
                 self::fail('Invalid response accepted');
@@ -636,6 +654,7 @@ final class PublicCoreGatewayTest extends TestCase
                 $phase = 'uploaded';
             },
         );
+        self::assertSame($this->providerEnvelope()['model'], $result['actualModel']);
         self::assertSame(1, $exchanges);
         self::assertSame('uploaded', $phase);
         self::assertSame(GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Проверить публичные источники']), $result['actionBytes']);

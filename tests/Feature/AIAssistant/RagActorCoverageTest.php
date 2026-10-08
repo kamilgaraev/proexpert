@@ -354,7 +354,7 @@ final class RagActorCoverageTest extends TestCase
         [$organization, $actor, $visible] = $this->scope();
         $this->index($organization->id, $visible);
         $this->coverage->refreshCoverage($organization->id);
-        $this->travel(301)->seconds();
+        $this->travel(25)->hours();
         $status = $this->coverage->coverageForActor($organization->id, $actor);
         $this->assertFalse($status['eligible_count_known']);
         $this->assertNull($status['expected_source_count']);
@@ -492,6 +492,23 @@ final class RagActorCoverageTest extends TestCase
         }
         $this->coverage->refreshCoverage($organization->id, $visible->id, 'project');
         $this->assertSame(1, $this->collector->collections);
+    }
+
+    public function test_unchanged_projection_is_reused_after_five_minutes_and_cache_loss(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $this->coverage->refreshCoverage($organization->id);
+        $generation = RagExpectedSource::query()->where('organization_id', $organization->id)->value('generation');
+        Queue::fake();
+        $this->travel(6)->minutes();
+
+        $this->assertTrue($this->coverage->coverageForActor($organization->id, $actor)['eligible_count_known']);
+        Cache::flush();
+        $this->assertTrue($this->coverage->coverageForActor($organization->id, $actor)['coverage_complete']);
+        $this->assertSame(1, $this->collector->collections);
+        $this->assertSame($generation, RagExpectedSource::query()->where('organization_id', $organization->id)->value('generation'));
+        Queue::assertNotPushed(RefreshRagCoverageJob::class);
     }
 
     public function test_obsolete_and_already_completed_coverage_jobs_do_not_repeat_collection(): void

@@ -63,7 +63,7 @@ final class SlowQueryContext
         return preg_replace("/(?:E)?'(?:''|\\\\.|[^'\\\\])*'|(\\$[A-Za-z_][A-Za-z0-9_]*\\$|\\$\\$)[\\s\\S]*?\\1/i", "'[redacted]'", $sql) ?? '[sql redacted]';
     }
 
-    private static function source(): ?array
+    public static function source(array $ignoredFiles = []): ?array
     {
         $root = base_path().DIRECTORY_SEPARATOR;
         foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 96) as $frame) {
@@ -72,6 +72,9 @@ final class SlowQueryContext
                 continue;
             }
             $relative = str_replace(DIRECTORY_SEPARATOR, '/', substr($file, strlen($root)));
+            if (in_array($relative, $ignoredFiles, true)) {
+                continue;
+            }
             if ($file !== __FILE__ && $relative !== 'app/Providers/AppServiceProvider.php'
                 && preg_match('#^(?:app/|database/|tests/|routes/|artisan$)#', $relative) === 1) {
                 return ['file' => $relative, 'line' => $frame['line'] ?? null];

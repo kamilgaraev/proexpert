@@ -32,6 +32,8 @@ class EnterpriseInquiryController extends Controller
                 $user,
                 $organizationId,
                 EnterpriseInquiryData::fromValidated($request->validated()),
+                $request->validated(),
+                $request,
             );
 
             return LandingResponse::success([

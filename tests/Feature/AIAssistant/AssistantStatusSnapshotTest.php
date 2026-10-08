@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
@@ -28,6 +29,7 @@ use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\UserProjectAccessService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -60,35 +62,72 @@ final class AssistantStatusSnapshotTest extends TestCase
         $source = RagSource::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
             'identity_part_key' => '', 'title' => 'Project', 'checksum' => hash('sha256', 'snapshot')])->refresh();
+        $otherOrganization = Organization::factory()->create();
+        $otherSource = RagSource::query()->create(['organization_id' => $otherOrganization->id, 'project_id' => null,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => 'other-source',
+            'identity_part_key' => '', 'title' => 'Other project', 'checksum' => hash('sha256', 'other-snapshot')]);
         $generation = '59c9320d-a413-4510-8d0c-858d28a40910';
         \App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource::query()->create(['organization_id' => $organization->id,
             'project_id' => $project->id, 'identity_project_id' => $source->identity_project_id,
             'identity_part_key' => $source->identity_part_key, 'source_type' => 'project', 'entity_type' => 'project',
             'entity_id' => (string) $project->id, 'generation' => $generation, 'checksum' => $source->checksum, 'pending_since' => now()]);
         $coverageKey = 'ai-rag-coverage:'.$organization->id.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
-        Cache::put($coverageKey, ['projection_generation' => $generation, 'eligible_count_known' => true,
-            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project']]], 300);
+        $projection = ['projection_generation' => $generation, 'eligible_count_known' => true,
+            'snapshot_at' => now()->toAtomString(), 'source_catalog' => [['type' => 'project']]];
+        $stateStore = app(RagCoverageStateStore::class);
+        $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id), $projection);
+        Cache::put($coverageKey, $projection, 300);
+        $metrics = new ApiQueryMetrics;
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('snapshot_missing', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertTrue($metrics->summary()['assistant_snapshot']['refresh_queued']);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertFalse($metrics->summary()['assistant_snapshot']['refresh_queued']);
         Queue::assertPushed(RefreshAssistantIndexStatusJob::class, 1);
         $job = $this->queue->pushed(RefreshAssistantIndexStatusJob::class)->last();
         $warnings = [];
+        $refreshEvents = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->with('assistant_status_snapshot_refresh', Mockery::on(static function (array $context) use (&$refreshEvents): bool {
+            $refreshEvents[] = $context;
+
+            return true;
+        }));
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
         \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('warning')->andReturnUsing(static function (string $message, array $context = []) use (&$warnings): void {
             $warnings[] = [$message, $context];
         });
         $job->handle($service, $policy);
         self::assertNotNull(Cache::get($job->cacheKey), json_encode($warnings, JSON_THROW_ON_ERROR));
+        self::assertSame(['started', 'written'], array_column($refreshEvents, 'phase'));
+        $mismatched = clone $job;
+        $mismatched->cacheKey .= ':mismatch';
+        $mismatched->handle($service, $policy);
+        self::assertSame('cache_key_mismatch', $refreshEvents[3]['phase']);
+        self::assertNotSame($refreshEvents[3]['key_hash'], $refreshEvents[3]['expected_key_hash']);
+        self::assertNull(Cache::get($mismatched->cacheKey));
+        self::assertStringNotContainsString($job->cacheKey, json_encode($refreshEvents, JSON_THROW_ON_ERROR));
         DB::enableQueryLog();
         DB::flushQueryLog();
         $status = $service->status($organization->id, $actor, 'sources');
         $queries = array_column(DB::getQueryLog(), 'query');
         DB::disableQueryLog();
         self::assertTrue($status['status_available']);
+        self::assertSame('ready', $metrics->summary()['assistant_snapshot']['phase']);
         self::assertSame(1, $status['source_count']);
         self::assertSame(1, $status['expected_source_count']);
         self::assertFalse((bool) preg_grep('/COUNT\(\*\) AS stored_count/i', $queries));
+        $otherSource->forceFill(['checksum' => hash('sha256', 'other-updated'), 'metadata' => ['assistant_public_schema_revision' => 'changed']])->save();
+        DB::table('ai_rag_status_sources')->where('id', $otherSource->id)->update(['chunk_count' => 3, 'indexed_chunk_count' => 3]);
+        $stateStore->markIndexChanged((int) $otherOrganization->id);
+        $unchanged = $service->status($organization->id, $actor, 'sources');
+        self::assertTrue($unchanged['status_available']);
+        self::assertSame(1, $unchanged['source_count']);
+        self::assertSame('valid', $metrics->summary()['assistant_snapshot_epoch']['phase']);
         $permissions->denied = ['projects.view'];
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('snapshot_rejected', $metrics->summary()['assistant_snapshot']['phase']);
         $permissions->denied = [];
         DB::table('projects')->where('id', $project->id)->update(['is_archived' => true]);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
@@ -101,7 +140,10 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         $job->handle($service, $policy);
         self::assertSame(0, $service->status($organization->id, $actor, 'sources')['source_count']);
-        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0), ['projection_generation' => 'changed'], 60);
+        $changedGeneration = '6f207c85-81bb-4c2b-8991-9e1fe6e7eb94';
+        $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id),
+            array_replace($projection, ['projection_generation' => $changedGeneration]));
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.(int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0), ['projection_generation' => $changedGeneration], 60);
         self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
         $actor->organizations()->updateExistingPivot($organization->id, ['is_active' => false]);
         $this->expectException(AuthorizationException::class);
@@ -146,6 +188,19 @@ final class AssistantStatusSnapshotTest extends TestCase
             });
             self::assertNull($result['relations']);
         } finally { DB::purge('assistant_snapshot_foreign'); }
+    }
+
+    public function test_invalid_release_is_diagnosed_without_dispatching_or_returning_a_snapshot(): void
+    {
+        [$organization, $actor, , $service] = $this->scope();
+        config(['ai-assistant.status_snapshot_release' => 'invalid-release']);
+        $metrics = new ApiQueryMetrics;
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+
+        self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('missing_release', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertNull($metrics->summary()['assistant_snapshot']['release_sha']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
     public function test_snapshot_controller_keeps_its_service_gate_on_all_surfaces(): void

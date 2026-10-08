@@ -389,7 +389,7 @@ final class GatewayPublicCoreHttpSender
             throw new LogicException($reason);
         }
 
-        return ['actionBytes' => $actionBytes, 'usage' => $usage];
+        return ['actionBytes' => $actionBytes, 'usage' => $usage, 'actualModel' => $envelope['model']];
     }
 
     private function keysAllowed(array $value, array $required, array $optional): bool

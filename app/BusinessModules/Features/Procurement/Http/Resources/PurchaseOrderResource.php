@@ -7,6 +7,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -28,14 +29,21 @@ class PurchaseOrderResource extends JsonResource
 
     public function toArray(Request $request): array
     {
+        $renderStartedAt = hrtime(true);
+        $phaseStartedAt = hrtime(true);
         $workflowSummary = app(ProcurementLifecycleService::class)
             ->forPurchaseOrder($this->resource);
+        ApiQueryMetrics::recordProcessingPhase($request, 'order_workflow', $phaseStartedAt);
+        $phaseStartedAt = hrtime(true);
         $paymentSummary = app(PurchaseOrderPaymentGateService::class)
             ->summary($this->resource);
+        ApiQueryMetrics::recordProcessingPhase($request, 'order_payment', $phaseStartedAt);
+        $phaseStartedAt = hrtime(true);
         $chainSummary = $this->procurementChain ?? app(ProcurementChainService::class)
-            ->forPurchaseOrder($this->resource, $request->user());
+            ->forPurchaseOrder($this->resource, $request->user(), includePermissions: false);
+        ApiQueryMetrics::recordProcessingPhase($request, 'order_chain', $phaseStartedAt);
 
-        return [
+        $data = [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
             'purchase_request_id' => $this->purchase_request_id,
@@ -104,6 +112,9 @@ class PurchaseOrderResource extends JsonResource
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];
+        ApiQueryMetrics::recordProcessingPhase($request, 'order_render', $renderStartedAt);
+
+        return $data;
     }
 
     private function pricingBreakdown(): array

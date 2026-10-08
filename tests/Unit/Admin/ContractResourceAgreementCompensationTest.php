@@ -14,15 +14,20 @@ use App\Services\Contract\ContractSideResolverService;
 use App\Services\Contract\ContractStateEventService;
 use Illuminate\Http\Request;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 final class ContractResourceAgreementCompensationTest extends TestCase
 {
-    public function refreshDatabase(): void
+    public function refreshDatabase(): void {}
+
+    public static function eventLoadingModes(): array
     {
+        return [[false], [true]];
     }
 
-    public function test_superseding_an_agreement_preserves_its_carried_amount_in_the_summary(): void
+    #[DataProvider('eventLoadingModes')]
+    public function test_superseding_an_agreement_preserves_its_carried_amount_in_the_summary(bool $eventsLoaded): void
     {
         foreach ([0, -500] as $change) {
             $resolver = Mockery::mock(ContractSideResolverService::class);
@@ -30,7 +35,8 @@ final class ContractResourceAgreementCompensationTest extends TestCase
             $resolver->shouldReceive('resolve')->andReturn([]);
             $this->app->instance(ContractSideResolverService::class, $resolver);
 
-            $contract = new class extends Contract {
+            $contract = new class extends Contract
+            {
                 public function usesEventSourcing(): bool
                 {
                     return true;
@@ -58,8 +64,19 @@ final class ContractResourceAgreementCompensationTest extends TestCase
                 $this->event(ContractStateEventTypeEnum::SUPERSEDED, 0),
             ]);
             $service = Mockery::mock(ContractStateEventService::class);
-            $service->shouldReceive('getCurrentState')->with($contract)->andReturn(['total_amount' => $total]);
-            $service->shouldReceive('getTimeline')->with($contract)->andReturn($events);
+            $service->shouldReceive($eventsLoaded ? 'getCurrentStateFromLoadedEvents' : 'getCurrentState')
+                ->withArgs($eventsLoaded ? [$contract, Mockery::type(\Illuminate\Support\Collection::class)] : [$contract])
+                ->andReturn(['total_amount' => $total]);
+            if ($eventsLoaded) {
+                foreach ($events as $event) {
+                    $event->setAttribute('superseded_by_events_exists', ! $event->isActive());
+                    $event->failOnActivityCheck = true;
+                }
+                $contract->setRelation('stateEvents', new \Illuminate\Database\Eloquent\Collection($events->all()));
+                $service->shouldNotReceive('getTimeline');
+            } else {
+                $service->shouldReceive('getTimeline')->with($contract)->andReturn($events);
+            }
             $this->app->instance(ContractStateEventService::class, $service);
 
             $payload = (new ContractResource($contract))->toArray(Request::create('/'));
@@ -72,13 +89,48 @@ final class ContractResourceAgreementCompensationTest extends TestCase
         }
     }
 
+    public function test_loaded_events_preserve_the_legacy_fallback_when_current_state_fails(): void
+    {
+        $resolver = Mockery::mock(ContractSideResolverService::class);
+        $resolver->shouldReceive('resolveCustomerAlias')->andReturn(null);
+        $resolver->shouldReceive('resolve')->andReturn([]);
+        $this->app->instance(ContractSideResolverService::class, $resolver);
+        $contract = new Contract;
+        $contract->setRawAttributes([
+            'id' => 275, 'organization_id' => 75, 'status' => ContractStatusEnum::DRAFT->value,
+            'base_amount' => 1000, 'total_amount' => 1200, 'is_fixed_amount' => true,
+            'created_at' => '2026-09-04 08:00:00', 'updated_at' => '2026-09-04 08:00:00',
+        ], true);
+        $contract->setRelation('stateEvents', new \Illuminate\Database\Eloquent\Collection([
+            $this->event(ContractStateEventTypeEnum::CREATED, 1000),
+        ]));
+        $contract->setRelation('agreements', collect([new SupplementaryAgreement(['change_amount' => 200])]));
+        $service = Mockery::mock(ContractStateEventService::class);
+        $service->shouldReceive('getCurrentStateFromLoadedEvents')
+            ->with($contract, Mockery::type(\Illuminate\Support\Collection::class))
+            ->once()->andThrow(new \RuntimeException('State unavailable'));
+        $service->shouldNotReceive('getTimeline');
+        $this->app->instance(ContractStateEventService::class, $service);
+        $payload = (new ContractResource($contract))->toArray(Request::create('/'));
+        self::assertSame(1400.0, $payload['total_amount']);
+        self::assertEquals(1200, $payload['financial_summary']['base_amount']);
+        self::assertEquals(200, $payload['financial_summary']['agreements_total_change']);
+    }
+
     private function event(ContractStateEventTypeEnum $type, int $amount, bool $active = true, bool $compensating = false): ContractStateEvent
     {
-        $event = new class extends ContractStateEvent {
+        $event = new class extends ContractStateEvent
+        {
             public bool $activeForTest = true;
+
+            public bool $failOnActivityCheck = false;
 
             public function isActive(): bool
             {
+                if ($this->failOnActivityCheck) {
+                    throw new \LogicException('Loaded list events must not perform activity lookups');
+                }
+
                 return $this->activeForTest;
             }
         };

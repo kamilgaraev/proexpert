@@ -31,6 +31,7 @@ use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -319,6 +320,42 @@ class WarehouseDashboardControllerTest extends TestCase
             ->assertJsonPath('data.materials.0.unlocated_quantity', 100)
             ->assertJsonPath('data.materials.0.has_unlocated_quantity', true)
             ->assertJsonPath('data.materials.0.storage_address', 'Зона STORAGE');
+    }
+
+    public function test_dashboard_only_hydrates_the_six_latest_movements(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id, 'Page material', 'PAGE-MATERIAL');
+        $warehouse = $this->createWarehouse($context->organization->id, 'Page warehouse', 'PAGE-WH');
+        $ids = [];
+
+        for ($number = 1; $number <= 12; $number++) {
+            $movement = WarehouseMovement::query()->create([
+                'organization_id' => $context->organization->id,
+                'warehouse_id' => $warehouse->id,
+                'material_id' => $material->id,
+                'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+                'quantity' => 1,
+                'price' => 1,
+                'user_id' => $context->user->id,
+                'movement_date' => '2026-06-01 12:00:00',
+            ]);
+            $ids[] = $movement->id;
+        }
+
+        $this->allowAdminAccess();
+        $retrieved = 0;
+        Event::listen('eloquent.retrieved: ' . WarehouseMovement::class, function () use (&$retrieved): void {
+            $retrieved++;
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/dashboard");
+
+        $response->assertOk()->assertJsonCount(6, 'data.movements');
+        $this->assertSame(array_slice(array_reverse($ids), 0, 6), collect($response->json('data.movements'))->pluck('movement_id')->all());
+        $this->assertSame(6, $retrieved);
     }
 
     private function createUnit(int $organizationId): MeasurementUnit

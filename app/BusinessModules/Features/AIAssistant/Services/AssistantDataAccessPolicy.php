@@ -335,6 +335,11 @@ final class AssistantDataAccessPolicy
                 if (! ($decisions[$key] ?? false)) { continue; }
                 foreach ($indices as $index) { $neededFinancialReferences[$index] = $financialReferences[$index]; }
             }
+            if ($entities !== [] || $neededFinancialReferences !== []) {
+                $schemaTypes = array_keys($entities);
+                if ($neededFinancialReferences !== []) { $schemaTypes = array_merge($schemaTypes, ['estimate', 'estimate_item', 'estimate_item_resource', 'project']); }
+                $this->schemaMetadata->prefetchForEntities($schemaTypes, $this->currentCheckpoint);
+            }
             if ($neededFinancialReferences !== []) {
                 $this->currentCheckpoint?->__invoke();
                 $financialAuthorization = $this->currentAuthorization();
@@ -922,7 +927,7 @@ final class AssistantDataAccessPolicy
             if (in_array('organization_id', $columns, true)) { $internal[] = 'organization_id'; }
 
             return $this->aclCompiler->register($type, $query, array_values(array_intersect(array_unique($internal), $columns)), $this->entityQueryPath,
-                materialize: ! in_array($type, ['approved_estimate_norm', 'approved_construction_resource', 'design_ifc_model_element'], true));
+                materialize: ! in_array($type, ['approved_estimate_norm', 'approved_construction_resource', 'core_normative_resource', 'design_ifc_model_element'], true));
         } finally {
             array_pop($this->entityQueryPath);
         }

@@ -37,6 +37,7 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
             $firstQueries = $connection->getQueryLog();
             $this->assertNotEmpty($this->authorizationReads($firstQueries));
             $this->assertCount(1, $this->effectiveModuleListReads($firstQueries));
+            $this->assertCount(2, array_filter($firstQueries, static fn (array $query): bool => str_contains(strtolower($query['query']), 'from "authorization_contexts"')));
 
             $connection->flushQueryLog();
             $this->assertTrue($authorization->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => $organizationId]));
@@ -52,6 +53,53 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $this->assertTrue($authorization->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
         $this->assertFalse(app(AuthorizationService::class)->forCurrentChecks(true)->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
         $this->assertTrue(app(AuthorizationService::class)->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+    }
+
+    public function test_fresh_role_reads_refresh_metadata_and_parents_even_with_a_stale_context_model(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $context = AuthorizationContext::findOrFail($fixture->memberAssignment->context_id);
+        $context->update(['metadata' => ['revision' => 'original']]);
+        $originalParent = $context->parentContext;
+        $scope = app(AuthorizationService::class)->forCurrentChecks(true);
+        $originalRoles = $scope->getUserRoles($fixture->member, $context);
+        $originalRoleContext = $originalRoles->firstOrFail()->context;
+
+        $this->assertNotSame($context, $originalRoleContext);
+        $this->assertSame($originalParent, $context->parentContext);
+        $this->assertSame('original', $originalRoleContext->metadata['revision']);
+
+        $newParent = AuthorizationContext::getOrganizationContext($fixture->foreignOrganization->id);
+        $context->fresh()->update([
+            'metadata' => ['revision' => 'updated'],
+            'parent_context_id' => $newParent->id,
+        ]);
+
+        $freshRoles = app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoles($fixture->member, $context);
+        $freshRoleContext = $freshRoles->firstOrFail()->context;
+        $this->assertSame('updated', $freshRoleContext->metadata['revision']);
+        $this->assertSame((int) $newParent->id, (int) $freshRoleContext->parentContext->id);
+        $this->assertFalse($freshRoleContext->parentContext->relationLoaded('parentContext'));
+        $this->assertSame('original', $originalRoleContext->metadata['revision']);
+        $this->assertSame($originalParent, $context->parentContext);
+
+        $fixture->memberAssignment->update(['is_active' => false]);
+        $this->assertCount(0, app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoles($fixture->member, $context));
+    }
+
+    public function test_fresh_permission_reads_do_not_reuse_hierarchy_from_a_different_context_instance(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $context = AuthorizationContext::findOrFail($fixture->memberAssignment->context_id);
+        $context->update(['metadata' => ['revision' => 'original']]);
+        $scope = app(AuthorizationService::class)->forCurrentChecks(true);
+        $scope->getUserRoles($fixture->owner, $context);
+        $context->fresh()->update(['metadata' => ['revision' => 'updated']]);
+
+        $this->assertTrue($scope->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => (int) $fixture->organization->id]));
+        $roles = $scope->getUserRoles($fixture->member, $context);
+        $this->assertSame('updated', $roles->firstOrFail()->context->metadata['revision']);
+        $this->assertSame('original', $context->metadata['revision']);
     }
 
     public function test_current_role_slugs_reuse_permission_reads_and_refresh_after_revocation(): void

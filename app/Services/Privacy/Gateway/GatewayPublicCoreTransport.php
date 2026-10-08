@@ -471,13 +471,16 @@ final class GatewayPublicCoreTransport implements GatewayModelTransport
                         return $response = GatewayModelResponse::blocked($request, 'expired');
                     }
                     try {
-                        if (! GatewayModelRequest::hasExactKeys($provider, ['actionBytes', 'usage'])
+                        if (! (GatewayModelRequest::hasExactKeys($provider, ['actionBytes', 'usage', 'actualModel'])
+                            || (!$this->profile->isActualProfile() && GatewayModelRequest::hasExactKeys($provider, ['actionBytes', 'usage'])))
+                            || ($this->profile->isActualProfile() && ($provider['actualModel'] ?? null) !== $this->profile->values()['modelId'])
+                            || (!$this->profile->isActualProfile() && ($provider['actualModel'] ?? null) !== null)
                             || ! is_string($provider['actionBytes'])
                             || ($provider['usage'] !== null && ! is_array($provider['usage']))) {
                             return $response = GatewayModelResponse::blocked($request, 'invalid_model_output');
                         }
 
-                        $completed = GatewayModelResponse::completed($request, $provider['actionBytes'], $provider['usage']);
+                        $completed = GatewayModelResponse::completed($request, $provider['actionBytes'], $provider['usage'], $provider['actualModel'] ?? null);
                         $reason = $this->validator->validateUsage($this->profile, $completed->usage);
 
                         return $response = $reason === null

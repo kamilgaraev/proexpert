@@ -8,6 +8,10 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
+use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
+use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseRequestResource;
+use App\BusinessModules\Features\Procurement\Http\Resources\SupplierRequestResource;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -20,6 +24,7 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -27,6 +32,243 @@ use Tests\TestCase;
 class PurchaseRequestCoreExperienceControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_purchase_request_list_batches_orders_across_parents_after_expiry_and_keeps_detail_payloads(): void
+    {
+        Event::fake();
+        $this->freezeTime();
+
+        $context = AdminApiTestContext::create();
+        $ids = [];
+        $expired = null;
+        for ($index = 0; $index < 4; $index++) {
+            $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+            $supplier = $this->createSupplierRequest($purchaseRequest, $index === 0 ? 'sent' : 'draft', $index === 0 ? now()->subMinute() : null);
+            if ($index === 0) {
+                $expired = $supplier;
+            }
+            PurchaseOrder::query()->create([
+                'organization_id' => $context->organization->id,
+                'purchase_request_id' => $purchaseRequest->id,
+                'order_number' => 'PO-PAGE-'.$purchaseRequest->id,
+                'order_date' => now()->toDateString(),
+                'status' => 'draft',
+                'total_amount' => 100,
+                'currency' => 'RUB',
+            ]);
+            $ids[] = $purchaseRequest->id;
+        }
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $expected = [];
+        foreach ($ids as $id) {
+            $detail = $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/procurement/purchase-requests/{$id}");
+            $detail->assertOk();
+            $expected[] = $detail->json('data');
+        }
+        SupplierRequest::query()->whereKey($expired?->id)->update(['status' => 'sent']);
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $list = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20&sort_by=id&sort_dir=asc');
+            $parentQueries = count(array_filter(DB::getQueryLog(), static fn (array $query): bool => preg_match('/\\bfrom\\s+"?purchase_requests\\b/i', $query['query']) === 1));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $list->assertOk();
+        $this->assertSame($ids, collect($list->json('data'))->pluck('id')->all());
+        $this->assertLessThanOrEqual(6, $parentQueries);
+        $this->assertDatabaseHas('supplier_requests', ['id' => $expired?->id, 'status' => 'expired']);
+        foreach ($expected as $index => $payload) {
+            $this->assertSame($payload, $list->json("data.{$index}"));
+        }
+    }
+
+    public function test_pending_request_with_expiring_supplier_keeps_lazy_order_graph_and_original_payload(): void
+    {
+        Event::fake();
+        $this->freezeTime();
+
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::PENDING);
+        $supplier = $this->createSupplierRequest($purchaseRequest, 'sent', now()->subMinute());
+        PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'order_number' => 'PO-EXPIRY-'.$purchaseRequest->id,
+            'order_date' => now()->toDateString(),
+            'status' => 'draft',
+            'total_amount' => 100,
+            'currency' => 'RUB',
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $before = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}");
+        $before->assertOk();
+        SupplierRequest::query()->whereKey($supplier->id)->update(['status' => 'sent']);
+        $list = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20');
+
+        $list->assertOk();
+        $this->assertSame($before->json('data'), $list->json('data.0'));
+        $this->assertDatabaseHas('supplier_requests', ['id' => $supplier->id, 'status' => 'expired']);
+    }
+
+    public function test_raw_resource_collections_accept_keys_and_keep_default_fresh_supplier_state(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $ids = [];
+        $supplierIds = [];
+        for ($index = 0; $index < 2; $index++) {
+            $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+            $supplierRequest = $this->createSupplierRequest($purchaseRequest);
+            $ids[] = $purchaseRequest->id;
+            $supplierIds[] = $supplierRequest->id;
+        }
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $loaded = PurchaseRequest::query()->with(['supplierRequests', 'lines'])->whereIn('id', $ids)->orderBy('id')->get();
+        $supplierLoaded = SupplierRequest::query()->whereIn('id', $supplierIds)->orderBy('id')->get();
+        SupplierRequest::query()->whereIn('id', $supplierIds)->update(['status' => 'sent']);
+        $request = \Illuminate\Http\Request::create('/api/v1/admin/procurement/purchase-requests', 'GET');
+        $request->setUserResolver(fn () => $context->user);
+
+        $data = PurchaseRequestResource::collection($loaded)->response($request)->getData(true);
+        $this->assertCount(2, $data['data']);
+        $this->assertSame('sent', $data['data'][0]['supplier_requests'][0]['status']);
+        $this->assertSame('sent', $data['data'][1]['supplier_requests'][0]['status']);
+        $supplierData = SupplierRequestResource::collection($supplierLoaded)->resolve($request);
+        $this->assertCount(2, $supplierData);
+        $this->assertSame('sent', $supplierData[0]['status']);
+        $this->assertSame('sent', $supplierData[1]['status']);
+    }
+
+    public function test_purchase_request_list_batches_chain_relations_as_the_page_grows(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $ids = [];
+        for ($index = 0; $index < 8; $index++) {
+            $siteRequest = $this->createSiteRequest($context, $project);
+            $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+            $purchaseRequest->update(['site_request_id' => $siteRequest->id]);
+            $this->createSupplierRequest($purchaseRequest);
+            $ids[] = $purchaseRequest->id;
+        }
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $small = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=1&sort_by=id&sort_dir=desc');
+            $smallQueries = DB::getQueryLog();
+            DB::flushQueryLog();
+            $large = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=8&sort_by=id&sort_dir=desc');
+            $largeQueries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $small->assertOk();
+        $large->assertOk();
+        $this->assertSame(array_reverse($ids), collect($large->json('data'))->pluck('id')->all());
+        $this->assertLessThanOrEqual(count($smallQueries) + 1, count($largeQueries));
+        $graphQueryCount = static fn (array $queries): int => count(array_filter(
+            $queries,
+            static fn (array $query): bool => preg_match('/\\b(?:from|join)\\s+"?(?:supplier_proposals|supplier_proposal_decisions|purchase_order_items|purchase_receipts|purchase_receipt_lines|material_deliveries|site_requests)\\b/i', $query['query']) === 1,
+        ));
+        $this->assertGreaterThan(0, $graphQueryCount($smallQueries));
+        $this->assertSame($graphQueryCount($smallQueries), $graphQueryCount($largeQueries));
+        $this->assertSame($small->json('data.0.workflow_summary'), $large->json('data.0.workflow_summary'));
+        $this->assertSame($small->json('data.0.procurement_chain_summary'), $large->json('data.0.procurement_chain_summary'));
+    }
+
+    public function test_purchase_request_list_preserves_supplier_request_expiry_after_batch_loading(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::APPROVED);
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'sent', now()->subMinute());
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.0.workflow_summary.stage', 'approved_without_supplier_requests');
+        $response->assertJsonPath('data.0.workflow_summary.next_action', 'create_supplier_request');
+        $response->assertJsonPath('data.0.supplier_requests.0.status', 'expired');
+        $this->assertDatabaseHas('supplier_requests', ['id' => $supplierRequest->id, 'status' => 'expired']);
+    }
+
+    public function test_purchase_request_list_and_show_preserve_compact_chain_and_organization_scope(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context, PurchaseRequestStatusEnum::PENDING);
+        $this->createSupplierRequest($purchaseRequest);
+        PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'order_number' => 'PO-HTTP-'.$purchaseRequest->id,
+            'order_date' => now()->toDateString(),
+            'status' => 'draft',
+            'total_amount' => 100,
+            'currency' => 'RUB',
+        ]);
+        $draft = $this->createPurchaseRequest($context);
+        $foreignPurchaseRequest = $this->createPurchaseRequest($foreignContext, PurchaseRequestStatusEnum::PENDING);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $expectedSummary = app(ProcurementChainService::class)
+            ->forPurchaseRequest($purchaseRequest, $context->user)
+            ->compact()
+            ->toArray();
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-requests?per_page=20&status=pending');
+
+        $indexResponse->assertOk();
+        $ids = collect($indexResponse->json('data'))->pluck('id')->all();
+        $this->assertSame([$purchaseRequest->id], $ids);
+        $this->assertNotContains($draft->id, $ids);
+        $this->assertNotContains($foreignPurchaseRequest->id, $ids);
+        $this->assertSame($expectedSummary, $indexResponse->json('data.0.procurement_chain_summary'));
+        $this->assertNotNull($indexResponse->json('data.0.workflow_summary'));
+
+        $showResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('data.id', $purchaseRequest->id);
+        $this->assertSame($expectedSummary, $showResponse->json('data.procurement_chain_summary'));
+        $this->assertSame($indexResponse->json('data.0.workflow_summary'), $showResponse->json('data.workflow_summary'));
+        $this->assertSame($indexResponse->json('data.0'), $showResponse->json('data'));
+        $this->assertArrayNotHasKey('current_version', $indexResponse->json('data.0.supplier_requests.0'));
+        $this->assertArrayNotHasKey('lines', $indexResponse->json('data.0.supplier_requests.0'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-requests/{$foreignPurchaseRequest->id}")
+            ->assertNotFound();
+    }
 
     public function test_owner_can_create_list_show_and_reject_purchase_request_without_organization_leaks(): void
     {
@@ -335,6 +577,18 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
             'type' => 'material',
             'is_default' => false,
             'is_system' => false,
+        ]);
+    }
+
+    private function createSupplierRequest(PurchaseRequest $purchaseRequest, string $status = 'draft', ?\DateTimeInterface $expiresAt = null): SupplierRequest
+    {
+        return SupplierRequest::query()->create([
+            'organization_id' => $purchaseRequest->organization_id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'request_number' => 'SR-HTTP-'.$purchaseRequest->id,
+            'status' => $status,
+            'public_token' => 'test-'.$purchaseRequest->id.str_repeat('a', 40),
+            'public_token_expires_at' => $expiresAt ?? now()->addDay(),
         ]);
     }
 

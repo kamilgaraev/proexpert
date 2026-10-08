@@ -6,9 +6,12 @@ namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\DTOs\PurchaseRequestListItem;
 use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleOwnerEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Contracts\ProcurementOwnerWorkflowRuntime;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Enums\ProcurementTerminalReason;
@@ -44,6 +47,7 @@ class PurchaseRequestService
         private readonly ProjectMaterialDeliveryService $deliveryService,
         private readonly ProcurementCycleOwnerEventRecorder $cycleEventRecorder,
         private readonly ProcurementOwnerWorkflowRuntime $ownerWorkflowRuntime,
+        private readonly ProcurementLifecycleService $lifecycleService,
     ) {}
 
     public function find(int $id, int $organizationId): ?PurchaseRequest
@@ -77,7 +81,30 @@ class PurchaseRequestService
         $sortDir = $filters['sort_dir'] ?? 'desc';
         $query->orderBy($sortBy, $sortDir);
 
-        return $query->paginate($perPage);
+        return $query->with([
+            ...ProcurementChainResolver::PURCHASE_REQUEST_RELATIONS,
+            'supplierRequests.purchaseRequest',
+        ])->paginate($perPage);
+    }
+
+    public function paginateForListView(int $organizationId, int $perPage = 15, array $filters = []): LengthAwarePaginator
+    {
+        $page = $this->paginate($organizationId, $perPage, $filters);
+        $items = $page->getCollection()->map(fn (PurchaseRequest $purchaseRequest) => new PurchaseRequestListItem(
+            $purchaseRequest,
+            $this->lifecycleService->forPurchaseRequest($purchaseRequest),
+        ));
+        $eligible = $items->filter(fn (PurchaseRequestListItem $item) => ! $item->purchaseRequest->supplierRequests->contains(
+            fn (SupplierRequest $supplierRequest) => $supplierRequest->status === SupplierRequestStatusEnum::SENT
+                && $supplierRequest->public_token_expires_at !== null
+        ));
+        $orders = new \Illuminate\Database\Eloquent\Collection($eligible->flatMap(
+            fn (PurchaseRequestListItem $item) => $item->purchaseRequest->purchaseOrders
+        )->all());
+        $orders->loadMissing(ProcurementChainResolver::PURCHASE_ORDER_RELATIONS);
+        $page->setCollection($items);
+
+        return $page;
     }
 
     public function createFromSiteRequest(

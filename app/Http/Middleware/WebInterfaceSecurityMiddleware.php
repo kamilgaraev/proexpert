@@ -100,7 +100,7 @@ final class WebInterfaceSecurityMiddleware
             return 'admin';
         }
 
-        if ($request->is('api/v1/landing/*') || $request->is('api/lk/*')) {
+        if ($request->is('api/v1/landing/*') || $request->is('api/lk/*') || $request->is('api/v1/ai-assistant/*')) {
             return 'lk';
         }
 

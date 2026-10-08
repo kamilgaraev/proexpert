@@ -22,6 +22,12 @@ use Tests\TestCase;
 
 final class RegistrationSideEffectsTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Tests\Support\LegalAcceptanceFixture::enable();
+    }
+
     use RefreshDatabase;
 
     public function test_registration_dispatches_side_effects_only_after_commit_and_not_on_replay(): void
@@ -189,6 +195,7 @@ final class RegistrationSideEffectsTest extends TestCase
             'password' => 'Password1',
             'password_confirmation' => 'Password1',
             'organization_name' => 'Side Effects Organization',
+            ...\Tests\Support\LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']),
             'terms_accepted' => true,
             'privacy_accepted' => true,
         ];

@@ -9,6 +9,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
@@ -18,6 +19,7 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -390,6 +392,72 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         ]);
     }
 
+    public function test_request_list_batches_procurement_and_payment_presence(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreign = AdminApiTestContext::create();
+        $foreignRequest = $this->createSiteRequest($foreign, Project::factory()->create(['organization_id' => $foreign->organization->id]));
+        $otherCreator = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $otherDraft = $this->createSiteRequest($context, $project);
+        $otherDraft->update(['user_id' => $otherCreator->id]);
+        $ids = [];
+
+        for ($number = 1; $number <= 8; $number++) {
+            $siteRequest = $this->createSiteRequest($context, $project);
+            $siteRequest->update(['status' => SiteRequestStatusEnum::APPROVED]);
+            $ids[] = $siteRequest->id;
+            PurchaseRequest::query()->create([
+                'organization_id' => $context->organization->id,
+                'site_request_id' => $siteRequest->id,
+                'assigned_to' => $context->user->id,
+                'request_number' => 'PAGE-PR-' . $number,
+                'status' => 'pending',
+            ]);
+        }
+
+        $checkedPermissions = [];
+        $approvalChecks = 0;
+        $this->allowAdminAccess(function (string $permission) use (&$checkedPermissions, &$approvalChecks): bool {
+            $checkedPermissions[] = $permission;
+
+            return $permission !== 'procurement.purchase_requests.approve' || ++$approvalChecks % 2 === 1;
+        });
+        $this->allowModuleAccess();
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+
+        try {
+            $response = $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/site-requests?per_page=20');
+            $queries = collect(DB::getQueryLog())->pluck('query');
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        $response->assertOk()->assertJsonCount(8, 'data.data');
+        $returnedIds = collect($response->json('data.data'))->pluck('id')->all();
+        $this->assertEqualsCanonicalizing($ids, $returnedIds);
+        $this->assertNotContains($foreignRequest->id, $returnedIds);
+        $this->assertNotContains($otherDraft->id, $returnedIds);
+        $this->assertNotContains('procurement.supplier_proposals.accept', $checkedPermissions);
+
+        foreach ($response->json('data.data') as $payload) {
+            $this->assertFalse($payload['has_payment']);
+            $this->assertTrue($payload['can_create_payment']);
+            $this->assertIsArray($payload['action_summary']);
+            $this->assertIsArray($payload['procurement_chain_summary']);
+            $this->assertArrayNotHasKey('permissions', $payload['procurement_chain_summary']);
+            $this->assertSame('approve_purchase_request', $payload['action_summary']['primary_action']['key']);
+            $this->assertFalse($payload['action_summary']['primary_action']['is_enabled']);
+        }
+
+        $this->assertSame(16, $approvalChecks);
+
+        $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "purchase_requests"')));
+        $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "payment_documents"')));
+    }
+
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
     {
         return SiteRequest::query()->create([
@@ -439,11 +507,13 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         });
     }
 
-    private function allowAdminAccess(): void
+    private function allowAdminAccess(?callable $permissionCheck = null): void
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissionCheck): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission): bool => $permissionCheck === null || $permissionCheck($permission)
+            );
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

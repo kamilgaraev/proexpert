@@ -13,6 +13,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
+use Illuminate\Support\Facades\DB;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\Models\Organization;
 use Tests\TestCase;
@@ -112,6 +113,39 @@ class ProcurementLifecycleServiceTest extends TestCase
 
         $this->assertSame('proposal_expired', $summary->stage);
         $this->assertFalse($summary->canAcceptProposal);
+    }
+
+    public function test_default_supplier_request_summary_refreshes_a_stale_status(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'draft');
+        SupplierRequest::query()->whereKey($supplierRequest->id)->update(['status' => 'sent']);
+
+        $summary = app(ProcurementLifecycleService::class)->forSupplierRequest($supplierRequest);
+
+        $this->assertSame('supplier_request_sent', $summary->stage);
+        $this->assertSame('sent', $supplierRequest->status->value);
+    }
+
+    public function test_loaded_supplier_request_summary_preserves_the_payload_without_reloading_unchanged_relations(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'draft');
+        $service = app(ProcurementLifecycleService::class);
+        $expected = $service->forSupplierRequest($supplierRequest->fresh())->toArray();
+        $loaded = $supplierRequest->fresh(['proposals', 'proposalDecision', 'purchaseRequest']);
+        DB::enableQueryLog();
+        try {
+            DB::flushQueryLog();
+            $actual = $service->forLoadedSupplierRequest($loaded)->toArray();
+            $queryCount = count(DB::getQueryLog());
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $this->assertSame($expected, $actual);
+        $this->assertSame(0, $queryCount);
     }
 
     public function test_expired_supplier_request_returns_purchase_request_to_supplier_request_creation(): void

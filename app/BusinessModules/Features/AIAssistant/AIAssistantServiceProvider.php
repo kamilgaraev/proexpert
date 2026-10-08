@@ -98,6 +98,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantRep
 use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
 use App\Support\AI\LunaModelPolicy;
 use App\Support\AI\TokenBudgetService;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreAssistantRuntime;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRequestService;
 use Illuminate\Support\ServiceProvider;
 use InvalidArgumentException;
 
@@ -105,6 +107,8 @@ class AIAssistantServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->app->singleton(PublicCoreAssistantRuntime::class);
+        $this->app->singleton(PublicCoreRequestService::class);
         $this->mergeConfigFrom(
             __DIR__.'/config/ai-assistant.php', 'ai-assistant'
         );
