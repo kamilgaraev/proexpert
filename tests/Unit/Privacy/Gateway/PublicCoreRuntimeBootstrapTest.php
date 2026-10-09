@@ -53,7 +53,7 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                         $valid = $event === 'workflow_dispatch' && $ref === 'refs/heads/main' && $expected === $sha;
                         $expectedOutput = 'allowed='.($valid && $mode === 'release' ? 'true' : 'false')."\n"
                             .'input_allowed='.($valid && $mode === 'input-only' ? 'true' : 'false')."\n"
-                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n";
+                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\nnamespace_allowed=false\n";
                         self::assertSame(0, $result['exit']); self::assertSame('', $result['stderr']);
                         self::assertSame($expectedOutput, $result['stdout'], $mode.'/'.$event.'/'.$ref.'/'.$expected);
                     }
@@ -77,10 +77,7 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                 ['REQUESTED_MODE' => 'qualification-only'], ['EXPECTED_SOURCE_SHA' => ''],
                 ['EXPECTED_SOURCE_SHA' => strtoupper($sha)], ['EXPECTED_SOURCE_SHA' => $sha."\n"],
                 ['EXPECTED_SOURCE_SHA' => str_repeat('f', 40)]];
-            if ($job === 'deploy') {
-                foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $cases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
-                $cases[] = ['CURRENT_CANDIDATE_REVISION' => '']; $cases[] = ['CURRENT_CANDIDATE_SHA256' => ''];
-            } else {
+            if ($job !== 'deploy') {
                 $cases[] = ['PREPARATION_REF' => '']; $cases[] = ['PREPARATION_SHA' => str_repeat('f', 40)];
                 $cases[] = ['PREPARATION_PINS_SHA256' => ''];
                 if ($job === 'model_input') { $cases[] = ['INPUT_IMAGE_REF' => 'foreign:latest']; }
@@ -91,6 +88,84 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                 self::assertSame($index === 0 ? "CREDENTIAL_SENTINEL\n" : '', $result['stdout'], $job.'/'.$index);
                 self::assertSame('', $result['stderr']);
             }
+        }
+    }
+
+    public function testOrdinaryReleaseNeedsNoPublicCoreInputsAndRetainsExactImageGate(): void
+    {
+        $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
+        $job = $workflow['jobs']['deploy'];
+        $guard = $job['steps'][0]['run']."\nprintf 'RELEASE_ALLOWED\\n'\n";
+        $sha = str_repeat('a', 40);
+        $result = $this->inputPreparationProcess($guard, ['GITHUB_SHA' => $sha, 'GITHUB_REF' => 'refs/heads/main',
+            'GITHUB_EVENT_NAME' => 'workflow_dispatch', 'REQUESTED_MODE' => 'release', 'EXPECTED_SOURCE_SHA' => $sha]);
+        self::assertSame(0, $result['exit']);
+        self::assertSame("RELEASE_ALLOWED\n", $result['stdout']);
+        $script = $job['steps'][7]['with']['script'];
+        foreach (['CURRENT_', 'ACCEPTED_', 'runtime.php', 'invalidate_public_core_projections',
+            'prepare_public_core_', 'intake_public_core_', 'stage_public_core_', 'publish-projections'] as $forbidden) {
+            self::assertStringNotContainsString($forbidden, $script);
+        }
+        self::assertStringContainsString('verify_backend_release_image "${IMAGE_REF}" "${RELEASE_SHA}"', $script);
+        self::assertStringContainsString("quiesce_public_core_gateway_route\ninitialize_secure_env", $script);
+        self::assertStringContainsString('php artisan migrate:safe --force', $script);
+        self::assertStringContainsString('curl -fsS http://localhost:8000/ready', $script);
+        self::assertStringContainsString('docker compose up -d --no-deps --force-recreate ${BACKEND_SERVICES}', $script);
+    }
+
+    public function testOrdinaryReleaseQuiesceRejectsForeignActiveAndFailedDiscovery(): void
+    {
+        $helper = str_replace('\\', '/', dirname(__DIR__, 4).'/deploy/backend-runtime-allowlist.sh');
+        $script = 'source '.escapeshellarg($helper)."\n".<<<'BASH'
+set -eu
+ip() { [ "$CASE" != ip_error ]; }
+docker() {
+  local args="$*"
+  if [[ "$args" == 'ps -aq --filter name='* ]]; then
+    [ "$CASE" != named_error ] || return 73
+    if [ "$CASE" = foreign_name ]; then printf '%064d\n' 1; fi
+  elif [[ "$args" == 'ps -aq --filter label='* ]]; then
+    [ "$CASE" != discovery_error ] || return 74
+    if [ "$CASE" != absent ] && [[ "$args" == *'service=public-core-gateway' ]]; then printf '%064d\n' 1; fi
+  elif [[ "$args" == 'network ls '* ]]; then
+    [ "$CASE" != network_error ] || return 75
+    if [[ "$CASE" == foreign_network || "$CASE" == collision ]]; then printf 'network1\n'; fi
+    if [ "$CASE" = collision ]; then printf 'network2\n'; fi
+  elif [[ "$args" == 'network inspect '* ]]; then
+    case "$args" in
+      *bridge.name*) printf br-most-pc ;;
+      *compose.project*) if [ "$CASE" = foreign_network ]; then printf foreign; else printf prohelper; fi ;;
+      *compose.network*) printf public-core-gateway ;;
+      *Containers*) : ;;
+      *) return 99 ;;
+    esac
+  elif [[ "$args" == 'inspect '* ]]; then
+    case "$args" in
+      *'compose.project"}}:'*) printf 'foreign:public-core-gateway' ;;
+      *compose.project*) printf prohelper ;;
+      *compose.service*) printf public-core-gateway ;;
+      *State.Running*)
+        if [ "$CASE" = inspect_error ]; then printf 'false:0:no'; return 76; fi
+        if [ "$CASE" = active ]; then printf 'true:123:no'; else printf 'false:0:no'; fi ;;
+      *State.Pid*) printf 0 ;;
+      *NetworkSettings.Networks*) : ;;
+      *) return 99 ;;
+    esac
+  elif [[ "$args" == 'stop '* ]]; then
+    [ "$CASE" != stop_error ] || return 77
+  else return 99
+  fi
+}
+quiesce_public_core_gateway_route || exit 1
+printf 'QUIESCED\n'
+BASH;
+        foreach (['absent', 'inactive', 'active', 'foreign_name', 'foreign_network', 'collision',
+            'named_error', 'discovery_error', 'network_error', 'inspect_error', 'stop_error', 'ip_error'] as $case) {
+            $result = $this->inputPreparationProcess($script, ['CASE' => $case, 'PATH' => '/usr/bin:/bin']);
+            $success = in_array($case, ['absent', 'inactive'], true);
+            self::assertSame($success, $result['exit'] === 0, $case);
+            self::assertSame($success ? "QUIESCED\n" : '', $result['stdout'], $case);
+            self::assertSame('', $result['stderr'], $case);
         }
     }
 
@@ -478,7 +553,7 @@ INVALIDATE_BASH;
         return $app;
     }
 
-    public function testProviderHookDoesNotResolveProvidersOrRuntimeDuringBoot(): void
+    public function testProductionProviderKeepsPublicCoreUnavailableWithoutExternalBootstrap(): void
     {
         $app = $this->application();
         foreach ([PublicCoreAssistantRuntime::class,
@@ -487,6 +562,8 @@ INVALIDATE_BASH;
             self::assertFalse($app->resolved($class));
         }
         $app->boot();
+        // A protected bootstrap would replace this default singleton with a scoped reader.
+        self::assertTrue($app->getBindings()[PublicCoreAssistantRuntime::class]['shared']);
         self::assertFalse($app->resolved(PublicCoreAssistantRuntime::class));
         self::assertFalse($app->resolved(\App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface::class));
         self::assertFalse($app->resolved(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface::class));

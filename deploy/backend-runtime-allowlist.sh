@@ -327,6 +327,20 @@ except Exception:
 PYCURRENT
 }
 
+# Ordinary release validates its immutable image and helper without PublicCore inputs.
+verify_backend_release_image() {
+  local image_ref="$1" release_sha="$2" source embedded helper
+  [[ "${image_ref}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] \
+    && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "${BACKEND_HELPER_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  source="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image_ref}")" || return 1
+  [ "${source}" = "${release_sha}" ] || return 1
+  embedded="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 82:82 --entrypoint php "${image_ref}" -r 'echo json_decode(file_get_contents("/etc/most/release.json"), true, 8, JSON_THROW_ON_ERROR)["sha"];')" || return 1
+  [ "${embedded}" = "${release_sha}" ] || return 1
+  helper="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 82:82 --entrypoint php "${image_ref}" -r 'echo hash_file("sha256", "deploy/backend-runtime-allowlist.sh");')" || return 1
+  [ "${helper}" = "${BACKEND_HELPER_SHA256}" ] || return 1
+}
+
 # Read-only exact image/source gate runs before any managed store mutation.
 verify_public_core_candidate_image() {
   local image_ref="$1" release_sha="$2" source embedded helper runtime
@@ -502,9 +516,14 @@ resume_public_core_backend_writers() {
 # Managed lifecycle only. Keep the old deny barrier until roles and endpoints are gone.
 # Out-of-band privileged table deletion is outside this interface and remains unqualified.
 quiesce_public_core_gateway_route() {
-  local role container_id running host_pid network_id bridge project network_role member_id discovered members inspected matches=0
+  local role container_id running host_pid network_id bridge project network_role member_id discovered members inspected named links matches=0
   local -a ids=()
   for role in "${MOST_PUBLIC_CORE_SERVICES[@]}"; do
+    named="$(docker ps -aq --filter "name=^/prohelper-${role}(-[0-9]+)?$")" || return 1
+    for container_id in ${named}; do
+      inspected="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}:{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || return 1
+      [ "${inspected}" = "prohelper:${role}" ] || return 1
+    done
     discovered="$(docker ps -aq --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${role}")" || return 1
     for container_id in ${discovered}; do
       [[ "${container_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
@@ -512,6 +531,8 @@ quiesce_public_core_gateway_route() {
       [ "${inspected}" = prohelper ] || return 1
       inspected="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || return 1
       [ "${inspected}" = "${role}" ] || return 1
+      inspected="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" || return 1
+      [ "${inspected}" = 'false:0:no' ] || return 1
       host_pid="$(docker inspect --format '{{.State.Pid}}' "${container_id}")" || return 1
       [[ "${host_pid}" =~ ^[0-9]+$ ]] || return 1
       docker stop --time 30 "${container_id}" >/dev/null || return 1
@@ -545,7 +566,8 @@ quiesce_public_core_gateway_route() {
     inspected="$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" || return 1
     [ -z "${inspected}" ] || return 1
   done
-  if ip link show br-most-pc >/dev/null 2>&1; then [ "${matches}" -eq 1 ] || return 1; fi
+  links="$(ip -o link show)" || return 1
+  if [[ "${links}" =~ [[:space:]]br-most-pc: ]]; then [ "${matches}" -eq 1 ] || return 1; fi
   # Verify stopped roles have no endpoint on any network before invalidating readers.
   for container_id in "${ids[@]}"; do
     inspected="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" || return 1
