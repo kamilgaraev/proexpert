@@ -14,6 +14,74 @@ use Tests\TestCase;
 
 final class AssistantAclParentQueryPlanTest extends TestCase
 {
+    public function test_stored_catalog_batches_read_only_canonical_candidates_and_recheck_publication(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $dataset = DB::table('estimate_dataset_versions')->insertGetId([
+            'source_type' => 'fsnb_2022', 'version_key' => 'stored-catalog-plan', 'bucket' => 'testing', 'prefix' => 'resources',
+            'status' => 'parsed', 'finished_at' => now(), 'rows_imported' => 20000,
+        ]);
+        $collection = DB::table('estimate_norm_collections')->insertGetId([
+            'dataset_version_id' => $dataset, 'code' => 'stored', 'name' => 'Stored', 'norm_type' => 'gesn', 'source_file' => 'testing.xml',
+        ]);
+        $norm = DB::table('estimate_norms')->insertGetId([
+            'collection_id' => $collection, 'code' => 'stored', 'name' => 'Stored', 'unit' => 'm2',
+        ]);
+        DB::statement('INSERT INTO estimate_norm_resources (estimate_norm_id) SELECT ? FROM generate_series(1, 20000)', [$norm]);
+        DB::statement("INSERT INTO estimate_resource_prices (dataset_version_id, resource_code, base_price, price_type) SELECT ?, 'unused-' || n, 10, 'material' FROM generate_series(1, 20000) n", [$dataset]);
+        $allowed = [];
+        foreach (['approved_estimate_norm_resource' => 'estimate_norm_resources', 'approved_estimate_resource_price' => 'estimate_resource_prices'] as $type => $table) {
+            foreach ([PHP_INT_MIN, -1, 0, PHP_INT_MAX] as $id) {
+                $attributes = $table === 'estimate_norm_resources' ? ['estimate_norm_id' => $norm]
+                    : ['dataset_version_id' => $dataset, 'resource_code' => 'canonical-'.$id, 'base_price' => 10, 'price_type' => 'material'];
+                DB::table($table)->insert(['id' => $id, ...$attributes]);
+                $source = RagSource::withoutEvents(fn () => RagSource::query()->create([
+                    'organization_id' => $fixture->organization->id, 'source_type' => 'organization_reporting',
+                    'entity_type' => $type, 'entity_id' => (string) $id, 'title' => 'Stored', 'checksum' => hash('sha256', $type.$id),
+                ]));
+                $allowed[] = $source->id;
+            }
+            $part = $source->replicate()->forceFill(['identity_part_key' => 'second-part']);
+            $part->save();
+            $allowed[] = $part->id;
+            foreach (['00', '+0', '-0', ' 0', '0 ', '0.0', '0e0', 'invalid', '9223372036854775808', '-9223372036854775809', '٠'] as $invalidId) {
+                $source->replicate()->forceFill(['entity_id' => $invalidId])->save();
+            }
+            DB::statement('ANALYZE '.$table);
+        }
+        DB::statement('ANALYZE ai_rag_status_sources');
+        $policy = app(AssistantDataAccessPolicy::class);
+        $policy->withCurrentChecks($fixture->owner, $fixture->organization->id, function () use ($policy, $fixture, $allowed, $dataset): void {
+            $policy->prefetchEntitySchemaMetadata();
+            $batches = $policy->aggregateSourceIdentityBatches(
+                RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->owner, $fixture->organization->id,
+                ['ai_rag_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'),
+            );
+            $read = static fn (): array => array_merge(...array_map(static fn ($batch): array => $batch->get()->pluck('id')->all(), $batches));
+            self::assertEqualsCanonicalizing($allowed, $read());
+            $nativeScans = [];
+            $collect = static function (array $node) use (&$collect, &$nativeScans): void {
+                if (in_array($node['Relation Name'] ?? null, ['estimate_norm_resources', 'estimate_resource_prices'], true)) { $nativeScans[] = $node; }
+                foreach ($node['Plans'] ?? [] as $child) { $collect($child); }
+            };
+            foreach ($batches as $batch) {
+                $result = DB::selectOne('EXPLAIN (ANALYZE, TIMING FALSE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
+                $collect(json_decode($result->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+            }
+            self::assertNotEmpty($nativeScans);
+            foreach ($nativeScans as $scan) {
+                $visited = ($scan['Actual Rows'] + ($scan['Rows Removed by Filter'] ?? 0) + ($scan['Rows Removed by Index Recheck'] ?? 0)) * $scan['Actual Loops'];
+                self::assertLessThanOrEqual(4, $visited, 'A sparse stored identity batch must not read the entire native catalog.');
+            }
+            DB::table('estimate_dataset_versions')->where('id', $dataset)->update(['status' => 'failed']);
+            self::assertSame([], $read());
+            DB::table('estimate_dataset_versions')->where('id', $dataset)->update(['status' => 'parsed']);
+            self::assertEqualsCanonicalizing($allowed, $read());
+            $fixture->owner->organizations()->updateExistingPivot($fixture->organization->id, ['is_active' => false]);
+            self::assertSame([], $read());
+        }, fresh: true);
+    }
+
     public function test_source_counts_keep_a_bounded_plan_when_a_parent_catalog_exceeds_the_hash_memory_limit(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));

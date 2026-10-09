@@ -642,8 +642,10 @@ final class AssistantDataAccessPolicy
             }
 
             return null;
-        }, compact: true, inlineTypes: $expectedProjection && $joinSourceIds
-            ? ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'estimate_item', 'estimate_item_resource'] : []);
+        }, compact: true, inlineTypes: $joinSourceIds
+            ? ($expectedProjection
+                ? ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'estimate_item', 'estimate_item_resource']
+                : ['approved_estimate_resource_price', 'approved_estimate_norm_resource']) : []);
 
         return $compiled;
     }
