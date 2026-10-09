@@ -149,8 +149,9 @@ jobs:
           key: ${{ secrets.DEPLOY }}
           envs: OBSERVER_SHA,OBS_EXPECTED_SHA,OBS_REF,OBS_EVENT,OBS_MODE,OBS_IMAGE_REF,TARGET_SHA,TARGET_PREPARATION_REF,TARGET_PINS_SHA256,OBS_RUN_ID,OBS_RUN_ATTEMPT
           command_timeout: 30s
-          script_stop: true
+          script_stop: false
           script: |
+            set -eu
             python3 - <<'PYNAMESPACE'
             import datetime, errno, json, os, re, stat, sys
 
