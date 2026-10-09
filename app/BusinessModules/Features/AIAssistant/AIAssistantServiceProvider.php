@@ -109,20 +109,8 @@ class AIAssistantServiceProvider extends ServiceProvider
     {
         $this->app->singleton(PublicCoreAssistantRuntime::class);
         $this->app->scoped(PublicCoreRequestService::class);
-        $this->app->booted(static function (\Illuminate\Foundation\Application $app): void {
-            $bootstrap = dirname(__DIR__, 4).'/docker/public-core/runtime.php';
-            if (! is_file($bootstrap)) {
-                return;
-            }
-            try {
-                require_once $bootstrap;
-                if (class_exists(\Most\PublicCore\AppRuntimeBootstrap::class, false)) {
-                    \Most\PublicCore\AppRuntimeBootstrap::register($app);
-                }
-            } catch (\Throwable) {
-                // Keep the default unavailable binding on missing/invalid startup.
-            }
-        });
+        // The unfinished PublicCore route stays unavailable during ordinary releases.
+        // Do not load external protected bootstrap files from the production provider.
         $this->mergeConfigFrom(
             __DIR__.'/config/ai-assistant.php', 'ai-assistant'
         );
