@@ -91,6 +91,62 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         }
     }
 
+    public function testProductionSelectedCredentialIsInheritedOnlyByApiAndHorizon(): void
+    {
+        $compose = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/docker-compose.yml');
+        $canonical = 'TIMEWEB_AI_API_KEY';
+        $disabled = ['OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'TIMEWEB_API_KEY',
+            'TIMEWEB_AI_PROXY_KEY', 'AI_RAG_EMBEDDING_API_KEY'];
+        foreach (['api', 'horizon', 'websockets', 'geometry-worker', 'geometry-recovery-worker',
+            'worker-heavy', 'worker-ifc', 'scheduler'] as $role) {
+            $service = $compose['services'][$role];
+            self::assertSame('.env', $service['env_file']);
+            foreach ($disabled as $key) { self::assertSame('', $service['environment'][$key], $role.'/'.$key); }
+            if (in_array($role, ['api', 'horizon'], true)) {
+                // Omission inherits env_file. A null/empty/interpolated override would not be equivalent.
+                self::assertArrayNotHasKey($canonical, $service['environment'], $role);
+                self::assertArrayNotHasKey('group_add', $service);
+                foreach ($service['volumes'] as $mount) {
+                    self::assertStringNotContainsString('most-public-core', json_encode($mount, JSON_THROW_ON_ERROR));
+                    self::assertStringNotContainsString('/etc/most/public-core', json_encode($mount, JSON_THROW_ON_ERROR));
+                }
+            } else {
+                self::assertSame('', $service['environment'][$canonical], $role);
+            }
+        }
+        foreach (['public-core-processor', 'public-core-gateway'] as $role) {
+            self::assertSame(['public-core'], $compose['services'][$role]['profiles']);
+            self::assertArrayNotHasKey('env_file', $compose['services'][$role]);
+        }
+    }
+
+    public function testMissingSelectedCredentialDeniesNativeResponsesBeforeHttp(): void
+    {
+        $original = \Illuminate\Container\Container::getInstance();
+        $app = new Application(dirname(__DIR__, 4));
+        $app->instance('config', new Repository(['ai-assistant' => ['llm' => ['timeweb' => ['api_key' => '']]]]));
+        $calls = 0;
+        $client = new \GuzzleHttp\Client(['handler' => static function () use (&$calls): never {
+            ++$calls;
+            throw new LogicException('unexpected_fixture_http');
+        }]);
+        try {
+            $provider = new \App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider(
+                $this->createMock(\App\Services\Logging\LoggingService::class), $client,
+            );
+            self::assertFalse($provider->isAvailable());
+            try {
+                $provider->responses([['role' => 'user', 'content' => 'Inert missing-key fixture']]);
+                self::fail('Missing key accepted');
+            } catch (\RuntimeException $error) {
+                self::assertSame('ai_provider_unavailable', $error->getMessage());
+            }
+            self::assertSame(0, $calls);
+        } finally {
+            \Illuminate\Container\Container::setInstance($original);
+        }
+    }
+
     public function testOrdinaryReleaseNeedsNoPublicCoreInputsAndRetainsExactImageGate(): void
     {
         $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
