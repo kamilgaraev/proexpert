@@ -18,16 +18,22 @@ final class ExecutePublicCoreTestJob implements ShouldQueue
     use InteractsWithQueue;
     use Queueable;
 
-    public int $tries = 1;
+    public int $tries = 3;
 
-    public int $timeout = 90;
+    public int $timeout = 30;
+
+    public function backoff(): array
+    {
+        return [1, 3];
+    }
 
     public function __construct(public readonly string $requestRef)
     {
         if (!PublicCoreRuntimeResource::opaqueRef($requestRef)) {
             throw new InvalidArgumentException('public_core_request_invalid');
         }
-        $this->onQueue('ai-public-core');
+        $this->onConnection('redis');
+        $this->onQueue('default');
     }
 
     public function handle(PublicCoreRequestService $requests): void

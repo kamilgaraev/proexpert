@@ -88,6 +88,17 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         return $app;
     }
 
+    private static function nativeItems(array $action): array
+    {
+        return \Tests\Unit\AIAssistant\Loop\AssistantLocalLoopTest::nativeItems($action);
+    }
+
+    private static function nativeProvider(GatewayModelProfile $profile, array $action): array
+    {
+        return ['outputItemsBytes' => GatewayModelRequest::canonicalJson(self::nativeItems($action)),
+            'providerResponseId' => 'resp_source_fixture', 'usage' => null, 'actualModel' => $profile->values()['modelId']];
+    }
+
     public function testNativeTerminalCustodyKeepsKernelChannelTransferAndProjectionTuple(): void
     {
         $binding = ['requestRef' => 'ref_'.str_repeat('a', 32), 'attemptRef' => 'ref_'.str_repeat('b', 32), 'projectionDigest' => str_repeat('c', 64)];
@@ -142,6 +153,185 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         self::assertSame(0, $called);
         $this->expectExceptionMessage('receipt_changed');
         $processor->exchangeNormalControl('upload_complete', ['terminal' => 'uploaded'], null, time() + 20);
+    }
+
+    public function testNativeFactoryViewerCallbackMatchesConsumerContract(): void
+    {
+        $deny = static function (): never { throw new LogicException('unconfigured source'); };
+        $processor = \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRuntimeComposition::nativeProcessor(
+            new PublicCoreReceiptStore(), new PublicCoreRuntimeReadiness(RegisteredPublicFixtureRegistry::compiled()),
+            $deny, $deny, $deny, $deny);
+        $callback = (new \ReflectionProperty($processor, 'viewerBindingSource'))->getValue($processor);
+        $ticket = 'viewer_'.str_repeat('a', 48);
+        self::assertSame(['viewerTicketRef' => $ticket], $callback($ticket, ['role' => 'app']));
+        self::assertSame(2, (new \ReflectionFunction($callback))->getNumberOfRequiredParameters());
+    }
+
+    private static function registeredCommand(): array
+    {
+        return array_replace(self::command(), ['fixture_id' => 'material-search-v1',
+            'fixture_version' => 'public-material/1', 'input_id' => 'price-b25']);
+    }
+
+    private function ownedProducerFixture(): array
+    {
+        $cache = new \Illuminate\Cache\Repository(new \Illuminate\Cache\ArrayStore());
+        $fence = new class($cache) extends PublicCoreBackendAuthorityFence {
+            public bool $revoked = false;
+            public function __construct(\Illuminate\Contracts\Cache\Repository $cache) { parent::__construct(null, null, $cache, str_repeat('fixture-key', 4)); }
+            public function available(): bool { return true; }
+            public function inspectSourceCandidate(User $actor, int $organizationId, Request $origin, Closure $inspect): mixed { return $inspect([]); }
+            public function viewerTicketBinding(array $payload, int $frameExpiresAt): array {
+                if ($this->revoked || $frameExpiresAt <= time()) { throw new LogicException('authorization_changed'); }
+                return ['schemaVersion' => 'public-core-app-viewer-ticket-binding/1', 'viewerTicketRef' => $payload['viewerTicketRef'],
+                    'currentViewer' => ['authorized' => true, 'viewerRef' => 'synthetic-owner', 'organizationRef' => 'synthetic-tenant',
+                        'authorizationRevision' => 'synthetic-auth/1', 'policyRevision' => 'synthetic-policy/1']];
+            }
+        };
+        $viewer = new User(); $viewer->setRawAttributes(['id' => 7]);
+        $probe = (object) ['opens' => [], 'attempts' => 0, 'executions' => 0, 'executed' => false, 'failOpen' => false, 'failQueue' => false, 'queueAmbiguous' => false, 'jobs' => []];
+        $portFactory = static function (): PublicCoreContextBindings {
+            $channel = (new \ReflectionClass(AuthenticatedPublicCoreChannel::class))->newInstanceWithoutConstructor();
+            (new \ReflectionProperty($channel, 'closed'))->setValue($channel, true);
+            $port = (new \ReflectionClass(PublicCoreContextBindings::class))->newInstanceWithoutConstructor();
+            (new \ReflectionProperty($port, 'nativeChannel'))->setValue($port, $channel);
+            (new \ReflectionProperty($port, 'normalState'))->setValue($port, null);
+            return $port;
+        };
+        $runtime = new class($fence, $portFactory, static fn (): Request => Request::create('/', 'POST', server: ['REMOTE_ADDR' => '127.0.0.1'])) extends PublicCoreAssistantRuntime {
+            public object $probe;
+            public function callNormalSource(PublicCoreContextBindings $port, string $command, array $input,
+                int $rpcExpiresAt, ?int $requestOriginalExpiresAt = null, ?array $ownedContext = null): array {
+                if ($command === 'open_or_resume') {
+                    $this->probe->opens[] = $input;
+                    if ($this->probe->failOpen) { $this->probe->failOpen = false; throw new LogicException('receipt_unavailable'); }
+                    return ['status' => 'accepted', 'request_ref' => 'ref_'.str_repeat('a', 32), 'public_session_ref' => 'ref_'.str_repeat('b', 32),
+                        'process_ref' => 'ref_'.str_repeat('c', 32), 'original_expires_at' => $this->probe->originalExpiry];
+                }
+                TestCase::assertSame($ownedContext['expiresAt'], $requestOriginalExpiresAt);
+                TestCase::assertLessThanOrEqual($requestOriginalExpiresAt, $rpcExpiresAt);
+                if ($command === 'execute_owned') { $this->probe->executions++; }
+                return ['status' => 'accepted', 'reasonCode' => 'none'];
+            }
+        };
+        $probe->originalExpiry = time() + 100;
+        $runtime->probe = $probe;
+        $bus = Mockery::mock(\Illuminate\Contracts\Bus\Dispatcher::class);
+        $bus->shouldReceive('dispatch')->andReturnUsing(static function (ExecutePublicCoreTestJob $job) use ($probe): string {
+            $probe->attempts++;
+            if ($probe->failQueue) { $probe->failQueue = false; throw new LogicException('fixture queue failed before push'); }
+            $probe->jobs[] = $job;
+            if ($probe->queueAmbiguous) { $probe->queueAmbiguous = false; throw new LogicException('fixture push acknowledged ambiguously'); }
+            return 'fixture-job-'.$probe->attempts;
+        });
+        app()->instance(\Illuminate\Contracts\Bus\Dispatcher::class, $bus);
+        return [$cache, $fence, $viewer, $runtime, $probe];
+    }
+
+    public function testOwnedSubmitProducesExistingJobAndReplayDoesNotDuplicateAcknowledgedEnqueue(): void
+    {
+        [, $fence, $viewer, $runtime, $probe] = $this->ownedProducerFixture();
+        $accepted = $runtime->submit($viewer, 11, self::registeredCommand());
+        self::assertSame('accepted', $accepted['status']);
+        self::assertCount(1, $probe->jobs);
+        $job = $probe->jobs[0];
+        self::assertSame($accepted['request_ref'], $job->requestRef);
+        self::assertSame('redis', $job->connection);
+        self::assertSame('default', $job->queue);
+        $row = $fence->ownedRequest($accepted['request_ref']);
+        self::assertSame($accepted, $runtime->submit($viewer, 11, self::registeredCommand()));
+        self::assertSame('accepted', $runtime->poll($viewer, 11, $accepted['request_ref'])['status']);
+        self::assertCount(1, $probe->opens);
+        self::assertCount(1, $probe->jobs);
+        $permissions = Mockery::mock(AIPermissionChecker::class);
+        $permissions->shouldNotReceive('canUseAssistant');
+        $job->handle(new PublicCoreRequestService($permissions, $runtime));
+        $job->handle(new PublicCoreRequestService($permissions, $runtime));
+        self::assertSame(2, $probe->executions);
+        self::assertSame($row, $fence->ownedRequest($accepted['request_ref']));
+        self::assertSame('blocked', $runtime->submit($viewer, 11, array_replace(self::registeredCommand(), ['input_id' => 'quote-12m3']))['status']);
+        self::assertCount(1, $probe->jobs);
+        $fence->revoked = true;
+        self::assertSame('blocked', $runtime->poll($viewer, 11, $accepted['request_ref'])['status']);
+        self::assertSame('blocked', $runtime->submit($viewer, 11, self::registeredCommand())['status']);
+        self::assertCount(1, $probe->jobs);
+        $this->expectExceptionMessage('authorization_changed');
+        $job->handle(new PublicCoreRequestService($permissions, $runtime));
+    }
+
+    public function testOwnedEnqueueFailureAndAmbiguousPushRecoverWithoutRenewingViewerOrExpiry(): void
+    {
+        [, $fence, $viewer, $runtime, $probe] = $this->ownedProducerFixture();
+        $probe->failQueue = true;
+        self::assertSame('receipt_unavailable', $runtime->submit($viewer, 11, self::registeredCommand())['reason_code']);
+        self::assertCount(0, $probe->jobs);
+        $selection = self::registeredCommand() + ['public_session_ref' => null];
+        $saved = $fence->findOwnedSelection($viewer, 11, $selection);
+        $probe->queueAmbiguous = true;
+        self::assertSame('receipt_unavailable', $runtime->submit($viewer, 11, self::registeredCommand())['reason_code']);
+        self::assertCount(1, $probe->jobs);
+        self::assertSame('accepted', $runtime->poll($viewer, 11, $saved['requestRef'])['status']);
+        self::assertCount(2, $probe->jobs);
+        self::assertCount(1, $probe->opens);
+        self::assertSame($saved, $fence->ownedRequest($saved['requestRef']));
+        $permissions = Mockery::mock(AIPermissionChecker::class);
+        $permissions->shouldNotReceive('canUseAssistant');
+        foreach ($probe->jobs as $job) { $job->handle(new PublicCoreRequestService($permissions, $runtime)); }
+        self::assertSame(2, $probe->executions);
+        self::assertSame('accepted', $runtime->submit($viewer, 11, self::registeredCommand())['status']);
+        self::assertSame(3, $probe->attempts);
+    }
+
+    public function testAmbiguousOpenRetryReusesSignedViewerAndRejectsUuidMutation(): void
+    {
+        [$cache, $fence, $viewer, $runtime, $probe] = $this->ownedProducerFixture();
+        $probe->failOpen = true;
+        self::assertSame('receipt_unavailable', $runtime->submit($viewer, 11, self::registeredCommand())['reason_code']);
+        self::assertSame('blocked', $runtime->submit($viewer, 11, array_replace(self::registeredCommand(), ['input_id' => 'quote-12m3']))['status']);
+        self::assertSame('accepted', $runtime->submit($viewer, 11, self::registeredCommand())['status']);
+        self::assertCount(2, $probe->opens);
+        self::assertSame($probe->opens[0], $probe->opens[1]);
+        self::assertCount(1, $probe->jobs);
+        $selection = self::registeredCommand() + ['public_session_ref' => null];
+        $row = $fence->findOwnedSelection($viewer, 11, $selection);
+        $key = 'ai-public-core:enqueued:'.$row['requestRef'];
+        $receipt = $cache->get($key);
+        self::assertIsArray($receipt);
+        $receipt['record']['expiresAt'] += 100;
+        $cache->put($key, $receipt, 100);
+        self::assertSame('receipt_changed', $runtime->submit($viewer, 11, self::registeredCommand())['reason_code']);
+        self::assertCount(1, $probe->jobs);
+    }
+
+    public function testOwnedSelectionLockPartialCacheWriteAndExpiredWorkerRemainBounded(): void
+    {
+        [$cache, $fence, $viewer, $runtime, $probe] = $this->ownedProducerFixture();
+        $selection = self::registeredCommand() + ['public_session_ref' => null];
+        $blocked = $fence->withOwnedSelection($viewer, 11, $selection,
+            fn (): array => $runtime->submit($viewer, 11, self::registeredCommand()));
+        self::assertSame('receipt_changed', $blocked['reason_code']);
+        self::assertCount(0, $probe->opens);
+        $accepted = $runtime->submit($viewer, 11, self::registeredCommand());
+        self::assertSame('accepted', $accepted['status']);
+        $row = $fence->ownedRequest($accepted['request_ref']);
+        $selectionKey = (new \ReflectionMethod($fence, 'selectionKey'))->invoke($fence, 7, 11, $selection);
+        $cache->forget($selectionKey);
+        $opened = ['status' => 'accepted', 'request_ref' => $row['requestRef'], 'public_session_ref' => $row['public_session_ref'],
+            'process_ref' => $row['process_ref'], 'original_expires_at' => $row['expiresAt']];
+        self::assertSame($row, $fence->rememberOwnedRequest($row['viewerTicketRef'], $selection, $opened));
+        self::assertSame($row, $fence->findOwnedSelection($viewer, 11, $selection));
+        $key = 'ai-public-core:owned-request:'.$row['requestRef'];
+        $expired = $cache->get($key);
+        $expired['record']['expiresAt'] = time() - 1;
+        $expired['mac'] = (new \ReflectionMethod($fence, 'ownedRequestMac'))->invoke($fence, $expired['record']);
+        $cache->put($key, $expired, 10);
+        self::assertSame('blocked', $runtime->submit($viewer, 11, self::registeredCommand())['status']);
+        self::assertSame('blocked', $runtime->poll($viewer, 11, $row['requestRef'])['status']);
+        self::assertCount(1, $probe->jobs);
+        $permissions = Mockery::mock(AIPermissionChecker::class);
+        $permissions->shouldNotReceive('canUseAssistant');
+        $this->expectExceptionMessage('authorization_changed');
+        $probe->jobs[0]->handle(new PublicCoreRequestService($permissions, $runtime));
     }
 
     public function testSignedOwnedRequestCacheRechecksWorkerViewerUuidTenantAndMac(): void
@@ -399,19 +589,13 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                 $channel = AuthenticatedPublicCoreChannel::connect($path, ['uid' => $uid, 'gid' => $gid, 'pid' => $parent], 30000);
                 $registry = RegisteredPublicFixtureRegistry::compiled();
                 $store = new PublicCoreReceiptStore($directory.'/producer', str_repeat('s', 32));
-                $processorCell = new class { public ?PublicCoreProcessor $processor = null; };
-                $sessions = new PublicCoreSessionAuthority($registry, $store,
-                    static function (array $binding) use ($processorCell): ?array {
-                        return $processorCell->processor instanceof PublicCoreProcessor
-                            ? $processorCell->processor->currentNormalViewer($binding) : null;
-                    }, static fn (): int => $now);
                 $peer = $channel->peer();
-                $processor = new PublicCoreProcessor($registry, $store, $sessions, new PublicCoreRuntimeReadiness($registry),
+                $deny = static function (): never { throw new LogicException('fixture protected Gateway unavailable'); };
+                $processor = \App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreRuntimeComposition::nativeProcessor(
+                    $store, new PublicCoreRuntimeReadiness($registry),
                     static fn (array $actual): ?array => $actual === $peer
                         ? ['role' => 'app', 'identityRef' => 'ref_source_only_app_role', 'kernelPeer' => $actual] : null,
-                    static fn (string $reference): array => ['viewerTicketRef' => $reference],
-                    static function () use ($directory): array { file_put_contents($directory.'/factory-called', '1'); return []; });
-                $processorCell->processor = $processor;
+                    $deny, $deny, $deny);
                 $processor->serveAppChannel($channel);
                 exit(0);
             } catch (\Throwable $failure) {
@@ -481,7 +665,8 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                     self::assertSame('authorization_changed', $opened['reasonCode']);
                 } else {
                     self::assertSame('accepted', $opened['status']);
-                    self::assertSame($now + 120, $opened['original_expires_at']);
+                    self::assertGreaterThanOrEqual($now + 120, $opened['original_expires_at']);
+                    self::assertLessThanOrEqual(time() + 120, $opened['original_expires_at']);
                     self::assertGreaterThanOrEqual(4, $checks);
                     if ($mode === 'later-revoke') {
                         $sourceOwner->revoke = true;
@@ -615,7 +800,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         $loop = PublicCoreContextBindings::processorLoop($context,
             static fn (?string $ref): array => $fixture->authority($ref), $tokenizer,
             static function (array $input) use ($fixture): array {
-                return $fixture->driverCalls++ === 0 ? OfflineLoopFixtures::searchAction() : OfflineLoopFixtures::priceAnswer($input);
+                return self::nativeItems($fixture->driverCalls++ === 0 ? OfflineLoopFixtures::searchAction() : OfflineLoopFixtures::priceAnswer($input));
             }, $fixture->adapter(), $fixture->validator(), static fn (): int => $fixture->now,
             static function (array $binding, array $conditions, array $evidence) use ($fixture): ?array {
                 if (!$fixture->gateAllowed || $fixture->corpus->guard($fixture->corpus->context()) !== null) { return null; }
@@ -925,11 +1110,21 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         (new PublicCoreRuntimeResource(array_replace(PublicCoreRuntimeResource::unavailable(), ['model_enabled' => true])))->resolve();
     }
 
-    public function testDedicatedJobCarriesOnlyOpaqueReferenceAndNeverRetriesDefaultUnavailableDispatch(): void
+    public function testDedicatedJobUsesExistingHorizonRouteAndBoundedRetries(): void
     {
         $job = new ExecutePublicCoreTestJob('request_'.str_repeat('a', 32));
-        self::assertSame('ai-public-core', $job->queue);
-        self::assertSame(1, $job->tries);
+        self::assertSame('redis', $job->connection);
+        self::assertSame('default', $job->queue);
+        self::assertSame(3, $job->tries);
+        self::assertSame(30, $job->timeout);
+        self::assertSame([1, 3], $job->backoff());
+        $horizon = require dirname(__DIR__, 4).'/config/horizon.php';
+        $consumer = $horizon['environments']['production']['supervisor-normal'];
+        self::assertSame($job->connection, $consumer['connection']);
+        self::assertContains($job->queue, $consumer['queue']);
+        self::assertLessThan($consumer['timeout'], $job->timeout);
+        self::assertStringNotContainsString('viewerTicketRef', serialize($job));
+        self::assertStringNotContainsString('fixture_id', serialize($job));
         $permissions = Mockery::mock(AIPermissionChecker::class);
         $permissions->shouldNotReceive('canUseAssistant');
         $this->expectExceptionMessage('runtime_not_activated');
@@ -954,7 +1149,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
         self::assertArrayNotHasKey('mappingEvidenceRef', $mapped);
         self::assertFalse($gateway->isActualProfile());
         $this->expectExceptionMessage('receipt_unavailable');
-        (new PublicCoreGatewayModelDriver($gateway))(['schemaVersion' => 'assistant-loop-input/1']);
+        (new PublicCoreGatewayModelDriver($gateway))(['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [], 'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []]);
     }
 
     public function testUnqualifiedGatewayProfileCannotProduceCoreProfileOrBody(): void
@@ -972,15 +1167,16 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         $profile = self::gatewayProfile();
         $driver = new PublicCoreGatewayModelDriver($profile);
-        $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => ['currentRef' => 'ref_'.str_repeat('a', 32)],
+        $input = ['schemaVersion' => 'assistant-loop-input/2', 'context' => ['currentRef' => 'ref_'.str_repeat('a', 32)],
             'contextScope' => ['kind' => 'selected_entity'], 'tools' => [['name' => 'material.search']],
-            'toolReferences' => null, 'repair' => ['reason' => 'claims_invalid']];
+            'toolReferences' => null, 'repair' => ['reason' => 'claims_invalid'], 'nativeHistory' => []];
         $body = $driver->bodyBytes($input);
         $decoded = json_decode($body, true, 64, JSON_THROW_ON_ERROR);
-        self::assertSame(GatewayModelRequest::canonicalJson($input), $decoded['messages'][1]['content']);
+        $withoutHistory = $input; unset($withoutHistory['nativeHistory']);
+        self::assertSame(GatewayModelRequest::canonicalJson($withoutHistory), $decoded['input'][1]['content'][0]['text']);
         self::assertFalse($decoded['stream']);
         self::assertFalse($decoded['store']);
-        self::assertSame($profile->values()['maxOutputTokens'], $decoded['max_completion_tokens']);
+        self::assertSame($profile->values()['maxOutputTokens'], $decoded['max_output_tokens']);
         $request = self::gatewayRequest($profile, $body);
         self::assertNull((new GatewayPublicCoreRequestValidator())->validate($request, $profile, 1000));
         self::assertSame(hash('sha256', $body), $request->projectionDigest);
@@ -1024,7 +1220,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                     self::assertArrayNotHasKey('reasonCode', $dispatch->uploadComplete($state->packet));
                     self::assertFalse((new \ReflectionProperty($fixture, 'appHeld'))->getValue($fixture));
 
-                    return ['actionBytes' => GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Выбрать материал.']), 'usage' => null];
+                    return self::nativeProvider($current, ['type' => 'plan', 'plan' => 'Выбрать материал.']);
                 });
             $transport = new class($gateway, $state) implements GatewayModelTransport {
                 public function __construct(private GatewayModelTransport $gateway, private object $state) {}
@@ -1043,13 +1239,14 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                     return $mode !== 'binding-unavailable' && $contextRef === $binding['receipt']['contextRef'] ? $binding : null;
                 });
             try {
-                $action = $driver($input);
+                $action = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction::native($driver($input))->values();
                 self::assertNull($reason);
                 self::assertEquals(['type' => 'plan', 'plan' => 'Выбрать материал.'], $action);
                 self::assertSame(1, $state->writes);
                 self::assertInstanceOf(GatewayModelRequest::class, $state->packet);
                 self::assertSame(hash('sha256', $state->packet->bodyBytes), $state->packet->projectionDigest);
-                self::assertEquals($input, json_decode(json_decode($state->packet->bodyBytes, true, 64, JSON_THROW_ON_ERROR)['messages'][1]['content'], true, 64, JSON_THROW_ON_ERROR));
+                $withoutHistory = $input; unset($withoutHistory['nativeHistory']);
+                self::assertEquals($withoutHistory, json_decode(json_decode($state->packet->bodyBytes, true, 64, JSON_THROW_ON_ERROR)['input'][1]['content'][0]['text'], true, 64, JSON_THROW_ON_ERROR));
             } catch (LogicException $error) {
                 self::assertNotNull($reason, $error->getMessage());
                 self::assertSame($reason, $error->getMessage());
@@ -1118,9 +1315,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                 }
                 file_put_contents($directory.'/body', $body);
                 if ($mode === 'stopped') { fclose($connection); exit(0); }
-                $payload = GatewayModelRequest::canonicalJson(['id' => 'local-source-native-fence', 'object' => 'chat.completion',
-                    'created' => time(), 'model' => 'source-fixture-model', 'choices' => [['index' => 0,
-                        'message' => ['role' => 'assistant', 'content' => '{"type":"plan","plan":"Read public facts."}'], 'finish_reason' => 'stop']]]);
+                $payload = GatewayModelRequest::canonicalJson(['id' => 'local-source-native-fence', 'object' => 'response', 'created_at' => time(), 'status' => 'completed', 'model' => 'source-fixture-model', 'output' => self::nativeItems(['type' => 'plan', 'plan' => 'Read public facts.'])]);
                 fwrite($connection, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ".strlen($payload)."\r\nConnection: close\r\n\r\n".$payload);
                 fclose($connection);
                 exit(0);
@@ -1187,7 +1382,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
                 }, $processor, $channel);
             self::assertSame('source-fixture-model', $profile->values()['modelId']);
             try {
-                $action = $driver($input);
+                $action = \App\BusinessModules\Features\AIAssistant\Services\Loop\AssistantModelAction::native($driver($input))->values();
                 self::assertSame('valid', $mode);
                 self::assertEquals(['type' => 'plan', 'plan' => 'Read public facts.'], $action);
             } catch (LogicException $failure) {
@@ -1289,48 +1484,44 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
 
     public function testDriverDecodesExactCanonicalActionAndRejectsForeignResponseBindings(): void
     {
-        $profile = self::gatewayProfile();
-        $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
-        $action = ['type' => 'plan', 'plan' => 'Выбрать разрешённый инструмент.'];
-        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson($action), null);
-        self::assertSame(json_decode(GatewayModelRequest::canonicalJson($action), true, 64, JSON_THROW_ON_ERROR), $driver->action($request, $response));
+        $profile = self::gatewayProfile(); $driver = new PublicCoreGatewayModelDriver($profile);
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(self::emptyNativeInput()));
+        $items = self::nativeItems(['type' => 'plan', 'plan' => 'Выбрать разрешённый инструмент.']);
+        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson($items), 'resp_fixture', null, $profile->values()['modelId']);
+        self::assertSame(GatewayModelRequest::decodeJson(GatewayModelRequest::canonicalJson($items)), $driver->action($request, $response));
+        self::assertNull($driver->actualModel());
         $other = GatewayModelResponse::fromArray(array_replace($response->values(), ['attemptRef' => 'attempt_'.str_repeat('d', 32)]));
-        $this->expectExceptionMessage('profile_changed');
-        $driver->action($request, $other);
+        $this->expectExceptionMessage('profile_changed'); $driver->action($request, $other);
+    }
+
+    private static function emptyNativeInput(): array
+    {
+        return ['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [],
+            'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []];
     }
 
     public function testDriverCannotPublishGuessedOrStaleActualModelEvidence(): void
     {
         $profile = GatewayModelProfile::fromArray(array_replace(self::gatewayProfile()->values(), [
-            'qualification' => 'actual', 'apiMethod' => 'chat_completions', 'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT,
-            'modelId' => 'source-fixture-model', 'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
+            'qualification' => 'actual', 'adapterRevision' => GatewayModelProfile::ADAPTER_REVISION, 'apiMethod' => 'responses',
+            'endpoint' => GatewayPublicCoreHttpSender::ENDPOINT, 'modelId' => 'source-fixture-model',
+            'modelRevision' => 'source-fixture-v1', 'tokenizerId' => 'source-fixture-tokenizer',
         ]));
-        $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
+        $driver = new PublicCoreGatewayModelDriver($profile); $request = self::gatewayRequest($profile, $driver->bodyBytes(self::emptyNativeInput()));
         $ref = 'ref_'.str_repeat('a', 32);
         $final = ['type' => 'final', 'text' => 'Публичный ответ.', 'claims' => [], 'sourceRefs' => [$ref],
             'claimScope' => ['kind' => 'selected_entity', 'scopeRef' => $ref, 'sourceGenerationRef' => $ref, 'unitRefs' => [$ref]]];
-        $bytes = GatewayModelRequest::canonicalJson($final);
-        $model = $profile->values()['modelId'];
+        $items = self::nativeItems($final); $bytes = GatewayModelRequest::canonicalJson($items); $model = $profile->values()['modelId'];
         $usage = ['inputTokens' => 10, 'outputTokens' => 10, 'totalTokens' => 20];
-        self::assertSame(json_decode($bytes, true, flags: JSON_THROW_ON_ERROR), $driver->action($request, GatewayModelResponse::completed($request, $bytes, $usage, $model)));
+        self::assertSame(GatewayModelRequest::decodeJson($bytes), $driver->action($request, GatewayModelResponse::completed($request, $bytes, 'resp_fixture', $usage, $model)));
         self::assertSame($model, $driver->actualModel());
         self::assertSame('public-gateway-actual', PublicCoreContextBindings::coreProfile($profile)['qualification']);
-        foreach ([null, 'wrong-provider-model'] as $invalid) {
-            try {
-                $driver->action($request, GatewayModelResponse::completed($request, $bytes, $usage, $invalid));
-                self::fail('Profile identity cannot replace observed response model');
-            } catch (LogicException $error) {
-                self::assertSame('invalid_model_output', $error->getMessage());
-                self::assertNull($driver->actualModel());
-            }
-        }
-        $stub = self::gatewayProfile();
-        $local = new PublicCoreGatewayModelDriver($stub);
-        $packet = self::gatewayRequest($stub, $local->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
-        $this->expectExceptionMessage('invalid_model_output');
-        $local->action($packet, GatewayModelResponse::completed($packet, $bytes, null, $model));
+        try { $driver->action($request, GatewayModelResponse::completed($request, $bytes, 'resp_fixture', $usage, 'wrong-model')); self::fail('No requested-model fallback'); }
+        catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); self::assertNull($driver->actualModel()); }
+        try { GatewayModelResponse::fromArray(array_replace(GatewayModelResponse::completed($request, $bytes, 'resp_fixture', $usage, $model)->values(), ['actualModel' => null])); self::fail('Missing observed model denied'); }
+        catch (LogicException $error) { self::assertSame('invalid_model_output', $error->getMessage()); }
+        $local = new PublicCoreGatewayModelDriver(self::gatewayProfile()); $packet = self::gatewayRequest(self::gatewayProfile(), $local->bodyBytes(self::emptyNativeInput()));
+        $this->expectExceptionMessage('invalid_model_output'); $local->action($packet, GatewayModelResponse::completed($packet, $bytes, 'resp_fixture', null, $model));
     }
 
     public function testReadyResourceCannotUseProfileGuessAsObservedResponseModel(): void
@@ -1347,7 +1538,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         $profile = self::gatewayProfile();
         $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [], 'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []]));
         $this->expectExceptionMessage('runtime_not_activated');
         $driver->action($request, GatewayModelResponse::unavailable($request, 'runtime_not_activated'));
     }
@@ -1356,9 +1547,9 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         $profile = self::gatewayProfile();
         $driver = new PublicCoreGatewayModelDriver($profile);
-        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/1']));
-        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson(['type' => 'plan', 'plan' => 'Шаг']),
-            ['inputTokens' => 1, 'outputTokens' => 257, 'totalTokens' => 258]);
+        $request = self::gatewayRequest($profile, $driver->bodyBytes(['schemaVersion' => 'assistant-loop-input/2', 'context' => [], 'contextScope' => [], 'tools' => [], 'toolReferences' => null, 'repair' => null, 'nativeHistory' => []]));
+        $response = GatewayModelResponse::completed($request, GatewayModelRequest::canonicalJson(self::nativeItems(['type' => 'plan', 'plan' => 'Шаг'])), 'resp_fixture',
+            ['inputTokens' => 1, 'outputTokens' => 257, 'totalTokens' => 258], $profile->values()['modelId']);
         $this->expectExceptionMessage('budget_exceeded');
         $driver->action($request, $response);
     }
@@ -1402,7 +1593,7 @@ final class PublicCoreRuntimeBindingsTest extends TestCase
     {
         return GatewayModelProfile::fromArray([
             'profileRef' => 'profile_'.str_repeat('a', 32), 'qualification' => 'local-stub',
-            'adapterRevision' => 'unit-public-adapter/1', 'apiMethod' => 'local_action', 'endpoint' => 'local://public-core-stub',
+            'adapterRevision' => 'unit-public-adapter/1', 'apiMethod' => 'responses', 'endpoint' => 'local://public-core-stub',
             'modelId' => 'local-action-stub', 'modelRevision' => 'unit/1', 'tokenizerId' => 'unit-tokenizer', 'tokenizerRevision' => 'unit/1',
             'mappingEvidenceRef' => 'mapping_'.str_repeat('b', 32), 'capabilityEvidenceRef' => 'capability_'.str_repeat('b', 32),
             'capacityEvidenceRef' => 'capacity_'.str_repeat('b', 32), 'contextWindow' => 32768,

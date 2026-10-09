@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Runtime;
 
 use App\BusinessModules\Features\AIAssistant\Http\Resources\PublicCoreRuntimeResource;
+use App\BusinessModules\Features\AIAssistant\Jobs\ExecutePublicCoreTestJob;
+use Illuminate\Contracts\Bus\Dispatcher;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
@@ -214,20 +216,23 @@ class PublicCoreAssistantRuntime
             $command = ['fixture_id' => $command['fixture_id'], 'fixture_version' => $command['fixture_version'],
                 'input_id' => $command['input_id'], 'request_id' => strtolower($command['request_id']),
                 'public_session_ref' => $command['public_session_ref'] ?? null];
-            $owned = $this->sourceFence->findOwnedSelection($viewer, $organizationId, $command);
-            if ($owned === null) {
-                $this->sourceFence->reserveOwnedSelection($viewer, $organizationId, $command);
-                $origin = ($this->originSource)();
-                if (!$origin instanceof Request) { throw new LogicException('authorization_changed'); }
-                $ticket = $this->sourceFence->issueViewerTicket($viewer, $organizationId, $origin, time() + 150);
-                $expiry = time() + 25;
-                $port = $this->nativePort($expiry);
-                try { $opened = $this->callNormalSource($port, 'open_or_resume', ['viewer_ticket_ref' => $ticket] + $command, $expiry); }
-                finally { $port->closeNative(); }
-                if (($opened['status'] ?? null) !== 'accepted') { return PublicCoreRuntimeResource::blocked($opened['reasonCode'] ?? 'receipt_unavailable'); }
-                $owned = $this->sourceFence->rememberOwnedRequest($ticket, $command, $opened);
-            }
-            return $this->acceptedOwned($owned);
+            return $this->sourceFence->withOwnedSelection($viewer, $organizationId, $command, function () use ($viewer, $organizationId, $command): array {
+                $owned = $this->sourceFence->findOwnedSelection($viewer, $organizationId, $command);
+                if ($owned === null) {
+                    $origin = ($this->originSource)();
+                    if (!$origin instanceof Request) { throw new LogicException('authorization_changed'); }
+                    $binding = $this->sourceFence->ownedSelectionTicket($viewer, $organizationId, $command, $origin);
+                    $ticket = $binding['viewerTicketRef'];
+                    $expiry = min(time() + 25, $binding['expiresAt']);
+                    $port = $this->nativePort($expiry);
+                    try { $opened = $this->callNormalSource($port, 'open_or_resume', ['viewer_ticket_ref' => $ticket] + $command, $expiry); }
+                    finally { $port->closeNative(); }
+                    if (($opened['status'] ?? null) !== 'accepted') { return PublicCoreRuntimeResource::blocked($opened['reasonCode'] ?? 'receipt_unavailable'); }
+                    $owned = $this->sourceFence->rememberOwnedRequest($ticket, $command, $opened);
+                }
+                $this->enqueueOwnedRequest($owned['requestRef']);
+                return $this->acceptedOwned($owned);
+            });
         } catch (Throwable $error) { return PublicCoreRuntimeResource::blocked($this->safeReason($error)); }
 
     }
@@ -241,8 +246,11 @@ class PublicCoreAssistantRuntime
             if (($output['schemaVersion'] ?? null) === 'public-core-result-publication/1') {
                 return $port->nativePublicationResponse($output, $this->sourceFence) ?? PublicCoreRuntimeResource::blocked('receipt_unavailable');
             }
-            return ($output['status'] ?? null) === 'accepted' ? $this->acceptedOwned($owned)
-                : PublicCoreRuntimeResource::blocked($output['reasonCode'] ?? 'receipt_unavailable');
+            if (($output['status'] ?? null) === 'accepted') {
+                $this->enqueueOwnedRequest($owned['requestRef']);
+                return $this->acceptedOwned($owned);
+            }
+            return PublicCoreRuntimeResource::blocked($output['reasonCode'] ?? 'receipt_unavailable');
         } catch (Throwable $error) { return PublicCoreRuntimeResource::blocked($this->safeReason($error)); }
     }
 
@@ -252,6 +260,12 @@ class PublicCoreAssistantRuntime
         $owned = $this->sourceFence->ownedRequest($requestRef);
         [, $output] = $this->ownedOperation($owned, 'execute_owned');
         if (($output['status'] ?? null) === 'blocked') { throw new LogicException($output['reasonCode']); }
+    }
+
+    private function enqueueOwnedRequest(string $reference): void
+    {
+        $this->sourceFence->ensureOwnedRequestEnqueued($reference,
+            static fn (string $requestRef): mixed => app(Dispatcher::class)->dispatch(new ExecutePublicCoreTestJob($requestRef)));
     }
 
     private function ownedOperation(array $owned, string $command): array

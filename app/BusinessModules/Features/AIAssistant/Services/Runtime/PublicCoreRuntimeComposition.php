@@ -83,9 +83,8 @@ final class PublicCoreRuntimeComposition
         };
         $composition = new self($factory, $semanticValidator);
         $processor = new PublicCoreProcessor($registry, $store, $sessions, $readiness, $peerSource,
-            static function (array $input, array $peer, string $command): ?array {
-                return isset($input['viewer_ticket_ref']) ? ['viewerTicketRef' => $input['viewer_ticket_ref']] : null;
-            }, $composition(...), $composition->currentRuntime(...));
+            static fn (string $ticket, array $peer): array => ['viewerTicketRef' => $ticket],
+            $composition(...), $composition->currentRuntime(...));
         return $processor;
     }
 

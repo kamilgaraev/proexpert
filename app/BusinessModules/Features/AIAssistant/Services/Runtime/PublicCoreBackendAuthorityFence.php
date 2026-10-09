@@ -27,6 +27,7 @@ use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Database\Connection;
 use Illuminate\Http\Request;
 use LogicException;
@@ -174,12 +175,84 @@ class PublicCoreBackendAuthorityFence
         return $owned;
     }
 
-    public function reserveOwnedSelection(User $viewer, int $organizationId, array $selection): string
+    public function withOwnedSelection(User $viewer, int $organizationId, array $selection, Closure $operation): mixed
+    {
+        return $this->withOwnedLock($this->selectionKey($viewer->id, $organizationId, $selection), $operation);
+    }
+
+    public function ownedSelectionTicket(User $viewer, int $organizationId, array $selection, Request $origin): array
+    {
+        $key = $this->selectionKey($viewer->id, $organizationId, $selection).':opening';
+        $stored = $this->tickets->get($key);
+        if ($stored === null) {
+            $ticket = $this->issueViewerTicket($viewer, $organizationId, $origin, time() + 150);
+            $row = ['viewerTicketRef' => $ticket, 'actorId' => $viewer->id, 'organizationId' => $organizationId,
+                'selection' => $selection, 'expiresAt' => $this->ownedViewerTicket($ticket)['expiresAt']];
+            if (!$this->tickets->add($key, ['record' => $row, 'mac' => $this->ticketMac($key, $row)], $row['expiresAt'] - time())) {
+                throw new LogicException('receipt_changed');
+            }
+            $stored = $this->tickets->get($key);
+        }
+        $row = $this->signedOwnedRecord($key, $stored);
+        if (array_keys($row) !== ['viewerTicketRef', 'actorId', 'organizationId', 'selection', 'expiresAt']
+            || $row['actorId'] !== $viewer->id || $row['organizationId'] !== $organizationId || $row['selection'] !== $selection
+            || !is_int($row['expiresAt']) || $row['expiresAt'] <= time()
+            || $this->ownedViewerTicket($row['viewerTicketRef'])['expiresAt'] !== $row['expiresAt']) {
+            throw new LogicException('receipt_changed');
+        }
+        $this->viewerTicketBinding(['schemaVersion' => 'public-core-app-viewer-ticket-check/1',
+            'viewerTicketRef' => $row['viewerTicketRef']], $row['expiresAt']);
+        return ['viewerTicketRef' => $row['viewerTicketRef'], 'expiresAt' => $row['expiresAt']];
+    }
+
+    public function ensureOwnedRequestEnqueued(string $reference, Closure $enqueue): void
+    {
+        $this->withOwnedLock('ai-public-core:enqueue:'.$reference, function () use ($reference, $enqueue): void {
+            $owned = $this->ownedRequest($reference);
+            $key = 'ai-public-core:enqueued:'.$reference;
+            $stored = $this->tickets->get($key);
+            if ($stored !== null) {
+                $row = $this->signedOwnedRecord($key, $stored);
+                if (array_keys($row) !== ['requestRef', 'viewerTicketRef', 'expiresAt', 'jobId']
+                    || $row['requestRef'] !== $reference || $row['viewerTicketRef'] !== $owned['viewerTicketRef']
+                    || $row['expiresAt'] !== $owned['expiresAt'] || !is_string($row['jobId']) || $row['jobId'] === '') {
+                    throw new LogicException('receipt_changed');
+                }
+                return;
+            }
+            try { $jobId = $enqueue($reference); }
+            catch (Throwable $error) { throw new LogicException('receipt_unavailable', 0, $error); }
+            $current = $this->ownedRequest($reference);
+            if ($current !== $owned || (!is_string($jobId) && !is_int($jobId)) || (string) $jobId === ''
+                || strlen((string) $jobId) > 200 || $owned['expiresAt'] <= time()) {
+                throw new LogicException('receipt_unavailable');
+            }
+            $row = ['requestRef' => $reference, 'viewerTicketRef' => $owned['viewerTicketRef'],
+                'expiresAt' => $owned['expiresAt'], 'jobId' => (string) $jobId];
+            if (!$this->tickets->add($key, ['record' => $row, 'mac' => $this->ticketMac($key, $row)], $owned['expiresAt'] - time())) {
+                throw new LogicException('receipt_changed');
+            }
+        });
+    }
+
+    private function signedOwnedRecord(string $key, mixed $value): array
+    {
+        if (!is_array($value) || array_keys($value) !== ['record', 'mac'] || !is_array($value['record'])
+            || !is_string($value['mac']) || !hash_equals($this->ticketMac($key, $value['record']), $value['mac'])) {
+            throw new LogicException('receipt_changed');
+        }
+        return $value['record'];
+    }
+
+    private function withOwnedLock(string $key, Closure $operation): mixed
     {
         $this->assertTicketStore();
-        $key = $this->selectionKey($viewer->id, $organizationId, $selection).':opening';
-        if (!$this->tickets->add($key, true, 30)) { throw new LogicException('receipt_changed'); }
-        return $key;
+        $store = $this->tickets instanceof \Illuminate\Cache\Repository ? $this->tickets->getStore() : null;
+        if (!$store instanceof LockProvider) { throw new LogicException('receipt_unavailable'); }
+        $lock = $store->lock($key.':lock', 60);
+        if (!$lock->get()) { throw new LogicException('receipt_changed'); }
+        try { return $operation(); }
+        finally { $lock->release(); }
     }
 
     public function rememberOwnedRequest(string $ticketRef, array $selection, array $opened): array
@@ -197,9 +270,14 @@ class PublicCoreBackendAuthorityFence
             'requestRef' => $opened['request_ref'], 'public_session_ref' => $opened['public_session_ref'],
             'process_ref' => $opened['process_ref'], 'expiresAt' => $opened['original_expires_at']];
         $ttl = $row['expiresAt'] - time();
-        if ($ttl <= 0 || !$this->tickets->add('ai-public-core:owned-request:'.$row['requestRef'],
-            ['record' => $row, 'mac' => $this->ownedRequestMac($row)], $ttl)
-            || !$this->tickets->add($this->selectionKey($ticket['actorId'], $ticket['organizationId'], $selection), $row['requestRef'], $ttl)) {
+        if ($ttl <= 0) { throw new LogicException('expired'); }
+        $requestKey = 'ai-public-core:owned-request:'.$row['requestRef'];
+        $signed = ['record' => $row, 'mac' => $this->ownedRequestMac($row)];
+        if (!$this->tickets->add($requestKey, $signed, $ttl) && $this->tickets->get($requestKey) !== $signed) {
+            throw new LogicException('receipt_changed');
+        }
+        $selectionKey = $this->selectionKey($ticket['actorId'], $ticket['organizationId'], $selection);
+        if (!$this->tickets->add($selectionKey, $row['requestRef'], $ttl) && $this->tickets->get($selectionKey) !== $row['requestRef']) {
             throw new LogicException('receipt_changed');
         }
         return $this->ownedRequest($row['requestRef']);
