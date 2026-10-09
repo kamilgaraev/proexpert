@@ -352,6 +352,26 @@ jobs:
         test "${TARGET_PINS_SHA256:-}" = 70f882c343fe9c4adf3c51e294c3acb157391bb213e4bc538dac7b2ee4819e06
         [[ "${OBS_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ ]]
         test "${OBS_RUN_ATTEMPT:-}" = 1
+        # Custody is NOT_ESTABLISHED: emit runner refusal, then fail before managed credentials.
+        python3 - <<'PYDENYBOOTSTRAP'
+        import datetime, json, os
+        e = os.environ
+        def utc():
+            return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+        receipt = dict(schemaVersion='public-core-namespace-bootstrap/1', sourceSha=e['OBSERVER_SHA'],
+                       expectedSourceSha=e['OBS_EXPECTED_SHA'], targetSourceSha=e['TARGET_SHA'],
+                       preparationRef=e['TARGET_PREPARATION_REF'], pinsSha256=e['TARGET_PINS_SHA256'],
+                       runId=int(e['OBS_RUN_ID']), runAttempt=1, ref=e['OBS_REF'], event=e['OBS_EVENT'],
+                       mode=e['OBS_MODE'], startedAtUtc=utc(), endedAtUtc=utc(), status='DENIED',
+                       stoppedAt='A', reason='UNAVAILABLE', slots=[dict(slot=x, mkdirAttempted=False,
+                       mkdirSucceeded=None, ownedConfirmed=False, postcheckPassed=None) for x in 'AB'],
+                       historicalCleanup='UNKNOWN')
+        raw = json.dumps(receipt, separators=(',', ':'))
+        if len(raw.encode('utf-8')) > 4096:
+            raise SystemExit(1)
+        print(raw)
+        raise SystemExit(1)
+        PYDENYBOOTSTRAP
     - name: Create only fixed absent namespace A and B through existing managed custodian
       uses: appleboy/ssh-action@v1.0.3
       env:
@@ -376,7 +396,7 @@ jobs:
         script: |
           set -eu
           python3 - <<'PYBOOTSTRAP'
-          import datetime, errno, json, os, re, stat, sys
+          import datetime, json, os, re
 
           TARGET = 'c4bfba3854fbe3bb87eaa213bced44ccc25cc3ed'
           PREPARATION = 'ref_6d788644c6ab42f9bddd47dcb8d88c8e'
@@ -405,111 +425,12 @@ jobs:
               return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
 
           def bootstrap(binding):
+              # No effective exclusive namespace custody is established. Refuse before any namespace syscall.
               result = dict(schemaVersion='public-core-namespace-bootstrap/1', **binding,
-                            startedAtUtc=utc(), endedAtUtc=None, status='DENIED', stoppedAt='ROOT_PREFIX',
+                            startedAtUtc=utc(), endedAtUtc=utc(), status='DENIED', stoppedAt='A',
                             reason='UNAVAILABLE', slots=[dict(slot=x, mkdirAttempted=False, mkdirSucceeded=None,
                             ownedConfirmed=False, postcheckPassed=None) for x in 'AB'], historicalCleanup='UNKNOWN')
-              handles, anchors = [], []
-              active, previous_umask = 'ROOT_PREFIX', None
-
-              def deny(reason):
-                  result['stoppedAt'], result['reason'] = active, reason
-                  raise RuntimeError
-
-              def identity(s):
-                  return (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_gid)
-
-              def protected(s, exact=False):
-                  return (stat.S_ISDIR(s.st_mode) and s.st_uid == 0 and s.st_gid == 0
-                          and not s.st_mode & 0o022 and (not exact or stat.S_IMODE(s.st_mode) == 0o755))
-
-              def recheck():
-                  nonlocal active
-                  for slot, parent, name, fd, initial in anchors:
-                      active = slot
-                      if (identity(os.stat(name, dir_fd=parent, follow_symlinks=False)) != initial
-                              or identity(os.fstat(fd)) != initial):
-                          deny('CHANGED')
-
-              try:
-                  if (sys.platform != 'linux' or os.geteuid() != 0 or os.getegid() != 0
-                          or any(not hasattr(os, x) for x in ('O_PATH', 'O_DIRECTORY', 'O_NOFOLLOW', 'O_CLOEXEC'))
-                          or any(x not in os.supports_dir_fd for x in (os.open, os.stat, os.mkdir))
-                          or os.stat not in os.supports_follow_symlinks):
-                      deny('PRIMITIVES_OR_ROOT_UNAVAILABLE')
-                  flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-                  parent = None
-                  for active, name in [('ROOT_PREFIX', '/'), ('ETC_PREFIX', 'etc')]:
-                      initial = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                      if not protected(initial):
-                          deny('UNSAFE_PREFIX')
-                      fd = os.open(name, flags, dir_fd=parent)
-                      handles.append(fd)
-                      if identity(os.fstat(fd)) != identity(initial):
-                          deny('CHANGED')
-                      anchors.append((active, parent, name, fd, identity(initial)))
-                      parent = fd
-                  previous_umask = os.umask(0o022)
-                  for slot, name in [('A', 'most'), ('B', 'public-core')]:
-                      recheck()
-                      active = slot
-                      row = result['slots']['AB'.index(slot)]
-                      try:
-                          os.stat(name, dir_fd=parent, follow_symlinks=False)
-                      except OSError as error:
-                          if error.errno != errno.ENOENT:
-                              raise
-                      else:
-                          deny('EXISTS')
-                      # Exclusive mkdirat: no parent creation, adoption, chmod/chown or deletion.
-                      row['mkdirAttempted'] = True
-                      os.mkdir(name, 0o755, dir_fd=parent)
-                      row['mkdirSucceeded'] = True
-                      initial = os.stat(name, dir_fd=parent, follow_symlinks=False)
-                      if not protected(initial, exact=True):
-                          deny('UNSAFE_CREATED_ENTRY')
-                      fd = os.open(name, flags, dir_fd=parent)
-                      handles.append(fd)
-                      if identity(os.fstat(fd)) != identity(initial):
-                          deny('CHANGED')
-                      anchors.append((slot, parent, name, fd, identity(initial)))
-                      recheck()
-                      row['ownedConfirmed'] = True
-                      parent = fd
-                  recheck()
-                  for row in result['slots']:
-                      row['postcheckPassed'] = True
-                  result['status'], result['stoppedAt'], result['reason'] = 'CREATED', None, 'NONE'
-              except RuntimeError:
-                  pass
-              except OSError as error:
-                  if active in ('A', 'B') and error.errno in (errno.EEXIST, errno.EACCES, errno.EPERM):
-                      row = result['slots']['AB'.index(active)]
-                      if row['mkdirAttempted'] and row['mkdirSucceeded'] is None:
-                          row['mkdirSucceeded'] = False
-                  result['stoppedAt'] = active
-                  result['reason'] = ('EXISTS' if error.errno == errno.EEXIST else
-                                      'INACCESSIBLE' if error.errno in (errno.EACCES, errno.EPERM) else
-                                      'CHANGED' if error.errno in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP) else 'IO_ERROR')
-              except Exception:
-                  result['stoppedAt'], result['reason'] = active, 'IO_ERROR'
-              finally:
-                  if previous_umask is not None:
-                      os.umask(previous_umask)
-                  for fd in reversed(handles):
-                      try:
-                          os.close(fd)
-                      except OSError:
-                          result['status'], result['stoppedAt'], result['reason'] = 'DENIED', active, 'IO_ERROR'
-                  if result['status'] != 'CREATED':
-                      for row in result['slots']:
-                          row['postcheckPassed'] = None
-                      if any(row['mkdirSucceeded'] for row in result['slots']):
-                          result['status'] = 'PARTIAL'
-                      elif any(row['mkdirAttempted'] and row['mkdirSucceeded'] is None for row in result['slots']):
-                          result['status'] = 'UNOBSERVABLE'
-                  result['endedAtUtc'] = utc()
-              return result, 0 if result['status'] == 'CREATED' else 1
+              return result, 1
 
           if __name__ == '__main__':
               receipt, code = bootstrap(checked_binding())
