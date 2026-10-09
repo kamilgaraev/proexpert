@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "public-core-gateway-runtime/1",
+  "activation": "inactive",
+  "gatewayUid": 41003,
+  "gatewayGid": 41003,
+  "processorPeer": {"uid": 41002, "gid": 41002, "pid": null},
+  "socketPath": "/run/most-public-core/gateway/gateway.sock",
+  "profile": null,
+  "evidenceDirectory": "/etc/most/public-core/gateway/evidence",
+  "evidence": {},
+  "credentialFile": "/etc/most/public-core/gateway/credential/provider-key",
+  "tokenizerFile": "/etc/most/public-core/gateway/tokenizer/vocabulary.tiktoken",
+  "tokenizerSha256": null,
+  "tokenizerPattern": "/etc/most/public-core/gateway/tokenizer/pattern.txt",
+  "tokenizerPatternSha256": null,
+  "tokenizerVocabulary": null,
+  "deadlineMs": 15000,
+  "maxRequests": 128
+}

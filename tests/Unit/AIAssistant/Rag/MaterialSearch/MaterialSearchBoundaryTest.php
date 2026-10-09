@@ -18,6 +18,36 @@ use PHPUnit\Framework\TestCase;
 
 final class MaterialSearchBoundaryTest extends TestCase
 {
+    public function testRegisteredFactoryUsesSixAuthoritativeMaterialRowsAndRetainsClosedConcreteType(): void
+    {
+        $corpus = SyntheticMaterialSearchCorpus::registered('material-search-v1', 'public-material/1', 'quote-12m3');
+        self::assertCount(6, $corpus->records());
+        self::assertSame('7800.00', $corpus->records()[0]->decimal);
+        self::assertSame('m3', $corpus->records()[0]->rawUnit);
+        self::assertSame('ref_0b8c4d85d5d246598fac886dac770d20', $corpus->records()[0]->generationRef);
+        $service = new MaterialSearchService($corpus);
+        $result = $service->search($corpus->context(), new MaterialSearchQuery('бетон В25 м3', 1));
+        self::assertContains($result->localEnvelope()['status'], ['verified', 'partial']);
+        $corpus->revokePrice();
+        $denied = $service->search($corpus->context(), new MaterialSearchQuery('бетон В25 м3', 1));
+        self::assertSame([], array_values(array_filter($denied->localEnvelope()['facts'], static fn (array $fact): bool => $fact['kind'] === 'price')));
+        $corpus->invalidateSource();
+        self::assertSame('source_stale', $service->search($corpus->context(), new MaterialSearchQuery('бетон'))->localEnvelope()['reason']);
+    }
+
+    public function testRegisteredFactoryRejectsVersionInputAndCorpusPairingOutsideCompiledMaterialRegistry(): void
+    {
+        foreach ([['material-search-v1', 'wrong', 'quote-12m3'], ['material-search-v1', 'public-material/1', 'wrong'],
+            ['public-photo-metadata-v1', 'public-photo-metadata/1', 'photo-explain']] as [$id, $version, $input]) {
+            try {
+                SyntheticMaterialSearchCorpus::registered($id, $version, $input);
+                self::fail('Nonmaterial/unregistered selection cannot create a corpus');
+            } catch (InvalidArgumentException $error) {
+                self::assertSame('unknown_material_search_fixture', $error->getMessage());
+            }
+        }
+    }
+
     public function testDefaultServiceIsBlockedForSearchAndRead(): void
     {
         $corpus = SyntheticMaterialSearchCorpus::named('material-search-v1');

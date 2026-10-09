@@ -6,6 +6,7 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Services\Logging\LoggingService;
+use App\Services\Entitlements\OrganizationEntitlementService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Cache\Repository;
@@ -26,6 +27,7 @@ class PermissionResolver
 
     private ?Repository $readCache = null;
     private bool $currentChecks = false;
+    private ?OrganizationEntitlementService $currentEntitlementSource = null;
 
     public function __construct(
         RoleScanner $roleScanner,
@@ -42,6 +44,14 @@ class PermissionResolver
         $scope = clone $this;
         $scope->currentChecks = true;
         $scope->readCache = null;
+        return $scope;
+    }
+
+    public function withCurrentEntitlementSource(OrganizationEntitlementService $source): self
+    {
+        $scope = clone $this;
+        $scope->currentEntitlementSource = $source;
+
         return $scope;
     }
 
@@ -253,7 +263,8 @@ class PermissionResolver
             $isActive = $this->rememberRead($cacheKey, fn () => $this->rememberCurrent($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 if ($this->currentChecks) {
                     $activeModules = $this->rememberRead('current_active_modules_'.$organizationId,
-                        fn (): array => app(\App\Services\Entitlements\OrganizationEntitlementService::class)->getEffectiveModules($organizationId)->pluck('slug')->all());
+                        fn (): array => ($this->currentEntitlementSource ?? app(OrganizationEntitlementService::class))
+                            ->getEffectiveModules($organizationId)->pluck('slug')->all());
 
                     return in_array($moduleToCheck, $activeModules, true);
                 }

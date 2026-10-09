@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag\MaterialSearch;
 
 use App\Services\Privacy\Contracts\AuthenticatedPrivateContext;
+use App\Services\Privacy\PublicCore\RegisteredPublicFixtureRegistry;
 use InvalidArgumentException;
 
 final class SyntheticMaterialSearchCorpus implements MaterialSearchCorpus
@@ -22,7 +23,7 @@ final class SyntheticMaterialSearchCorpus implements MaterialSearchCorpus
     private ?int $scheduledCheck = null;
     private ?string $scheduledAction = null;
 
-    private function __construct(string $fixture)
+    private function __construct(string $fixture, ?string $registeredVersion = null, ?string $registeredInput = null)
     {
         $this->principal = new AuthenticatedPrivateContext(7, 11, 13,
             'most-ai-v1-purpose-policy/0.2-product-approved-20261005', 'material-search-fixture-acl/1');
@@ -37,6 +38,31 @@ final class SyntheticMaterialSearchCorpus implements MaterialSearchCorpus
             ['Перемычка железобетонная', ['перемычка', 'изделие', 'железобетон'], 'шт.', '1900.00', 'RUB', 'item', '20%'],
             ['Цемент М500', ['цемент', 'м500'], 'кг', '16.40', 'RUB', 'kg', null],
         ];
+
+        if ($registeredVersion !== null || $registeredInput !== null) {
+            $registry = RegisteredPublicFixtureRegistry::compiled();
+            $selection = $registeredVersion !== null && $registeredInput !== null
+                ? $registry->resolve($fixture, $registeredVersion, $registeredInput) : null;
+            if ($fixture !== 'material-search-v1' || $selection === null || $selection['corpus_id'] !== $fixture
+                || $registry->manifestDigest() !== 'f6bfc3c523c792ab9a80dbe2c3a950aebec1dfad65456243bbaadfcdb50a85fe') {
+                throw new InvalidArgumentException('unknown_material_search_fixture');
+            }
+            $records = $registry->records($fixture, $registeredVersion);
+            if (!is_array($records) || !array_is_list($records) || count($records) !== 6) {
+                throw new InvalidArgumentException('unknown_material_search_fixture');
+            }
+            $this->generationRef = $selection['source_generation_ref'];
+            $definitions = [];
+            foreach ($records as $record) {
+                if (!is_array($record) || array_keys($record) !== ['id', 'title', 'unit', 'price', 'currency', 'price_basis', 'vat']) {
+                    throw new InvalidArgumentException('unknown_material_search_fixture');
+                }
+                $aliases = preg_split('/\s+/u', mb_strtolower($record['title'], 'UTF-8'), -1, PREG_SPLIT_NO_EMPTY);
+                if ($aliases === false || $aliases === []) { throw new InvalidArgumentException('unknown_material_search_fixture'); }
+                $definitions[] = [$record['title'], $aliases, $record['unit'], $record['price'],
+                    $record['currency'], $record['price_basis'], $record['vat']];
+            }
+        }
 
         if ($fixture === 'material-search-unknown-unit-v1') {
             $definitions = [['Бетон с неподтверждённой единицей', ['бетон'], 'неизвестно', '7800.00', 'RUB', null, null]];
@@ -64,6 +90,13 @@ final class SyntheticMaterialSearchCorpus implements MaterialSearchCorpus
         }
 
         return new self($fixture);
+    }
+
+    public static function registered(string $fixtureId, string $fixtureVersion, string $inputId): self
+    {
+        if (func_num_args() !== 3) { throw new InvalidArgumentException('unknown_material_search_fixture'); }
+
+        return new self($fixtureId, $fixtureVersion, $inputId);
     }
 
     public function context(): AuthenticatedPrivateContext

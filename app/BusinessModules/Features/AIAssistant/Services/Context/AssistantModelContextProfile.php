@@ -25,7 +25,7 @@ final readonly class AssistantModelContextProfile
                 throw new LogicException('model_profile_unavailable');
             }
         }
-        if ($values['profileRef'] !== $profileRef || $values['qualification'] !== 'offline-synthetic') {
+        if ($values['profileRef'] !== $profileRef || !in_array($values['qualification'], ['offline-synthetic', 'public-gateway-actual'], true)) {
             throw new LogicException('model_profile_unqualified');
         }
         foreach (array_slice($keys, 7) as $key) {
