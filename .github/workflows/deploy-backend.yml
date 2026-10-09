@@ -688,7 +688,7 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
           if os.environ['REQUESTED_MODE']=='input-prepare':
            root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
-           root.mkdir(mode=0o700);context=root/'context';context.mkdir();archive=root/'source.tar'
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir(mode=0o700);archive=root/'source.tar'
            subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
            with tarfile.open(archive) as tar:
             for member in tar.getmembers():
@@ -903,7 +903,7 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
           if os.environ['REQUESTED_MODE']=='input-prepare':
            root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
-           root.mkdir(mode=0o700);context=root/'context';context.mkdir();archive=root/'source.tar'
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir(mode=0o700);archive=root/'source.tar'
            subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
            with tarfile.open(archive) as tar:
             for member in tar.getmembers():
