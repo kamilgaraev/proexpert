@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string] $TestPath = '',
     [string] $TestSuite = '',
     [string] $Filter = '',
@@ -99,45 +99,140 @@ function Initialize-MostNativeSupervisor {
     # No PowerShell event callback/runspace or unbounded ReadToEnd buffer.
     Add-Type -TypeDefinition @'
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 public sealed class MostPostgresNativeCapture : IDisposable {
     public readonly Process Process;
-    private readonly StringBuilder output = new StringBuilder();
-    private readonly StringBuilder error = new StringBuilder();
+    private readonly StringBuilder output = new StringBuilder(), error = new StringBuilder();
     private Task outputTask, errorTask, inputTask;
+    private StreamReader outputReader, errorReader;
+    private StreamWriter inputWriter;
+    private IntPtr job;
     private const int Limit = 2097152;
-    private bool truncated;
-    public MostPostgresNativeCapture(ProcessStartInfo start, string input) {
-        Process = new Process(); Process.StartInfo = start;
-        if (!Process.Start()) throw new InvalidOperationException("native_start_failed");
-        outputTask = Drain(Process.StandardOutput, output);
-        errorTask = Drain(Process.StandardError, error);
-        inputTask = Task.Run(async () => {
-            try { if (input != null) await Process.StandardInput.WriteAsync(input); }
-            catch (IOException) { }
-            finally { Process.StandardInput.Close(); }
-        });
+    private volatile bool truncated;
+    [StructLayout(LayoutKind.Sequential)] struct Security {
+        public int length; public IntPtr descriptor; public int inherit;
     }
-    private async Task Drain(StreamReader reader, StringBuilder target) {
-        char[] buffer = new char[4096]; int count;
-        while ((count = await reader.ReadAsync(buffer, 0, buffer.Length)) != 0) {
-            lock (target) {
-                int retained = Math.Min(count, Math.Max(0, Limit - target.Length));
-                target.Append(buffer, 0, retained);
-                if (retained != count) truncated = true;
-            }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
+        public int size; public string reserved, desktop, title;
+        public int x, y, width, height, charsX, charsY, fill, flags;
+        public short show, reservedSize; public IntPtr reservedBytes, input, output, error;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct ProcessInfo {
+        public IntPtr process, thread; public int pid, tid;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
+        public long processTime, jobTime; public uint flags;
+        public UIntPtr minimumWorkingSet, maximumWorkingSet; public uint activeProcesses;
+        public UIntPtr affinity; public uint priority, scheduling;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct IoCounters {
+        public ulong readOperations, writeOperations, otherOperations, readBytes, writeBytes, otherBytes;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct ExtendedLimits {
+        public BasicLimits basic; public IoCounters io;
+        public UIntPtr processMemory, jobMemory, peakProcessMemory, peakJobMemory;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct JobAccounting {
+        public long userTime, kernelTime, periodUserTime, periodKernelTime;
+        public uint faults, totalProcesses, activeProcesses, terminatedProcesses;
+    }
+    [DllImport("kernel32", SetLastError=true)] static extern bool CreatePipe(out IntPtr read, out IntPtr write, ref Security security, uint size);
+    [DllImport("kernel32", SetLastError=true)] static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+    [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr security, string name);
+    [DllImport("kernel32", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, uint size);
+    [DllImport("kernel32", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    [DllImport("kernel32", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job, uint exit);
+    [DllImport("kernel32", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job, int kind, out JobAccounting accounting, uint size, IntPtr returned);
+    [DllImport("kernel32", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint exit);
+    [DllImport("kernel32", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32", SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(
+        string application, StringBuilder command, IntPtr processSecurity, IntPtr threadSecurity, bool inherit,
+        uint flags, IntPtr environment, string cwd, ref Startup startup, out ProcessInfo info);
+    private static void Require(bool success) {
+        if (!success) throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+    private static void Close(ref IntPtr handle) { if (handle != IntPtr.Zero) { CloseHandle(handle); handle=IntPtr.Zero; } }
+    public MostPostgresNativeCapture(ProcessStartInfo start, string input) {
+        IntPtr stdinRead=IntPtr.Zero, stdinWrite=IntPtr.Zero, stdoutRead=IntPtr.Zero, stdoutWrite=IntPtr.Zero;
+        IntPtr stderrRead=IntPtr.Zero, stderrWrite=IntPtr.Zero, environment=IntPtr.Zero;
+        ProcessInfo info=new ProcessInfo();
+        try {
+            Security security=new Security {length=Marshal.SizeOf(typeof(Security)), inherit=1};
+            Require(CreatePipe(out stdinRead,out stdinWrite,ref security,0));
+            Require(CreatePipe(out stdoutRead,out stdoutWrite,ref security,0));
+            Require(CreatePipe(out stderrRead,out stderrWrite,ref security,0));
+            Require(SetHandleInformation(stdinWrite,1,0));
+            Require(SetHandleInformation(stdoutRead,1,0));
+            Require(SetHandleInformation(stderrRead,1,0));
+            job=CreateJobObject(IntPtr.Zero,null); Require(job!=IntPtr.Zero);
+            ExtendedLimits limits=new ExtendedLimits(); limits.basic.flags=0x2000; // KILL_ON_JOB_CLOSE
+            Require(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(ExtendedLimits))));
+            StringBuilder variables=new StringBuilder();
+            string[] keys=new string[start.EnvironmentVariables.Count]; start.EnvironmentVariables.Keys.CopyTo(keys,0);
+            Array.Sort(keys,StringComparer.OrdinalIgnoreCase);
+            foreach(string key in keys) variables.Append(key).Append('=').Append(start.EnvironmentVariables[key]).Append('\0');
+            variables.Append('\0'); environment=Marshal.StringToHGlobalUni(variables.ToString());
+            Startup startup=new Startup {size=Marshal.SizeOf(typeof(Startup)),flags=0x100,input=stdinRead,output=stdoutWrite,error=stderrWrite};
+            // Suspended creation closes the assign-before-spawn race: every
+            // Compose descendant inherits this Job before any user code runs.
+            StringBuilder command=new StringBuilder("\""+start.FileName+"\" "+start.Arguments);
+            Require(CreateProcess(start.FileName,command,IntPtr.Zero,IntPtr.Zero,true,0x08000404,environment,start.WorkingDirectory,ref startup,out info));
+            Require(AssignProcessToJobObject(job,info.process));
+            Process=Process.GetProcessById(info.pid);
+            // Cache the managed handle while the child is suspended. A Process
+            // opened by PID otherwise loses ExitCode access after native exit.
+            IntPtr managedHandle=Process.Handle;
+            outputReader=new StreamReader(new FileStream(new SafeFileHandle(stdoutRead,true),FileAccess.Read),new UTF8Encoding(false)); stdoutRead=IntPtr.Zero;
+            errorReader=new StreamReader(new FileStream(new SafeFileHandle(stderrRead,true),FileAccess.Read),new UTF8Encoding(false)); stderrRead=IntPtr.Zero;
+            inputWriter=new StreamWriter(new FileStream(new SafeFileHandle(stdinWrite,true),FileAccess.Write),new UTF8Encoding(false)); stdinWrite=IntPtr.Zero;
+            Close(ref stdinRead); Close(ref stdoutWrite); Close(ref stderrWrite);
+            outputTask=Drain(outputReader,output); errorTask=Drain(errorReader,error);
+            inputTask=Task.Run(async () => {
+                try { if(input!=null) await inputWriter.WriteAsync(input); }
+                catch(IOException) { }
+                finally { inputWriter.Close(); }
+            });
+            Require(ResumeThread(info.thread)!=0xffffffff);
+        } catch {
+            if(info.process!=IntPtr.Zero) TerminateProcess(info.process,1);
+            if(job!=IntPtr.Zero) { TerminateJobObject(job,1); Close(ref job); }
+            throw;
+        } finally {
+            Close(ref info.thread); Close(ref info.process);
+            Close(ref stdinRead); Close(ref stdinWrite); Close(ref stdoutRead); Close(ref stdoutWrite); Close(ref stderrRead); Close(ref stderrWrite);
+            if(environment!=IntPtr.Zero) Marshal.FreeHGlobal(environment);
         }
     }
-    public bool Finish(int milliseconds) {
-        return Task.WaitAll(new Task[] { outputTask, errorTask, inputTask }, milliseconds);
+    private async Task Drain(StreamReader reader, StringBuilder target) {
+        char[] buffer=new char[4096]; int count;
+        while((count=await reader.ReadAsync(buffer,0,buffer.Length))!=0) {
+            lock(target) { int retained=Math.Min(count,Math.Max(0,Limit-target.Length)); target.Append(buffer,0,retained); if(retained!=count)truncated=true; }
+        }
     }
-    public string Output { get { lock (output) return output.ToString(); } }
-    public string Error { get { lock (error) return error.ToString(); } }
-    public bool Truncated { get { return truncated; } }
-    public void Dispose() { Process.Dispose(); }
+    public void KillTree() { Require(TerminateJobObject(job,1)); }
+    public bool TreeTerminal(int milliseconds) {
+        Stopwatch clock=Stopwatch.StartNew();
+        do { JobAccounting accounting; Require(QueryInformationJobObject(job,1,out accounting,(uint)Marshal.SizeOf(typeof(JobAccounting)),IntPtr.Zero));
+            if(accounting.activeProcesses==0)return true; System.Threading.Thread.Sleep(20);
+        } while(clock.ElapsedMilliseconds<milliseconds);
+        return false;
+    }
+    public bool Finish(int milliseconds) { return Task.WaitAll(new Task[]{outputTask,errorTask,inputTask},milliseconds); }
+    public string Output { get { lock(output)return output.ToString(); } }
+    public string Error { get { lock(error)return error.ToString(); } }
+    public bool Truncated { get {return truncated;} }
+    public void Dispose() {
+        if(job!=IntPtr.Zero) { TerminateJobObject(job,1); Close(ref job); }
+        if(outputReader!=null)outputReader.Dispose(); if(errorReader!=null)errorReader.Dispose(); if(inputWriter!=null)inputWriter.Dispose();
+        if(Process!=null)Process.Dispose();
+    }
 }
 '@
 }
@@ -175,10 +270,15 @@ function Invoke-MostNativeClient {
             try { if ($OnAbort) { & $OnAbort } }
             catch { $abortFailure = $_.Exception.Message; $outcome = 'abort_cleanup_failed' }
             finally {
-                if (-not $capture.Process.HasExited) { $capture.Process.Kill() }
+                $capture.KillTree()
             }
         }
         Assert-MostCondition ($capture.Process.WaitForExit(5000)) 'native_child_not_terminal'
+        if (-not $capture.TreeTerminal(0)) {
+            $capture.KillTree()
+            if ($outcome -ceq 'completed') { $outcome = 'native_descendant_outlived_client' }
+        }
+        Assert-MostCondition ($capture.TreeTerminal(5000)) 'native_process_tree_not_terminal'
         Assert-MostCondition ($capture.Finish(5000)) 'native_pipe_drain_not_terminal'
         return [pscustomobject]@{
             ExitCode = $capture.Process.ExitCode; Outcome = $outcome
@@ -192,7 +292,7 @@ function Invoke-MostNativeClient {
         if ($capture) {
             if (-not $capture.Process.HasExited) {
                 try { if ($OnAbort) { & $OnAbort } }
-                finally { $capture.Process.Kill(); [void] $capture.Process.WaitForExit(5000) }
+                finally { $capture.KillTree(); [void] $capture.Process.WaitForExit(5000); [void] $capture.TreeTerminal(5000) }
             }
             $capture.Dispose()
         }
@@ -250,7 +350,8 @@ function Get-MostRuntimeReceipt([string] $Path, [string] $Root, [string] $Select
         [DateTimeOffset]::Parse([string] $grant.expiresAtUtc) -ge $expiry) 'linux_runtime_live_cas_refused'
     Assert-MostCondition ([IO.Path]::GetFullPath($receipt.sourceRoot) -ceq $Root -and
         $receipt.sourceHead -cmatch '^[0-9a-f]{40}$' -and
-        $receipt.parentHead -ceq '7a191699a92c9539618aa3f77e20dc88df27d97e' -and
+        $receipt.sourceBaseHead -ceq '7a191699a92c9539618aa3f77e20dc88df27d97e' -and
+        $receipt.parentHead -cmatch '^[0-9a-f]{40}$' -and
         $receipt.sourceHead -cne $receipt.parentHead) 'linux_runtime_patched_source_unbound'
     Assert-MostCondition ($receipt.daemonEndpoint -ceq 'npipe:////./pipe/dockerDesktopLinuxEngine' -and
         $receipt.daemonId -ceq 'a58d6046-2716-4603-8619-e93b137722db' -and
@@ -319,6 +420,7 @@ function Get-MostRuntimeReceipt([string] $Path, [string] $Root, [string] $Select
     foreach ($check in @(
         @{ argv=@('rev-parse','HEAD'); expected=$receipt.sourceHead },
         @{ argv=@('rev-parse','HEAD^'); expected=$receipt.parentHead },
+        @{ argv=@('merge-base','--is-ancestor',$receipt.sourceBaseHead,$receipt.sourceHead); expected='' },
         @{ argv=@('branch','--show-current'); expected='task/cmp-7-production-responses' },
         @{ argv=@('status','--porcelain=v1'); expected='' }
     )) {
