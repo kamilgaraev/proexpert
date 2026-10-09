@@ -699,7 +699,7 @@ jobs:
            subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
            # Preserve export-ignore; add only the independently pinned literal workflow blob.
            workflow_source=subprocess.run(['git','show',sha+':.github/workflows/deploy-backend.yml'],check=True,stdout=subprocess.PIPE).stdout
-           assert hashlib.sha256(workflow_source).hexdigest()==h[5]
+           assert hashlib.sha256(workflow_source).hexdigest()==pins.split(':')[5]
            directory_flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
            owned_fds=[]
            try:
@@ -914,7 +914,7 @@ jobs:
            subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
            # Preserve export-ignore; add only the independently pinned literal workflow blob.
            workflow_source=subprocess.run(['git','show',sha+':.github/workflows/deploy-backend.yml'],check=True,stdout=subprocess.PIPE).stdout
-           assert hashlib.sha256(workflow_source).hexdigest()==h[5]
+           assert hashlib.sha256(workflow_source).hexdigest()==pins.split(':')[5]
            directory_flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
            owned_fds=[]
            try:
