@@ -143,7 +143,7 @@ final class ApiQueryMetrics
 
     public function recordAssistantSnapshot(array $context): void
     {
-        if (! in_array($context['phase'] ?? null, ['missing_release', 'ready', 'snapshot_rejected', 'snapshot_missing'], true)
+        if (! in_array($context['phase'] ?? null, ['missing_release', 'ready', 'snapshot_rejected', 'snapshot_missing', 'fresh_read'], true)
             || ! in_array($context['section'] ?? null, ['all', 'sources', 'documents'], true)) {
             return;
         }
