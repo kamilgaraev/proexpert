@@ -688,7 +688,7 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
           if os.environ['REQUESTED_MODE']=='input-prepare':
            root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
-           root.mkdir(mode=0o700);context=root/'context';context.mkdir();archive=root/'source.tar'
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir(mode=0o700);archive=root/'source.tar'
            subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
            with tarfile.open(archive) as tar:
             for member in tar.getmembers():
@@ -697,8 +697,28 @@ jobs:
              assert not (name=='.env' or (name.startswith('.env.') and name!='.env.example') or name in ['.npmrc','.netrc','auth.json','id_rsa','id_ed25519'] or path.suffix.lower() in ['.pem','.key','.p12','.pfx'])
              if member.issym():assert (context/path.parent/member.linkname).resolve().is_relative_to(context.resolve())
            subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
+           # Preserve export-ignore; add only the independently pinned literal workflow blob.
+           workflow_source=subprocess.run(['git','show',sha+':.github/workflows/deploy-backend.yml'],check=True,stdout=subprocess.PIPE).stdout
+           assert hashlib.sha256(workflow_source).hexdigest()==pins.split(':')[5]
+           directory_flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+           owned_fds=[]
+           try:
+            root_fd=os.open(root,directory_flags);owned_fds.append(root_fd)
+            context_fd=os.open('context',directory_flags,dir_fd=root_fd);owned_fds.append(context_fd)
+            for fd in [root_fd,context_fd]:
+             st=os.fstat(fd);assert st.st_uid==os.geteuid() and st.st_mode&0o022==0
+            os.mkdir('.github',mode=0o700,dir_fd=context_fd)
+            github_fd=os.open('.github',directory_flags,dir_fd=context_fd);owned_fds.append(github_fd)
+            os.mkdir('workflows',mode=0o700,dir_fd=github_fd)
+            workflows_fd=os.open('workflows',directory_flags,dir_fd=github_fd);owned_fds.append(workflows_fd)
+            flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW
+            with os.fdopen(os.open('deploy-backend.yml',flags,0o600,dir_fd=workflows_fd),'wb') as workflow_file:
+             assert workflow_file.write(workflow_source)==len(workflow_source)
+           finally:
+            for fd in reversed(owned_fds):os.close(fd)
            assert set(['/.git','/.env','/.env.*','/vendor','/node_modules','/storage/*.key']).issubset((context/'.dockerignore').read_text().splitlines())
-           assert all((context/v).is_file() and not (context/v).is_symlink() for v in paths)
+           missing=[v for v in paths if not (context/v).is_file() or (context/v).is_symlink()]
+           assert not missing,'required context file missing or non-regular/symlink: '+','.join(missing)
            assert ':'.join(hashlib.sha256((context/v).read_bytes()).hexdigest() for v in paths)==pins
            with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('context='+str(context)+'\n')
           PYCONTEXT
@@ -883,7 +903,7 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
           if os.environ['REQUESTED_MODE']=='input-prepare':
            root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
-           root.mkdir(mode=0o700);context=root/'context';context.mkdir();archive=root/'source.tar'
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir(mode=0o700);archive=root/'source.tar'
            subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
            with tarfile.open(archive) as tar:
             for member in tar.getmembers():
@@ -892,8 +912,28 @@ jobs:
              assert not (name=='.env' or (name.startswith('.env.') and name!='.env.example') or name in ['.npmrc','.netrc','auth.json','id_rsa','id_ed25519'] or path.suffix.lower() in ['.pem','.key','.p12','.pfx'])
              if member.issym():assert (context/path.parent/member.linkname).resolve().is_relative_to(context.resolve())
            subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
+           # Preserve export-ignore; add only the independently pinned literal workflow blob.
+           workflow_source=subprocess.run(['git','show',sha+':.github/workflows/deploy-backend.yml'],check=True,stdout=subprocess.PIPE).stdout
+           assert hashlib.sha256(workflow_source).hexdigest()==pins.split(':')[5]
+           directory_flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+           owned_fds=[]
+           try:
+            root_fd=os.open(root,directory_flags);owned_fds.append(root_fd)
+            context_fd=os.open('context',directory_flags,dir_fd=root_fd);owned_fds.append(context_fd)
+            for fd in [root_fd,context_fd]:
+             st=os.fstat(fd);assert st.st_uid==os.geteuid() and st.st_mode&0o022==0
+            os.mkdir('.github',mode=0o700,dir_fd=context_fd)
+            github_fd=os.open('.github',directory_flags,dir_fd=context_fd);owned_fds.append(github_fd)
+            os.mkdir('workflows',mode=0o700,dir_fd=github_fd)
+            workflows_fd=os.open('workflows',directory_flags,dir_fd=github_fd);owned_fds.append(workflows_fd)
+            flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW
+            with os.fdopen(os.open('deploy-backend.yml',flags,0o600,dir_fd=workflows_fd),'wb') as workflow_file:
+             assert workflow_file.write(workflow_source)==len(workflow_source)
+           finally:
+            for fd in reversed(owned_fds):os.close(fd)
            assert set(['/.git','/.env','/.env.*','/vendor','/node_modules','/storage/*.key']).issubset((context/'.dockerignore').read_text().splitlines())
-           assert all((context/v).is_file() and not (context/v).is_symlink() for v in paths)
+           missing=[v for v in paths if not (context/v).is_file() or (context/v).is_symlink()]
+           assert not missing,'required context file missing or non-regular/symlink: '+','.join(missing)
            assert ':'.join(hashlib.sha256((context/v).read_bytes()).hexdigest() for v in paths)==pins
            with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('context='+str(context)+'\n')
           PYCONTEXT
