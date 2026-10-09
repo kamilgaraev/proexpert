@@ -19,6 +19,11 @@ final class DeepSeekProvider implements LLMProviderInterface
         throw new DomainException('ai_luna_provider_required');
     }
 
+    public function responses(array $input, array $options = []): array
+    {
+        throw new DomainException('ai_luna_provider_required');
+    }
+
     public function countTokens(string $text): int
     {
         return (new TokenCounter())->text($text);

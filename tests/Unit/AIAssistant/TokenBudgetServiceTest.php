@@ -135,6 +135,52 @@ final class TokenBudgetServiceTest extends TestCase
         ], [], 'short');
     }
 
+    public function test_native_history_is_trimmed_as_complete_call_output_pairs(): void
+    {
+        $items = [
+            ['role' => 'system', 'content' => 'правила'],
+            ['type' => 'reasoning', 'id' => 'rs_old', 'summary' => []],
+            ['type' => 'function_call', 'id' => 'fc_old', 'call_id' => 'old', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'old', 'output' => str_repeat('b', 9000)],
+            ['role' => 'user', 'content' => 'текущий запрос'],
+            ['type' => 'function_call', 'id' => 'fc_active', 'call_id' => 'active', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'active', 'output' => 'актуальный результат'],
+        ];
+        $prepared = $this->budget()->prepare($items, [], 'short');
+        self::assertSame([$items[0], $items[4], $items[5], $items[6]], $prepared['messages']);
+        self::assertGreaterThan(0, $prepared['raw_input_tokens']);
+        TokenBudgetService::assertNativePairs($prepared['messages']);
+        $items[6]['output'] = str_repeat('x', 9000);
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('ai_token_budget_exhausted');
+        $this->budget()->prepare($items, [], 'short');
+    }
+
+    public function test_orphan_duplicate_incomplete_and_reordered_native_pairs_fail_closed(): void
+    {
+        $call = ['type' => 'function_call', 'call_id' => 'same', 'name' => 'lookup', 'arguments' => '{}'];
+        $output = ['type' => 'function_call_output', 'call_id' => 'same', 'output' => '{}'];
+        foreach ([[$output], [$call], [$call, $output, $output], [$call, ['role' => 'user', 'content' => 'interleave'], $output], [$call, $output, $call, $output]] as $items) {
+            try {
+                $this->budget()->prepare($items);
+                self::fail('Expected atomic native pair rejection');
+            } catch (DomainException $exception) {
+                self::assertSame('assistant_native_pair_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    public function test_native_images_use_the_same_reserved_vision_budget(): void
+    {
+        $items = [['role' => 'user', 'content' => [
+            ['type' => 'input_text', 'text' => 'Фото'], ['type' => 'input_image', 'image_url' => 'data:image/png;base64,AAAA', 'detail' => 'low'],
+        ]]];
+        $prepared = $this->budget()->prepare($items, [], 'short');
+        self::assertTrue($prepared['contains_images']);
+        self::assertSame(4096, (new TokenCounter)->imageTokens($items));
+        self::assertGreaterThanOrEqual(4096, $prepared['input_tokens']);
+    }
+
     public function test_large_tool_schema_alone_exhausts_budget(): void
     {
         $this->expectException(DomainException::class);

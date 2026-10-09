@@ -131,6 +131,41 @@ final class TimewebProvider implements LLMProviderInterface
         throw new RuntimeException("No Timeweb models configured for profile '{$profile}'");
     }
 
+    public function responses(array $input, array $options = []): array
+    {
+        if (!$this->isAvailable()) {
+            throw new \RuntimeException('ai_provider_unavailable');
+        }
+        if (app()->bound(AssistantRequestExecutionContext::class)) {
+            app(AssistantRequestExecutionContext::class)->assertCanContinue();
+        }
+        $model = LunaModelPolicy::assert((string) ($options['model'] ?? $this->models($options, $this->profileConfig($this->profile($options)))[0]), 'timeweb');
+        $budgetService = new TokenBudgetService(calibrationModel: LunaModelPolicy::TIMEWEB);
+        $tools = (array) ($options['tools'] ?? []);
+        $prepared = $budgetService->resolvePrepared($options['_prepared_token_budget'] ?? null, $input, $tools,
+            (string) ($options['budget_profile'] ?? 'normal'), isset($options['budget_limits']) ? (array) $options['budget_limits'] : null);
+        $maxTokens = min(max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? $this->maxTokens)), $prepared['max_completion_tokens']);
+        $payload = OpenAIProvider::nativePayload($model, $prepared['messages'], $tools, $maxTokens);
+        $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
+        try {
+            $response = $this->makeClient($timeout)->responses()->create($payload);
+            if (app()->bound(AssistantRequestExecutionContext::class)) {
+                app(AssistantRequestExecutionContext::class)->assertCanContinue();
+            }
+            $result = OpenAIProvider::nativeResult($response->toArray(), $model, 'timeweb', $tools);
+            $result['token_calibration'] = ($result['provider_usage_available'] ?? false)
+                ? $budgetService->calibration($prepared, (int) $result['input_tokens'])
+                : ['actual_input_tokens' => null, 'provider_usage_available' => false, 'persisted' => false, 'profile_input_exceeded' => false];
+            return $result;
+        } catch (\Throwable $exception) {
+            if (app()->bound(AssistantRequestExecutionContext::class)) {
+                app(AssistantRequestExecutionContext::class)->assertCanContinue();
+            }
+            $this->logging->technical('ai.timeweb.native_failed', ['exception_class' => $exception::class], 'warning');
+            throw $exception;
+        }
+    }
+
     public function countTokens(string $text): int
     {
         return (new TokenCounter())->text($text);

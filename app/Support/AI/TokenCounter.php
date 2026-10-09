@@ -157,7 +157,7 @@ final class TokenCounter
                 $content = $message['content'];
                 unset($message['content']);
                 foreach ($content as $part) {
-                    if (($part['type'] ?? null) === 'image_url') {
+                    if (in_array($part['type'] ?? null, ['image_url', 'input_image'], true)) {
                         $tokens += 4096;
                     } else {
                         $tokens += $this->value($part);
@@ -180,7 +180,7 @@ final class TokenCounter
         $tokens = 0;
         foreach ($messages as $message) {
             foreach (is_array($message['content'] ?? null) ? $message['content'] : [] as $part) {
-                if (($part['type'] ?? null) === 'image_url') { $tokens += 4096; }
+                if (in_array($part['type'] ?? null, ['image_url', 'input_image'], true)) { $tokens += 4096; }
             }
         }
         return $tokens;
