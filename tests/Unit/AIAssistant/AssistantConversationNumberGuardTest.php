@@ -44,4 +44,15 @@ final class AssistantConversationNumberGuardTest extends TestCase
             self::assertTrue($verifier->guard('Цена 100 руб.', [], null, $query)['replaced']);
         }
     }
+
+    public function test_unit_labels_are_not_numeric_business_claims(): void
+    {
+        $verifier = new AssistantFinancialClaimVerifier;
+        $query = 'Что нужно уточнить для расчёта доставки?';
+        self::assertFalse($verifier->guard('Уточните объём (м3), цену за 1 км и цену за 1 м³.', [], null, $query)['replaced']);
+        self::assertTrue($verifier->guard('Цена за 1 м3: 100 руб.', [], null, $query)['replaced']);
+        self::assertTrue($verifier->guard('Объём 1 м³.', [], null, $query)['replaced']);
+        self::assertTrue($verifier->guard('Цена за 1 км: 100.', [], null, $query)['replaced']);
+        self::assertTrue($verifier->guard('Цена 1 м³.', [], null, $query)['replaced']);
+    }
 }
