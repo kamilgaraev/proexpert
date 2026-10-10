@@ -19,6 +19,7 @@ use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantS
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -58,9 +59,19 @@ final class AssistantIndexStatusService
 
         $phase = (object) ['value' => 'schema'];
         $started = hrtime(true);
+        $metricsRequest = request();
+        $processingPhase = 'rag_prepare';
+        $processingCheckpoint = ApiQueryMetrics::processingCheckpoint($metricsRequest);
+        $setProcessingPhase = static function (?string $next) use ($metricsRequest, &$processingPhase, &$processingCheckpoint): void {
+            if ($processingPhase !== null && $processingCheckpoint !== null) {
+                ApiQueryMetrics::recordProcessingPhase($metricsRequest, $processingPhase, $processingCheckpoint['started_at'], $processingCheckpoint);
+            }
+            $processingPhase = $next;
+            $processingCheckpoint = $next === null ? null : ApiQueryMetrics::processingCheckpoint($metricsRequest);
+        };
         try {
             $budget = new RagStatusBudget(DB::connection(), 2500);
-            $result = $this->inRepeatableRead(fn (): array => $budget->run(function (callable $checkpoint) use ($organizationId, $actor, $budget, $section, $phase, $checkCurrentAccess): array {
+            $result = $this->inRepeatableRead(fn (): array => $budget->run(function (callable $checkpoint) use ($organizationId, $actor, $budget, $section, $phase, $checkCurrentAccess, $setProcessingPhase): array {
                 if ($checkCurrentAccess) {
                     $actor = User::query()->find($actor->id);
                     if ($actor === null || ! $actor->is_active || (int) $actor->current_organization_id !== $organizationId) {
@@ -71,7 +82,7 @@ final class AssistantIndexStatusService
                 return $this->access->withCurrentChecks(
                     $actor,
                     $organizationId,
-                    function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase, $checkCurrentAccess): array {
+                    function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase, $checkCurrentAccess, $setProcessingPhase): array {
                         $validUntil = null;
                         if ($checkCurrentAccess) {
                             if (! $this->access->canReadDomain($actor, $organizationId, 'assistant')) { throw new AuthorizationException; }
@@ -84,12 +95,21 @@ final class AssistantIndexStatusService
                             $capturedAt = DB::selectOne('SELECT LEAST(transaction_timestamp(), clock_timestamp())::text AS captured_at')->captured_at;
                             $validUntil = $inputs->validUntil($capturedAt, self::SNAPSHOT_TTL_SECONDS, $organizationId, (int) $actor->id);
                         }
+                        $setProcessingPhase('rag_schema_prefetch');
                         $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
+                        $setProcessingPhase('rag_source_prepare');
                         $projectionProof = null;
                         $coverage = $section === 'documents' ? [] : $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true,
-                            progress: static function (string $value) use ($phase): void { $phase->value = $value; });
+                            progress: static function (string $value) use ($phase, $setProcessingPhase): void {
+                                $phase->value = $value;
+                                if (in_array($value, ['source_acl', 'source_counts', 'expected_counts'], true)) {
+                                    $setProcessingPhase('rag_'.$value);
+                                }
+                            });
                         $phase->value = 'documents';
+                        $setProcessingPhase($section === 'sources' ? 'rag_finalize' : 'rag_documents');
                         $documents = $section === 'sources' ? [] : $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
+                        if ($section !== 'sources') { $setProcessingPhase('rag_finalize'); }
 
                         $canReindex = $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]);
                         $budget->checkDeadline();
@@ -114,6 +134,8 @@ final class AssistantIndexStatusService
                 'phase' => $phase->value, 'elapsed_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
             ]);
             $result = $this->unavailableStatus();
+        } finally {
+            $setProcessingPhase(null);
         }
 
         if ($checkCurrentAccess && ($result['status_available'] ?? false)) { AssistantStatusSnapshotDiagnostics::request('fresh_read', $section); }

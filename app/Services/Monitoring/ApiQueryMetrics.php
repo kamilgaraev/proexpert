@@ -81,14 +81,34 @@ final class ApiQueryMetrics
         $metrics->maximum = max($metrics->maximum, $milliseconds);
     }
 
-    public static function recordProcessingPhase(Request $request, string $phase, int $startedAt): void
+    public static function processingCheckpoint(Request $request): ?array
+    {
+        $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
+        if (! $metrics instanceof self || ! $metrics->captureSources) {
+            return null;
+        }
+
+        return ['metrics' => $metrics, 'started_at' => hrtime(true), 'sql_count' => $metrics->count, 'sql_total_ms' => $metrics->total];
+    }
+
+    public static function recordProcessingPhase(Request $request, string $phase, int $startedAt, ?array $checkpoint = null): void
     {
         $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
         if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
             'list_prepare', 'list_encode', 'request_render', 'request_chain',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
             'admin_authorize', 'purchase_authorize', 'interface_access', 'procurement_modules', 'response_normalize',
+            'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',
+            'rag_expected_counts', 'rag_documents', 'rag_finalize',
+            'sql_tracing',
         ], true)) {
+            return;
+        }
+        if ($checkpoint !== null && (($checkpoint['metrics'] ?? null) !== $metrics
+            || ($checkpoint['started_at'] ?? null) !== $startedAt
+            || ! is_int($checkpoint['sql_count'] ?? null) || $checkpoint['sql_count'] < 0 || $checkpoint['sql_count'] > $metrics->count
+            || ! is_float($checkpoint['sql_total_ms'] ?? null) || ! is_finite($checkpoint['sql_total_ms'])
+            || $checkpoint['sql_total_ms'] < 0 || $checkpoint['sql_total_ms'] > $metrics->total)) {
             return;
         }
         $milliseconds = (hrtime(true) - $startedAt) / 1_000_000;
@@ -98,6 +118,10 @@ final class ApiQueryMetrics
         $metrics->processingPhases[$phase]['count'] = ($metrics->processingPhases[$phase]['count'] ?? 0) + 1;
         $metrics->processingPhases[$phase]['total_ms'] = ($metrics->processingPhases[$phase]['total_ms'] ?? 0) + $milliseconds;
         $metrics->processingPhases[$phase]['max_ms'] = max($metrics->processingPhases[$phase]['max_ms'] ?? 0, $milliseconds);
+        if ($checkpoint !== null) {
+            $metrics->processingPhases[$phase]['sql_count'] = ($metrics->processingPhases[$phase]['sql_count'] ?? 0) + $metrics->count - $checkpoint['sql_count'];
+            $metrics->processingPhases[$phase]['sql_total_ms'] = ($metrics->processingPhases[$phase]['sql_total_ms'] ?? 0) + $metrics->total - $checkpoint['sql_total_ms'];
+        }
     }
 
     public function summary(): array
@@ -127,6 +151,9 @@ final class ApiQueryMetrics
             $summary['processing_phases'] = array_map(static function (array $phase): array {
                 $phase['total_ms'] = round($phase['total_ms'], 2);
                 $phase['max_ms'] = round($phase['max_ms'], 2);
+                if (isset($phase['sql_total_ms'])) {
+                    $phase['sql_total_ms'] = round($phase['sql_total_ms'], 2);
+                }
 
                 return $phase;
             }, $this->processingPhases);

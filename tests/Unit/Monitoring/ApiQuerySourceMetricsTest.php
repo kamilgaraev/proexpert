@@ -64,6 +64,37 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame(['phase' => 'schema_rejected', 'relation' => null], $metrics->summary()['assistant_snapshot_epoch']);
     }
 
+    public function test_processing_sql_deltas_are_request_local_and_exclude_invalid_checkpoints(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+        self::assertNotNull($checkpoint);
+        ApiQueryMetrics::record($request, 1.25);
+        ApiQueryMetrics::record($request, 2.75);
+        ApiQueryMetrics::recordProcessingPhase($request, 'rag_source_counts', $checkpoint['started_at'], $checkpoint);
+        $next = ApiQueryMetrics::processingCheckpoint($request);
+        self::assertNotNull($next);
+        ApiQueryMetrics::record($request, 3.5);
+        ApiQueryMetrics::recordProcessingPhase($request, 'rag_source_counts', $next['started_at'], $next);
+        $phase = $metrics->summary()['processing_phases']['rag_source_counts'];
+        self::assertSame(2, $phase['count']);
+        self::assertSame(3, $phase['sql_count']);
+        self::assertSame(7.5, $phase['sql_total_ms']);
+        self::assertGreaterThanOrEqual(0, $phase['total_ms']);
+        self::assertArrayNotHasKey('metrics', $phase);
+        self::assertArrayNotHasKey('started_at', $phase);
+        foreach ([array_replace($checkpoint, ['sql_count' => 99]), array_replace($checkpoint, ['sql_total_ms' => NAN])] as $invalid) {
+            ApiQueryMetrics::recordProcessingPhase($request, 'rag_prepare', $invalid['started_at'], $invalid);
+        }
+        self::assertArrayNotHasKey('rag_prepare', $metrics->summary()['processing_phases']);
+        $other = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $other);
+        ApiQueryMetrics::recordProcessingPhase($request, 'rag_source_counts', $checkpoint['started_at'], $checkpoint);
+        self::assertSame([], $other->summary()['processing_phases']);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, new ApiQueryMetrics);
+        self::assertNull(ApiQueryMetrics::processingCheckpoint($request));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -123,6 +154,8 @@ final class ApiQuerySourceMetricsTest extends TestCase
     public function test_source_group_overflow_preserves_complete_request_totals(): void
     {
         [$request, $metrics] = $this->metrics();
+        $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+        self::assertNotNull($checkpoint);
         $queries = ['select * from role_conditions', 'select * from authorization_contexts', 'select * from pg_attribute a',
             'select count(*) as stored_count from records', 'select * from ai_rag_sources', 'select * from files', 'SET LOCAL statement_timeout=1', 'select 1'];
         foreach ($queries as $sql) {
@@ -133,12 +166,15 @@ final class ApiQuerySourceMetricsTest extends TestCase
             $this->recordFour($request, $event);
             $this->recordFive($request, $event);
         }
+        ApiQueryMetrics::recordProcessingPhase($request, 'rag_expected_counts', $checkpoint['started_at'], $checkpoint);
         $summary = $metrics->summary();
         self::assertSame(40, $summary['sql_count']);
         self::assertSame(60.0, $summary['sql_total_ms']);
         self::assertCount(32, $summary['sql_sources']);
         self::assertSame(8, $summary['sql_sources_dropped_count']);
         self::assertSame(32, array_sum(array_column($summary['sql_sources'], 'count')));
+        self::assertSame(40, $summary['processing_phases']['rag_expected_counts']['sql_count']);
+        self::assertSame(60.0, $summary['processing_phases']['rag_expected_counts']['sql_total_ms']);
     }
 
     public function test_diagnostic_failure_preserves_query_totals_and_does_not_escape(): void
