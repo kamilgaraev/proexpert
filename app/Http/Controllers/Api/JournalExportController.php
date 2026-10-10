@@ -53,6 +53,8 @@ final class JournalExportController extends Controller
             }
 
             return AdminResponse::success($this->workflow->payload($export, $user));
+        } catch (AuthorizationException $exception) {
+            return AdminResponse::error(trans_message('construction_journal.errors.access_denied'), 403);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 404);
         }

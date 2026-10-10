@@ -62,6 +62,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $approver->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $journal = $this->createJournal($organization, $project, $contract, $user);
         app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id], actor: $user);
         $this->allowPermissions();
@@ -300,6 +301,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $approver->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $estimateItem->update(['work_type_id' => null]);
         $journal = $this->createJournal($organization, $project, $contract, $user);
         $this->coverEstimateItem($contract, $estimate, $estimateItem);
@@ -517,7 +519,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
                     'quantity' => 15,
                 ],
             ],
-        ]);
+        ], $user);
 
         $this->assertDatabaseHas('completed_works', [
             'id' => $originalWork->id,
@@ -610,15 +612,19 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertSame('missing_planned_quantity', $payload['item']['blockers'][0]['code']);
     }
 
-    public function test_approval_without_estimate_item_is_blocked(): void
+    public function test_incomplete_manual_work_is_blocked_before_save(): void
     {
         [$organization, $user, $contract, $project, $estimate] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $approver->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $journal = $this->createJournal($organization, $project, $contract, $user);
 
         $this->allowPermissions();
 
-        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage(trans_message('construction_journal.errors.manual_work_required'));
+
+        app(ConstructionJournalService::class)->createEntry($journal, [
             'estimate_id' => $estimate->id,
             'entry_date' => '2026-04-28',
             'work_description' => 'Вне сметы',
@@ -630,16 +636,13 @@ class ConstructionJournalContractCoverageTest extends TestCase
             ],
         ], $user);
 
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage('Для записи журнала нужно выбрать позицию сметы');
-
-        app(JournalApprovalService::class)->submitForApproval($entry, $user);
     }
 
     public function test_schedule_missing_override_writes_audit_and_allows_approval(): void
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $approver->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $journal = $this->createJournal($organization, $project, $contract, $user);
         app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id], actor: $user);
 
@@ -710,6 +713,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
         $approver = User::factory()->create(['current_organization_id' => $organization->id]);
+        $approver->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $journal = $this->createJournal($organization, $project, $contract, $user);
         $this->coverEstimateItem($contract, $estimate, $estimateItem);
         $task = $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 3);
@@ -856,6 +860,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
     {
         return ConstructionJournal::create([
             'organization_id' => $organization->id,
+            'performing_organization_id' => $organization->id,
             'project_id' => $project->id,
             'contract_id' => $contract?->id,
             'name' => 'Журнал',
@@ -929,6 +934,7 @@ class ConstructionJournalContractCoverageTest extends TestCase
     {
         $this->mock(AuthorizationService::class, function ($mock) use ($allowed): void {
             $mock->shouldReceive('can')->andReturn($allowed);
+            $mock->shouldReceive('hasRole')->andReturn(false);
         });
     }
 }

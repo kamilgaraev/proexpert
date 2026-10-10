@@ -23,6 +23,11 @@ class ConstructionJournalPayloadService
         'createdBy',
         'approvedBy',
         'workVolumes.estimateItem.contractLinks.contract.contractor',
+        'workVolumes.estimateItem.resources.material.measurementUnit',
+        'workVolumes.estimateItem.resources.measurementUnit',
+        'workVolumes.estimateItem.workType.measurementUnit',
+        'workVolumes.estimateItem.measurementUnit',
+        'journal.performingOrganization',
         'workVolumes.workType',
         'workVolumes.measurementUnit',
         'materials.material',
@@ -30,12 +35,14 @@ class ConstructionJournalPayloadService
         'equipment.estimateItem',
         'workers.estimateItem',
         'approvalEvents.actor',
+        'approvalEvents.actorOrganization',
     ];
 
     public function __construct(
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly WorkflowGuardService $workflowGuardService,
         private readonly JournalScheduleTaskResolver $journalScheduleTaskResolver,
+        private readonly \App\Services\ConstructionJournal\ConstructionJournalFormOptionsService $formOptions,
     ) {}
 
     public static function journalCountRelations(): array
@@ -55,11 +62,15 @@ class ConstructionJournalPayloadService
 
     public function mapJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
     {
+        app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->assertReadable($user, $journal);
         $summary = $this->buildJournalSummary($journal);
 
         $payload = [
             'id' => $journal->id,
             'organization_id' => $journal->organization_id,
+            'performing_organization_id' => $journal->performing_organization_id,
+            'approval_context' => app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalContext($journal),
+            'performingOrganization' => $journal->performingOrganization ? ['id' => $journal->performingOrganization->id, 'name' => $journal->performingOrganization->name] : null,
             'project_id' => $journal->project_id,
             'contract_id' => $journal->contract_id,
             'name' => $journal->name,
@@ -99,14 +110,8 @@ class ConstructionJournalPayloadService
 
     public function mapEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal = true): array
     {
-        $entry->loadMissing([
-            'journal.contract.contractor',
-            'workVolumes.estimateItem.contractLinks.contract.contractor',
-            'materials.estimateItem',
-            'equipment.estimateItem',
-            'workers.estimateItem',
-            'approvalEvents.actor',
-        ]);
+        $entry->loadMissing(self::ENTRY_RELATIONS);
+        app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->assertReadable($user, $entry->journal);
 
         $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
 
@@ -136,6 +141,8 @@ class ConstructionJournalPayloadService
                 'reason' => $event->reason,
                 'occurred_at' => optional($event->occurred_at)?->toIso8601String(),
                 'actor' => $event->actor ? $this->mapUser($event->actor) : null,
+                'actor_organization_id' => $event->actor_organization_id,
+                'actor_organization' => $event->actorOrganization ? ['id' => $event->actorOrganization->id, 'name' => $event->actorOrganization->name] : null,
             ])->values()->all(),
             'created_at' => optional($entry->created_at)?->toDateTimeString(),
             'updated_at' => optional($entry->updated_at)?->toDateTimeString(),
@@ -162,18 +169,16 @@ class ConstructionJournalPayloadService
                         'id' => $volume->id,
                         'journal_entry_id' => $volume->journal_entry_id,
                         'estimate_item_id' => $volume->estimate_item_id,
+                        'work_name' => $volume->work_name,
+                        'is_unplanned' => $volume->estimate_item_id === null,
                         'work_type_id' => $volume->work_type_id,
                         'quantity' => (float) $volume->quantity,
                         'measurement_unit_id' => $volume->measurement_unit_id,
                         'notes' => $volume->notes,
                         ...$coverage,
+                        'contract_coverage' => $coverage,
                         'estimateItem' => $volume->relationLoaded('estimateItem') && $volume->estimateItem
-                            ? [
-                                'id' => $volume->estimateItem->id,
-                                'estimate_id' => $volume->estimateItem->estimate_id,
-                                'name' => $volume->estimateItem->name,
-                                'quantity_total' => (float) $volume->estimateItem->quantity_total,
-                            ]
+                            ? $this->formOptions->mapEstimateItem($volume->estimateItem, $entry->journal)
                             : null,
                         'workType' => $volume->relationLoaded('workType') && $volume->workType
                             ? [
@@ -328,6 +333,11 @@ class ConstructionJournalPayloadService
 
         if (Gate::forUser($user)->allows('create', [ConstructionJournalEntry::class, $subject])) {
             $actions[] = 'create_entry';
+            $access = app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class);
+            if ($access->canWrite($user, $subject, ['edit', '*'])
+                && $access->approvalContext($subject)['mode'] !== 'unconfigured') {
+                $actions[] = 'submit';
+            }
         }
 
         return array_values(array_unique($actions));
@@ -460,6 +470,9 @@ class ConstructionJournalPayloadService
         return [
             'id' => $journal->id,
             'organization_id' => $journal->organization_id,
+            'performing_organization_id' => $journal->performing_organization_id,
+            'approval_context' => app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalContext($journal),
+            'performingOrganization' => $journal->performingOrganization ? ['id' => $journal->performingOrganization->id, 'name' => $journal->performingOrganization->name] : null,
             'project_id' => $journal->project_id,
             'contract_id' => $journal->contract_id,
             'name' => $journal->name,

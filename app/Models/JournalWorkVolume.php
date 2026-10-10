@@ -14,6 +14,7 @@ class JournalWorkVolume extends Model
     protected $fillable = [
         'journal_entry_id',
         'estimate_item_id',
+        'work_name',
         'work_type_id',
         'quantity',
         'measurement_unit_id',

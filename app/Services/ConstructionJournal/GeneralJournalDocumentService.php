@@ -66,24 +66,13 @@ final class GeneralJournalDocumentService
 
     public function authorize(User $user, ConstructionJournal $journal): void
     {
-        if ((int) $journal->organization_id !== (int) $user->current_organization_id
-            || !$user->belongsToOrganization((int) $journal->organization_id)
-            || $journal->project === null
-            || !$this->projects->canAccessProject($user, $journal->project, (int) $journal->organization_id)) {
-            throw new BusinessLogicException(trans_message('general_journal.not_found'), 404);
-        }
-        if (!$this->authorization->can($user, 'construction-journal.export', [
-            'organization_id' => (int) $journal->organization_id,
-            'project_id' => (int) $journal->project_id, 'strict_project_scope' => true,
-        ])) {
-            throw new BusinessLogicException(trans_message('general_journal.access_denied'), 403);
-        }
+        app(ConstructionJournalAccessService::class)->assertReadable($user, $journal, ['export']);
     }
 
     public function authorizeDocuments(User $user, ConstructionJournal $journal): void
     {
         if (!$this->authorization->can($user, 'executive-documentation.view', [
-            'organization_id' => (int) $journal->organization_id,
+            'organization_id' => (int) $user->current_organization_id,
             'project_id' => (int) $journal->project_id, 'strict_project_scope' => true,
         ])) {
             throw new BusinessLogicException(trans_message('general_journal.access_denied'), 403);

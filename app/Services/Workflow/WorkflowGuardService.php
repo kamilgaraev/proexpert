@@ -34,6 +34,13 @@ class WorkflowGuardService
         }
 
         $blockers = [];
+        if ($entry->journal) {
+            try {
+                app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalOrganizationId($entry->journal);
+            } catch (DomainException $exception) {
+                $blockers[] = $this->blocker('hierarchy_missing', $exception->getMessage(), 'hierarchy_missing', false, ['configure_project_hierarchy'], null);
+            }
+        }
 
         if ((float) $entry->workVolumes->sum('quantity') <= 0) {
             $blockers[] = $this->blocker(
@@ -50,6 +57,9 @@ class WorkflowGuardService
 
         foreach ($entry->workVolumes as $volume) {
             if (! $volume->estimate_item_id) {
+                if (trim((string) $volume->work_name) !== '' && $volume->measurement_unit_id && (float) $volume->quantity > 0) {
+                    continue;
+                }
                 $blockers[] = $this->blocker(
                     'missing_estimate_item',
                     trans_message('workflow.blockers.missing_estimate_item'),
@@ -113,7 +123,8 @@ class WorkflowGuardService
             return array_values($blockers);
         }
 
-        if (! $this->scheduleTaskResolver->allVolumesHaveResolvableTask($entry)) {
+        if ($entry->workVolumes->contains(fn ($volume): bool => $volume->estimate_item_id !== null)
+            && ! $this->scheduleTaskResolver->allVolumesHaveResolvableTask($entry)) {
             $blockers[] = $this->blocker(
                 'schedule_missing',
                 trans_message('workflow.blockers.schedule_missing'),
@@ -159,7 +170,11 @@ class WorkflowGuardService
             throw new DomainException(trans_message('workflow.override_reason_required'));
         }
 
-        if (! $user || ! $user->can(self::PERMISSION_OVERRIDE, ['organization_id' => (int) $entry->journal->organization_id])) {
+        if (! $user || ! app(\App\Domain\Authorization\Services\AuthorizationService::class)->can($user, self::PERMISSION_OVERRIDE, [
+            'organization_id' => (int) $user->current_organization_id,
+            'project_id' => (int) $entry->journal->project_id,
+            'strict_project_scope' => true,
+        ])) {
             throw new DomainException(trans_message('workflow.override_forbidden'));
         }
 

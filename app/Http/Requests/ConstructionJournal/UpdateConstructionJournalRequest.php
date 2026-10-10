@@ -22,6 +22,8 @@ class UpdateConstructionJournalRequest extends FormRequest
             'start_date' => ['sometimes', 'date'],
             'end_date' => ['sometimes', 'nullable', 'date'],
             'status' => ['prohibited'],
+            'organization_id' => ['prohibited'],
+            'performing_organization_id' => ['prohibited'],
         ];
     }
 }

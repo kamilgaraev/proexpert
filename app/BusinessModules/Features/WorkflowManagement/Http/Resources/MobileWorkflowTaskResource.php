@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkflowManagement\Http\Resources;
 
-use App\Domain\Authorization\Services\AuthorizationService;
+use App\BusinessModules\Features\WorkflowManagement\Services\MobileWorkflowTaskService;
 use App\Models\CompletedWork;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -90,31 +91,11 @@ final class MobileWorkflowTaskResource extends JsonResource
     private function availableActions(Request $request, CompletedWork $task): array
     {
         $user = $request->user();
-        if (! $user) {
+        if (! $user instanceof User) {
             return [];
         }
 
-        $canEdit = app(AuthorizationService::class)->can(
-            $user,
-            'completed_works.edit',
-            ['organization_id' => (int) $task->organization_id]
-        );
-
-        if (! $canEdit) {
-            return [];
-        }
-
-        $actions = match ($task->status) {
-            'draft', 'pending' => ['approve', 'reject', 'request_changes'],
-            'in_review' => ['approve', 'reject'],
-            default => [],
-        };
-
-        if (! in_array($task->status, ['cancelled'], true)) {
-            $actions[] = 'comment';
-        }
-
-        return $actions;
+        return app(MobileWorkflowTaskService::class)->availableActions($user, $task);
     }
 
     private function workflowData(CompletedWork $task): array

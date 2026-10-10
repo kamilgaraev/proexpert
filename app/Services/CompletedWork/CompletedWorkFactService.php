@@ -50,6 +50,7 @@ class CompletedWorkFactService
                 'scheduleTask.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
+                'workVolumes.measurementUnit',
                 'materials.estimateItem.contractLinks.contract.contractor',
                 'materials.material',
                 'equipment.estimateItem.contractLinks.contract.contractor',
@@ -470,7 +471,7 @@ class CompletedWorkFactService
         JournalWorkVolume $volume,
         ?ScheduleTask $task,
     ): array {
-        $estimateItem = $volume->estimateItem ?? $task?->estimateItem;
+        $estimateItem = $volume->estimate_item_id ? ($volume->estimateItem ?? $task?->estimateItem) : null;
         $contractLink = $this->resolveContractLinkForEntry($entry, $estimateItem);
 
         $price = null;
@@ -517,7 +518,7 @@ class CompletedWorkFactService
             'organization_id' => $entry->journal->organization_id,
             'project_id' => $entry->journal->project_id,
             'schedule_task_id' => $task?->id,
-            'estimate_item_id' => $volume->estimate_item_id ?? $task?->estimate_item_id,
+            'estimate_item_id' => $volume->estimate_item_id,
             'journal_entry_id' => $entry->id,
             'journal_work_volume_id' => $volume->id,
             'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
@@ -535,6 +536,9 @@ class CompletedWorkFactService
             'status' => $this->mapJournalStatusToCompletedWorkStatus($entry->status),
             'additional_info' => array_filter([
                 'fact_kind' => 'production',
+                'work_name' => $volume->work_name,
+                'measurement_unit_id' => $volume->measurement_unit_id,
+                'unit_of_measurement' => $volume->measurementUnit?->short_name ?? $volume->measurementUnit?->name,
                 'journal_entry_number' => $entry->entry_number,
                 'journal_status' => $entry->status?->value,
                 'weather_conditions' => $entry->weather_conditions,

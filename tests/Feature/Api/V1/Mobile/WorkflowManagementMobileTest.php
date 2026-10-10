@@ -10,6 +10,7 @@ use App\BusinessModules\Features\ProjectManagement\ProjectManagementModule;
 use App\BusinessModules\Features\WorkflowManagement\WorkflowManagementModule;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
+use App\Models\MeasurementUnit;
 use App\Models\Module;
 use App\Models\Project;
 use App\Models\User;
@@ -17,6 +18,7 @@ use App\Models\WorkType;
 use App\Modules\Contracts\ModuleInterface;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -272,12 +274,96 @@ final class WorkflowManagementMobileTest extends TestCase
             ->assertJsonPath('data.total_amount', 0);
     }
 
+    public function test_mobile_workflow_respects_assigned_project_scope_for_reading_and_mutations(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $task = $this->completedWork($context, $project, $this->workType($context));
+        $project->users()->detach($context->user->id);
+        DB::table('organization_user')->where('organization_id', $context->organization->id)
+            ->where('user_id', $context->user->id)->update(['project_access_mode' => 'assigned_projects']);
+        $this->registerWorkflowFoundationModules((int) $context->organization->id);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/workflow-management/tasks')->assertOk()->assertJsonCount(0, 'data.items');
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/workflow-management/tasks/'.$task->id)->assertNotFound();
+
+        foreach (['approve' => [], 'reject' => ['reason' => 'Объём требует проверки'],
+            'request-changes' => ['comment' => 'Уточните объём'], 'comments' => ['comment' => 'Проверка']] as $action => $payload) {
+            $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson('/api/v1/mobile/workflow-management/tasks/'.$task->id.'/'.$action, $payload)->assertStatus(422);
+        }
+        self::assertSame('pending', $task->refresh()->status);
+        self::assertSame([], data_get($task->additional_info, 'mobile_workflow.status_history', []));
+    }
+
+    public function test_mobile_workflow_does_not_expose_or_confirm_journal_origin_facts(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $task = $this->completedWork($context, $project, $this->workType($context), [
+            'work_origin_type' => CompletedWork::ORIGIN_JOURNAL,
+            'status' => 'in_review',
+        ]);
+        $this->registerWorkflowFoundationModules((int) $context->organization->id);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/workflow-management/tasks')->assertOk()->assertJsonCount(0, 'data.items');
+        foreach (['approve' => [], 'reject' => ['reason' => 'Проверить исходный журнал'],
+            'request-changes' => ['comment' => 'Уточните запись'], 'comments' => ['comment' => 'Проверка']] as $action => $payload) {
+            $this->withHeaders($context->mobileAuthHeaders())
+                ->postJson('/api/v1/mobile/workflow-management/tasks/'.$task->id.'/'.$action, $payload)->assertStatus(422);
+        }
+        self::assertSame('in_review', $task->refresh()->status);
+    }
+
+    public function test_mobile_confirmation_uses_common_fact_readiness(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $task = $this->completedWork($context, $project, $this->workType($context), [
+            'status' => 'draft', 'quantity' => 0, 'completed_quantity' => 0,
+        ]);
+        $this->registerWorkflowFoundationModules((int) $context->organization->id);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->getJson('/api/v1/mobile/workflow-management/tasks/'.$task->id)
+            ->assertOk()->assertJsonPath('data.available_actions', ['reject', 'comment']);
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/workflow-management/tasks/'.$task->id.'/approve')
+            ->assertStatus(422);
+        self::assertSame('draft', $task->refresh()->status);
+        self::assertSame([], data_get($task->additional_info, 'mobile_workflow.status_history', []));
+    }
+
+    public function test_mobile_confirmation_requires_manual_name_and_location(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $task = $this->completedWork($context, $project, $this->workType($context), [
+            'additional_info' => ['unit_of_measurement' => 'м³'],
+        ]);
+        $this->registerWorkflowFoundationModules((int) $context->organization->id);
+
+        $this->withHeaders($context->mobileAuthHeaders())
+            ->postJson('/api/v1/mobile/workflow-management/tasks/'.$task->id.'/approve')->assertStatus(422);
+        self::assertSame('pending', $task->refresh()->status);
+    }
+
     private function workType(AdminApiTestContext $context): WorkType
     {
+        $unit = MeasurementUnit::query()->firstOrCreate([
+            'organization_id' => $context->organization->id,
+            'short_name' => 'м³',
+        ], [
+            'name' => 'Кубический метр', 'is_active' => true,
+        ]);
         return WorkType::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Бетонирование',
             'code' => 'CONCRETE',
+            'measurement_unit_id' => $unit->id,
             'is_active' => true,
         ]);
     }
@@ -288,6 +374,7 @@ final class WorkflowManagementMobileTest extends TestCase
         WorkType $workType,
         array $attributes = []
     ): CompletedWork {
+        $project->users()->syncWithoutDetaching([$context->user->id => ['role' => 'member', 'is_active' => true]]);
         return CompletedWork::query()->create(array_merge([
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
@@ -301,6 +388,7 @@ final class WorkflowManagementMobileTest extends TestCase
             'status' => 'pending',
             'work_origin_type' => CompletedWork::ORIGIN_MANUAL,
             'planning_status' => CompletedWork::PLANNING_PLANNED,
+            'additional_info' => ['work_name' => 'Бетонирование', 'unit_of_measurement' => 'м³', 'location' => 'Участок А'],
         ], $attributes));
     }
 

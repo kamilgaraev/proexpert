@@ -14,6 +14,7 @@ class JournalEntryApprovalEvent extends Model
         'organization_id',
         'project_id',
         'actor_user_id',
+        'actor_organization_id',
         'event',
         'from_status',
         'to_status',
@@ -33,5 +34,10 @@ class JournalEntryApprovalEvent extends Model
     public function actor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'actor_user_id');
+    }
+
+    public function actorOrganization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'actor_organization_id');
     }
 }

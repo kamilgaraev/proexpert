@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\ConstructionJournalController;
 use App\Http\Controllers\Api\ConstructionJournalEntryController;
+use App\Http\Controllers\Api\ConstructionJournalFormOptionsController;
 use App\Http\Controllers\Api\JournalExportController;
 use App\Http\Controllers\Api\GeneralJournalDocumentController;
 use Illuminate\Support\Facades\Route;
@@ -17,6 +18,9 @@ use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_admin'])->group(function () {
 
+    Route::get('construction-journals/form-options', [ConstructionJournalFormOptionsController::class, 'index'])
+        ->name('construction-journals.form-options');
+
     // Журналы работ
     Route::prefix('projects/{project}')->group(function () {
         Route::get('construction-journals', [ConstructionJournalController::class, 'index'])
@@ -26,6 +30,8 @@ Route::middleware(['auth:api_admin'])->group(function () {
     });
 
     Route::prefix('construction-journals/{journal}')->group(function () {
+        Route::get('entry-form-options', [ConstructionJournalFormOptionsController::class, 'show'])
+            ->name('construction-journals.entry-form-options');
         Route::get('general-document', [GeneralJournalDocumentController::class, 'show']);
         Route::get('general-document/versions/{versionId}', [GeneralJournalDocumentController::class, 'show'])->whereNumber('versionId');
         Route::post('export/general', [GeneralJournalDocumentController::class, 'prepare']);

@@ -12,6 +12,7 @@ use App\Models\ConstructionJournal;
 use App\Services\ConstructionJournal\GeneralJournalDocumentQuery;
 use App\Services\ConstructionJournal\GeneralJournalDocumentService;
 use App\Services\ConstructionJournal\JournalExportWorkflowService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -50,6 +51,8 @@ final class GeneralJournalDocumentController extends Controller
     {
         try {
             return $operation();
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('general_journal.access_denied'), 403);
         } catch (BusinessLogicException $exception) {
             $code = in_array($exception->getCode(), [403, 404, 409, 422], true) ? $exception->getCode() : 422;
             return AdminResponse::error(trans_message(match ($code) {

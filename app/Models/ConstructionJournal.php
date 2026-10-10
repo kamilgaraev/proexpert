@@ -15,6 +15,7 @@ class ConstructionJournal extends Model
 
     protected $fillable = [
         'organization_id',
+        'performing_organization_id',
         'project_id',
         'contract_id',
         'name',
@@ -31,9 +32,21 @@ class ConstructionJournal extends Model
         'status' => JournalStatusEnum::class,
     ];
 
+    protected static function booted(): void
+    {
+        static::creating(function (ConstructionJournal $journal): void {
+            $journal->performing_organization_id ??= $journal->organization_id;
+        });
+    }
+
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function performingOrganization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'performing_organization_id');
     }
 
     public function project(): BelongsTo
@@ -133,11 +146,7 @@ class ConstructionJournal extends Model
 
         $user = request()->user();
         if ($user && $user->current_organization_id) {
-            $project = $journal->project;
-
-            if ((int) $journal->organization_id !== (int) $user->current_organization_id
-                || ! $project
-                || ! $project->hasOrganization($user->current_organization_id)) {
+            if (! app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canRead($user, $journal)) {
                 abort(403, trans_message('construction_journal.errors.access_denied'));
             }
         }

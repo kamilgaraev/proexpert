@@ -15,6 +15,8 @@ class StoreConstructionJournalRequest extends ConstructionJournalFormRequest
             'start_date' => ['required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'status' => ['prohibited'],
+            'organization_id' => ['prohibited'],
+            'performing_organization_id' => ['prohibited'],
         ];
     }
 }

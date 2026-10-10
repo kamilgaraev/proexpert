@@ -4,23 +4,15 @@ declare(strict_types=1);
 
 namespace App\Services\Mobile;
 
-use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
-use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
-use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
-use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
-use App\Models\Contract;
-use App\Models\Estimate;
-use App\Models\EstimateItem;
 use App\Models\Project;
 use App\Models\User;
-use App\Models\WorkType;
+use App\Services\ConstructionJournal\ConstructionJournalAccessService;
+use App\Services\ConstructionJournal\ConstructionJournalFormOptionsService;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 
@@ -44,7 +36,8 @@ class MobileConstructionJournalService
 
     public function __construct(
         private readonly ConstructionJournalPayloadService $payloadService,
-        private readonly AuthorizationService $authorizationService,
+        private readonly ConstructionJournalAccessService $access,
+        private readonly ConstructionJournalFormOptionsService $formOptions,
         private readonly MobileProjectAccessResolver $projectAccess,
     ) {}
 
@@ -70,13 +63,20 @@ class MobileConstructionJournalService
 
     public function assertJournalAccess(User $user, ConstructionJournal $journal): void
     {
-        $projectId = (int) $journal->project_id;
-        $this->resolveProject($user, $projectId);
+        $this->access->assertReadable($user, $journal);
     }
 
     public function buildJournalList(User $user, Project $project, int $page = 1, int $perPage = 15, ?string $status = null): array
     {
-        $journals = $project->journals()
+        if (! $this->access->canAccessProject($user, $project)
+            || ! $this->access->hasPermission($user, $project, ['view', '*'])) {
+            throw new AuthorizationException(trans_message('errors.unauthorized'));
+        }
+
+        $visibleJournals = $project->journals()
+            ->where('organization_id', $project->organization_id)
+            ->whereIn('performing_organization_id', $this->access->visiblePerformerIds($user, $project));
+        $journals = (clone $visibleJournals)
             ->with(['project', 'contract', 'createdBy'])
             ->withCount([
                 'entries',
@@ -102,9 +102,9 @@ class MobileConstructionJournalService
             'meta' => $this->payloadService->paginationMeta($journals),
             'summary' => [
                 'total_journals' => $journals->total(),
-                'active_journals' => $project->journals()->where('status', 'active')->count(),
-                'archived_journals' => $project->journals()->where('status', 'archived')->count(),
-                'closed_journals' => $project->journals()->where('status', 'closed')->count(),
+                'active_journals' => (clone $visibleJournals)->where('status', 'active')->count(),
+                'archived_journals' => (clone $visibleJournals)->where('status', 'archived')->count(),
+                'closed_journals' => (clone $visibleJournals)->where('status', 'closed')->count(),
             ],
             'available_actions' => $this->mapActionList($this->payloadService->buildJournalActions($project, $user)),
         ];
@@ -112,20 +112,10 @@ class MobileConstructionJournalService
 
     public function buildEntriesList(User $user, ConstructionJournal $journal, array $filters): array
     {
+        $this->assertJournalAccess($user, $journal);
+
         $query = $journal->entries()
-            ->with([
-                'journal',
-                'scheduleTask',
-                'estimate',
-                'createdBy',
-                'approvedBy',
-                'workVolumes.estimateItem',
-                'workVolumes.workType',
-                'workVolumes.measurementUnit',
-                'workers',
-                'equipment',
-                'materials.material',
-            ]);
+            ->with(ConstructionJournalPayloadService::ENTRY_RELATIONS);
 
         if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
@@ -152,6 +142,8 @@ class MobileConstructionJournalService
                 max(1, (int) ($filters['page'] ?? 1))
             );
 
+        $this->payloadService->prepareEntryPage($entries->getCollection());
+
         return [
             'items' => collect($entries->items())
                 ->map(fn (ConstructionJournalEntry $entry): array => $this->mapMobileEntry($entry, $user))
@@ -165,151 +157,21 @@ class MobileConstructionJournalService
 
     public function buildEntryFormOptions(User $user, ConstructionJournal $journal): array
     {
-        $this->assertJournalAccess($user, $journal);
-
-        $estimates = Estimate::query()
-            ->where('organization_id', $journal->organization_id)
-            ->where('project_id', $journal->project_id)
-            ->where('status', 'approved')
-            ->with([
-                'items' => function ($query): void {
-                    $query->where('item_type', EstimatePositionItemType::WORK->value)
-                        ->with([
-                            'workType.measurementUnit',
-                            'measurementUnit',
-                            'contractLinks.contract.contractor',
-                        ]);
-                },
-            ])
-            ->orderByDesc('created_at')
-            ->get();
-
-        $workTypes = WorkType::query()
-            ->where(function ($query) use ($journal): void {
-                $query->where('organization_id', $journal->organization_id)
-                    ->orWhereNull('organization_id');
-            })
-            ->where('is_active', true)
-            ->with('measurementUnit')
-            ->orderBy('name')
-            ->get();
-
-        return [
-            'estimates' => $estimates
-                ->map(fn (Estimate $estimate): array => $this->mapEstimateOption($estimate))
-                ->values()
-                ->all(),
-            'work_types' => $workTypes
-                ->map(fn (WorkType $workType): array => [
-                    'id' => $workType->id,
-                    'name' => $workType->name,
-                    'measurement_unit_id' => $workType->measurement_unit_id,
-                    'measurementUnit' => $workType->measurementUnit ? [
-                        'id' => $workType->measurementUnit->id,
-                        'name' => $workType->measurementUnit->name,
-                        'short_name' => $workType->measurementUnit->short_name,
-                    ] : null,
-                ])
-                ->values()
-                ->all(),
-            'project_materials' => $this->buildAcceptedProjectMaterials($user, (int) $journal->organization_id, (int) $journal->project_id),
-        ];
+        return $this->formOptions->build($user, $journal);
     }
 
     public function mapMobileJournal(ConstructionJournal $journal, User $user, bool $includeEntries = false): array
     {
+        $this->assertJournalAccess($user, $journal);
+
         return $this->transformJournalPayload($this->payloadService->mapJournal($journal, $user, $includeEntries));
     }
 
     public function mapMobileEntry(ConstructionJournalEntry $entry, User $user, bool $includeJournal = true): array
     {
+        $this->assertJournalAccess($user, $entry->journal);
+
         return $this->transformEntryPayload($this->payloadService->mapEntry($entry, $user, $includeJournal));
-    }
-
-    private function buildAcceptedProjectMaterials(User $user, int $organizationId, int $projectId): array
-    {
-        $custodyWarehouse = $this->resolveResponsibleCustodyWarehouse($organizationId, $projectId, (int) $user->id);
-        $canIssueFromProject = $this->authorizationService->can($user, 'warehouse.manage_stock', [
-            'organization_id' => $organizationId,
-            'project_id' => $projectId,
-        ]);
-
-        return ProjectMaterialDelivery::query()
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
-            ->where('accepted_quantity', '>', 0)
-            ->with(['material.measurementUnit', 'allocation'])
-            ->orderByDesc('accepted_at')
-            ->get()
-            ->filter(function (ProjectMaterialDelivery $delivery) use ($organizationId, $custodyWarehouse, $canIssueFromProject): bool {
-                if ($delivery->availableQuantity() <= 0) {
-                    return false;
-                }
-
-                $custodyQuantity = $custodyWarehouse
-                    ? $this->availableWarehouseQuantity($organizationId, (int) $custodyWarehouse->id, (int) $delivery->material_id)
-                    : 0.0;
-                $projectQuantity = $canIssueFromProject && $delivery->project_warehouse_id
-                    ? $this->availableWarehouseQuantity($organizationId, (int) $delivery->project_warehouse_id, (int) $delivery->material_id)
-                    : 0.0;
-
-                return $custodyQuantity > 0 || $projectQuantity > 0;
-            })
-            ->map(fn (ProjectMaterialDelivery $delivery): array => $this->mapProjectMaterialOption(
-                $delivery,
-                $organizationId,
-                $custodyWarehouse,
-                $canIssueFromProject
-            ))
-            ->values()
-            ->all();
-    }
-
-    private function mapEstimateOption(Estimate $estimate): array
-    {
-        return [
-            'id' => $estimate->id,
-            'name' => $estimate->name,
-            'number' => $estimate->number,
-            'items' => $estimate->items
-                ->map(fn (EstimateItem $item): array => [
-                    'id' => $item->id,
-                    'estimate_id' => $item->estimate_id,
-                    'position_number' => $item->position_number,
-                    'name' => $item->name,
-                    'item_type' => $item->item_type?->value,
-                    'quantity' => $this->requiredEstimateQuantity($item, 'quantity'),
-                    'quantity_total' => $this->resolveEstimateQuantityTotal($item),
-                    'work_type_id' => $item->work_type_id,
-                    'measurement_unit_id' => $item->measurement_unit_id,
-                    'workType' => $item->workType ? [
-                        'id' => $item->workType->id,
-                        'name' => $item->workType->name,
-                        'measurement_unit_id' => $item->workType->measurement_unit_id,
-                        'measurementUnit' => $item->workType->measurementUnit ? [
-                            'id' => $item->workType->measurementUnit->id,
-                            'name' => $item->workType->measurementUnit->name,
-                            'short_name' => $item->workType->measurementUnit->short_name,
-                        ] : null,
-                    ] : null,
-                    'measurementUnit' => $item->measurementUnit ? [
-                        'id' => $item->measurementUnit->id,
-                        'name' => $item->measurementUnit->name,
-                        'short_name' => $item->measurementUnit->short_name,
-                    ] : null,
-                    'contract_links' => $item->contractLinks
-                        ->map(fn ($link): array => [
-                            'contract_id' => $link->contract_id,
-                            'contract_number' => $link->contract?->number,
-                            'contractor_name' => $link->contract?->contractor?->name,
-                        ])
-                        ->values()
-                        ->all(),
-                ])
-                ->values()
-                ->all(),
-        ];
     }
 
     private function transformJournalPayload(array $payload): array
@@ -362,6 +224,9 @@ class MobileConstructionJournalService
     {
         $title = trim((string) ($volume['estimateItem']['name'] ?? ''));
         if ($title === '') {
+            $title = trim((string) ($volume['work_name'] ?? ''));
+        }
+        if ($title === '') {
             $title = trim((string) ($volume['workType']['name'] ?? ''));
         }
         if ($title === '') {
@@ -373,12 +238,8 @@ class MobileConstructionJournalService
             ?? ''
         ));
 
-        if ($measurementUnitName === '') {
-            throw new DomainException(trans_message('mobile_construction_journal.errors.work_volume_measurement_unit_missing'));
-        }
-
         $volume['title'] = $title;
-        $volume['measurement_unit_name'] = $measurementUnitName;
+        $volume['measurement_unit_name'] = $measurementUnitName !== '' ? $measurementUnitName : null;
 
         return $volume;
     }
@@ -402,103 +263,6 @@ class MobileConstructionJournalService
             ->all();
     }
 
-    private function mapProjectMaterialOption(
-        ProjectMaterialDelivery $delivery,
-        int $organizationId,
-        ?OrganizationWarehouse $custodyWarehouse,
-        bool $canIssueFromProject
-    ): array {
-        $material = $delivery->material;
-        $measurementUnit = $material?->measurementUnit;
-
-        if (! $material) {
-            throw new DomainException(trans_message('mobile_construction_journal.errors.material_missing'));
-        }
-
-        if (! $measurementUnit) {
-            throw new DomainException(trans_message('mobile_construction_journal.errors.material_measurement_unit_missing'));
-        }
-
-        $deliveryAvailableQuantity = $delivery->availableQuantity();
-        $custodyAvailableQuantity = $custodyWarehouse
-            ? $this->availableWarehouseQuantity($organizationId, (int) $custodyWarehouse->id, (int) $delivery->material_id)
-            : 0.0;
-        $projectWarehouseAvailableQuantity = $canIssueFromProject && $delivery->project_warehouse_id
-            ? $this->availableWarehouseQuantity($organizationId, (int) $delivery->project_warehouse_id, (int) $delivery->material_id)
-            : 0.0;
-        $availableQuantity = min($deliveryAvailableQuantity, $custodyAvailableQuantity);
-
-        return [
-            'material_id' => $delivery->material_id,
-            'delivery_id' => $delivery->id,
-            'project_material_delivery_id' => $delivery->id,
-            'warehouse_project_allocation_id' => $delivery->warehouse_project_allocation_id,
-            'name' => $material->name,
-            'code' => $material->code,
-            'accepted_quantity' => (float) $delivery->accepted_quantity,
-            'used_quantity' => $delivery->usedQuantity(),
-            'available_quantity' => $availableQuantity,
-            'custody_warehouse_id' => $custodyWarehouse?->id,
-            'custody_available_quantity' => $custodyAvailableQuantity,
-            'can_consume_from_custody' => $custodyAvailableQuantity > 0,
-            'project_warehouse_id' => $delivery->project_warehouse_id,
-            'project_warehouse_available_quantity' => $projectWarehouseAvailableQuantity,
-            'can_issue_from_project' => $canIssueFromProject && $projectWarehouseAvailableQuantity > 0,
-            'requires_issue_from_project' => $availableQuantity <= 0 && $canIssueFromProject && $projectWarehouseAvailableQuantity > 0,
-            'measurement_unit' => [
-                'id' => $measurementUnit->id,
-                'name' => $measurementUnit->name,
-                'short_name' => $measurementUnit->short_name,
-            ],
-            'accepted_at' => $delivery->accepted_at?->toDateTimeString(),
-        ];
-    }
-
-    private function resolveResponsibleCustodyWarehouse(
-        int $organizationId,
-        int $projectId,
-        int $responsibleUserId
-    ): ?OrganizationWarehouse {
-        return OrganizationWarehouse::query()
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('responsible_user_id', $responsibleUserId)
-            ->where('warehouse_type', OrganizationWarehouse::TYPE_CUSTODY)
-            ->where('is_active', true)
-            ->first();
-    }
-
-    private function availableWarehouseQuantity(int $organizationId, int $warehouseId, int $materialId): float
-    {
-        return (float) WarehouseBalance::query()
-            ->where('organization_id', $organizationId)
-            ->where('warehouse_id', $warehouseId)
-            ->where('material_id', $materialId)
-            ->sum('available_quantity');
-    }
-
-    private function requiredEstimateQuantity(EstimateItem $item, string $attribute): float
-    {
-        $value = $item->getAttribute($attribute);
-
-        if ($value === null) {
-            throw new DomainException(trans_message('mobile_construction_journal.errors.estimate_quantity_missing'));
-        }
-
-        return (float) $value;
-    }
-
-    private function resolveEstimateQuantityTotal(EstimateItem $item): float
-    {
-        $this->requiredEstimateQuantity($item, 'quantity');
-
-        if ($item->quantity_total === null) {
-            return $item->resolvePlannedQuantity();
-        }
-
-        return $this->requiredEstimateQuantity($item, 'quantity_total');
-    }
-
     private function requiredPayloadString(array $payload, string $key): string
     {
         $value = trim((string) ($payload[$key] ?? ''));
@@ -512,33 +276,7 @@ class MobileConstructionJournalService
 
     public function buildJournalFormOptions(User $user, Project $project): array
     {
-        if ((int) $user->current_organization_id !== (int) $project->organization_id) {
-            throw new AuthorizationException(trans_message('errors.unauthorized'));
-        }
-
-        $contracts = Contract::query()
-            ->where('organization_id', $project->organization_id)
-            ->where(function ($query) use ($project): void {
-                $query->where('project_id', $project->id)
-                    ->orWhereHas('projects', static function ($projectsQuery) use ($project): void {
-                        $projectsQuery->where('projects.id', $project->id);
-                    });
-            })
-            ->whereIn('status', ['active', 'completed'])
-            ->with('contractor:id,name')
-            ->orderBy('number')
-            ->get();
-
-        return [
-            'contracts' => $contracts->map(static fn (Contract $contract): array => [
-                'id' => $contract->id,
-                'number' => $contract->number,
-                'contractor_name' => $contract->contractor?->name,
-                'status' => $contract->status instanceof \BackedEnum
-                    ? $contract->status->value
-                    : (string) $contract->status,
-            ])->values()->all(),
-        ];
+        return $this->formOptions->buildJournalFormOptions($user, $project);
     }
 
     private function requiredPayloadArray(array $payload, string $key): array

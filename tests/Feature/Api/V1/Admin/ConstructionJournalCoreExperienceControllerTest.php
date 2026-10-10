@@ -434,6 +434,7 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
             'position_number' => '1',
             'item_type' => 'work',
             'name' => 'Page item',
+            'measurement_unit_id' => \App\Models\MeasurementUnit::query()->firstOrCreate(['organization_id' => $organization->id, 'short_name' => 'м'], ['name' => 'Метр', 'type' => 'work', 'is_system' => false])->id,
             'quantity' => 100,
             'quantity_total' => 100,
             'unit_price' => 1,
@@ -457,6 +458,7 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
     ): ConstructionJournal {
         return ConstructionJournal::query()->create(array_merge([
             'organization_id' => $organization->id,
+            'performing_organization_id' => $organization->id,
             'project_id' => $project->id,
             'name' => 'Journal ' . random_int(1000, 9999),
             'journal_number' => 'J-' . random_int(1000, 9999),

@@ -119,7 +119,7 @@
                         <td>
                             @forelse($entry->workVolumes as $volume)
                                 <div>
-                                    {{ $volume->workType?->name ?? $volume->estimateItem?->name ?? 'Работа' }}:
+                                    {{ $volume->work_name ?? $volume->workType?->name ?? $volume->estimateItem?->name ?? 'Работа' }}:
                                     {{ number_format((float) $volume->quantity, 2, ',', ' ') }}
                                     {{ $volume->measurementUnit?->short_name ?? $volume->workType?->measurementUnit?->short_name ?? $volume->estimateItem?->measurementUnit?->short_name ?? '' }}
                                 </div>

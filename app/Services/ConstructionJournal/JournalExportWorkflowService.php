@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace App\Services\ConstructionJournal;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
+use App\Exceptions\BusinessLogicException;
 use App\Jobs\ConstructionJournal\GenerateJournalExportJob;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
+use App\Models\GeneralJournalDocumentVersion;
 use App\Models\JournalExport;
 use App\Models\User;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 
 final class JournalExportWorkflowService
 {
@@ -25,6 +28,20 @@ final class JournalExportWorkflowService
         string $idempotencyKey,
         ?ConstructionJournalEntry $entry = null,
     ): JournalExport {
+        app(ConstructionJournalAccessService::class)->assertReadable($user, $journal, ['export']);
+        if ($entry && (int) $entry->journal_id !== (int) $journal->id) {
+            throw new DomainException(trans_message('construction_journal.errors.access_denied'));
+        }
+        if (! empty($options['estimate_id']) && ! \App\Models\Estimate::query()
+            ->whereKey($options['estimate_id'])->where('organization_id', $journal->organization_id)
+            ->where('project_id', $journal->project_id)->where('status', 'approved')->exists()) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_estimate'));
+        }
+        if (! empty($options['document_version_id']) && ! \App\Models\GeneralJournalDocumentVersion::query()
+            ->whereKey($options['document_version_id'])->where('organization_id', $journal->organization_id)
+            ->where('project_id', $journal->project_id)->where('journal_id', $journal->id)->exists()) {
+            throw new DomainException(trans_message('construction_journal.errors.access_denied'));
+        }
         ksort($options);
         $fingerprint = hash('sha256', json_encode([
             'journal_id' => $journal->id,
@@ -63,9 +80,30 @@ final class JournalExportWorkflowService
 
     public function payload(JournalExport $export, User $user): array
     {
-        if ((int) $export->organization_id !== (int) $user->current_organization_id
-            || (int) $export->requested_by_user_id !== (int) $user->id) {
+        $journal = ConstructionJournal::query()->find($export->journal_id);
+        if (! $journal || (int) $export->organization_id !== (int) $journal->organization_id
+            || (int) $export->project_id !== (int) $journal->project_id) {
             throw new DomainException(trans_message('construction_journal.errors.export_not_found'));
+        }
+        app(ConstructionJournalAccessService::class)->assertReadable($user, $journal);
+        if ($export->type === 'general') {
+            $version = GeneralJournalDocumentVersion::query()
+                ->where('organization_id', $journal->organization_id)
+                ->where('project_id', $journal->project_id)->where('journal_id', $journal->id)
+                ->find($export->options['document_version_id'] ?? 0);
+            if (! $version) {
+                throw new DomainException(trans_message('construction_journal.errors.export_not_found'));
+            }
+            if (($version->source_snapshot['sources']['documents'] ?? []) !== []) {
+                try {
+                    app(GeneralJournalDocumentService::class)->authorizeDocuments($user, $journal);
+                } catch (BusinessLogicException $exception) {
+                    if ($exception->getCode() !== 403) {
+                        throw $exception;
+                    }
+                    throw new AuthorizationException($exception->getMessage());
+                }
+            }
         }
 
         $payload = [

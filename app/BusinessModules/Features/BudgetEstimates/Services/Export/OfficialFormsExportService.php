@@ -1465,7 +1465,7 @@ class OfficialFormsExportService
             $sheet->setCellValue("C{$row}", $entry->work_description);
 
             $volumesText = $entry->workVolumes->map(function ($v) {
-                return $v->quantity.' '.($v->measurementUnit?->short_name ?? '');
+                return ($v->work_name ? $v->work_name.': ' : '').$v->quantity.' '.($v->measurementUnit?->short_name ?? '');
             })->implode(', ');
             $sheet->setCellValue("D{$row}", $volumesText);
 

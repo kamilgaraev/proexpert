@@ -22,32 +22,19 @@ class NotifyAboutPendingApprovals implements ShouldQueue
         $entry = $event->entry;
         $journal = $entry->journal;
 
+        $access = app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class);
+        try {
+            $organizationId = $access->approvalOrganizationId($journal);
+        } catch (\DomainException) {
+            return;
+        }
         $approvers = User::query()
-            ->whereHas('roleAssignments', function ($query) use ($journal): void {
-                $query->active()->whereHas('context', function ($contextQuery) use ($journal): void {
-                    $contextQuery
-                        ->where(function ($organizationContext) use ($journal): void {
-                            $organizationContext
-                                ->where('type', AuthorizationContext::TYPE_ORGANIZATION)
-                                ->where('resource_id', $journal->organization_id);
-                        })
-                        ->orWhere(function ($projectContext) use ($journal): void {
-                            $projectContext
-                                ->where('type', AuthorizationContext::TYPE_PROJECT)
-                                ->where('resource_id', $journal->project_id);
-                        });
-                });
-            })
-            ->where('id', '!=', $entry->created_by_user_id)
-            ->get()
-            ->filter(fn (User $user): bool => $this->authorization->can(
-                $user,
-                'construction-journal.approve',
-                [
-                    'organization_id' => (int) $journal->organization_id,
-                    'project_id' => (int) $journal->project_id,
-                ],
-            ));
+            ->whereHas('organizations', fn ($query) => $query->where('organizations.id', $organizationId)
+                ->where('organization_user.is_active', true))
+            ->get()->filter(function (User $user) use ($access, $entry, $organizationId): bool {
+                $user->current_organization_id = $organizationId;
+                return $access->canApprove($user, $entry);
+            });
 
         if ($approvers->isEmpty()) {
             return;

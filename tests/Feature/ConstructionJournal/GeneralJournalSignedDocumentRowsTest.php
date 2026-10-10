@@ -124,6 +124,7 @@ final class GeneralJournalSignedDocumentRowsTest extends TestCase
         });
         $this->app->instance(LegalDocumentAudit::class, Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing());
         $context = $existingContext ?? AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context->user->organizations()->updateExistingPivot($context->organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $project = $existingProject ?? Project::factory()->create(['organization_id' => $context->organization->id]);
         $journal = ConstructionJournal::query()->create([
             'organization_id' => $context->organization->id,

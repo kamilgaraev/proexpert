@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Policies;
 
 use App\Enums\ConstructionJournal\JournalStatusEnum;
@@ -11,53 +13,18 @@ class ConstructionJournalPolicy
 {
     private function hasProjectAccess(User $user, Project $project): bool
     {
-        $organizationId = $user->current_organization_id;
-
-        if (! $organizationId) {
-            return false;
-        }
-
-        return $project->hasOrganization($organizationId);
+        return app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canAccessProject($user, $project);
     }
 
     private function hasJournalAccess(User $user, ConstructionJournal $journal): bool
     {
-        return (int) $user->current_organization_id === (int) $journal->organization_id
-            && $journal->project !== null
-            && $this->hasProjectAccess($user, $journal->project);
+        return app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canWrite($user, $journal, ['*', 'view', 'create', 'edit', 'delete', 'approve', 'reopen', 'export']);
     }
 
-    private function hasModulePermission(
-        User $user,
-        array $permissions,
-        ?int $organizationId = null,
-        ?int $projectId = null
-    ): bool {
-        $orgId = $organizationId ?? $user->current_organization_id;
-
-        if (! $orgId) {
-            return false;
-        }
-
-        $orgContext = ['organization_id' => $orgId];
-
-        foreach ($permissions as $permission) {
-            if ($user->hasPermission("construction-journal.{$permission}", $orgContext)) {
-                return true;
-            }
-        }
-
-        if ($projectId) {
-            $projectContext = ['project_id' => $projectId, 'organization_id' => $orgId];
-
-            foreach ($permissions as $permission) {
-                if ($user->hasPermission("construction-journal.{$permission}", $projectContext)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+    private function hasModulePermission(User $user, array $permissions, ?int $organizationId = null, ?int $projectId = null): bool
+    {
+        $project = $projectId ? Project::query()->find($projectId) : null;
+        return $project !== null && app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->hasPermission($user, $project, $permissions);
     }
 
     public function viewAny(User $user, Project $project): bool
@@ -81,7 +48,7 @@ class ConstructionJournalPolicy
 
         $project = $model->project;
 
-        if (! $project || ! $this->hasJournalAccess($user, $model)) {
+        if (! $project || ! app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canRead($user, $model)) {
             return false;
         }
 
@@ -143,13 +110,8 @@ class ConstructionJournalPolicy
 
     public function export(User $user, ConstructionJournal $journal): bool
     {
-        $project = $journal->project;
-
-        if (! $project || ! $this->hasJournalAccess($user, $journal)) {
-            return false;
-        }
-
-        return $this->hasModulePermission($user, ['export', '*'], null, $project->id);
+        return app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canRead($user, $journal)
+            && $this->hasModulePermission($user, ['export', '*'], null, $journal->project_id);
     }
 
     private function canManageLifecycle(User $user, ConstructionJournal $journal, array $permissions): bool

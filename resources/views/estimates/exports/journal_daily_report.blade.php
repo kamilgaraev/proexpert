@@ -63,7 +63,9 @@
                 @foreach($entry->workVolumes as $volume)
                 <tr>
                     <td>
-                        @if($volume->workType)
+                        @if($volume->work_name)
+                            {{ $volume->work_name }}
+                        @elseif($volume->workType)
                             {{ $volume->workType->name }}
                         @elseif($volume->estimateItem)
                             {{ $volume->estimateItem->name }}
