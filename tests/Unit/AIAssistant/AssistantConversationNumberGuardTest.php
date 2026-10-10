@@ -37,6 +37,7 @@ final class AssistantConversationNumberGuardTest extends TestCase
             'Какой объём бетона на складе?',
             'Реши учебный пример и покажи фактический объём на складе.',
             'Какое условное число я назвал и какова стоимость в смете?',
+            'Какое условное число я назвал в предыдущем сообщении и какой статус проекта?',
         ] as $query) {
             self::assertFalse(AssistantFactIntentClassifier::isConversationNumberRequest($query));
             self::assertTrue($verifier->guard('Объём бетона: 12 м³.', [], null, $query)['replaced']);

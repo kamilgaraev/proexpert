@@ -33,7 +33,9 @@ final class AssistantFactIntentClassifier
 
     public static function isConversationNumberRequest(string $query): bool
     {
-        if (preg_match('/(?:смет|склад|остат|фактич|стоимост|цен[а-яё]*|бюджет|позиц|договор|плат[её]ж|оплат)/iu', $query)) {
+        if (preg_match(self::STATUS, $query) || preg_match(self::DATE, $query)
+            || preg_match(self::OVERDUE, $query) || preg_match(self::OWNER, $query)
+            || preg_match('/(?:смет|склад|остат|фактич|стоимост|цен[а-яё]*|бюджет|позиц|договор|плат[её]ж|оплат)/iu', $query)) {
             return false;
         }
 
