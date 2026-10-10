@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'version' => '2026-10-07.2',
+    'version' => '2026-10-10.1',
     'provider' => [
         'name' => env('LEGAL_PROVIDER_NAME', ''),
         'status' => env('LEGAL_PROVIDER_STATUS', ''),
