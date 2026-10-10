@@ -7,13 +7,14 @@ namespace Tests\Feature\EstimateGeneration\Pipeline;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationTransitionMap;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPublishDraftOnce;
+use App\Models\User;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -25,17 +26,16 @@ final class SinglePipelineRuntimeContractTest extends TestCase
     public const ARTIFACT_HASH = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]
-    public function sequential_and_competing_publications_create_one_ordinary_estimate(): void
+    public function explicit_authorized_apply_and_repeated_delivery_create_one_ordinary_estimate(): void
     {
         $session = $this->session();
         $writer = new PublicationWriter(781);
         $apply = $this->apply($session, $writer);
-        $firstPublisher = new TestablePublishDraftOnce($apply, $session);
-        $competingPublisher = new TestablePublishDraftOnce($apply, $session);
+        $competingApply = $this->apply($session, $writer);
 
-        $first = $firstPublisher->publish('42', self::PIPELINE_VERSION, self::ARTIFACT_HASH);
-        $second = $firstPublisher->publish('42', self::PIPELINE_VERSION, self::ARTIFACT_HASH);
-        $competing = $competingPublisher->publish('42', self::PIPELINE_VERSION, self::ARTIFACT_HASH);
+        $first = $apply->handle($this->command());
+        $second = $apply->handle($this->command());
+        $competing = $competingApply->handle($this->command());
 
         self::assertTrue($first->created);
         self::assertFalse($second->created);
@@ -44,18 +44,16 @@ final class SinglePipelineRuntimeContractTest extends TestCase
         self::assertSame($first->estimateId, $second->estimateId);
         self::assertSame($first->estimateId, $competing->estimateId);
         self::assertSame(1, $writer->calls);
-        self::assertSame(self::PIPELINE_VERSION, $first->pipelineVersion);
-        self::assertSame(self::ARTIFACT_HASH, $first->artifactHash);
     }
 
     #[Test]
     public function failure_before_commit_leaves_no_marker_and_retry_is_safe(): void
     {
         $session = $this->session();
-        $failing = new TestablePublishDraftOnce($this->apply($session, new FailingPublicationWriter), $session);
+        $failing = $this->apply($session, new FailingPublicationWriter);
 
         try {
-            $failing->publish('42', self::PIPELINE_VERSION, self::ARTIFACT_HASH);
+            $failing->handle($this->command());
             self::fail('Expected writer failure.');
         } catch (RuntimeException $exception) {
             self::assertSame('writer failed', $exception->getMessage());
@@ -64,8 +62,7 @@ final class SinglePipelineRuntimeContractTest extends TestCase
         }
 
         $writer = new PublicationWriter(991);
-        $retried = (new TestablePublishDraftOnce($this->apply($session, $writer), $session))
-            ->publish('42', self::PIPELINE_VERSION, self::ARTIFACT_HASH);
+        $retried = $this->apply($session, $writer)->handle($this->command());
 
         self::assertTrue($retried->created);
         self::assertSame(991, $retried->estimateId);
@@ -81,8 +78,9 @@ final class SinglePipelineRuntimeContractTest extends TestCase
 
         self::assertIsString($provider);
         self::assertIsString($publisher);
-        self::assertStringContainsString('PublishDraftOnce::class', $provider);
-        self::assertStringContainsString('PublishDraftOnce $publishDraftOnce', $publisher);
+        self::assertStringNotContainsString('PublishDraftOnce::class', $provider);
+        self::assertStringNotContainsString('PublishDraftOnce', $publisher);
+        self::assertStringNotContainsString('->publish(', $publisher);
 
         foreach (['FinalizationOutbox', 'FinalizationDeliveryStore', 'DocumentManifestPublicationFence'] as $forbidden) {
             self::assertStringNotContainsString($forbidden, $provider.$publisher);
@@ -105,11 +103,23 @@ final class SinglePipelineRuntimeContractTest extends TestCase
 
     private function apply(EstimateGenerationSession $session, GeneratedEstimateWriter $writer): PublicationApply
     {
+        $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
+        $authorization->method('authorize')->with(self::isInstanceOf(User::class), self::identicalTo($session), 'estimate_generation.apply');
+
         return new PublicationApply(
             $writer,
             new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, new PublicationStateStore($session)),
             $session,
+            $authorization,
         );
+    }
+
+    private function command(): ApplyGeneratedEstimateCommand
+    {
+        return new ApplyGeneratedEstimateCommand(42, 10, 20, 5,
+            idempotencyKey: 'confirmed:'.self::PIPELINE_VERSION,
+            artifactHash: self::ARTIFACT_HASH,
+            actor: new User);
     }
 }
 
@@ -127,31 +137,15 @@ final class PublicationSession extends EstimateGenerationSession
     }
 }
 
-final class TestablePublishDraftOnce extends EloquentPublishDraftOnce
-{
-    public function __construct(ApplyGeneratedEstimate $apply, private EstimateGenerationSession $session)
-    {
-        parent::__construct($apply);
-    }
-
-    protected function loadSession(int $sessionId): EstimateGenerationSession
-    {
-        if ($sessionId !== $this->session->getKey()) {
-            throw new RuntimeException('session not found');
-        }
-
-        return $this->session;
-    }
-}
-
 final class PublicationApply extends ApplyGeneratedEstimate
 {
     public function __construct(
         GeneratedEstimateWriter $writer,
         EstimateGenerationWorkflow $workflow,
         private EstimateGenerationSession $session,
+        EstimateGenerationActionAuthorization $authorization,
     ) {
-        parent::__construct($writer, $workflow);
+        parent::__construct($writer, $workflow, $authorization);
     }
 
     protected function transaction(callable $callback): mixed

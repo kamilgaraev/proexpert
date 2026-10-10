@@ -46,8 +46,10 @@ final readonly class AttemptAwareNormativeLlmClient
         $organizationId = $operation->organizationId;
         $projectId = $operation->projectId;
         $sessionId = $operation->sessionId;
+        $identity = get_object_vars($operation);
+        unset($identity['checkpointClaimToken'], $identity['logicalAttempt'], $identity['stateVersion'], $identity['generationAttemptId']);
         $seed = json_encode([
-            ...get_object_vars($operation),
+            ...$identity,
             'candidate_set_hash' => (string) ($domainContext['candidate_set_hash'] ?? ''),
             'prompt_version' => (string) ($domainContext['prompt_version'] ?? ''),
             'schema_version' => (string) ($domainContext['schema_version'] ?? ''),
@@ -56,6 +58,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 ? array_values(array_map('strval', $domainContext['dataset_versions'])) : [],
             'model_strategy' => $modelStrategy,
             'timeout_cap_seconds' => $callerTimeout,
+            'request_payload_hash' => hash('sha256', json_encode([$messages, $options], JSON_THROW_ON_ERROR)),
         ], JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
         $effective = $this->settingsResolver?->forOperation($correlationId, $organizationId, $sessionId);
@@ -72,7 +75,7 @@ final readonly class AttemptAwareNormativeLlmClient
             $heartbeat?->__invoke();
             $attemptContext = new AiOperationContext(
                 $correlationId,
-                AiPhysicalAttemptIdentity::fromParts($operation->checkpointClaimToken, $model, $index + 1, $operation->inputVersion.'|'.($domainContext['prompt_version'] ?? 'rerank:v1')),
+                AiPhysicalAttemptIdentity::fromParts($correlationId, $model, $index + 1, hash('sha256', $seed)),
                 $organizationId,
                 $projectId,
                 $sessionId,
@@ -89,11 +92,19 @@ final readonly class AttemptAwareNormativeLlmClient
             $status = 'connection_failed';
             $httpCode = null;
             $response = [];
+            $wireStarted = true;
             try {
                 $options['estimate_generation_scope'] = [
                     'organization_id' => $organizationId,
                     'project_id' => $projectId,
                     'session_id' => $sessionId,
+                    'state_version' => $operation->stateVersion,
+                    'generation_attempt_id' => $operation->generationAttemptId,
+                ];
+                $options['estimate_generation_attempt'] = [
+                    'attempt_id' => $attemptContext->attemptId,
+                    'request_fingerprint' => hash('sha256', $seed),
+                    'price_snapshot' => $priceSnapshot->toArray(),
                 ];
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
@@ -127,14 +138,26 @@ final readonly class AttemptAwareNormativeLlmClient
                     $response,
                 );
                 $last = new RerankWireException('malformed_response');
+                if (($response['usage_available'] ?? false) !== true) {
+                    throw $last;
+                }
+            } catch (AiWireNotStarted $exception) {
+                $wireStarted = false;
+                throw $exception;
             } catch (RerankWireException $exception) {
+                if ($exception->providerResponse !== []) {
+                    $response = $exception->providerResponse;
+                }
                 $status = $exception->attemptStatus;
                 $httpCode = $exception->httpCode;
                 $last = $exception;
+                throw $exception;
             } catch (Throwable $exception) {
-                $last = $exception;
+                throw $exception;
             } finally {
-                $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
+                if ($wireStarted) {
+                    $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
+                }
                 $heartbeat?->__invoke();
             }
         }
@@ -146,6 +169,13 @@ final readonly class AttemptAwareNormativeLlmClient
     private function record(AiOperationContext $context, string $model, string $status, ?int $httpCode, array $response, int $started, AiPriceSnapshot $snapshot): void
     {
         try {
+            $receipt = is_array($response['physical_attempt_receipt'] ?? null) ? $response['physical_attempt_receipt'] : null;
+            if (($receipt['usage_recorded'] ?? false) === true) {
+                return;
+            }
+            $durationMs = is_int($receipt['duration_ms'] ?? null) ? $receipt['duration_ms']
+                : (int) max(0, round((hrtime(true) - $started) / 1_000_000));
+            $snapshot = is_array($receipt['price_snapshot'] ?? null) ? AiPriceSnapshot::fromArray($receipt['price_snapshot']) : $snapshot;
             $usageAvailable = ($response['usage_available'] ?? false) === true;
             $input = $usageAvailable ? max(0, (int) ($response['input_tokens'] ?? 0)) : 0;
             $output = $usageAvailable ? max(0, (int) ($response['output_tokens'] ?? 0)) : 0;
@@ -155,10 +185,12 @@ final readonly class AttemptAwareNormativeLlmClient
                 requestedModel: $model,
                 reportedModel: is_string($response['model'] ?? null) ? $response['model'] : null,
                 status: $status,
-                durationMs: (int) max(0, round((hrtime(true) - $started) / 1_000_000)),
+                durationMs: $durationMs,
                 usageStatus: $usageAvailable ? 'measured' : 'unavailable',
                 inputTokens: $input,
                 outputTokens: $output,
+                cachedInputTokens: $usageAvailable ? max(0, (int) ($response['cached_input_tokens'] ?? 0)) : 0,
+                reasoningTokens: $usageAvailable ? max(0, (int) ($response['reasoning_tokens'] ?? 0)) : 0,
                 httpCode: $httpCode,
                 priceSnapshot: $snapshot,
             ));
@@ -167,6 +199,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 Log::error('[EstimateGeneration] Reranker usage recording failed', ['exception_class' => $exception::class]);
             } catch (Throwable) {
             }
+            throw $exception;
         }
     }
 
@@ -176,7 +209,7 @@ final readonly class AttemptAwareNormativeLlmClient
         if ($effective !== null && $strategy === self::MODEL_STRATEGY_EFFECTIVE_RETRIES) {
             return array_fill(
                 0,
-                $effective->retryAttempts('normative_matching') + 1,
+                min(3, $effective->retryAttempts('normative_matching') + 1),
                 LunaModelPolicy::assert($effective->model('normative_matching'), 'timeweb'),
             );
         }

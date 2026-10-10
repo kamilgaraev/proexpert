@@ -13,6 +13,7 @@ final class EstimateGenerationTransitionMap
             'cancelled' => 'cancelled',
         ],
         'processing_documents' => [
+            'documents_changed' => 'processing_documents',
             'documents_ready' => 'ready_to_generate',
             'documents_need_review' => 'input_review_required',
             'failed' => 'failed',

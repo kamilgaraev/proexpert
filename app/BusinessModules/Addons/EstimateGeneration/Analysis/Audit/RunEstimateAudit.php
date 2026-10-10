@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use InvalidArgumentException;
 use RuntimeException;
@@ -69,7 +70,8 @@ final readonly class RunEstimateAudit
             return $validated;
         } catch (Throwable $exception) {
             $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
-                'estimate_auditor_failed', $physicalAttemptId !== null, $physicalAttemptId,
+                'estimate_auditor_failed', $physicalAttemptId !== null && ! $exception instanceof AiWireNotStarted, $physicalAttemptId,
+                wireNotStarted: $exception instanceof AiWireNotStarted,
             ));
             throw $exception;
         }

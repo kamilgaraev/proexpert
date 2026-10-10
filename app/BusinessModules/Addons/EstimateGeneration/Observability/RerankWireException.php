@@ -8,7 +8,8 @@ use RuntimeException;
 
 final class RerankWireException extends RuntimeException
 {
-    public function __construct(public readonly string $attemptStatus, public readonly ?int $httpCode = null)
+    public function __construct(public readonly string $attemptStatus, public readonly ?int $httpCode = null,
+        public readonly array $providerResponse = [])
     {
         parent::__construct('reranker_wire_failed');
     }

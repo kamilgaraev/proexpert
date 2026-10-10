@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -13,7 +14,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 final class ReuseEstimateGenerationDocuments
 {
@@ -22,7 +25,7 @@ final class ReuseEstimateGenerationDocuments
         private DocumentParsingService $parsing,
         private DocumentGenerationReadinessService $readiness,
         private EffectiveSettingsResolver $settingsResolver,
-        private EstimateGenerationActionAuthorizer $authorizer,
+        private EstimateGenerationActionAuthorization $authorizer,
     ) {}
 
     public function handle(
@@ -31,58 +34,75 @@ final class ReuseEstimateGenerationDocuments
         int $sourceSessionId,
         User $user,
     ): UploadDocumentsResult {
-        $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
-        $this->policy->documents($session, $expectedVersion);
-        if ($sourceSessionId === (int) $session->id) {
-            throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_same_session']);
-        }
+        $created = collect();
+        try {
+            return DB::transaction(function () use ($session, $expectedVersion, $sourceSessionId, $user, &$created): UploadDocumentsResult {
+                $session = EstimateGenerationSession::query()->whereKey($session->getKey())
+                    ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+                    ->lockForUpdate()->firstOrFail();
+                $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
+                $this->policy->documents($session, $expectedVersion);
+                if ($sourceSessionId === (int) $session->id) {
+                    throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_same_session']);
+                }
 
-        $sourceSession = EstimateGenerationSession::query()
-            ->whereKey($sourceSessionId)
-            ->where('organization_id', $session->organization_id)
-            ->where('project_id', $session->project_id)
-            ->first();
-        if ($sourceSession === null) {
-            throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_not_found']);
-        }
+                $sourceSession = EstimateGenerationSession::query()
+                    ->whereKey($sourceSessionId)
+                    ->where('organization_id', $session->organization_id)
+                    ->where('project_id', $session->project_id)
+                    ->first();
+                if ($sourceSession === null) {
+                    throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_not_found']);
+                }
 
-        $sourceDocuments = $sourceSession->documents()
-            ->whereNotIn('status', ['ignored'])
-            ->whereNotNull('storage_path')
-            ->whereNotNull('checksum_sha256')
-            ->orderBy('id')
-            ->get();
-        if ($sourceDocuments->isEmpty()) {
-            throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_empty']);
-        }
+                $sourceDocuments = $sourceSession->documents()
+                    ->whereNotIn('status', ['ignored'])
+                    ->whereNotNull('storage_path')
+                    ->whereNotNull('checksum_sha256')
+                    ->orderBy('id')
+                    ->get();
+                if ($sourceDocuments->isEmpty()) {
+                    throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_empty']);
+                }
 
-        $settings = $this->settingsResolver->forOperation(
-            AiOperationContext::deterministicId("reuse|{$session->id}|{$sourceSessionId}|{$expectedVersion}"),
-            (int) $session->organization_id,
-            (int) $session->id,
-        );
-        $existingDocuments = $session->documents()->get(['meta']);
-        $existingSourceIds = $existingDocuments
-            ->map(static fn (EstimateGenerationDocument $document): int => (int) ($document->meta['reused_from_document_id'] ?? 0))
-            ->filter(static fn (int $documentId): bool => $documentId > 0)
-            ->all();
-        $missingDocuments = $sourceDocuments
-            ->reject(static fn (EstimateGenerationDocument $document): bool => in_array((int) $document->id, $existingSourceIds, true))
-            ->values();
-        if ($existingDocuments->count() + $missingDocuments->count() > $settings->maxFiles()) {
-            throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_file_limit_exceeded']);
-        }
-        foreach ($missingDocuments as $document) {
-            $meta = is_array($document->meta) ? $document->meta : [];
-            $extension = strtolower((string) ($meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
-            if (! $settings->allowsFormat($extension)) {
-                throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_format_disabled']);
-            }
-        }
+                $settings = $this->settingsResolver->forOperation(
+                    AiOperationContext::deterministicId("reuse|{$session->id}|{$sourceSessionId}|{$expectedVersion}"),
+                    (int) $session->organization_id,
+                    (int) $session->id,
+                );
+                $existingDocuments = $session->documents()->get(['meta']);
+                $existingSourceIds = $existingDocuments
+                    ->map(static fn (EstimateGenerationDocument $document): int => (int) ($document->meta['reused_from_document_id'] ?? 0))
+                    ->filter(static fn (int $documentId): bool => $documentId > 0)
+                    ->all();
+                $missingDocuments = $sourceDocuments
+                    ->reject(static fn (EstimateGenerationDocument $document): bool => in_array((int) $document->id, $existingSourceIds, true))
+                    ->values();
+                if ($existingDocuments->count() + $missingDocuments->count() > $settings->maxFiles()) {
+                    throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_file_limit_exceeded']);
+                }
+                foreach ($missingDocuments as $document) {
+                    $meta = is_array($document->meta) ? $document->meta : [];
+                    $extension = strtolower((string) ($meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
+                    if (! $settings->allowsFormat($extension)) {
+                        throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_format_disabled']);
+                    }
+                }
 
-        $documents = $this->parsing->reuseDocuments($session, $sourceDocuments, $user);
-        $session = $session->fresh(['documents']) ?? $session->load('documents');
+                $documents = $this->parsing->reuseDocuments($session, $missingDocuments, $user);
+                $created = $documents;
+                $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
+                $session = $session->fresh(['documents']) ?? $session->load('documents');
+                if ($documents->isNotEmpty()) {
+                    $session->forceFill(['input_payload' => [...($session->input_payload ?? []),
+                        ...EstimateGenerationExecutionActor::identity($user)]])->saveQuietly();
+                }
 
-        return new UploadDocumentsResult($documents, $this->readiness->evaluate($session)['summary']);
+                return new UploadDocumentsResult($documents, $this->readiness->evaluate($session)['summary']);
+            }, 1);
+        } catch (Throwable $exception) {
+            $this->parsing->rollbackStoredDocuments($session, $created);
+            throw $exception;
+        }
     }
 }

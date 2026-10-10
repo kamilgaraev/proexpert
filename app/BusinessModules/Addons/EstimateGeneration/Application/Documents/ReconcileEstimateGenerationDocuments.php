@@ -31,6 +31,7 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             return $this->advance->documentsChanged($session);
         }
         if (in_array($session->status, [
+            EstimateGenerationStatus::ProcessingDocuments,
             EstimateGenerationStatus::InputReviewRequired,
             EstimateGenerationStatus::ReadyToGenerate,
             EstimateGenerationStatus::Generating,
@@ -109,6 +110,7 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             (int) $session->getKey(),
             (string) Str::uuid(),
             max(1, (int) $session->state_version),
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope((int) $session->state_version),
         );
         if (! $planning->isReadyForCompleteness()) {
             return $this->advance->documentsNeedReview(

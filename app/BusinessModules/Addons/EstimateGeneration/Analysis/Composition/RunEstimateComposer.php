@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
 use InvalidArgumentException;
 use RuntimeException;
@@ -91,8 +92,9 @@ final readonly class RunEstimateComposer
         } catch (Throwable $exception) {
             $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
                 code: 'estimate_composer_failed',
-                ambiguous: $physicalAttemptId !== null,
+                ambiguous: $physicalAttemptId !== null && ! $exception instanceof AiWireNotStarted,
                 physicalAttemptId: $physicalAttemptId,
+                wireNotStarted: $exception instanceof AiWireNotStarted,
             ));
 
             throw $exception;

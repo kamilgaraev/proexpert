@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use Closure;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Str;
 
 final class RetryEstimateGenerationSession
@@ -27,21 +28,28 @@ final class RetryEstimateGenerationSession
         private EstimateGenerationSessionReconciler $reconciler,
         private EstimateGenerationRegionalContextResolver $regionalContextResolver,
         ?Closure $attemptIdFactory = null,
+        private ?EstimateGenerationActionAuthorization $authorizer = null,
     ) {
         $this->attemptIdFactory = $attemptIdFactory ?? static fn (): string => (string) Str::uuid();
     }
 
     public function handle(RetryEstimateGenerationSessionCommand $command): EstimateGenerationSession
     {
+        if ($command->actor === null) {
+            throw new AuthorizationException(trans_message('estimate_generation.access_denied'));
+        }
         $reconcileImmediately = false;
         $session = $this->repository->withLockedSession(
             $command->sessionId,
             $command->organizationId,
             $command->projectId,
             function (EstimateGenerationSession $session) use ($command, &$reconcileImmediately): EstimateGenerationSession {
+                ($this->authorizer ?? app(EstimateGenerationActionAuthorization::class))
+                    ->authorize($command->actor, $session, 'estimate_generation.generate');
                 if ($session->state_version !== $command->expectedStateVersion) {
                     throw new StaleEstimateGenerationState((int) $session->getKey(), $command->expectedStateVersion);
                 }
+                $session->input_payload = [...($session->input_payload ?? []), ...EstimateGenerationExecutionActor::identity($command->actor)];
                 if ($session->status === EstimateGenerationStatus::InputReviewRequired) {
                     return $this->retryInputReview($session, $reconcileImmediately);
                 }
@@ -87,6 +95,7 @@ final class RetryEstimateGenerationSession
         }
 
         $session = $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
+            'input_payload' => $session->input_payload,
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,
@@ -132,6 +141,7 @@ final class RetryEstimateGenerationSession
             static fn ($document): bool => (string) $document->status === 'needs_review',
         );
         $session = $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
+            'input_payload' => $session->input_payload,
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,

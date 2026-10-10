@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunResult;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -68,7 +69,8 @@ final readonly class RunEstimateComposerCorrection
             return $corrections;
         } catch (Throwable $exception) {
             $this->runs->fail($claim->runId, $claim->ownerUuid, new AiRoleRunFailure(
-                'estimate_composer_correction_failed', $attemptId !== null, $attemptId,
+                'estimate_composer_correction_failed', $attemptId !== null && ! $exception instanceof AiWireNotStarted, $attemptId,
+                wireNotStarted: $exception instanceof AiWireNotStarted,
             ));
             throw $exception;
         }

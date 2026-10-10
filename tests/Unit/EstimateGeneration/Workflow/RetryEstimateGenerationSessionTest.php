@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Workflow;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationSessionReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
@@ -18,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
+use App\Models\User;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -233,7 +235,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
 
         $this->expectException(StaleEstimateGenerationState::class);
         try {
-            $action->handle(new RetryEstimateGenerationSessionCommand(71, 10, 20, 2));
+            $action->handle(new RetryEstimateGenerationSessionCommand(71, 10, 20, 2, new User(['current_organization_id' => 10, 'is_active' => true])));
         } finally {
             self::assertSame([], $dispatcher->generation);
         }
@@ -418,6 +420,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 $reconciler ??= new RetryReconcilerFake,
                 $regionalContextResolver,
                 static fn (): string => 'attempt-new',
+                $this->authorization(),
             ),
             $repository,
             $dispatcher,
@@ -427,7 +430,17 @@ final class RetryEstimateGenerationSessionTest extends TestCase
 
     private function command(): RetryEstimateGenerationSessionCommand
     {
-        return new RetryEstimateGenerationSessionCommand(71, 10, 20, 3);
+        return new RetryEstimateGenerationSessionCommand(71, 10, 20, 3, new User(['current_organization_id' => 10, 'is_active' => true]));
+    }
+
+    private function authorization(): EstimateGenerationActionAuthorization
+    {
+        $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
+        $authorization->expects(self::atLeastOnce())->method('authorize')->with(
+            self::isInstanceOf(User::class), self::isInstanceOf(EstimateGenerationSession::class), 'estimate_generation.generate',
+        );
+
+        return $authorization;
     }
 
     private function failed(EstimateGenerationStatus $resume): EstimateGenerationSession

@@ -668,6 +668,32 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame(str_repeat('я', 4000), $preparedMessages[array_key_last($preparedMessages)]['content']);
     }
 
+    public function test_native_tool_catalog_does_not_displace_authorized_conversation_history(): void
+    {
+        $query = 'Какое условное число я назвал в предыдущем сообщении?';
+        $history = [['role' => 'user', 'content' => 'Условный объём бетона — 12 м³.']];
+        $service = $this->makeService(new AIToolRegistry, history: $history);
+        (new \ReflectionProperty(AIAssistantService::class, 'precomputedCapabilityHints'))->setValue($service, ['domains' => str_repeat('каталог инструментов ', 1600)]);
+        $conversation = new \App\BusinessModules\Features\AIAssistant\Models\Conversation;
+        $plan = ['task_type' => 'summary', 'request' => ['context' => ['source_module' => 'projects', 'entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $messages = $service->exposeBuildMessages($conversation, $plan, $query);
+        [$prepared] = $service->exposePrepareProviderPayload($messages, ['budget_profile' => 'normal']);
+        self::assertContains($history[0], $prepared);
+        self::assertSame($messages[0], $prepared[0]);
+        self::assertSame($messages[count($messages) - 2], $prepared[count($prepared) - 2]);
+        self::assertSame($query, $prepared[array_key_last($prepared)]['content']);
+    }
+
+    public function test_general_clarification_does_not_require_a_complete_document_corpus(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        self::assertFalse($service->exposeDocumentEvidenceRequired('Что нужно уточнить для расчёта доставки?'));
+        self::assertFalse($service->exposeDocumentEvidenceRequired('Какие параметры нужны для расчёта?'));
+        self::assertTrue($service->exposeDocumentEvidenceRequired('Что нужно уточнить по условиям моего договора?'));
+        self::assertTrue($service->exposeDocumentEvidenceRequired('Покажи весь текст договора.'));
+        self::assertTrue($service->exposeDocumentEvidenceRequired('Покажи текущие суммы проекта.'));
+    }
+
     public function test_mandatory_context_overflow_fails_without_hidden_fallback_or_truncation(): void
     {
         $service = $this->makeService(new AIToolRegistry);
@@ -953,10 +979,11 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertFalse($metadata['model_invoked']);
     }
 
-    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null): TestableAIAssistantService
+    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = []): TestableAIAssistantService
     {
         $llmProvider = $provider ?? $this->createMock(NativeResponsesTestProvider::class);
         $conversationManager = $this->createMock(ConversationManager::class);
+        $conversationManager->method('getMessagesForContextWithBudget')->willReturn($history);
         $contextBuilder = $this->createMock(ContextBuilder::class);
         $intentRecognizer = $this->createMock(IntentRecognizer::class);
         $usageTracker = $this->createMock(UsageTracker::class);
@@ -1046,6 +1073,16 @@ class TestableAIAssistantService extends AIAssistantService
     public function exposePrepareProviderPayload(array $messages, array $options): array
     {
         return $this->prepareProviderPayload($messages, $options, 15, new User);
+    }
+
+    public function exposeBuildMessages(\App\BusinessModules\Features\AIAssistant\Models\Conversation $conversation, array $plan, string $query): array
+    {
+        return $this->buildMessages($conversation, [], $plan, currentQuery: $query);
+    }
+
+    public function exposeDocumentEvidenceRequired(string $query): bool
+    {
+        return $this->documentEvidenceRequiredForAnswer($query);
     }
 
     public function exposeResolveToolDefinitions(array $taskPlan): array

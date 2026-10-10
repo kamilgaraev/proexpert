@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
@@ -56,7 +57,7 @@ final class RequestEstimateGeneration
         $generationMode = EstimateGenerationMode::fromInput(
             $requestedMode ?? ($session->input_payload['generation_mode'] ?? null),
         )->value;
-        $generationInput = [];
+        $generationInput = EstimateGenerationExecutionActor::identity($actor);
         if (($session->input_payload['generation_mode'] ?? null) !== $generationMode) {
             if ($session->status === EstimateGenerationStatus::Applied) {
                 $generationInput['generation_mode'] = $generationMode;
@@ -94,6 +95,7 @@ final class RequestEstimateGeneration
             if ($this->canWait($session, $readiness['summary'])) {
                 $session = $this->advance->documentsStarted($session, ['input_payload' => [
                     ...($session->input_payload ?? []),
+                    ...$generationInput,
                     'generation_requested' => true,
                 ]]);
 

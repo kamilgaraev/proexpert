@@ -351,6 +351,11 @@ class AIAssistantService
         return $conversationContext;
     }
 
+    protected function documentEvidenceRequiredForAnswer(string $query): bool
+    {
+        return ! AssistantFactIntentClassifier::isClarificationRequest($query) || $this->isDocumentKnowledgeRequest($query);
+    }
+
     private function isDocumentKnowledgeRequest(string $query): bool
     {
         $normalized = mb_strtolower(trim($query));
@@ -1010,7 +1015,7 @@ class AIAssistantService
                     $documentNotices[] = trans_message('ai_assistant.document_search_partial');
                 }
             }
-            if ($documentCorpusIncomplete || $documentSearchPartial) {
+            if (($documentCorpusIncomplete || $documentSearchPartial) && $this->documentEvidenceRequiredForAnswer($query)) {
                 $documentNotice = trans_message($documentCorpusIncomplete
                     ? 'ai_assistant.document_corpus_incomplete' : 'ai_assistant.document_search_partial');
                 $serverVerifiedText = null;
@@ -1032,7 +1037,7 @@ class AIAssistantService
                     'source_refs' => $serverVerifiedRefs, 'replaced' => true, 'needs_clarification' => false];
                 $ragMetadata = ['enabled' => true, 'used' => false, 'query' => $query, 'sources' => [], 'limits' => ['returned' => 0]];
                 $degradedMode = true;
-            } elseif ($documentNotices !== []) {
+            } elseif ($documentNotices !== [] && $this->documentEvidenceRequiredForAnswer($query)) {
                 $degradedMode = true;
                 $notice = implode("\n", array_unique($documentNotices));
                 $hasProof = ($structuredCheck['source_refs'] ?? []) !== [] || ($financialCheck['source_refs'] ?? []) !== []
@@ -3236,10 +3241,6 @@ class AIAssistantService
         ];
         if ($this->activeEstimateSelection !== null) {
             $references['selected_estimate'] = $this->activeEstimateSelection;
-        }
-        $capabilityHints = $this->precomputedCapabilityHints ?? $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan));
-        if ($capabilityHints !== []) {
-            $references['registered_domain_capabilities'] = $capabilityHints;
         }
         if ($this->activeActor !== null) {
             if (! $this->documentContextBlocked) {

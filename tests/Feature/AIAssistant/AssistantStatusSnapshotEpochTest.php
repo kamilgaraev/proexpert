@@ -231,6 +231,32 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertSame(1, DB::table(AssistantStatusSnapshotEpoch::CHANGE_TABLE)->count());
     }
 
+    public function test_effective_schema_changes_invalidate_proof_with_the_same_search_path(): void
+    {
+        $originalPath = DB::selectOne("SELECT current_setting('search_path') AS path")->path;
+        $schema = 'assistant_snapshot_effective_schema_test';
+        self::assertNull(DB::selectOne('SELECT to_regnamespace(?) AS namespace', [$schema])->namespace);
+        $created = false;
+        try {
+            DB::select("SELECT set_config('search_path', ?, false)", [$schema.',public']);
+            self::assertSame('public', DB::selectOne('SELECT pg_catalog.current_schema() AS schema')->schema);
+            $state = $this->capture();
+            self::assertTrue($state['cacheable']);
+            self::assertTrue($this->valid($state));
+            $path = DB::selectOne("SELECT current_setting('search_path') AS path")->path;
+            DB::statement('CREATE SCHEMA '.$schema);
+            $created = true;
+            self::assertSame($path, DB::selectOne("SELECT current_setting('search_path') AS path")->path);
+            self::assertSame($schema, DB::selectOne('SELECT pg_catalog.current_schema() AS schema')->schema);
+            self::assertFalse($this->valid($state));
+        } finally {
+            DB::select("SELECT set_config('search_path', ?, false)", [$originalPath]);
+            if ($created) {
+                DB::statement('DROP SCHEMA '.$schema);
+            }
+        }
+    }
+
     public function test_ttl_starts_at_capture_and_unsafe_transaction_or_malformed_state_fails_closed(): void
     {
         self::assertFalse($this->epoch->capture()['cacheable']);

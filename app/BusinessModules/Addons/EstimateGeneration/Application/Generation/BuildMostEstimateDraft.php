@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Brick\Math\BigDecimal;
 use Closure;
 use Illuminate\Support\Facades\Facade;
@@ -98,7 +99,14 @@ final class BuildMostEstimateDraft
         $draft['stage6_review_items'] = $this->uniqueReviewItems($reviewItems);
         $draft['is_complete'] = $draft['stage6_review_items'] === [];
         $draft['stage6_status'] = $draft['is_complete'] ? 'ready' : 'review_required';
+
+        return $this->seal($draft);
+    }
+
+    public function seal(array $draft): array
+    {
         unset($draft['artifact_hash']);
+        $this->attachArtifactHash($draft, null);
         $draft['artifact_hash'] = hash('sha256', $this->canonicalJson($draft));
         $this->attachArtifactHash($draft, $draft['artifact_hash']);
 
@@ -191,6 +199,8 @@ final class BuildMostEstimateDraft
         $workAmount = $this->decimal($workItem['quantity'] ?? null);
         $unit = $this->string($quantity['unit'] ?? null);
         $workUnit = $this->string($workItem['unit'] ?? null);
+        $factor = $unit !== null && $workUnit !== null
+            ? NormativeUnitNormalizer::safeQuantityFactorDecimal($unit, $workUnit) : null;
         $evidenceIds = $quantity['evidence_ids'] ?? [];
         $snapshot = $quantity['snapshot_identity']['input_fingerprint']
             ?? $quantity['formula_inputs']['snapshot_identity']['input_fingerprint']
@@ -201,9 +211,9 @@ final class BuildMostEstimateDraft
         return $amount !== null
             && $workAmount !== null
             && $amount->isGreaterThan(BigDecimal::zero())
-            && $amount->compareTo($workAmount) === 0
+            && $factor !== null
+            && $amount->multipliedBy($factor)->compareTo($workAmount) === 0
             && $unit !== null
-            && $unit === $workUnit
             && is_array($evidenceIds)
             && $evidenceIds !== []
             && is_string($snapshot)
@@ -255,7 +265,10 @@ final class BuildMostEstimateDraft
         return is_array($norm)
             && ($norm['status'] ?? null) === 'matched'
             && ($norm['hard_gate_passed'] ?? false) === true
-            && $this->string($norm['unit'] ?? null) === $this->string($workItem['unit'] ?? null)
+            && NormativeUnitNormalizer::safeQuantityFactorDecimal(
+                $this->string($workItem['unit'] ?? null) ?? '',
+                $this->string($norm['unit'] ?? null) ?? '',
+            ) !== null
             && is_array($retrieval)
             && in_array($retrieval['status'] ?? null, ['matched', 'retrieval_only', 'reranked'], true)
             && ($retrieval['blocking_issues'] ?? []) === []
