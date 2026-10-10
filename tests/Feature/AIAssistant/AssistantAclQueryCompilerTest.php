@@ -75,6 +75,30 @@ final class AssistantAclQueryCompilerTest extends TestCase
         $this->assertSame([$this->visible->id], $query->pluck('id')->all());
     }
 
+    public function test_reused_compact_definitions_keep_current_project_actor_and_membership_scope(): void
+    {
+        $compiler = new AssistantAclQueryCompiler((int) $this->actor->id, (int) $this->organization->id, compact: true);
+        $reference = $compiler->register('project', $this->policy->accessibleProjects($this->actor, $this->organization->id), ['id', 'organization_id']);
+        $first = $compiler->finish((clone $reference)->select('projects.id')->where('projects.id', $this->visible->id));
+        $second = $compiler->finish((clone $reference)->select('projects.id')->whereNotNull('projects.name'));
+        $again = $compiler->finish((clone $reference)->select('projects.id')->where('projects.id', $this->visible->id));
+        self::assertSame($first->toSql(), $again->toSql());
+        self::assertSame($first->getBindings(), $again->getBindings());
+        self::assertSame([$this->visible->id], $first->pluck('id')->all());
+        self::assertSame([$this->visible->id], $second->pluck('id')->all());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        self::assertSame([], $again->pluck('id')->all());
+        self::assertSame([], $second->pluck('id')->all());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+        self::assertSame([$this->visible->id], $again->pluck('id')->all());
+        User::query()->whereKey($this->actor->id)->update(['is_active' => false]);
+        self::assertSame([], $second->pluck('id')->all());
+        User::query()->whereKey($this->actor->id)->update(['is_active' => true]);
+        $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+        self::assertSame([], $again->pluck('id')->all());
+        self::assertSame([], $second->pluck('id')->all());
+    }
+
     public function test_materialized_source_acl_filters_hidden_high_rank_rows_before_limit_and_rechecks_revocation(): void
     {
         $allowed = $this->source($this->visible);

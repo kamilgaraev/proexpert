@@ -270,6 +270,57 @@ final class AssistantAclQueryCompilerTest extends TestCase
         self::assertStringStartsWith('select "projects"."name"', $finished->select('projects.name')->toSql());
     }
 
+    public function test_repeated_compaction_reuses_definition_parsing_but_keeps_root_columns_and_bindings_fresh(): void
+    {
+        $grammar = new class($this->offlineConnection) extends \Illuminate\Database\Query\Grammars\PostgresGrammar {
+            public int $selectCompilations = 0;
+            public function compileSelect(\Illuminate\Database\Query\Builder $query)
+            {
+                $this->selectCompilations++;
+
+                return parent::compileSelect($query);
+            }
+        };
+        $this->offlineConnection->setQueryGrammar($grammar);
+        $compiler = new AssistantAclQueryCompiler(1, 1, compact: true);
+        $reference = $compiler->register('project', Project::query()->where('organization_id', 1), ['id', 'organization_id']);
+        $before = $grammar->selectCompilations;
+        $first = $compiler->finish((clone $reference)->select('projects.id')->where('projects.name', 'first'));
+        $firstSql = $first->toSql();
+        $firstCompilations = $grammar->selectCompilations - $before;
+        $before = $grammar->selectCompilations;
+        $second = $compiler->finish((clone $reference)->select('projects.id')->where('projects.description', 'second'));
+        $secondSql = $second->toSql();
+        $secondCompilations = $grammar->selectCompilations - $before;
+
+        self::assertStringContainsString('select "projects"."id", "projects"."organization_id", "projects"."name", "projects"."deleted_at" from "projects"', $firstSql);
+        self::assertStringContainsString('select "projects"."id", "projects"."organization_id", "projects"."description", "projects"."deleted_at" from "projects"', $secondSql);
+        self::assertStringNotContainsString('"projects"."name"', $secondSql);
+        self::assertSame([1, 'first', 1, true, 1, 1, 1, true], $first->getBindings());
+        self::assertSame([1, 'second', 1, true, 1, 1, 1, true], $second->getBindings());
+        self::assertLessThan($firstCompilations, $secondCompilations);
+        $again = $compiler->finish((clone $reference)->select('projects.id')->where('projects.name', 'first'));
+        self::assertSame($firstSql, $again->toSql());
+        self::assertSame($first->getBindings(), $again->getBindings());
+        $before = $grammar->selectCompilations;
+        $sameColumns = $compiler->finish((clone $reference)->select('projects.id')->where('projects.name', 'third'));
+        self::assertSame($firstSql, $sameColumns->toSql());
+        self::assertSame([1, 'third', 1, true, 1, 1, 1, true], $sameColumns->getBindings());
+        self::assertLessThan($secondCompilations, $grammar->selectCompilations - $before);
+
+        $unrelated = $compiler->register('unrelated', Project::query()->where('name', 'unrelated'), ['id']);
+        $compiler->finish($unrelated)->toSql();
+        $pruned = $compiler->finish((clone $reference)->select('projects.id'))->toSql();
+        self::assertStringNotContainsString('"assistant_acl_1"', $pruned);
+        self::assertStringNotContainsString('"projects"."name"', $pruned);
+        self::assertStringNotContainsString('"projects"."description"', $pruned);
+        $dependent = $compiler->register('dependent', Project::query()->whereIn('projects.id', (clone $reference)->select('projects.id')), ['id', 'organization_id']);
+        $transitive = $compiler->finish($dependent->select('projects.id'));
+        self::assertSame(2, substr_count($transitive->toSql(), 'AS MATERIALIZED'));
+        self::assertStringContainsString('"assistant_acl_2" AS MATERIALIZED', $transitive->toSql());
+        self::assertStringNotContainsString('"assistant_acl_1"', $transitive->toSql());
+    }
+
     public function test_discovery_drops_unreferenced_ctes_and_bindings_but_keeps_current_actor_guards(): void
     {
         $compiler = new AssistantAclQueryCompiler(1, 1);

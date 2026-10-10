@@ -14,6 +14,9 @@ final class AssistantAclQueryCompiler
     private array $dependencies = [];
     private array $heights = [];
     private array $decisions = [];
+    private array $sqlDependencies = [];
+    private array $definitionColumns = [];
+    private array $definitionProjections = [];
 
     public function remember(string $key, callable $resolve): mixed
     {
@@ -93,8 +96,11 @@ final class AssistantAclQueryCompiler
             if (! isset($required[$definition['name']])) {
                 continue;
             }
-            preg_match_all('/\bassistant_acl_\d+\b/', $definition['sql'], $dependencies);
-            foreach ($dependencies[0] as $dependency) {
+            if (! isset($this->sqlDependencies[$definition['name']])) {
+                preg_match_all('/\bassistant_acl_\d+\b/', $definition['sql'], $dependencies);
+                $this->sqlDependencies[$definition['name']] = $dependencies[0];
+            }
+            foreach ($this->sqlDependencies[$definition['name']] as $dependency) {
                 $required[$dependency] = true;
             }
         }
@@ -102,16 +108,16 @@ final class AssistantAclQueryCompiler
         $bindings = [];
         $referencedColumns = [];
         if ($this->compact) {
-            $fragments = [$sql];
+            $referencedColumns = $this->columnsInSql($sql);
             foreach ($this->queries as $definition) {
                 if (! isset($required[$definition['name']])) { continue; }
-                $fragments[] = $definition['compactColumns'] === [] ? $definition['sql']
-                    : $definition['query']->cloneWithout(['columns'])->cloneWithoutBindings(['select'])->selectRaw('1')->toSql();
-            }
-            foreach ($fragments as $fragment) {
-                preg_match_all('/(?:"([a-zA-Z_][a-zA-Z_0-9]*)"|([a-zA-Z_][a-zA-Z_0-9]*))\.(?:"([a-zA-Z_][a-zA-Z_0-9]*)"|([a-zA-Z_][a-zA-Z_0-9]*))/', $fragment, $columns, PREG_SET_ORDER);
-                foreach ($columns as $column) {
-                    $referencedColumns[$column[1] ?: $column[2]][$column[3] ?: $column[4]] = true;
+                if (! isset($this->definitionColumns[$definition['name']])) {
+                    $fragment = $definition['compactColumns'] === [] ? $definition['sql']
+                        : $definition['query']->cloneWithout(['columns'])->cloneWithoutBindings(['select'])->selectRaw('1')->toSql();
+                    $this->definitionColumns[$definition['name']] = $this->columnsInSql($fragment);
+                }
+                foreach ($this->definitionColumns[$definition['name']] as $table => $columns) {
+                    $referencedColumns[$table] = ($referencedColumns[$table] ?? []) + $columns;
                 }
             }
         }
@@ -122,7 +128,12 @@ final class AssistantAclQueryCompiler
             if ($definition['compactColumns'] !== []) {
                 $table = $definition['table'];
                 $columns = array_unique([...$definition['compactColumns'], ...array_keys($referencedColumns[$table] ?? [])]);
-                $definition['sql'] = (clone $definition['query'])->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns))->toSql();
+                $projectionKey = serialize($columns);
+                if (($this->definitionProjections[$definition['name']]['columns'] ?? null) !== $projectionKey) {
+                    $this->definitionProjections[$definition['name']] = ['columns' => $projectionKey,
+                        'sql' => (clone $definition['query'])->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns))->toSql()];
+                }
+                $definition['sql'] = $this->definitionProjections[$definition['name']]['sql'];
             }
             $parts[] = '"'.$definition['name'].'" AS '.($definition['materialize'] ? 'MATERIALIZED' : 'NOT MATERIALIZED').' ('.$definition['sql'].')';
             array_push($bindings, ...$definition['bindings']);
@@ -143,5 +154,16 @@ final class AssistantAclQueryCompiler
         });
 
         return $finished;
+    }
+
+    private function columnsInSql(string $sql): array
+    {
+        preg_match_all('/(?:"([a-zA-Z_][a-zA-Z_0-9]*)"|([a-zA-Z_][a-zA-Z_0-9]*))\.(?:"([a-zA-Z_][a-zA-Z_0-9]*)"|([a-zA-Z_][a-zA-Z_0-9]*))/', $sql, $columns, PREG_SET_ORDER);
+        $references = [];
+        foreach ($columns as $column) {
+            $references[$column[1] ?: $column[2]][$column[3] ?: $column[4]] = true;
+        }
+
+        return $references;
     }
 }
