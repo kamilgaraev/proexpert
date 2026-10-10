@@ -53,7 +53,8 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                         $valid = $event === 'workflow_dispatch' && $ref === 'refs/heads/main' && $expected === $sha;
                         $expectedOutput = 'allowed='.($valid && $mode === 'release' ? 'true' : 'false')."\n"
                             .'input_allowed='.($valid && $mode === 'input-only' ? 'true' : 'false')."\n"
-                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n";
+                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n"
+                            ."namespace_allowed=false\n";
                         self::assertSame(0, $result['exit']); self::assertSame('', $result['stderr']);
                         self::assertSame($expectedOutput, $result['stdout'], $mode.'/'.$event.'/'.$ref.'/'.$expected);
                     }
