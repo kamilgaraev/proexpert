@@ -10,6 +10,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry;
 use BackedEnum;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -44,6 +45,9 @@ class RagIndexer
 
     public function indexChunk(RagChunkData $chunk, ?DateTimeInterface $reconciledAt = null, ?callable $guard = null): void
     {
+        if (in_array(AssistantExtendedDomainRegistry::retrievalMode($chunk->entityType), ['live_only', 'unavailable'], true)) {
+            return;
+        }
         Cache::lock($this->sourceIndexLockKey($chunk), $this->sourceIndexLockTtlSeconds())
             ->block($this->sourceIndexLockWaitSeconds(), function () use ($chunk, $reconciledAt, $guard): void {
                 $this->indexChunkUnderLock($chunk, $reconciledAt, $guard);

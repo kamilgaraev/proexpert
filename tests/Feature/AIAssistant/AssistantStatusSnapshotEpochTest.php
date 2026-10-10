@@ -14,6 +14,8 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 {
     private Migration $migration;
 
+    private ?Migration $scopedMigration = null;
+
     private AssistantStatusSnapshotEpoch $epoch;
 
     private bool $restoreEpoch = false;
@@ -39,6 +41,10 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         $this->migration = require base_path('database/migrations/2026_10_05_010000_create_assistant_status_snapshot_epoch.php');
         $this->restoreEpoch = DB::selectOne('SELECT to_regclass(?) AS table_name', ['public.'.AssistantStatusSnapshotEpoch::CONTROL_TABLE])->table_name !== null;
         if ($this->restoreEpoch) {
+            if (DB::getSchemaBuilder()->hasColumn(AssistantStatusSnapshotEpoch::CONTROL_TABLE, 'scoped_guard_body')) {
+                $this->scopedMigration = require base_path('database/migrations/2026_10_08_010000_scope_rag_snapshot_mutations_to_organization.php');
+                $this->scopedMigration->down();
+            }
             $this->migration->down();
         }
         DB::statement('CREATE TABLE public.assistant_snapshot_epoch_parent_test (id bigint PRIMARY KEY, organization_id bigint NOT NULL, hidden boolean NOT NULL)');
@@ -77,6 +83,7 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
             }
             if ($this->restoreEpoch) {
                 $this->migration->up();
+                $this->scopedMigration?->up();
             }
         }
         parent::tearDown();

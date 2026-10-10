@@ -98,14 +98,18 @@ final class AssistantStatusSnapshotEpoch
         return $valid !== null && $valid->valid === true;
     }
 
-    public function purge(int $retentionSeconds = 600): int
+    public function purge(int $retentionSeconds = 600, ?int $timeoutMilliseconds = null): int
     {
         $connection = $this->connection();
         if ($connection->getDriverName() !== 'pgsql' || $connection->transactionLevel() !== 0 || $retentionSeconds < 0) {
             throw new LogicException('assistant_snapshot_purge_requires_separate_writable_transaction');
         }
 
-        return $connection->transaction(function () use ($connection, $retentionSeconds): int {
+        return $connection->transaction(function () use ($connection, $retentionSeconds, $timeoutMilliseconds): int {
+            if ($timeoutMilliseconds !== null) {
+                $connection->selectOne("SELECT set_config('statement_timeout', ?, true)", [(string) max(1, $timeoutMilliseconds)]);
+                $connection->statement("SET LOCAL lock_timeout = '1s'");
+            }
             $deleted = $connection->delete('DELETE FROM public.'.self::CHANGE_TABLE.' WHERE ctid = ANY(ARRAY('
                 .'SELECT ctid FROM public.'.self::CHANGE_TABLE.' WHERE created_at < statement_timestamp() - make_interval(secs => ?) '
                 .'ORDER BY created_at LIMIT ?))', [$retentionSeconds, self::PURGE_BATCH_SIZE]);
