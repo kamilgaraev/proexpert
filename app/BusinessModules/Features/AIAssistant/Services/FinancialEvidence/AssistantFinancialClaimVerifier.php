@@ -75,7 +75,9 @@ final class AssistantFinancialClaimVerifier
             return ['text' => trans_message('ai_assistant_financial.unverified_claim'), 'validation_status' => 'partial',
                 'source_refs' => [], 'replaced' => true];
         }
-        $financial = (bool) preg_match('/(?:\d[\d\s\x{00A0}.,]*\s*(?:₽|руб|р\.|тыс|млн|млрд)|(?:сумм|стоимост|цен[а-яё]*|бюджет|позиц|объ[её]м|количеств)[^\n.!?]{0,100}\d)/iu', $text);
+        $financial = (bool) preg_match('/(?:\d[\d\s\x{00A0}.,]*\s*(?:₽|руб|р\.|тыс|млн|млрд)|(?:стоимост|цен[а-яё]*|бюджет|позиц)[^\n.!?]{0,100}\d)/iu', $text)
+            || (! AssistantFactIntentClassifier::isConversationNumberRequest($query ?? '')
+                && (bool) preg_match('/(?:сумм|объ[её]м|количеств)[^\n.!?]{0,100}\d/iu', $text));
         if (! $financial) {
             return ['text' => $text, 'validation_status' => 'unverified', 'source_refs' => [], 'replaced' => false];
         }
