@@ -10,8 +10,10 @@ use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\GeneralJournalDocumentVersion;
 use App\Models\Project;
+use App\Services\ConstructionJournal\GeneralJournalDocumentQuery;
 use App\Services\ConstructionJournal\GeneralJournalDocumentService;
 use App\Services\LegalArchive\CanonicalJson;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -83,10 +85,21 @@ final class GeneralJournalDocumentTest extends TestCase
     public function test_foreign_organization_cannot_create_or_read_versions(): void
     {
         [$context, $journal] = $this->fixture();
+        $version = app(GeneralJournalDocumentService::class)->prepare($context->user, $journal, $this->payload());
         $foreign = AdminApiTestContext::create(roleSlug: 'organization_owner');
-        $this->expectException(BusinessLogicException::class);
-        $this->expectExceptionCode(404);
-        app(GeneralJournalDocumentService::class)->prepare($foreign->user, $journal, $this->payload());
+        foreach (['create', 'read'] as $operation) {
+            try {
+                if ($operation === 'create') {
+                    app(GeneralJournalDocumentService::class)->prepare($foreign->user, $journal, $this->payload());
+                } else {
+                    app(GeneralJournalDocumentQuery::class)->read($foreign->user, $journal, $version->id);
+                }
+                self::fail('Foreign organization cannot '.$operation.' journal versions.');
+            } catch (AuthorizationException $exception) {
+                self::assertSame(trans_message('construction_journal.errors.access_denied'), $exception->getMessage());
+            }
+        }
+        self::assertSame(1, GeneralJournalDocumentVersion::query()->where('journal_id', $journal->id)->count());
     }
 
     private function payload(): array
@@ -210,6 +223,7 @@ final class GeneralJournalDocumentTest extends TestCase
         });
         $this->mock(\App\Modules\Core\AccessController::class)->shouldReceive('hasModuleAccess')->andReturnTrue();
         $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $context->user->organizations()->updateExistingPivot($context->organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $journal = ConstructionJournal::query()->create([
             'organization_id' => $context->organization->id, 'project_id' => $project->id,

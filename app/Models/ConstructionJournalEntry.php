@@ -204,10 +204,8 @@ class ConstructionJournalEntry extends Model
 
         $user = request()->user();
         if ($user && $user->current_organization_id) {
-            $project = $entry->journal?->project;
-
-            if (! $project || ! $project->hasOrganization($user->current_organization_id)) {
-                abort(403, 'У вас нет доступа к этой записи журнала');
+            if (! $entry->journal || ! app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canRead($user, $entry->journal)) {
+                abort(403, trans_message('construction_journal.errors.access_denied'));
             }
         }
 

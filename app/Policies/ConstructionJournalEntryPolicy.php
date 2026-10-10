@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Policies;
 
 use App\Enums\ConstructionJournal\JournalStatusEnum;
@@ -13,57 +15,23 @@ class ConstructionJournalEntryPolicy
 {
     private function hasProjectAccess(User $user, Project $project): bool
     {
-        $organizationId = $user->current_organization_id;
-
-        if (! $organizationId) {
-            return false;
-        }
-
-        return $project->hasOrganization($organizationId);
+        return app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canAccessProject($user, $project);
     }
 
     private function hasJournalAccess(User $user, ConstructionJournal $journal): bool
     {
-        return (int) $user->current_organization_id === (int) $journal->organization_id
-            && $journal->project !== null
-            && $this->hasProjectAccess($user, $journal->project);
+        return app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canWrite($user, $journal, ['*', 'view', 'create', 'edit', 'delete', 'approve', 'reopen', 'export']);
     }
 
     private function hasModulePermission(User $user, array $permissions, ?Project $project = null): bool
     {
-        $organizationId = $user->current_organization_id;
-
-        if (! $organizationId) {
-            return false;
-        }
-
-        foreach ($permissions as $permission) {
-            if ($project && $user->hasPermission("construction-journal.{$permission}", [
-                'organization_id' => $organizationId,
-                'project_id' => $project->id,
-            ])) {
-                return true;
-            }
-
-            if ($user->hasPermission("construction-journal.{$permission}", [
-                'organization_id' => $organizationId,
-            ])) {
-                return true;
-            }
-        }
-
-        return false;
+        return $project !== null && app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->hasPermission($user, $project, $permissions);
     }
 
     public function view(User $user, ConstructionJournalEntry $entry): bool
     {
-        $project = $entry->journal?->project;
-
-        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
-            return false;
-        }
-
-        return $this->hasModulePermission($user, ['view', '*'], $project);
+        return $entry->journal !== null
+            && app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canRead($user, $entry->journal);
     }
 
     public function create(User $user, ConstructionJournal $journal): bool
@@ -144,35 +112,7 @@ class ConstructionJournalEntryPolicy
 
     public function approve(User $user, ConstructionJournalEntry $entry): bool
     {
-        $project = $entry->journal?->project;
-
-        if (! $project || ! $entry->journal || ! $this->hasJournalAccess($user, $entry->journal)) {
-            return false;
-        }
-
-        if ($entry->journal->status !== JournalStatusEnum::ACTIVE) {
-            return false;
-        }
-
-        $journalOrganizationId = $entry->journal?->organization_id;
-
-        if (
-            $entry->created_by_user_id === $user->id
-            && (! $journalOrganizationId || ! $this->isOrganizationOwner($user, (int) $journalOrganizationId))
-        ) {
-            return false;
-        }
-
-        return $this->hasModulePermission($user, ['approve', '*'], $project);
-    }
-
-    private function isOrganizationOwner(User $user, int $organizationId): bool
-    {
-        return $user->isOrganizationOwner($organizationId)
-            || $user->organizations()
-                ->where('organization_user.organization_id', $organizationId)
-                ->wherePivot('is_owner', true)
-                ->wherePivot('is_active', true)
-                ->exists();
+        return $entry->journal?->status === JournalStatusEnum::ACTIVE
+            && app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canApprove($user, $entry);
     }
 }

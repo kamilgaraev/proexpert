@@ -114,7 +114,7 @@ class ConstructionJournalEntryController extends Controller
             }
 
             $validated = $request->validated();
-            $entry = $this->journalService->updateEntry($entry, $validated);
+            $entry = $this->journalService->updateEntry($entry, $validated, $request->user());
 
             return AdminResponse::success(
                 $this->payloadService->mapEntry($entry, $request->user()),
@@ -148,7 +148,7 @@ class ConstructionJournalEntryController extends Controller
                 return AdminResponse::error(trans_message('construction_journal.errors.entry_delete_forbidden_status'), 422);
             }
 
-            $this->journalService->deleteEntry($entry);
+            $this->journalService->deleteEntry($entry, $request->user());
 
             return AdminResponse::success(null, trans_message('construction_journal.messages.entry_deleted'));
         } catch (AuthorizationException $exception) {

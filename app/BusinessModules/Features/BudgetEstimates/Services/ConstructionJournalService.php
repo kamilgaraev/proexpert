@@ -43,6 +43,10 @@ class ConstructionJournalService
 
     public function createJournal(Project $project, array $data, User $user): ConstructionJournal
     {
+        $access = app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class);
+        if (! $access->canAccessProject($user, $project) || ! $access->hasPermission($user, $project, ['create', '*'])) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
         return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
             if (! isset($data['contract_id'])) {
                 throw new DomainException(trans_message('construction_journal.errors.contract_required'));
@@ -52,6 +56,7 @@ class ConstructionJournalService
 
             $journal = ConstructionJournal::create([
                 'organization_id' => $project->organization_id,
+                'performing_organization_id' => $user->current_organization_id,
                 'project_id' => $project->id,
                 'contract_id' => $data['contract_id'],
                 'name' => $data['name'],
@@ -69,9 +74,10 @@ class ConstructionJournalService
         });
     }
 
-    public function updateJournal(ConstructionJournal $journal, array $data): ConstructionJournal
+    public function updateJournal(ConstructionJournal $journal, array $data, ?User $actor = null): ConstructionJournal
     {
-        unset($data['status']);
+        $this->assertJournalWrite($journal, ['edit', '*'], $actor);
+        $data = array_intersect_key($data, array_flip(['name', 'journal_number', 'contract_id', 'start_date', 'end_date']));
         if (array_key_exists('contract_id', $data)) {
             $this->assertContractScope($journal->project, $data['contract_id']);
         }
@@ -84,8 +90,9 @@ class ConstructionJournalService
         return $journal;
     }
 
-    public function deleteJournal(ConstructionJournal $journal): bool
+    public function deleteJournal(ConstructionJournal $journal, ?User $actor = null): bool
     {
+        $this->assertJournalWrite($journal, ['delete', '*'], $actor);
         return DB::transaction(function () use ($journal): bool {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::ACTIVE || $journal->entries()->withTrashed()->exists()) {
@@ -99,8 +106,9 @@ class ConstructionJournalService
         });
     }
 
-    public function closeJournal(ConstructionJournal $journal): ConstructionJournal
+    public function closeJournal(ConstructionJournal $journal, ?User $actor = null): ConstructionJournal
     {
+        $this->assertJournalWrite($journal, ['edit', '*'], $actor);
         return DB::transaction(function () use ($journal): ConstructionJournal {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::ACTIVE || $journal->entries()->whereIn('status', [
@@ -117,8 +125,9 @@ class ConstructionJournalService
         });
     }
 
-    public function archiveJournal(ConstructionJournal $journal): ConstructionJournal
+    public function archiveJournal(ConstructionJournal $journal, ?User $actor = null): ConstructionJournal
     {
+        $this->assertJournalWrite($journal, ['edit', '*'], $actor);
         return DB::transaction(function () use ($journal): ConstructionJournal {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::CLOSED) {
@@ -131,8 +140,9 @@ class ConstructionJournalService
         });
     }
 
-    public function reopenJournal(ConstructionJournal $journal): ConstructionJournal
+    public function reopenJournal(ConstructionJournal $journal, ?User $actor = null): ConstructionJournal
     {
+        $this->assertJournalWrite($journal, ['reopen', '*'], $actor);
         return DB::transaction(function () use ($journal): ConstructionJournal {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::CLOSED) {
@@ -147,6 +157,7 @@ class ConstructionJournalService
 
     public function createEntry(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
     {
+        $this->assertJournalWrite($journal, ['create', '*'], $user);
         return DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             $this->assertJournalActive($journal);
@@ -220,8 +231,12 @@ class ConstructionJournalService
         });
     }
 
-    public function updateEntry(ConstructionJournalEntry $entry, array $data): ConstructionJournalEntry
+    public function updateEntry(ConstructionJournalEntry $entry, array $data, ?User $actor = null): ConstructionJournalEntry
     {
+        $actor ??= Auth::user();
+        if (! $actor || ! app(\App\Policies\ConstructionJournalEntryPolicy::class)->update($actor, $entry)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
         return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
             $this->assertEntryEditable($entry);
@@ -278,18 +293,15 @@ class ConstructionJournalService
             }
 
             if (array_key_exists('workers', $data)) {
-                $entry->workers()->delete();
-                $this->attachWorkers($entry, $data['workers'] ?? []);
+                $this->attachWorkers($entry, $data['workers'] ?? [], true);
             }
 
             if (array_key_exists('equipment', $data)) {
-                $entry->equipment()->delete();
-                $this->attachEquipment($entry, $data['equipment'] ?? []);
+                $this->attachEquipment($entry, $data['equipment'] ?? [], true);
             }
 
             if (array_key_exists('materials', $data)) {
-                $entry->materials()->delete();
-                $this->attachMaterials($entry, $data['materials'] ?? []);
+                $this->attachMaterials($entry, $data['materials'] ?? [], true);
             }
 
             $this->completedWorkFactService->syncFromJournalEntry($entry->load([
@@ -325,8 +337,12 @@ class ConstructionJournalService
         });
     }
 
-    public function deleteEntry(ConstructionJournalEntry $entry): bool
+    public function deleteEntry(ConstructionJournalEntry $entry, ?User $actor = null): bool
     {
+        $actor ??= Auth::user();
+        if (! $actor || ! app(\App\Policies\ConstructionJournalEntryPolicy::class)->delete($actor, $entry)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
         return DB::transaction(function () use ($entry): bool {
             $entry = $this->lockJournalAndEntry($entry);
             if ($entry->status !== JournalEntryStatusEnum::DRAFT || $entry->approvalEvents()->exists()) {
@@ -370,8 +386,9 @@ class ConstructionJournalService
         }
     }
 
-    public function getDailyEntries(ConstructionJournal $journal, Carbon $date): Collection
+    public function getDailyEntries(ConstructionJournal $journal, Carbon $date, ?User $actor = null): Collection
     {
+        $this->assertJournalRead($journal, $actor);
         return $journal->entries()
             ->byDate($date)
             ->with([
@@ -389,8 +406,9 @@ class ConstructionJournalService
             ->get();
     }
 
-    public function getEntriesForPeriod(ConstructionJournal $journal, Carbon $from, Carbon $to): Collection
+    public function getEntriesForPeriod(ConstructionJournal $journal, Carbon $from, Carbon $to, ?User $actor = null): Collection
     {
+        $this->assertJournalRead($journal, $actor);
         return $journal->entries()
             ->byDateRange($from, $to)
             ->with([
@@ -422,6 +440,7 @@ class ConstructionJournalService
 
             $entry->workVolumes()->create([
                 'estimate_item_id' => $estimateItemId,
+                'work_name' => $estimateItemId ? null : trim((string) ($volume['work_name'] ?? '')),
                 'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
                 'quantity' => $volume['quantity'],
                 'measurement_unit_id' => $this->resolveWorkVolumeMeasurementUnitId($entry, $volume, $estimateItem),
@@ -447,6 +466,7 @@ class ConstructionJournalService
 
             $payload = [
                 'estimate_item_id' => $estimateItemId,
+                'work_name' => $estimateItemId ? null : trim((string) ($volume['work_name'] ?? '')),
                 'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
                 'quantity' => $volume['quantity'],
                 'measurement_unit_id' => $this->resolveWorkVolumeMeasurementUnitId($entry, $volume, $estimateItem),
@@ -477,6 +497,9 @@ class ConstructionJournalService
         array $volume,
         ?EstimateItem $estimateItem
     ): ?int {
+        if (! $estimateItem) {
+            return ! empty($volume['work_type_id']) ? (int) $volume['work_type_id'] : null;
+        }
         if ($estimateItem?->work_type_id) {
             return (int) $estimateItem->work_type_id;
         }
@@ -512,35 +535,40 @@ class ConstructionJournalService
             ?? $entry->scheduleTask?->estimateItem?->measurement_unit_id;
     }
 
-    protected function attachWorkers(ConstructionJournalEntry $entry, array $workers): void
+    protected function attachWorkers(ConstructionJournalEntry $entry, array $workers, bool $replace = false): void
     {
+        $rows = [];
         foreach ($workers as $worker) {
-            $entry->workers()->create([
+            $rows[] = ['id' => $worker['id'] ?? null, 'payload' => [
                 'estimate_item_id' => $worker['estimate_item_id'] ?? null,
                 'specialty' => $worker['specialty'],
                 'workers_count' => $worker['workers_count'],
                 'hours_worked' => $worker['hours_worked'] ?? null,
-            ]);
+            ]];
         }
+        $this->persistResourceRows($entry, 'workers', $rows, $replace);
     }
 
-    protected function attachEquipment(ConstructionJournalEntry $entry, array $equipment): void
+    protected function attachEquipment(ConstructionJournalEntry $entry, array $equipment, bool $replace = false): void
     {
+        $rows = [];
         foreach ($equipment as $item) {
-            $entry->equipment()->create([
+            $rows[] = ['id' => $item['id'] ?? null, 'payload' => [
                 'estimate_item_id' => $item['estimate_item_id'] ?? null,
                 'equipment_name' => $item['equipment_name'],
                 'equipment_type' => $item['equipment_type'] ?? null,
                 'quantity' => $item['quantity'] ?? 1,
                 'hours_used' => $item['hours_used'] ?? null,
-            ]);
+            ]];
         }
+        $this->persistResourceRows($entry, 'equipment', $rows, $replace);
     }
 
-    protected function attachMaterials(ConstructionJournalEntry $entry, array $materials): void
+    protected function attachMaterials(ConstructionJournalEntry $entry, array $materials, bool $replace = false): void
     {
+        $rows = [];
         foreach ($materials as $material) {
-            $entry->materials()->create([
+            $rows[] = ['id' => $material['id'] ?? null, 'payload' => [
                 'material_id' => $material['material_id'] ?? null,
                 'estimate_item_id' => $material['estimate_item_id'] ?? null,
                 'project_material_delivery_id' => $material['project_material_delivery_id'] ?? null,
@@ -550,7 +578,27 @@ class ConstructionJournalService
                 'quantity' => $material['quantity'],
                 'measurement_unit' => $material['measurement_unit'],
                 'notes' => $material['notes'] ?? null,
-            ]);
+            ]];
+        }
+        $this->persistResourceRows($entry, 'materials', $rows, $replace);
+    }
+
+    private function persistResourceRows(ConstructionJournalEntry $entry, string $relation, array $rows, bool $replace): void
+    {
+        $existing = $replace ? $entry->{$relation}()->get()->keyBy('id') : collect();
+        $keptIds = [];
+        foreach ($rows as $row) {
+            $model = isset($row['id']) ? $existing->get((int) $row['id']) : null;
+            if ($model) {
+                $model->update($row['payload']);
+            } else {
+                $model = $entry->{$relation}()->create($row['payload']);
+            }
+            $keptIds[] = (int) $model->id;
+        }
+        if ($replace) {
+            $entry->{$relation}()->whereNotIn('id', $keptIds)->delete();
+            $entry->unsetRelation($relation);
         }
     }
 
@@ -739,11 +787,12 @@ class ConstructionJournalService
     protected function assertContractScope(Project $project, ?int $contractId): void
     {
         if (! $contractId) {
-            return;
+            throw new DomainException(trans_message('construction_journal.errors.contract_required'));
         }
 
         $contract = Contract::query()
             ->where('id', $contractId)
+            ->where('organization_id', $project->organization_id)
             ->where(function ($query) use ($project): void {
                 $query->where('project_id', $project->id)
                     ->orWhereHas('projects', function ($projectsQuery) use ($project): void {
@@ -770,11 +819,46 @@ class ConstructionJournalService
         $this->assertScheduleTaskScope($journal, $scheduleTaskId, $estimateId);
         $this->assertEntryEstimateConsistency($data['work_volumes'] ?? [], $estimateId);
         $this->assertScheduleTaskVolumeCompatibility($data['work_volumes'] ?? [], $scheduleTaskId);
+        foreach (['work_volumes' => 'workVolumes', 'workers' => 'workers', 'equipment' => 'equipment', 'materials' => 'materials'] as $key => $relation) {
+            $seenIds = [];
+            foreach ($data[$key] ?? [] as $row) {
+                if (! isset($row['id'])) {
+                    continue;
+                }
+                $id = (int) $row['id'];
+                if ($id <= 0 || in_array($id, $seenIds, true) || ! $entry || ! $entry->{$relation}()->whereKey($id)->exists()) {
+                    throw new DomainException(trans_message('construction_journal.errors.access_denied'));
+                }
+                $seenIds[] = $id;
+            }
+        }
 
         foreach (($data['work_volumes'] ?? []) as $volume) {
+            if ((float) ($volume['quantity'] ?? 0) <= 0) {
+                throw new DomainException(trans_message('construction_journal.errors.validation_work_volumes'));
+            }
+            if (! ($volume['estimate_item_id'] ?? null)
+                && (trim((string) ($volume['work_name'] ?? '')) === ''
+                    || ! ($volume['measurement_unit_id'] ?? null)
+                    || (float) ($volume['quantity'] ?? 0) <= 0)) {
+                throw new DomainException(trans_message('construction_journal.errors.manual_work_required'));
+            }
             $this->assertEstimateItemScope($journal, $volume['estimate_item_id'] ?? null, $estimateId);
             $this->assertWorkTypeScope($journal, $volume['work_type_id'] ?? null);
             $this->assertMeasurementUnitScope($journal, $volume['measurement_unit_id'] ?? null);
+            $item = ! empty($volume['estimate_item_id']) ? EstimateItem::query()->find($volume['estimate_item_id']) : null;
+            if ($item?->work_type_id) {
+                $this->assertWorkTypeScope($journal, (int) $item->work_type_id);
+            }
+            $resolvedUnitId = $item?->measurement_unit_id ?? ($volume['measurement_unit_id'] ?? null);
+            if (! $resolvedUnitId && $scheduleTaskId) {
+                $task = ScheduleTask::query()->with('estimateItem')->find($scheduleTaskId);
+                $resolvedUnitId = $task?->measurement_unit_id ?? $task?->estimateItem?->measurement_unit_id;
+            }
+            if (! $resolvedUnitId) {
+                throw new DomainException(trans_message('construction_journal.errors.invalid_measurement_unit'));
+            }
+            $this->assertMeasurementUnitScope($journal, (int) $resolvedUnitId);
         }
 
         foreach (($data['materials'] ?? []) as $material) {
@@ -855,9 +939,11 @@ class ConstructionJournalService
 
         $item = EstimateItem::query()
             ->where('id', $estimateItemId)
+            ->where('item_type', \App\Enums\EstimatePositionItemType::WORK->value)
             ->whereHas('estimate', function ($query) use ($journal, $estimateId): void {
                 $query->where('organization_id', $journal->organization_id)
-                    ->where('project_id', $journal->project_id);
+                    ->where('project_id', $journal->project_id)
+                    ->where('status', 'approved');
 
                 if ($estimateId) {
                     $query->where('id', $estimateId);
@@ -983,14 +1069,30 @@ class ConstructionJournalService
             ->where('id', $measurementUnitId)
             ->where(function ($query) use ($journal): void {
                 $query->where('organization_id', $journal->organization_id)
-                    ->orWhereNull('organization_id')
-                    ->orWhere('is_system', true);
+                    ->orWhereNull('organization_id');
             })
             ->first();
 
         if (! $unit) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_measurement_unit'));
         }
+    }
+
+    private function assertJournalWrite(ConstructionJournal $journal, array $permissions, ?User $actor = null): void
+    {
+        $actor ??= Auth::user();
+        if (! $actor || ! app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canWrite($actor, $journal, $permissions)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
+    }
+
+    private function assertJournalRead(ConstructionJournal $journal, ?User $actor = null): void
+    {
+        $actor ??= Auth::user();
+        if (! $actor) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
+        app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->assertReadable($actor, $journal);
     }
 
     private function recordJournalAudit(string $event, ConstructionJournal $journal, ?User $user = null): void

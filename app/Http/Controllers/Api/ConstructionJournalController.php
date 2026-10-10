@@ -32,7 +32,8 @@ class ConstructionJournalController extends Controller
         try {
             $this->authorize('viewAny', [ConstructionJournal::class, $project]);
 
-            $journals = $project->journals()
+            $visibleIds = app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->visiblePerformerIds($request->user(), $project);
+            $journals = $project->journals()->whereIn('performing_organization_id', $visibleIds)
                 ->with(['contract', 'createdBy', 'project'])
                 ->withCount(ConstructionJournalPayloadService::journalCountRelations())
                 ->when($request->filled('status'), function ($query) use ($request): void {
@@ -53,9 +54,9 @@ class ConstructionJournalController extends Controller
                 200,
                 [
                     'total_journals' => $journals->total(),
-                    'active_journals' => $project->journals()->where('status', 'active')->count(),
-                    'archived_journals' => $project->journals()->where('status', 'archived')->count(),
-                    'closed_journals' => $project->journals()->where('status', 'closed')->count(),
+                    'active_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->where('status', 'active')->count(),
+                    'archived_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->where('status', 'archived')->count(),
+                    'closed_journals' => $project->journals()->whereIn('performing_organization_id', $visibleIds)->where('status', 'closed')->count(),
                     'available_actions' => $this->payloadService->buildJournalActions($project, $request->user()),
                 ]
             );
@@ -155,7 +156,7 @@ class ConstructionJournalController extends Controller
 
             $validated = $request->validated();
 
-            $journal = $this->journalService->updateJournal($journal, $validated);
+            $journal = $this->journalService->updateJournal($journal, $validated, $request->user());
 
             return AdminResponse::success(
                 $this->payloadService->mapJournal($journal, $request->user()),
@@ -185,7 +186,7 @@ class ConstructionJournalController extends Controller
         try {
             $this->authorize('delete', $journal);
 
-            $this->journalService->deleteJournal($journal);
+            $this->journalService->deleteJournal($journal, $request->user());
 
             return AdminResponse::success(null, trans_message('construction_journal.messages.deleted'));
         } catch (AuthorizationException $exception) {
@@ -210,7 +211,7 @@ class ConstructionJournalController extends Controller
             $request,
             $journal,
             'close',
-            fn (): ConstructionJournal => $this->journalService->closeJournal($journal),
+            fn (): ConstructionJournal => $this->journalService->closeJournal($journal, $request->user()),
             'construction_journal.messages.closed'
         );
     }
@@ -221,7 +222,7 @@ class ConstructionJournalController extends Controller
             $request,
             $journal,
             'archive',
-            fn (): ConstructionJournal => $this->journalService->archiveJournal($journal),
+            fn (): ConstructionJournal => $this->journalService->archiveJournal($journal, $request->user()),
             'construction_journal.messages.archived'
         );
     }
@@ -232,7 +233,7 @@ class ConstructionJournalController extends Controller
             $request,
             $journal,
             'reopen',
-            fn (): ConstructionJournal => $this->journalService->reopenJournal($journal),
+            fn (): ConstructionJournal => $this->journalService->reopenJournal($journal, $request->user()),
             'construction_journal.messages.reopened'
         );
     }

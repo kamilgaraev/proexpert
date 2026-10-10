@@ -7,6 +7,7 @@ namespace Tests\Unit\ConstructionJournal;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\JournalScheduleIntegrationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\JournalApprovalService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
+use App\Models\CompletedWork;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -61,8 +62,10 @@ class JournalWorkflowConcurrencyContractTest extends TestCase
 
         self::assertStringContainsString('$contractReserved', $source);
         self::assertStringContainsString("where('contract_id', (int) \$contractId)", $source);
-        self::assertStringContainsString("'project_id' => (int) \$journal->project_id", $source);
-        self::assertStringContainsString('$this->authorizationService->can(', $source);
+        self::assertStringContainsString('ConstructionJournalAccessService::class)->canApprove($user, $entry)', $source);
+        $accessSource = (string) file_get_contents(dirname(__DIR__, 3).'/app/Services/ConstructionJournal/ConstructionJournalAccessService.php');
+        self::assertStringContainsString("'organization_id' => (int) \$user->current_organization_id", $accessSource);
+        self::assertStringContainsString("'strict_project_scope' => true", $accessSource);
 
         $reflection = new ReflectionClass(JournalApprovalService::class);
         $service = $reflection->newInstanceWithoutConstructor();
@@ -74,10 +77,10 @@ class JournalWorkflowConcurrencyContractTest extends TestCase
     public function test_schedule_actual_dates_are_derived_from_chronological_confirmed_facts(): void
     {
         $facts = collect([
-            (object) ['completion_date' => '2026-08-20', 'completed_quantity' => 4],
-            (object) ['completion_date' => '2026-08-10', 'completed_quantity' => 6],
-            (object) ['completion_date' => '2026-08-15', 'completed_quantity' => 2],
-        ]);
+            ['completion_date' => '2026-08-20', 'completed_quantity' => 4],
+            ['completion_date' => '2026-08-10', 'completed_quantity' => 6],
+            ['completion_date' => '2026-08-15', 'completed_quantity' => 2],
+        ])->map(static fn (array $attributes): CompletedWork => (new CompletedWork)->setRawAttributes($attributes));
         $reflection = new ReflectionClass(JournalScheduleIntegrationService::class);
         $service = $reflection->newInstanceWithoutConstructor();
         $method = $reflection->getMethod('calculateActualDates');

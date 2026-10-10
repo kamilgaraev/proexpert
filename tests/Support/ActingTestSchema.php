@@ -76,6 +76,8 @@ trait ActingTestSchema
             'contracts',
             'contractors',
             'projects',
+            'project_organization_hierarchy',
+            'project_user',
             'project_organization',
             'organization_user',
             'users',
@@ -123,6 +125,7 @@ trait ActingTestSchema
             $table->boolean('is_owner')->default(false);
             $table->boolean('is_active')->default(true);
             $table->json('settings')->nullable();
+            $table->string('project_access_mode')->default('all_projects');
             $table->timestamps();
         });
 
@@ -131,6 +134,7 @@ trait ActingTestSchema
             $table->foreignId('organization_id');
             $table->string('name');
             $table->string('status')->default('active');
+            $table->boolean('is_archived')->default(false);
             $table->string('address')->nullable();
             $table->decimal('latitude', 10, 7)->nullable();
             $table->decimal('longitude', 10, 7)->nullable();
@@ -194,6 +198,21 @@ trait ActingTestSchema
             $table->timestamp('invited_at')->nullable();
             $table->timestamp('accepted_at')->nullable();
             $table->jsonb('metadata')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('project_organization_hierarchy', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_id');
+            $table->foreignId('organization_id');
+            $table->foreignId('parent_organization_id')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('project_user', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('project_id');
+            $table->foreignId('user_id');
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
 
@@ -499,6 +518,7 @@ trait ActingTestSchema
         Schema::create('construction_journals', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');
+            $table->foreignId('performing_organization_id');
             $table->foreignId('project_id');
             $table->foreignId('contract_id')->nullable();
             $table->string('name');
@@ -541,6 +561,7 @@ trait ActingTestSchema
             $table->foreignId('organization_id');
             $table->foreignId('project_id');
             $table->foreignId('actor_user_id')->nullable();
+            $table->foreignId('actor_organization_id')->nullable();
             $table->string('event', 32);
             $table->string('from_status', 32);
             $table->string('to_status', 32);
@@ -553,6 +574,7 @@ trait ActingTestSchema
             $table->id();
             $table->foreignId('journal_entry_id');
             $table->foreignId('estimate_item_id')->nullable();
+            $table->string('work_name')->nullable();
             $table->foreignId('work_type_id')->nullable();
             $table->decimal('quantity', 15, 3)->default(0);
             $table->foreignId('measurement_unit_id')->nullable();

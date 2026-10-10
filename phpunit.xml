@@ -8,6 +8,19 @@
          stopOnFailure="true"
 >
     <testsuites>
+        <testsuite name="ConstructionJournalCollaboration">
+            <file>tests/Feature/ConstructionJournalCollaborationTest.php</file>
+            <file>tests/Feature/ConstructionJournalFormOptionsTest.php</file>
+            <file>tests/Feature/Api/V1/Mobile/WorkflowManagementMobileTest.php</file>
+            <file>tests/Feature/ConstructionJournalEntryValidationTest.php</file>
+            <file>tests/Feature/ConstructionJournalContractCoverageTest.php</file>
+            <file>tests/Feature/ConstructionJournalActivityTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ConstructionJournalCoreExperienceControllerTest.php</file>
+            <file>tests/Feature/ConstructionJournal/GeneralJournalDocumentTest.php</file>
+            <file>tests/Feature/ConstructionJournal/GeneralJournalSignedDocumentRowsTest.php</file>
+            <file>tests/Unit/Mobile/MobileConstructionJournalServiceTest.php</file>
+            <file>tests/Unit/ConstructionJournal/JournalWorkflowConcurrencyContractTest.php</file>
+        </testsuite>
         <testsuite name="ConstructionAccounting">
             <file>tests/Feature/ConstructionJournal/GeneralJournalDocumentTest.php</file>
             <file>tests/Feature/ConstructionJournal/GeneralJournalSignedDocumentRowsTest.php</file>

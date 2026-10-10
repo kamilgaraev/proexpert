@@ -146,19 +146,7 @@ class ConstructionJournalController extends Controller
                 'contract',
                 'createdBy',
                 'entries' => function ($query): void {
-                    $query->with([
-                        'journal',
-                        'scheduleTask',
-                        'estimate',
-                        'createdBy',
-                        'approvedBy',
-                        'workVolumes.estimateItem',
-                        'workVolumes.workType',
-                        'workVolumes.measurementUnit',
-                        'workers',
-                        'equipment',
-                        'materials.material',
-                    ])->orderByDesc('entry_date')
+                    $query->with(\App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService::ENTRY_RELATIONS)->orderByDesc('entry_date')
                         ->orderByDesc('entry_number')
                         ->limit(10);
                 },
@@ -201,7 +189,7 @@ class ConstructionJournalController extends Controller
 
             $validated = $request->validated();
 
-            $journal = $this->journalService->updateJournal($journal, $validated);
+            $journal = $this->journalService->updateJournal($journal, $validated, $user);
 
             return MobileResponse::success(
                 $this->mobileJournalService->mapMobileJournal($journal, $user),
@@ -298,7 +286,7 @@ class ConstructionJournalController extends Controller
             $request,
             $journal,
             'close',
-            fn (): ConstructionJournal => $this->journalService->closeJournal($journal),
+            fn (): ConstructionJournal => $this->journalService->closeJournal($journal, $request->user()),
             'construction_journal.messages.closed',
         );
     }
@@ -309,7 +297,7 @@ class ConstructionJournalController extends Controller
             $request,
             $journal,
             'archive',
-            fn (): ConstructionJournal => $this->journalService->archiveJournal($journal),
+            fn (): ConstructionJournal => $this->journalService->archiveJournal($journal, $request->user()),
             'construction_journal.messages.archived',
         );
     }
@@ -320,7 +308,7 @@ class ConstructionJournalController extends Controller
             $request,
             $journal,
             'reopen',
-            fn (): ConstructionJournal => $this->journalService->reopenJournal($journal),
+            fn (): ConstructionJournal => $this->journalService->reopenJournal($journal, $request->user()),
             'construction_journal.messages.reopened',
         );
     }

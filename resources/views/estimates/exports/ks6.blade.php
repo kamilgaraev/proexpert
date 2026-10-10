@@ -354,7 +354,7 @@
                             ?? $volume->workType?->measurementUnit?->short_name
                             ?? $volume->estimateItem?->measurementUnit?->short_name
                             ?? '';
-                        $name = $volume->workType?->name ?? $volume->estimateItem?->name ?? '';
+                        $name = $volume->work_name ?? $volume->workType?->name ?? $volume->estimateItem?->name ?? '';
 
                         return trim($volume->quantity . ' ' . $unit . ($name ? ' - ' . $name : ''));
                     })->filter()->implode('; ');

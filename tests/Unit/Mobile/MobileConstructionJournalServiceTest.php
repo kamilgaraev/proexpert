@@ -42,4 +42,20 @@ final class MobileConstructionJournalServiceTest extends TestCase
         self::assertSame('Бетонирование', $fallbackWork['title']);
         self::assertSame('кубический метр', $fallbackWork['measurement_unit_name']);
     }
+
+    public function test_manual_work_and_legacy_missing_unit_remain_readable(): void
+    {
+        $service = (new ReflectionClass(MobileConstructionJournalService::class))->newInstanceWithoutConstructor();
+        $transform = new ReflectionMethod(MobileConstructionJournalService::class, 'transformWorkVolumePayload');
+
+        $volume = $transform->invoke($service, [
+            'estimateItem' => null,
+            'workType' => ['name' => 'Прочее'],
+            'work_name' => 'Ручная работа',
+            'measurementUnit' => null,
+        ]);
+
+        self::assertSame('Ручная работа', $volume['title']);
+        self::assertNull($volume['measurement_unit_name']);
+    }
 }

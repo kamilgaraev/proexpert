@@ -55,6 +55,8 @@ final class JournalExportController extends Controller
             }
 
             return MobileResponse::success($this->workflow->payload($export, $user));
+        } catch (AuthorizationException $exception) {
+            return MobileResponse::error(trans_message('construction_journal.errors.access_denied'), 403);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 404);
         }

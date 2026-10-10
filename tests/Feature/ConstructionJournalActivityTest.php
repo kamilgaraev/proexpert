@@ -8,6 +8,9 @@ use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalSer
 use App\Enums\Activity\ActivityActionEnum;
 use App\Models\Activity\ActivityEvent;
 use App\Models\ConstructionJournal;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -24,6 +27,7 @@ class ConstructionJournalActivityTest extends TestCase
         $service = app(ConstructionJournalService::class);
 
         $journal = $service->createJournal($project, [
+            'contract_id' => Contract::query()->where('project_id', $project->id)->firstOrFail()->id,
             'name' => 'Общий журнал работ',
             'journal_number' => 'ЖР-1',
             'start_date' => '2026-05-01',
@@ -103,6 +107,15 @@ class ConstructionJournalActivityTest extends TestCase
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $user = User::factory()->create([
             'current_organization_id' => $organization->id,
+        ]);
+        $user->organizations()->attach($organization->id, ['is_active' => true, 'is_owner' => true, 'project_access_mode' => 'all_projects']);
+        $this->mock(AuthorizationService::class, function ($mock): void {
+            $mock->shouldReceive('can')->andReturn(true);
+        });
+        Contract::create([
+            'organization_id' => $organization->id, 'project_id' => $project->id,
+            'contractor_id' => Contractor::create(['organization_id' => $organization->id, 'name' => 'Подрядчик'])->id,
+            'number' => 'ACTIVITY-JOURNAL', 'date' => '2026-05-01', 'total_amount' => 1, 'status' => 'active',
         ]);
 
         return [$organization, $project, $user];

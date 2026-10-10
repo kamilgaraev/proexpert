@@ -39,8 +39,13 @@ class JournalApprovalService
 
     public function submitForApproval(ConstructionJournalEntry $entry, ?User $actor = null): ConstructionJournalEntry
     {
+        $actor ??= Auth::user();
+        if (! $actor || ! app(\App\Policies\ConstructionJournalEntryPolicy::class)->update($actor, $entry)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
         return DB::transaction(function () use ($entry, $actor): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
+            app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalOrganizationId($entry->journal);
             if (! $entry->status->canSubmit()) {
                 throw new DomainException(trans_message('construction_journal.errors.submit_invalid_status'));
             }
@@ -87,6 +92,7 @@ class JournalApprovalService
     {
         return DB::transaction(function () use ($entry, $approver, $override): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
+            app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalOrganizationId($entry->journal);
             if (! $entry->status->canApprove()) {
                 throw new DomainException(trans_message('construction_journal.errors.approve_invalid_status'));
             }
@@ -125,6 +131,7 @@ class JournalApprovalService
 
         return DB::transaction(function () use ($entry, $approver, $reason): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
+            app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalOrganizationId($entry->journal);
             if (! $entry->status->canReject()) {
                 throw new DomainException(trans_message('construction_journal.errors.reject_invalid_status'));
             }
@@ -156,12 +163,17 @@ class JournalApprovalService
         if ($journal->status !== JournalStatusEnum::ACTIVE) {
             throw new DomainException(trans_message('construction_journal.errors.journal_not_active'));
         }
+        $project = \App\Models\Project::query()->whereKey($journal->project_id)->lockForUpdate()->firstOrFail();
+        $journal->setRelation('project', $project);
 
-        return ConstructionJournalEntry::query()
+        $lockedEntry = ConstructionJournalEntry::query()
             ->whereKey($entry->getKey())
             ->where('journal_id', $journal->id)
             ->lockForUpdate()
             ->firstOrFail();
+        $lockedEntry->setRelation('journal', $journal);
+
+        return $lockedEntry;
     }
 
     private function factRelations(): array
@@ -253,63 +265,31 @@ class JournalApprovalService
 
     public function canApprove(User $user, ConstructionJournalEntry $entry): bool
     {
-        $journal = $entry->journal;
-        if (! $journal || $journal->organization_id !== $user->current_organization_id) {
-            return false;
-        }
-
-        if ($entry->created_by_user_id === $user->id && ! $this->isOrganizationOwner($user, (int) $journal->organization_id)) {
-            return false;
-        }
-
-        return $this->authorizationService->can($user, 'construction-journal.approve', [
-            'organization_id' => (int) $journal->organization_id,
-            'project_id' => (int) $journal->project_id,
-        ]);
-    }
-
-    private function isOrganizationOwner(User $user, int $organizationId): bool
-    {
-        return $user->isOrganizationOwner($organizationId)
-            || $user->organizations()
-                ->where('organization_user.organization_id', $organizationId)
-                ->wherePivot('is_owner', true)
-                ->wherePivot('is_active', true)
-                ->exists();
+        return app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canApprove($user, $entry);
     }
 
     public function getApprovalStats(User $user): array
     {
-        $journal = $user->current_organization_id
-            ? \App\Models\ConstructionJournal::where('organization_id', $user->current_organization_id)->first()
-            : null;
-
-        if (! $journal) {
-            return [
-                'pending_count' => 0,
-                'approved_today' => 0,
-                'rejected_today' => 0,
-            ];
+        $access = app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class);
+        $journalIds = [];
+        if ($user->current_organization_id) {
+            $projects = app(\App\Services\Project\UserProjectAccessService::class)
+                ->queryAccessibleProjects($user, (int) $user->current_organization_id)->get();
+            foreach ($projects as $project) {
+                if (! $access->hasPermission($user, $project, ['view', '*'])) {
+                    continue;
+                }
+                $journalIds = array_merge($journalIds, ConstructionJournal::query()
+                    ->where('project_id', $project->id)
+                    ->whereIn('performing_organization_id', $access->visiblePerformerIds($user, $project))
+                    ->pluck('id')->all());
+            }
         }
-
-        $pendingCount = \App\Models\ConstructionJournalEntry::where('journal_id', $journal->id)
-            ->where('status', JournalEntryStatusEnum::SUBMITTED)
-            ->count();
-
-        $approvedToday = \App\Models\ConstructionJournalEntry::where('journal_id', $journal->id)
-            ->where('status', JournalEntryStatusEnum::APPROVED)
-            ->whereDate('approved_at', today())
-            ->count();
-
-        $rejectedToday = \App\Models\ConstructionJournalEntry::where('journal_id', $journal->id)
-            ->where('status', JournalEntryStatusEnum::REJECTED)
-            ->whereDate('approved_at', today())
-            ->count();
-
+        $entries = ConstructionJournalEntry::query()->whereIn('journal_id', $journalIds);
         return [
-            'pending_count' => $pendingCount,
-            'approved_today' => $approvedToday,
-            'rejected_today' => $rejectedToday,
+            'pending_count' => (clone $entries)->where('status', JournalEntryStatusEnum::SUBMITTED)->count(),
+            'approved_today' => (clone $entries)->where('status', JournalEntryStatusEnum::APPROVED)->whereDate('approved_at', today())->count(),
+            'rejected_today' => (clone $entries)->where('status', JournalEntryStatusEnum::REJECTED)->whereDate('approved_at', today())->count(),
         ];
     }
 
@@ -368,6 +348,7 @@ class JournalApprovalService
             'organization_id' => $entry->journal->organization_id,
             'project_id' => $entry->journal->project_id,
             'actor_user_id' => $actor?->id ?? Auth::id() ?? $entry->created_by_user_id,
+            'actor_organization_id' => $actor?->current_organization_id,
             'event' => $event,
             'from_status' => $fromStatus->value,
             'to_status' => $toStatus->value,

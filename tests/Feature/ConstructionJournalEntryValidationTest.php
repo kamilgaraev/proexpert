@@ -33,6 +33,7 @@ class ConstructionJournalEntryValidationTest extends TestCase
         $user = User::factory()->create([
             'current_organization_id' => $organization->id,
         ]);
+        $user->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
         $project = Project::factory()->create([
             'organization_id' => $organization->id,
         ]);

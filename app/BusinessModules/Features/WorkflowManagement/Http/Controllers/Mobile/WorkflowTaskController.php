@@ -7,8 +7,10 @@ namespace App\BusinessModules\Features\WorkflowManagement\Http\Controllers\Mobil
 use App\BusinessModules\Features\WorkflowManagement\Http\Resources\MobileWorkflowTaskResource;
 use App\BusinessModules\Features\WorkflowManagement\Services\MobileWorkflowTaskService;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\MobileResponse;
+use App\Models\User;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -45,6 +47,7 @@ final class WorkflowTaskController extends Controller
             }
 
             $result = $this->service->paginateTasks(
+                $this->actor($request),
                 (int) $request->attributes->get('current_organization_id'),
                 $validated,
                 min((int) $request->input('per_page', 20), 50)
@@ -70,6 +73,8 @@ final class WorkflowTaskController extends Controller
             ]);
         } catch (ValidationException $exception) {
             return $this->validationFailed($exception);
+        } catch (BusinessLogicException $exception) {
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'index');
         }
@@ -83,11 +88,14 @@ final class WorkflowTaskController extends Controller
 
         try {
             return MobileResponse::success(new MobileWorkflowTaskResource($this->service->findTask(
+                $this->actor($request),
                 (int) $request->attributes->get('current_organization_id'),
                 $task
             )));
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 404);
+        } catch (BusinessLogicException $exception) {
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'show');
         }
@@ -120,6 +128,7 @@ final class WorkflowTaskController extends Controller
             ]);
 
             $model = $this->service->findTask(
+                $this->actor($request),
                 (int) $request->attributes->get('current_organization_id'),
                 $task
             );
@@ -127,7 +136,7 @@ final class WorkflowTaskController extends Controller
             return MobileResponse::success(
                 new MobileWorkflowTaskResource($this->service->addComment(
                     $model,
-                    (int) $request->user()?->id,
+                    $this->actor($request),
                     $validated['comment']
                 )),
                 trans_message('workflow_management.messages.comment_added')
@@ -136,6 +145,8 @@ final class WorkflowTaskController extends Controller
             return $this->validationFailed($exception);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
+        } catch (BusinessLogicException $exception) {
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, 'comment');
         }
@@ -155,14 +166,15 @@ final class WorkflowTaskController extends Controller
             };
             $validated = $this->validated($request, $rules);
             $model = $this->service->findTask(
+                $this->actor($request),
                 (int) $request->attributes->get('current_organization_id'),
                 $task
             );
 
             $updated = match ($action) {
-                'approve' => $this->service->approve($model, (int) $request->user()?->id, $validated['comment'] ?? null),
-                'reject' => $this->service->reject($model, (int) $request->user()?->id, $validated['reason']),
-                'request_changes' => $this->service->requestChanges($model, (int) $request->user()?->id, $validated['comment']),
+                'approve' => $this->service->approve($model, $this->actor($request), $validated['comment'] ?? null),
+                'reject' => $this->service->reject($model, $this->actor($request), $validated['reason']),
+                'request_changes' => $this->service->requestChanges($model, $this->actor($request), $validated['comment']),
             };
 
             return MobileResponse::success(
@@ -173,9 +185,21 @@ final class WorkflowTaskController extends Controller
             return $this->validationFailed($exception);
         } catch (DomainException $exception) {
             return MobileResponse::error($exception->getMessage(), 422);
+        } catch (BusinessLogicException $exception) {
+            return MobileResponse::error($exception->getMessage(), $exception->getCode() ?: 422);
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, $action);
         }
+    }
+
+    private function actor(Request $request): User
+    {
+        $actor = $request->user();
+        if (! $actor instanceof User) {
+            throw new BusinessLogicException(trans_message('workflow_management.errors.permission_denied'), 403);
+        }
+
+        return $actor;
     }
 
     private function ensurePermission(Request $request, string $permission): ?JsonResponse

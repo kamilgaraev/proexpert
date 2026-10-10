@@ -95,6 +95,7 @@ class JournalScheduleTaskResolver
         }
 
         return $entry->workVolumes
+            ->filter(fn (JournalWorkVolume $volume): bool => $volume->estimate_item_id !== null)
             ->every(fn (JournalWorkVolume $volume): bool => $this->resolveForVolume($entry, $volume) instanceof ScheduleTask);
     }
 
