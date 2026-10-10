@@ -60,8 +60,8 @@ class StoreContactFormRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'min:2', 'max:255'],
-            'email' => ['required', 'email', 'max:255'],
-            'phone' => ['nullable', 'string', 'max:20', 'regex:/^[\+]?[0-9\-\(\)\s]+$/'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'phone' => ['required', 'string', 'max:20', 'regex:/^\+?(?:[()\s-]*[0-9]){7,15}[()\s-]*$/'],
             'company' => ['nullable', 'string', 'max:255'],
             'company_role' => ['nullable', 'string', 'max:120'],
             'company_size' => ['nullable', 'string', 'max:120'],
@@ -91,9 +91,9 @@ class StoreContactFormRequest extends FormRequest
             'name.required' => trans_message('public_contact.validation.name_required', [], $locale),
             'name.min' => trans_message('public_contact.validation.name_min', ['min' => 2], $locale),
             'name.max' => trans_message('public_contact.validation.name_max', ['max' => 255], $locale),
-            'email.required' => trans_message('public_contact.validation.email_required', [], $locale),
             'email.email' => trans_message('public_contact.validation.email_email', [], $locale),
             'email.max' => trans_message('public_contact.validation.email_max', ['max' => 255], $locale),
+            'phone.required' => trans_message('public_contact.validation.phone_required', [], $locale),
             'phone.regex' => trans_message('public_contact.validation.phone_regex', [], $locale),
             'phone.max' => trans_message('public_contact.validation.phone_max', ['max' => 20], $locale),
             'company.max' => trans_message('public_contact.validation.company_max', ['max' => 255], $locale),

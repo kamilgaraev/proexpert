@@ -24,9 +24,9 @@ class PublicContactFormMail extends Mailable
     {
         return new Envelope(
             subject: 'Новая заявка с сайта МОСТ: ' . $this->contactForm->subject,
-            replyTo: [
-                new Address($this->contactForm->email, $this->contactForm->name),
-            ],
+            replyTo: $this->contactForm->email
+                ? [new Address($this->contactForm->email, $this->contactForm->name)]
+                : [],
         );
     }
 

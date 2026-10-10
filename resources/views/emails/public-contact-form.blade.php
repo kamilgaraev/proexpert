@@ -1,6 +1,6 @@
 <x-email-layout title="Новая заявка с сайта МОСТ">
 <p><strong>Имя:</strong> {{ $contactForm->name }}</p>
-    <p><strong>Email:</strong> {{ $contactForm->email }}</p>
+    <p><strong>Email:</strong> {{ $contactForm->email ?: 'Не указан' }}</p>
     <p><strong>Телефон:</strong> {{ $contactForm->phone ?: 'Не указан' }}</p>
     <p><strong>Компания:</strong> {{ $contactForm->company ?: 'Не указана' }}</p>
     <p><strong>Роль компании:</strong> {{ $contactForm->company_role ?: 'Не указана' }}</p>

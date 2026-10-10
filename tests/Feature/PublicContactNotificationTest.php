@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Mail;
 use Mockery;
 use RuntimeException;
+use Tests\Support\LegalAcceptanceFixture;
 use Tests\TestCase;
 
 class PublicContactNotificationTest extends TestCase
@@ -27,7 +28,10 @@ class PublicContactNotificationTest extends TestCase
         $telegram->shouldNotReceive('sendContactFormNotification');
         $this->app->instance(TelegramService::class, $telegram);
 
-        $contact = app(ContactFormService::class)->submit($this->payload());
+        $contact = app(ContactFormService::class)->submit([
+            ...$this->payload(),
+            'legal_documents' => LegalAcceptanceFixture::payload(['contactConsent'])['legal_documents'],
+        ]);
 
         self::assertSame('new', $contact->status);
         self::assertTrue($contact->notification_delivery['pending']);
@@ -63,6 +67,31 @@ class PublicContactNotificationTest extends TestCase
         Mail::assertSent(PublicContactFormMail::class, 1);
         self::assertTrue($notifications->deliver($contact->fresh()));
         Mail::assertSent(PublicContactFormMail::class, 1);
+    }
+
+    public function test_contact_without_email_still_notifies_sales_and_has_no_reply_to_address(): void
+    {
+        config(['telegram.notifications.contact_forms' => false, 'services.public_contact.recipients' => ['sales@example.test']]);
+        Mail::fake();
+        $contact = $this->contact();
+        $contact->update(['email' => null]);
+        $contact->refresh();
+        $mail = new PublicContactFormMail($contact);
+        $rendered = $mail->render();
+
+        self::assertNull($contact->email);
+        self::assertSame([], $mail->envelope()->replyTo);
+        self::assertStringContainsString('Не указан', $rendered);
+        self::assertStringContainsString($contact->phone, $rendered);
+        self::assertTrue(app(ContactFormNotificationService::class)->deliver($contact));
+        Mail::assertSent(PublicContactFormMail::class, fn (PublicContactFormMail $notification): bool => $notification->hasTo('sales@example.test'));
+    }
+
+    public function test_contact_with_email_preserves_reply_to_address(): void
+    {
+        $mail = new PublicContactFormMail($this->contact());
+
+        self::assertSame('buyer@example.test', $mail->envelope()->replyTo[0]->address);
     }
 
     public function test_email_failure_keeps_delivery_pending_and_telegram_is_not_resent(): void
@@ -119,7 +148,7 @@ class PublicContactNotificationTest extends TestCase
 
     private function payload(): array
     {
-        return ['name' => 'Test buyer', 'email' => 'buyer@example.test', 'subject' => 'Demo',
+        return ['name' => 'Test buyer', 'email' => 'buyer@example.test', 'phone' => '+7 900 123-45-67', 'subject' => 'Demo',
             'message' => 'Please show the application', 'consent_to_personal_data' => true,
             'consent_version' => 'test', 'page_source' => '/contact'];
     }
