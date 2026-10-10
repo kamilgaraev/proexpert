@@ -72,6 +72,9 @@ final readonly class ProcessDocumentUnit
         $context = $this->store->executionContext($claim);
 
         if ($context === null) {
+            if ($this->store->find($claim->unitId)?->status === DocumentProcessingUnitStatus::Superseded) {
+                return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Stale);
+            }
             $this->store->fail($claim, 'unit_scope_missing', hash('sha256', 'unit_scope_missing'), now()->toDateTimeImmutable());
 
             return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Stale);
@@ -95,6 +98,9 @@ final readonly class ProcessDocumentUnit
                 );
             }
             if (! $published) {
+                if ($this->store->find($claim->unitId)?->status === DocumentProcessingUnitStatus::Superseded) {
+                    return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Stale);
+                }
                 throw new TypedFailureException(
                     FailureCategory::Recoverable,
                     'unit_claim_lost',

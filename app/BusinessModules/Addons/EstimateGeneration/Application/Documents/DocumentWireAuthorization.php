@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiCost;
 use Brick\Math\BigDecimal;
 use DateTimeImmutable;
@@ -11,7 +14,7 @@ use Illuminate\Database\Connection;
 
 final readonly class DocumentWireAuthorization
 {
-    public function __construct(private Connection $database) {}
+    public function __construct(private Connection $database, private ?EstimateGenerationActionAuthorization $authorization = null) {}
 
     public function denialReason(string $attemptId, DateTimeImmutable $now, AiCost $costReservation): ?string
     {
@@ -21,6 +24,7 @@ final readonly class DocumentWireAuthorization
             ->first([
                 'attempts.organization_id', 'attempts.project_id', 'attempts.session_id',
                 'attempts.document_id', 'attempts.processing_lineage_id', 'units.source_version',
+                'attempts.unit_id', 'attempts.logical_request_fingerprint',
             ]);
         if ($scope === null) {
             return 'document_processing_stopped';
@@ -31,8 +35,9 @@ final readonly class DocumentWireAuthorization
             ->where('organization_id', $scope->organization_id)
             ->where('project_id', $scope->project_id)
             ->lockForUpdate()
-            ->first(['analysis_payload']);
-        if ($session === null) {
+            ->first(['id', 'organization_id', 'project_id', 'status', 'resume_status', 'input_payload', 'analysis_payload']);
+        if ($session === null || in_array((string) $session->status, ['cancelled', 'archived', 'applied', 'applying'], true)
+            || ((string) $session->status === 'failed' && (string) $session->resume_status !== 'processing_documents')) {
             return 'document_processing_stopped';
         }
         $document = $this->database->table('estimate_generation_documents')
@@ -43,6 +48,20 @@ final readonly class DocumentWireAuthorization
             ->lockForUpdate()
             ->first();
         if ($document === null || ! hash_equals((string) $document->source_version, (string) $scope->source_version)) {
+            return 'document_processing_stopped';
+        }
+        $input = is_string($session->input_payload) ? json_decode($session->input_payload, true) : $session->input_payload;
+        $actor = EstimateGenerationExecutionActor::resolve(is_array($input) ? $input : [], (int) $document->user_id);
+        if ($actor === null) {
+            return 'document_processing_stopped';
+        }
+        $subject = new EstimateGenerationSession;
+        $subject->setRawAttributes((array) $session, true);
+        $subject->exists = true;
+        try {
+            ($this->authorization ?? app(EstimateGenerationActionAuthorization::class))
+                ->authorize($actor, $subject, 'estimate_generation.generate');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
             return 'document_processing_stopped';
         }
         if ((string) $document->processing_control_status !== 'active') {
@@ -60,6 +79,18 @@ final readonly class DocumentWireAuthorization
         $lineage = is_string($meta['processing_attempt_id'] ?? null) ? $meta['processing_attempt_id'] : null;
         if ($lineage !== null && ! hash_equals($lineage, (string) $scope->processing_lineage_id)) {
             return 'document_processing_stopped';
+        }
+        $logicalAttempts = $this->database->table('estimate_generation_vision_physical_attempts')
+            ->where('organization_id', $scope->organization_id)->where('project_id', $scope->project_id)
+            ->where('session_id', $scope->session_id)->where('unit_id', $scope->unit_id)
+            ->where('processing_lineage_id', $scope->processing_lineage_id)
+            ->where('logical_request_fingerprint', $scope->logical_request_fingerprint);
+        if ((clone $logicalAttempts)->where('attempt_id', '<>', $attemptId)
+            ->whereIn('state', ['wire_started', 'ambiguous'])->exists()) {
+            return 'vision_wire_outcome_ambiguous';
+        }
+        if ((clone $logicalAttempts)->whereNotNull('wire_started_at')->count() >= 3) {
+            return 'physical_attempt_limit_reached';
         }
 
         $limit = $document->processing_cost_limit === null
@@ -82,26 +113,13 @@ final readonly class DocumentWireAuthorization
             && is_string($costReservation->amount)
             && preg_match('/^(?:0|[1-9]\d*)(?:\.\d+)?$/D', $costReservation->amount) === 1;
         $reservation = $reservationAvailable ? (string) $costReservation->amount : '0';
-        if ($reservationAvailable) {
-            $this->database->table('estimate_generation_vision_physical_attempts')
-                ->where('organization_id', $scope->organization_id)
-                ->where('project_id', $scope->project_id)
-                ->where('session_id', $scope->session_id)
-                ->whereIn('state', ['wire_started', 'response_received', 'completed', 'ambiguous'])
-                ->whereNull('cost_reservation_amount')
-                ->update([
-                    'cost_reservation_amount' => $reservation,
-                    'cost_reservation_currency' => 'RUB',
-                    'updated_at' => $now,
-                ]);
-        }
         $documentExposure = $this->exposure(
             (int) $scope->organization_id, (int) $scope->project_id, (int) $scope->session_id,
-            (int) $scope->document_id, $reservation,
+            (int) $scope->document_id,
         );
         $sessionExposure = $this->exposure(
             (int) $scope->organization_id, (int) $scope->project_id, (int) $scope->session_id,
-            null, $reservation,
+            null,
         );
         $documentProjected = BigDecimal::of($documentExposure['spent'])
             ->plus($documentExposure['reserved'])->plus($reservation);
@@ -153,7 +171,6 @@ final readonly class DocumentWireAuthorization
         int $projectId,
         int $sessionId,
         ?int $documentId,
-        string $legacyReservation,
     ): array {
         $documentUsage = $documentId === null ? '' : ' AND usage.document_id = ?';
         $usageBindings = [$organizationId, $projectId, $sessionId];
@@ -180,19 +197,16 @@ WHERE usage.organization_id = ?
 SQL, $usageBindings);
 
         $documentAttempts = $documentId === null ? '' : ' AND attempts.document_id = ?';
-        $attemptBindings = [$legacyReservation, $organizationId, $projectId, $sessionId];
+        $attemptBindings = [$organizationId, $projectId, $sessionId];
         if ($documentId !== null) {
             $attemptBindings[] = $documentId;
         }
         $attempts = $this->database->selectOne(<<<SQL
-SELECT COALESCE(SUM(
-           CASE
-               WHEN attempts.cost_reservation_amount IS NOT NULL
-                AND attempts.cost_reservation_currency = 'RUB'
-               THEN attempts.cost_reservation_amount
-               ELSE ?::numeric
-           END
-       ), 0)::numeric(20,8) AS reserved
+SELECT COALESCE(SUM(attempts.cost_reservation_amount) FILTER (
+           WHERE attempts.cost_reservation_currency = 'RUB'
+       ), 0)::numeric(20,8) AS reserved,
+       COUNT(*) FILTER (WHERE attempts.cost_reservation_amount IS NULL
+           OR attempts.cost_reservation_currency IS DISTINCT FROM 'RUB')::int AS unknown_count
 FROM estimate_generation_vision_physical_attempts attempts
 WHERE attempts.organization_id = ?
   AND attempts.project_id = ?
@@ -210,7 +224,7 @@ SQL, $attemptBindings);
         return [
             'spent' => (string) ($usage?->spent ?? '0'),
             'reserved' => (string) ($attempts?->reserved ?? '0'),
-            'unknown' => (int) ($usage?->unknown_count ?? 0),
+            'unknown' => (int) ($usage?->unknown_count ?? 0) + (int) ($attempts?->unknown_count ?? 0),
         ];
     }
 }

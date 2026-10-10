@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use InvalidArgumentException;
 
 final readonly class EstimateComposerInput
@@ -26,6 +27,7 @@ final readonly class EstimateComposerInput
         public array $candidates,
         public array $missingDocuments,
         public string $contractVersion,
+        public ?AiSessionWireScope $wireScope = null,
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
@@ -12,9 +14,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 
-final readonly class StopEstimateGenerationDocumentProcessing
+final readonly class StopEstimateGenerationDocumentProcessing implements SessionProcessingStopper
 {
     public function __construct(
         private AuthorizationService $authorization,
@@ -39,7 +42,8 @@ final readonly class StopEstimateGenerationDocumentProcessing
             $expectedSourceVersion,
             $keyHash,
         ): array {
-            $lockedSession = EstimateGenerationSession::query()->lockForUpdate()->findOrFail($session->getKey());
+            $lockedSession = EstimateGenerationSession::query()->where('organization_id', $session->organization_id)
+                ->where('project_id', $session->project_id)->lockForUpdate()->findOrFail($session->getKey());
             $lockedDocument = EstimateGenerationDocument::query()
                 ->where('organization_id', $lockedSession->organization_id)
                 ->where('project_id', $lockedSession->project_id)
@@ -49,11 +53,10 @@ final readonly class StopEstimateGenerationDocumentProcessing
             if ((int) $lockedSession->state_version !== $expectedVersion) {
                 throw new DocumentProcessingControlConflict('stale_session');
             }
-            if ((int) $actor->current_organization_id !== (int) $lockedDocument->organization_id
-                || ! $this->authorization->can($actor, 'estimate_generation.review', [
-                    'organization_id' => (int) $lockedDocument->organization_id,
-                    'project_id' => (int) $lockedDocument->project_id,
-                ])) {
+            try {
+                (new EstimateGenerationActionAuthorizer($this->authorization))
+                    ->authorize($actor, $lockedSession, 'estimate_generation.review');
+            } catch (AuthorizationException) {
                 throw new DocumentProcessingControlConflict('forbidden');
             }
             if (! hash_equals((string) $lockedDocument->source_version, $expectedSourceVersion)) {
@@ -74,54 +77,11 @@ final readonly class StopEstimateGenerationDocumentProcessing
 
                 return [$lockedSession, $lockedDocument, 'already_stopped', $attemptId];
             }
+            if (! EstimateGenerationMutationPolicy::canMutateDocuments($lockedSession)) {
+                throw new DocumentProcessingControlConflict('stale_session');
+            }
 
-            $cancelledUnitIds = [];
-            $units = EstimateGenerationProcessingUnit::query()
-                ->where('organization_id', $lockedDocument->organization_id)
-                ->where('project_id', $lockedDocument->project_id)
-                ->where('session_id', $lockedDocument->session_id)
-                ->where('document_id', $lockedDocument->id)
-                ->where('source_version', $expectedSourceVersion)
-                ->whereIn('status', ['pending', 'running'])
-                ->lockForUpdate()
-                ->get();
-            foreach ($units as $unit) {
-                if ($unit->status === DocumentProcessingUnitStatus::Running
-                    && $this->wireStarted((int) $unit->id, $attemptId)) {
-                    continue;
-                }
-                $this->releasePreWireAttempts((int) $unit->id, $attemptId, now());
-                $unitMeta = is_array($unit->metadata) ? $unit->metadata : [];
-                $unit->forceFill([
-                    'status' => DocumentProcessingUnitStatus::Superseded,
-                    'claim_token' => null,
-                    'lease_expires_at' => null,
-                    'next_dispatch_at' => null,
-                    'metadata' => [
-                        ...$unitMeta,
-                        'processing_control_status' => 'cancelled',
-                        'processing_control_reason' => 'operator_stop',
-                    ],
-                ])->save();
-                $cancelledUnitIds[] = (int) $unit->id;
-            }
-            if ($cancelledUnitIds !== []) {
-                EstimateGenerationDocumentPage::query()
-                    ->where('organization_id', $lockedDocument->organization_id)
-                    ->where('project_id', $lockedDocument->project_id)
-                    ->where('session_id', $lockedDocument->session_id)
-                    ->where('document_id', $lockedDocument->id)
-                    ->where('source_version', $expectedSourceVersion)
-                    ->whereIn('processing_unit_id', $cancelledUnitIds)
-                    ->get()
-                    ->each(function (EstimateGenerationDocumentPage $page): void {
-                        $flags = is_array($page->quality_flags) ? $page->quality_flags : [];
-                        $page->forceFill([
-                            'status' => 'needs_review',
-                            'quality_flags' => array_values(array_unique([...$flags, 'processing_cancelled'])),
-                        ])->save();
-                    });
-            }
+            $cancelledUnitIds = $this->stopUnitsForDocument($lockedDocument, $expectedSourceVersion, $attemptId);
 
             $now = now();
             $explicitRetry = is_array($meta['explicit_document_retry'] ?? null)
@@ -197,6 +157,104 @@ final readonly class StopEstimateGenerationDocumentProcessing
         );
     }
 
+    public function haltForSession(EstimateGenerationSession $session, User|\App\Models\SystemAdmin $actor): void
+    {
+        DB::transaction(function () use ($session, $actor): void {
+            $locked = EstimateGenerationSession::query()->whereKey($session->getKey())
+                ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+                ->lockForUpdate()->firstOrFail();
+            (new EstimateGenerationActionAuthorizer($this->authorization))
+                ->authorize($actor, $locked, 'estimate_generation.generate');
+            if (! in_array($locked->status, [\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus::Cancelled,
+                \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus::Archived], true)) {
+                throw new DocumentProcessingControlConflict('stale_session');
+            }
+            $documents = EstimateGenerationDocument::query()->where('organization_id', $locked->organization_id)
+                ->where('project_id', $locked->project_id)->where('session_id', $locked->id)->orderBy('id')->lockForUpdate()->get();
+            $reason = 'session_'.$locked->status->value;
+            foreach ($documents as $document) {
+                $meta = is_array($document->meta) ? $document->meta : [];
+                $attemptId = is_string($meta['processing_attempt_id'] ?? null) ? $meta['processing_attempt_id'] : null;
+                $this->stopUnitsForDocument($document, (string) $document->source_version, $attemptId, true, $reason);
+                $document->forceFill([
+                    'status' => $document->status === 'completed' ? 'completed' : 'needs_review',
+                    'processing_control_status' => 'cancelled',
+                    'processing_control_source_version' => (string) $document->source_version,
+                    'processing_control_attempt_id' => $attemptId,
+                    'processing_control_reason' => $reason,
+                    'processing_control_at' => now(),
+                    'units_reconcile_claim_token' => null,
+                    'units_reconcile_lease_expires_at' => null,
+                    'meta' => [...$meta, 'session_processing_stop' => [
+                        'reason' => $reason, 'state_version' => (int) $locked->state_version,
+                        'actor_type' => $actor instanceof User ? 'user' : 'system_admin',
+                        'actor_id' => (int) $actor->id,
+                    ]],
+                ])->save();
+            }
+        }, 3);
+    }
+
+    private function stopUnitsForDocument(
+        EstimateGenerationDocument $document,
+        string $sourceVersion,
+        ?string $attemptId,
+        bool $stopInFlight = false,
+        string $reason = 'operator_stop',
+    ): array {
+        $cancelledUnitIds = [];
+        $units = EstimateGenerationProcessingUnit::query()
+            ->where('organization_id', $document->organization_id)
+            ->where('project_id', $document->project_id)
+            ->where('session_id', $document->session_id)
+            ->where('document_id', $document->id)
+            ->where('source_version', $sourceVersion)
+            ->whereIn('status', ['pending', 'running'])
+            ->lockForUpdate()
+            ->get();
+        foreach ($units as $unit) {
+            if (! $stopInFlight && $unit->status === DocumentProcessingUnitStatus::Running
+                && $this->wireStarted((int) $unit->id, $attemptId)) {
+                continue;
+            }
+            if (! $stopInFlight) {
+                $this->releasePreWireAttempts((int) $unit->id, $attemptId, now());
+            }
+            $unitMeta = is_array($unit->metadata) ? $unit->metadata : [];
+            $unit->forceFill([
+                'status' => DocumentProcessingUnitStatus::Superseded,
+                'claim_token' => null,
+                'lease_expires_at' => null,
+                'next_dispatch_at' => null,
+                'metadata' => [
+                    ...$unitMeta,
+                    'processing_control_status' => 'cancelled',
+                    'processing_control_reason' => $reason,
+                ],
+            ])->save();
+            $cancelledUnitIds[] = (int) $unit->id;
+        }
+        if ($cancelledUnitIds !== []) {
+            EstimateGenerationDocumentPage::query()
+                ->where('organization_id', $document->organization_id)
+                ->where('project_id', $document->project_id)
+                ->where('session_id', $document->session_id)
+                ->where('document_id', $document->id)
+                ->where('source_version', $sourceVersion)
+                ->whereIn('processing_unit_id', $cancelledUnitIds)
+                ->get()
+                ->each(function (EstimateGenerationDocumentPage $page): void {
+                    $flags = is_array($page->quality_flags) ? $page->quality_flags : [];
+                    $page->forceFill([
+                        'status' => 'needs_review',
+                        'quality_flags' => array_values(array_unique([...$flags, 'processing_cancelled'])),
+                    ])->save();
+                });
+        }
+
+        return $cancelledUnitIds;
+    }
+
     private function invalidateCancelledAggregateIfStale(
         EstimateGenerationDocument $document,
         string $sourceVersion,
@@ -248,8 +306,16 @@ final readonly class StopEstimateGenerationDocumentProcessing
             ->where('unit_id', $unitId)
             ->where('processing_lineage_id', $attemptId)
             ->where('state', 'pre_wire')
-            ->lockForUpdate()
             ->pluck('attempt_id');
+        if ($attemptIds->isEmpty()) {
+            return;
+        }
+        DB::table('estimate_generation_ai_role_runs')
+            ->whereIn('physical_attempt_id', $attemptIds)
+            ->orderBy('id')->lockForUpdate()->get(['id']);
+        $attemptIds = DB::table('estimate_generation_vision_physical_attempts')
+            ->whereIn('attempt_id', $attemptIds)->where('state', 'pre_wire')
+            ->orderBy('attempt_id')->lockForUpdate()->pluck('attempt_id');
         if ($attemptIds->isEmpty()) {
             return;
         }

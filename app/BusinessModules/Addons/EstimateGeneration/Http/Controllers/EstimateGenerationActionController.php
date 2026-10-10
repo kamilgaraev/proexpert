@@ -153,12 +153,15 @@ final class EstimateGenerationActionController extends Controller
                 (int) $request->user()->current_organization_id,
                 (int) $project->getKey(),
                 (int) $request->validated('state_version'),
+                $request->user(),
             ));
 
             return AdminResponse::success(
                 $this->sessionPayload($updated),
                 trans_message('estimate_generation.session_retried'),
             );
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (HttpExceptionInterface $exception) {
@@ -221,9 +224,12 @@ final class EstimateGenerationActionController extends Controller
                     : (is_string($session->draft_payload['artifact_hash'] ?? null)
                         ? $session->draft_payload['artifact_hash']
                         : null),
+                actor: $request->user(),
             ));
 
             return AdminResponse::success($result->toArray(), trans_message('estimate_generation.draft_applied'));
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (ValidationException $e) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState $e) {
@@ -299,12 +305,15 @@ final class EstimateGenerationActionController extends Controller
                 $session,
                 (int) $request->input('state_version'),
                 $event,
+                $request->user(),
             );
 
             return AdminResponse::success(
                 $this->sessionPayload($updated),
                 trans_message($messageKey),
             );
+        } catch (AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (HttpExceptionInterface $exception) {

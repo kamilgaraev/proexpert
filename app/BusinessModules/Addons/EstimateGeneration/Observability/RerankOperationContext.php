@@ -16,6 +16,8 @@ final readonly class RerankOperationContext
         public string $inputVersion,
         public string $workItemKey,
         public int $logicalAttempt,
+        public ?int $stateVersion = null,
+        public ?string $generationAttemptId = null,
     ) {
         if (min($organizationId, $projectId, $sessionId, $logicalAttempt) < 1
             || preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $checkpointClaimToken) !== 1
@@ -31,6 +33,8 @@ final readonly class RerankOperationContext
         return new self((int) ($context['organization_id'] ?? 0), (int) ($context['project_id'] ?? 0),
             (int) ($context['session_id'] ?? 0), (string) ($context['checkpoint_claim_token'] ?? ''),
             (string) ($context['input_version'] ?? ''), (string) ($context['work_item_key'] ?? ''),
-            (int) ($context['logical_attempt'] ?? 0));
+            (int) ($context['logical_attempt'] ?? 0),
+            isset($context['state_version']) ? (int) $context['state_version'] : null,
+            is_string($context['generation_attempt_id'] ?? null) ? $context['generation_attempt_id'] : null);
     }
 }

@@ -70,5 +70,12 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
         if ($existing === null || ! hash_equals((string) $existing->immutable_fingerprint, $data->immutableFingerprint)) {
             throw new UsageInvariantViolation('AI usage attempt collision.');
         }
+        $this->database->table('estimate_generation_vision_physical_attempts')
+            ->where('attempt_id', $data->context->attemptId)->where('organization_id', $data->context->organizationId)
+            ->where('project_id', $data->context->projectId)->where('session_id', $data->context->sessionId)
+            ->whereNull('unit_id')->where('state', 'response_received')->update([
+                'state' => 'completed', 'usage_recorded' => true, 'owner_token' => null,
+                'lease_expires_at' => null, 'updated_at' => now(),
+            ]);
     }
 }

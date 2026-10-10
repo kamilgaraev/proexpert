@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Decision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use InvalidArgumentException;
 
 final readonly class EstimateComposerInputFactory
@@ -32,6 +33,7 @@ final readonly class EstimateComposerInputFactory
         array $candidates,
         array $derivedQuantities,
         array $missingDocuments,
+        ?AiSessionWireScope $wireScope = null,
     ): EstimateComposerInput {
         $capture = $this->models->snapshotForPlanning(
             $organizationId,
@@ -79,6 +81,7 @@ final readonly class EstimateComposerInputFactory
             candidates: $candidates,
             missingDocuments: $missingDocuments,
             contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
+            wireScope: $wireScope,
         );
     }
 

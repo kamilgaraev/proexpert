@@ -29,6 +29,7 @@ final readonly class ProjectUnderstandingCoordinator
         int $sessionId,
         string $checkpointClaimToken,
         int $logicalAttempt,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope $wireScope = null,
     ): ProjectUnderstandingResult {
         $preflight = $this->models->understandingPreflight(
             $organizationId,
@@ -144,6 +145,7 @@ final readonly class ProjectUnderstandingCoordinator
                 'geometry_expert' => $roleFingerprints['geometry_expert'],
             ],
             RunProjectSynthesis::PROMPT_CONTRACT,
+            $wireScope,
         );
         $sourceVersion = $synthesisInput->aggregateSourceVersion();
         $inputFingerprint = $synthesisInput->fingerprint();

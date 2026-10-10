@@ -22,13 +22,13 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Mockery;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
-final class ExplicitDocumentRetryPostgresContractTest extends TestCase
+final class ExplicitDocumentRetryPostgresContractTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     public function createApplication()
     {
@@ -53,8 +53,9 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             ?? Organization::factory()->create(['id' => 38]);
         Project::query()->find(52)
             ?? Project::factory()->for($organization)->create(['id' => 52]);
-        User::query()->find(7)
-            ?? User::factory()->create(['id' => 7, 'current_organization_id' => $organization->id]);
+        $user = User::query()->find(7)
+            ?? User::factory()->create(['id' => 7, 'current_organization_id' => $organization->id, 'is_active' => true]);
+        $user->organizations()->syncWithoutDetaching([$organization->id => ['is_active' => true, 'is_owner' => false, 'project_access_mode' => 'all_projects']]);
     }
 
     protected function tearDown(): void
@@ -133,7 +134,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         }
 
         $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->allows('can')->andReturnTrue();
+        $authorization->allows('canCurrent')->andReturnTrue();
         $policy = new EstimateGenerationMutationPolicy;
         $reconciler = Mockery::mock(DocumentMutationSessionReconciler::class);
         $reconciler->expects('changed')->twice()->andReturn($session);
@@ -147,8 +148,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             new ExplicitDocumentRetryEligibility,
             new ResetDocumentProcessingUnitsForAttempt,
         );
-        $actor = new User;
-        $actor->forceFill(['id' => 7, 'current_organization_id' => 38]);
+        $actor = User::query()->findOrFail(7);
         $key = (string) Str::uuid();
 
         try {
@@ -343,7 +343,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
         ]);
 
         $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->allows('can')->andReturnTrue();
+        $authorization->allows('canCurrent')->andReturnTrue();
         $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
         $readiness->allows('evaluate')->andReturn(['summary' => ['pending_count' => 1]]);
         $service = new RetryEstimateGenerationDocument(
@@ -354,8 +354,7 @@ final class ExplicitDocumentRetryPostgresContractTest extends TestCase
             new ExplicitDocumentRetryEligibility,
             new ResetDocumentProcessingUnitsForAttempt,
         );
-        $actor = new User;
-        $actor->forceFill(['id' => 7, 'current_organization_id' => 38]);
+        $actor = User::query()->findOrFail(7);
 
         $result = $service->handle(
             $session,

@@ -97,6 +97,8 @@ final class NormativeWorkIntentFactory
             (string) $context['checkpoint_claim_token'], (string) $context['input_version'], (int) $context['logical_attempt'],
             'normative-rerank-prompt-v1', 'normative-rerank-v1', ($this->modelSet ?? new NormativeRerankerModelSet)->version(),
             $this->evidence($context['source_refs'] ?? []),
+            isset($context['state_version']) ? (int) $context['state_version'] : null,
+            is_string($context['generation_attempt_id'] ?? null) ? $context['generation_attempt_id'] : null,
         );
     }
 

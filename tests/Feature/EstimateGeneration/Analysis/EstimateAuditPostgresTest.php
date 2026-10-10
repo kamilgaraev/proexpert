@@ -17,29 +17,19 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\PostgresConnection;
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class EstimateAuditPostgresTest extends TestCase
+final class EstimateAuditPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     private int $organizationId;
 
     private int $projectId;
 
     private int $sessionId;
-
-    public function createApplication(): Application
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
-
-        return $app;
-    }
 
     #[Test]
     public function three_cycle_audit_persists_once_and_complete_replay_does_not_call_model_again(): void
@@ -48,7 +38,7 @@ final class EstimateAuditPostgresTest extends TestCase
         self::assertInstanceOf(ApplyComposerCorrectionCycle::class, $this->app->make(ApplyComposerCorrectionCycle::class));
         [$connection, $schema] = $this->fixture();
         try {
-            $model = new PostgresRecordedEstimateAuditModel;
+            $model = new PostgresRecordedEstimateAuditModel($connection);
             $repository = new EloquentAiRoleRunRepository($connection, 180);
             $cycles = new ApplyComposerCorrectionCycle(
                 new RunEstimateAudit($repository, $model, 'openai/gpt-5-mini'),
@@ -91,11 +81,7 @@ final class EstimateAuditPostgresTest extends TestCase
     {
         $connection = $this->app->make('db')->connection();
         self::assertInstanceOf(PostgresConnection::class, $connection);
-        self::assertTrue(
-            $connection->getDatabaseName() === 'most_backend_testing'
-                || ($connection->getDatabaseName() === 'most_ai_estimator_contract'
-                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
-        );
+        self::assertStringEndsWith('_testing', $connection->getDatabaseName());
         $constraints = $connection->table('pg_constraint')
             ->whereIn('conname', ['eg_usage_stage_ck', 'eg_usage_operation_ck', 'eg_usage_stage_operation_ck'])
             ->selectRaw('conname, pg_get_constraintdef(oid) AS definition, convalidated')
@@ -144,6 +130,9 @@ final class EstimateAuditPostgresTest extends TestCase
             self::assertSame('owned', $owned->disposition);
             self::assertSame('busy', $busy->disposition);
             $first->startPhysicalAttempt($owned->runId, $ownerOne, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0');
+            $connection->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0')
+                ->update(['state' => 'response_received']);
             $first->complete($owned->runId, $ownerOne, new AiRoleRunResult(
                 ['accepted' => true, 'findings' => []],
                 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0',
@@ -164,11 +153,7 @@ final class EstimateAuditPostgresTest extends TestCase
         $connection = $this->app->make('db')->connection();
         self::assertInstanceOf(PostgresConnection::class, $connection);
         self::assertSame('pgsql', $connection->getDriverName());
-        self::assertTrue(
-            $connection->getDatabaseName() === 'most_backend_testing'
-                || ($connection->getDatabaseName() === 'most_ai_estimator_contract'
-                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
-        );
+        self::assertStringEndsWith('_testing', $connection->getDatabaseName());
         $connection->statement("SET statement_timeout TO '5000ms'");
         $connection->statement("SET lock_timeout TO '5000ms'");
         $schema = 'public';
@@ -262,10 +247,15 @@ final class PostgresRecordedEstimateAuditModel implements EstimateAuditModel
 {
     public int $calls = 0;
 
+    public function __construct(private readonly PostgresConnection $connection) {}
+
     public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
     {
         $this->calls++;
         $onAttemptStarted('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa'.$input->cycle);
+        $this->connection->table('estimate_generation_vision_physical_attempts')
+            ->where('attempt_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa'.$input->cycle)
+            ->update(['state' => 'response_received']);
         if ($input->cycle === 2) {
             return ['accepted' => true, 'findings' => []];
         }

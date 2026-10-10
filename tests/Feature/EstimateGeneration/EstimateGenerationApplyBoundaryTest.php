@@ -7,12 +7,14 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationTransitionMap;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -73,7 +75,7 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
 
         $this->expectException(ModelNotFoundException::class);
 
-        $useCase->handle(new ApplyGeneratedEstimateCommand(42, 99, 77, 5));
+        $useCase->handle(new ApplyGeneratedEstimateCommand(42, 99, 77, 5, actor: $this->actor()));
     }
 
     #[Test]
@@ -84,7 +86,7 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
         $useCase = $this->useCase($session, $writer);
 
         try {
-            $useCase->handle(new ApplyGeneratedEstimateCommand(42, 10, 20, 4));
+            $useCase->handle(new ApplyGeneratedEstimateCommand(42, 10, 20, 4, actor: $this->actor()));
             self::fail('Expected stale state exception.');
         } catch (StaleEstimateGenerationState) {
             self::assertSame(0, $writer->calls);
@@ -153,11 +155,18 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
         GeneratedEstimateWriter $writer,
     ): TestableApplyGeneratedEstimate {
         $store = new ApplyInMemoryStateStore($session);
+        $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
+        $authorization->method('authorize')->willReturnCallback(static function (User $actor, EstimateGenerationSession $loaded, string $permission): void {
+            self::assertSame('estimate_generation.apply', $permission);
+            self::assertSame(10, (int) $actor->current_organization_id);
+            self::assertSame(10, (int) $loaded->organization_id);
+        });
 
         return new TestableApplyGeneratedEstimate(
             $writer,
             new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store),
             $session,
+            $authorization,
         );
     }
 
@@ -177,7 +186,12 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
 
     private function command(): ApplyGeneratedEstimateCommand
     {
-        return new ApplyGeneratedEstimateCommand(42, 10, 20, 5);
+        return new ApplyGeneratedEstimateCommand(42, 10, 20, 5, actor: $this->actor());
+    }
+
+    private function actor(): User
+    {
+        return new User(['current_organization_id' => 10, 'is_active' => true]);
     }
 }
 
@@ -206,8 +220,9 @@ final class TestableApplyGeneratedEstimate extends ApplyGeneratedEstimate
         GeneratedEstimateWriter $writer,
         EstimateGenerationWorkflow $workflow,
         private EstimateGenerationSession $session,
+        EstimateGenerationActionAuthorization $authorization,
     ) {
-        parent::__construct($writer, $workflow);
+        parent::__construct($writer, $workflow, $authorization);
     }
 
     protected function transaction(callable $callback): mixed

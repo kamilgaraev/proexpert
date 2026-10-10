@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use InvalidArgumentException;
 
 final readonly class ProjectSynthesisInput
@@ -25,6 +26,7 @@ final readonly class ProjectSynthesisInput
         public array $decisions,
         public array $roleFingerprints,
         public string $contractVersion,
+        public ?AiSessionWireScope $wireScope = null,
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || $sourceVersions === [] || ! array_is_list($sourceVersions)

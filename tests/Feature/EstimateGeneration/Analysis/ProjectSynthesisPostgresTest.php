@@ -26,14 +26,14 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class ProjectSynthesisPostgresTest extends TestCase
+final class ProjectSynthesisPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     public function createApplication()
     {
@@ -79,7 +79,7 @@ final class ProjectSynthesisPostgresTest extends TestCase
             self::assertSame($scope[0], (int) $attempt->organization_id);
             self::assertSame($scope[1], (int) $attempt->project_id);
             self::assertSame($scope[2], (int) $attempt->session_id);
-            self::assertSame('wire_started', $attempt->state);
+            self::assertSame('pre_wire', $attempt->state);
             self::assertSame($attemptId, DB::table('estimate_generation_ai_role_runs')
                 ->where('id', $claim->runId)
                 ->value('physical_attempt_id'));
@@ -178,11 +178,7 @@ final class ProjectSynthesisPostgresTest extends TestCase
     public function synthesis_projection_is_atomic_replayable_and_fenced_by_exact_snapshot(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertTrue(
-            DB::getDatabaseName() === 'most_backend_testing'
-                || (DB::getDatabaseName() === 'most_ai_estimator_contract'
-                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
-        );
+        self::assertStringEndsWith('_testing', DB::getDatabaseName());
         $this->ensureSchema();
         DB::beginTransaction();
         try {
@@ -397,6 +393,9 @@ final class RecordedSynthesisWireClient implements RerankWireClient
     public function call(string $model, array $messages, array $options): array
     {
         $this->calls++;
+        DB::table('estimate_generation_vision_physical_attempts')
+            ->where('attempt_id', $options['estimate_generation_attempt']['attempt_id'])
+            ->where('state', 'pre_wire')->update(['state' => 'wire_started', 'wire_started_at' => now()]);
 
         return [
             'content' => json_encode([

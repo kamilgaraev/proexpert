@@ -14,7 +14,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorag
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 class DocumentParsingService
 {
@@ -32,12 +34,20 @@ class DocumentParsingService
         $this->documentReconciler->assertMutable($session);
         $documents = collect();
 
-        foreach ($files as $file) {
-            $document = $this->storageService->storeUploadedDocument($session, $file, $user);
-            $documents->push($document);
+        try {
+            DB::transaction(function () use ($session, $files, $user, $documents): void {
+                foreach ($files as $file) {
+                    $documents->push($this->storageService->storeUploadedDocument($session, $file, $user));
+                }
+                $this->startProcessing($session, $documents);
+                foreach ($documents as $document) {
+                    $document->refresh();
+                }
+            }, 1);
+        } catch (Throwable $exception) {
+            $this->rollbackStoredDocuments($session, $documents);
+            throw $exception;
         }
-
-        $this->startProcessing($session, $documents);
 
         return $documents;
     }
@@ -56,16 +66,34 @@ class DocumentParsingService
             ->all();
         $documents = collect();
 
-        foreach ($sourceDocuments as $sourceDocument) {
-            if (in_array((int) $sourceDocument->id, $existingSourceIds, true)) {
-                continue;
-            }
-            $documents->push($this->storageService->storeReusedDocument($session, $sourceDocument, $user));
+        try {
+            DB::transaction(function () use ($session, $sourceDocuments, $existingSourceIds, $user, $documents): void {
+                foreach ($sourceDocuments as $sourceDocument) {
+                    if (in_array((int) $sourceDocument->id, $existingSourceIds, true)) {
+                        continue;
+                    }
+                    $documents->push($this->storageService->storeReusedDocument($session, $sourceDocument, $user));
+                }
+                $this->startProcessing($session, $documents);
+                foreach ($documents as $document) {
+                    $document->refresh();
+                }
+            }, 1);
+        } catch (Throwable $exception) {
+            $this->rollbackStoredDocuments($session, $documents);
+            throw $exception;
         }
 
-        $this->startProcessing($session, $documents);
-
         return $documents;
+    }
+
+    public function rollbackStoredDocuments(EstimateGenerationSession $session, Collection $documents): void
+    {
+        foreach ($documents as $document) {
+            if ($document instanceof EstimateGenerationDocument) {
+                $this->storageService->removeUnpublishedDocumentObject($session, $document);
+            }
+        }
     }
 
     /** @param Collection<int, EstimateGenerationDocument> $documents */
@@ -76,28 +104,34 @@ class DocumentParsingService
         }
 
         $session = $this->documentReconciler->changed($session);
+        $pendingManifests = $session->documents()->where('organization_id', $session->organization_id)
+            ->where('project_id', $session->project_id)->whereIn('status', ['uploaded', 'queued', 'processing'])
+            ->where('processing_control_status', 'active')
+            ->whereDoesntHave('processingUnits')->orderBy('id')->get();
 
-        foreach ($documents as $document) {
-            $attemptId = (string) Str::uuid();
+        foreach ($pendingManifests as $document) {
+            $storedAttempt = $document->meta['processing_attempt_id'] ?? null;
+            $attemptId = is_string($storedAttempt) && Str::isUuid($storedAttempt) ? $storedAttempt : (string) Str::uuid();
             $document->forceFill([
                 'meta' => [
                     ...(is_array($document->meta) ? $document->meta : []),
                     'processing_attempt_id' => $attemptId,
                 ],
             ])->saveQuietly();
-            ProcessEstimateGenerationDocumentJob::dispatch(
-                $document->id,
-                FailureExecutionSnapshot::capture(
-                    $session,
-                    'document_manifest',
-                    attemptId: $attemptId,
-                    documentId: (int) $document->getKey(),
-                    sourceVersion: DocumentSourceVersion::fromDocument($document),
-                ),
-            )
-                ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
-                ->afterCommit();
+            $documentId = (int) $document->getKey();
+            $snapshot = FailureExecutionSnapshot::capture(
+                $session,
+                'document_manifest',
+                attemptId: $attemptId,
+                documentId: $documentId,
+                sourceVersion: DocumentSourceVersion::fromDocument($document),
+            );
+            DB::afterCommit(static function () use ($documentId, $snapshot): void {
+                ProcessEstimateGenerationDocumentJob::dispatch($documentId, $snapshot)
+                    ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
+                    ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
+                    ->afterCommit();
+            });
         }
     }
 }

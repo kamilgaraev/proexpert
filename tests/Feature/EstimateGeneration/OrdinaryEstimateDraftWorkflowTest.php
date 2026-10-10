@@ -60,6 +60,33 @@ final class OrdinaryEstimateDraftWorkflowTest extends TestCase
     }
 
     #[Test]
+    public function final_validation_and_audit_content_is_sealed_after_mutations(): void
+    {
+        $draft = $this->builder()->build($this->draft([$this->validWorkItem()]));
+        $draft['readiness_summary'] = ['blocking_issues' => [], 'status' => 'ready'];
+        $draft['audit_summary'] = ['status' => 'passed', 'cycles' => 1];
+        self::assertFalse($this->builder()->verifyArtifact($draft));
+        $sealed = $this->builder()->seal($draft);
+        self::assertTrue($this->builder()->verifyArtifact($sealed));
+        self::assertSame($sealed['artifact_hash'], $this->builder()->seal($sealed)['artifact_hash']);
+        $sealed['audit_summary']['status'] = 'review_required';
+        self::assertFalse($this->builder()->verifyArtifact($sealed));
+    }
+
+    #[Test]
+    public function normative_scale_and_quantity_aliases_preserve_the_calculated_price(): void
+    {
+        $item = $this->validWorkItem();
+        $item['normative_match']['unit'] = '100 м²';
+        $item['quantity_evidence']['unit'] = 'кв. м';
+        $draft = $this->builder()->build($this->draft([$item]));
+        self::assertSame('ready', $draft['stage6_status']);
+        self::assertSame($item['total_cost'], $draft['local_estimates'][0]['sections'][0]['work_items'][0]['total_cost']);
+        $item['normative_match']['unit'] = 'м3';
+        self::assertSame('review_required', $this->builder()->build($this->draft([$item]))['stage6_status']);
+    }
+
+    #[Test]
     public function cross_tenant_project_or_source_quantity_lineage_is_blocking(): void
     {
         foreach ([

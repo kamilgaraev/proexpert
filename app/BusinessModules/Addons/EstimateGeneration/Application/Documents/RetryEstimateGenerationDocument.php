@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
@@ -13,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecution
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -39,7 +41,8 @@ final class RetryEstimateGenerationDocument
         $keyHash = hash('sha256', $idempotencyKey);
         [$lockedSession, $lockedDocument, $attemptId, $disposition, $terminalReplay] = DB::transaction(
             function () use ($session, $document, $actor, $expectedVersion, $expectedSourceVersion, $keyHash, $reason): array {
-                $lockedSession = EstimateGenerationSession::query()->lockForUpdate()->findOrFail($session->getKey());
+                $lockedSession = EstimateGenerationSession::query()->where('organization_id', $session->organization_id)
+                    ->where('project_id', $session->project_id)->lockForUpdate()->findOrFail($session->getKey());
                 $lockedDocument = EstimateGenerationDocument::query()
                     ->where('organization_id', $lockedSession->organization_id)
                     ->where('project_id', $lockedSession->project_id)
@@ -48,11 +51,10 @@ final class RetryEstimateGenerationDocument
                     ->findOrFail($document->getKey());
                 $lockedDocument->load(['processingUnits', 'pages']);
 
-                if ((int) $actor->current_organization_id !== (int) $lockedDocument->organization_id
-                    || ! $this->authorization->can($actor, 'estimate_generation.review', [
-                        'organization_id' => (int) $lockedDocument->organization_id,
-                        'project_id' => (int) $lockedDocument->project_id,
-                    ])) {
+                try {
+                    (new EstimateGenerationActionAuthorizer($this->authorization))
+                        ->authorize($actor, $lockedSession, 'estimate_generation.review');
+                } catch (AuthorizationException) {
                     throw new ExplicitDocumentRetryConflict('forbidden');
                 }
 

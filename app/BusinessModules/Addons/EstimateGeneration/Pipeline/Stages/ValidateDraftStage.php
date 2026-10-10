@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
@@ -24,6 +25,7 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
         private StageResultFactory $results,
         private ApplyComposerCorrectionCycle $auditCycles,
         private EstimateAuditInputFactory $auditInputs,
+        private BuildMostEstimateDraft $artifacts = new BuildMostEstimateDraft,
     ) {}
 
     public function stage(): ProcessingStage
@@ -41,8 +43,10 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
             $context->projectId,
             $context->sessionId,
             $draft,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId),
         ));
         $draft = $this->readiness->project($this->validation->validate($audit['draft']));
+        $draft = $this->artifacts->seal($draft);
         $blockingCodes = array_column((array) ($draft['readiness_summary']['blocking_issues'] ?? []), 'code');
         $requiresAuditReview = ($audit['audit']['status'] ?? null) === 'review_required';
 

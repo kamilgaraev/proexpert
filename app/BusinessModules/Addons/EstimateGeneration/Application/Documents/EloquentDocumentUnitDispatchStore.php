@@ -55,8 +55,17 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
         callable $dispatch,
     ): bool {
         return $this->database->transaction(function () use ($candidate, $now, $nextDispatchAt, $dispatch): bool {
-            $documentId = $this->query()->whereKey($candidate->unitId)->value('document_id');
-            if (! is_int($documentId)) {
+            $scope = $this->query()->whereKey($candidate->unitId)->first(['document_id', 'organization_id', 'project_id', 'session_id']);
+            if (! $scope instanceof EstimateGenerationProcessingUnit) {
+                return false;
+            }
+            $documentId = (int) $scope->document_id;
+            $session = $this->database->table('estimate_generation_sessions')
+                ->where('id', $scope->session_id)->where('organization_id', $scope->organization_id)
+                ->where('project_id', $scope->project_id)->whereNotIn('status', ['cancelled', 'archived', 'applied', 'applying'])
+                ->where(static fn ($active) => $active->where('status', '<>', 'failed')->orWhere('resume_status', 'processing_documents'))
+                ->lockForUpdate()->first(['id']);
+            if ($session === null) {
                 return false;
             }
 
@@ -97,6 +106,9 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
     {
         return $this->query()
             ->where('dispatch_attempt_count', '<', DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS)
+            ->whereHas('document.session', static fn (Builder $query): Builder => $query
+                ->whereNotIn('status', ['cancelled', 'archived', 'applied', 'applying'])
+                ->where(static fn (Builder $active): Builder => $active->where('status', '<>', 'failed')->orWhere('resume_status', 'processing_documents')))
             ->whereHas('document', static fn (Builder $query): Builder => $query
                 ->whereColumn('estimate_generation_documents.source_version', 'estimate_generation_processing_units.source_version')
                 ->where('estimate_generation_documents.processing_control_status', 'active')
