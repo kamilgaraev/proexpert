@@ -32,7 +32,8 @@ final class AssistantStatusSnapshotBuilder
             throw new \LogicException('Assistant snapshot scope mismatch');
         }
         if (Cache::add('ai-rag-status-epoch:purge', true, 60)) { $this->epoch->purge(600); }
-        $snapshot = DB::connection()->transaction(function () use ($organizationId, $actorId, $surface, $section, $ip): ?array {
+        $unprovenReason = null;
+        $snapshot = DB::connection()->transaction(function () use ($organizationId, $actorId, $surface, $section, $ip, &$unprovenReason): ?array {
             DB::connection()->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
             $capturedAt = DB::selectOne('SELECT LEAST(transaction_timestamp(), clock_timestamp())::text AS captured_at')->captured_at;
             $budget = new RagStatusBudget(DB::connection(), 60000);
@@ -77,13 +78,15 @@ final class AssistantStatusSnapshotBuilder
                     }, fresh: true, checkpoint: $budget->checkDeadline(...));
             }));
             if ($observed['value'] === [] || $observed['relations'] === null) {
+                $unprovenReason = $observed['reason'] ?? ($observed['value'] === [] ? 'access_inputs_changed' : 'unproven_dependencies');
                 \Illuminate\Support\Facades\Log::warning('assistant.rag_status_snapshot_unavailable', ['organization_id' => $organizationId,
-                    'reason' => $observed['reason'] ?? ($observed['value'] === [] ? 'access_inputs_changed' : 'unproven_dependencies')]);
+                    'reason' => $unprovenReason]);
 
                 return null;
             }
             $epoch = $this->epoch->capture($observed['relations'], $organizationId);
             if (! $epoch['cacheable']) {
+                $unprovenReason = 'unproven_database_epoch';
                 \Illuminate\Support\Facades\Log::warning('assistant.rag_status_snapshot_unavailable', ['organization_id' => $organizationId, 'reason' => 'unproven_database_epoch']);
 
                 return null;
@@ -102,7 +105,7 @@ final class AssistantStatusSnapshotBuilder
                 $phase = 'written';
             }
         }
-        AssistantStatusSnapshotDiagnostics::refresh($phase, $section, $cacheKey, $expectedKey);
+        AssistantStatusSnapshotDiagnostics::refresh($phase, $section, $cacheKey, $expectedKey, $unprovenReason);
     }
 
     private function generation(int $organizationId): ?string

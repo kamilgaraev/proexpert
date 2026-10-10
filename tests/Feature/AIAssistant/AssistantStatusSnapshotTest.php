@@ -17,6 +17,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotBuilder;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotFootprint;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotInputs;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -340,6 +341,44 @@ final class AssistantStatusSnapshotTest extends TestCase
         } finally { DB::purge('assistant_snapshot_foreign'); }
     }
 
+    public function test_postgres_footprint_accepts_native_schema_introspection_and_rejects_shadowed_functions(): void
+    {
+        $connection = DB::connection();
+        $connection->getSchemaBuilder();
+        $columnsSql = $connection->getSchemaGrammar()->compileColumns(null, 'ai_assistant_documents');
+        self::assertStringContainsString('current_schema()', $columnsSql);
+        $result = app(AssistantStatusSnapshotFootprint::class)->capture(static function () use ($columnsSql): array {
+            DB::select('select current_schema()');
+            $columns = DB::select($columnsSql);
+            DB::table('public.projects')->select('id')->get();
+
+            return array_column($columns, 'name');
+        });
+        self::assertContains('file_id', $result['value']);
+        self::assertSame(['public.projects'], $result['relations'], $result['reason'] ?? '');
+        $catalogOnly = app(AssistantStatusSnapshotFootprint::class)->capture(static fn () => DB::select('select current_schema()'));
+        self::assertNull($catalogOnly['relations']);
+
+        DB::statement('CREATE FUNCTION public."current_schema"() RETURNS name LANGUAGE sql AS $$ SELECT \'public\'::name $$');
+        try {
+            foreach (['select current_schema()', 'select public."current_schema"()'] as $sql) {
+                $rejected = app(AssistantStatusSnapshotFootprint::class)->capture(static function () use ($sql): void {
+                    DB::table('public.projects')->select('id')->get();
+                    DB::select($sql);
+                });
+                self::assertNull($rejected['relations']);
+                self::assertSame('unsupported_function:current_schema', $rejected['reason']);
+            }
+            $qualified = app(AssistantStatusSnapshotFootprint::class)->capture(static function (): void {
+                DB::table('public.projects')->select('id')->get();
+                DB::select('select pg_catalog.current_schema()');
+            });
+            self::assertSame(['public.projects'], $qualified['relations']);
+        } finally {
+            DB::statement('DROP FUNCTION public."current_schema"()');
+        }
+    }
+
     public function test_invalid_release_is_diagnosed_without_dispatching_or_returning_a_snapshot(): void
     {
         [$organization, $actor, , $service] = $this->scope();
@@ -351,6 +390,25 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame('missing_release', $metrics->summary()['assistant_snapshot']['phase']);
         self::assertNull($metrics->summary()['assistant_snapshot']['release_sha']);
         Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
+    }
+
+    public function test_snapshot_refresh_diagnostics_only_emit_bounded_failure_reasons(): void
+    {
+        $events = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->with('assistant_status_snapshot_refresh', Mockery::on(static function (array $context) use (&$events): bool {
+            $events[] = $context;
+
+            return true;
+        }));
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
+        foreach (['unsupported_function:private_function', 'plan_unavailable:private_exception', 'unproven_database_epoch', 'unexpected private detail'] as $reason) {
+            AssistantStatusSnapshotDiagnostics::refresh('snapshot_unproven', 'documents', 'private-cache-key', reason: $reason);
+        }
+        AssistantStatusSnapshotDiagnostics::refresh('written', 'documents', 'private-cache-key', reason: 'unsupported_function:private_function');
+        self::assertSame(['unsupported_function', 'plan_unavailable', 'unproven_database_epoch', 'unclassified', null], array_column($events, 'reason'));
+        self::assertStringNotContainsString('private', json_encode($events, JSON_THROW_ON_ERROR));
+        self::assertSame(str_repeat('a', 40), $events[0]['release_sha']);
     }
 
     public function test_snapshot_controller_keeps_its_service_gate_on_all_surfaces(): void

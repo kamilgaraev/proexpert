@@ -186,7 +186,7 @@ WITH RECURSIVE relations AS (
     SELECT oid FROM roots
     UNION SELECT e.target_oid FROM required r JOIN dependency_edges e ON e.source_oid = r.oid
 )
-SELECT encode(sha256(convert_to(concat_ws('|', current_user, current_setting('TimeZone'), current_setting('DateStyle'), current_setting('search_path'), current_setting('row_security'),
+SELECT encode(sha256(convert_to(concat_ws('|', current_user, current_setting('TimeZone'), current_setting('DateStyle'), current_setting('search_path'), pg_catalog.current_schema(), pg_catalog.current_schemas(true)::text, current_setting('row_security'),
     to_regclass('public.ai_assistant_status_snapshot_changes'), to_regclass('public.ai_assistant_status_snapshot_changes')::oid,
     to_regclass('public.ai_assistant_status_snapshot_control')::oid, to_regprocedure(?)::oid,
     COALESCE((SELECT string_agg(definition, '|' ORDER BY oid) FROM relations), ''), COALESCE(pg_get_functiondef(to_regprocedure(?)), ''),

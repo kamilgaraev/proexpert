@@ -74,7 +74,7 @@ final class AssistantStatusSnapshotFootprint
                 'greatest', 'least', 'cardinality', 'array_length', 'array_cat', 'array_remove', 'array_append', 'bool_and', 'bool_or',
                 'jsonb_build_array', 'jsonb_build_object', 'jsonb_object_agg', 'string_agg', 'jsonb_agg',
                 'jsonb_array_elements', 'jsonb_array_elements_text', 'jsonb_array_length', 'jsonb_typeof', 'jsonb_extract_path', 'jsonb_extract_path_text',
-                'pg_input_is_valid', 'now', 'format_type', 'pg_get_expr', 'pg_table_is_visible', 'pg_type_is_visible', 'col_description', 'obj_description', 'pg_get_serial_sequence'];
+                'pg_input_is_valid', 'now', 'current_schema', 'format_type', 'pg_get_expr', 'pg_table_is_visible', 'pg_type_is_visible', 'col_description', 'obj_description', 'pg_get_serial_sequence'];
             foreach ($matches as $match) {
                 $schema = $this->identifier($match['schema'] ?? '');
                 $name = $this->identifier($match['name']);

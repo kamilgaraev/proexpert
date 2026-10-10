@@ -25,7 +25,7 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
-    public static function refresh(string $phase, string $section, string $cacheKey, ?string $expectedKey = null): void
+    public static function refresh(string $phase, string $section, string $cacheKey, ?string $expectedKey = null, ?string $reason = null): void
     {
         if (! in_array($phase, ['started', 'failed', 'snapshot_unproven', 'snapshot_expired_or_changed', 'cache_key_mismatch', 'written'], true)
             || ! in_array($section, ['all', 'sources', 'documents'], true)) {
@@ -34,9 +34,23 @@ final class AssistantStatusSnapshotDiagnostics
         try {
             Log::channel('api_latency')->info('assistant_status_snapshot_refresh', self::context($phase, $section, $cacheKey) + [
                 'expected_key_hash' => $expectedKey === null ? null : hash('sha256', $expectedKey),
+                'reason' => $phase === 'snapshot_unproven' ? self::failureReason($reason) : null,
             ]);
         } catch (Throwable) {
         }
+    }
+
+    private static function failureReason(?string $reason): ?string
+    {
+        if ($reason === null) {
+            return null;
+        }
+        $category = explode(':', $reason, 2)[0];
+
+        return in_array($category, ['connection_set_changed', 'unsupported_connection', 'unsupported_statement',
+            'unsupported_sql_literal', 'unsupported_input_type', 'unsupported_function', 'unsupported_schema',
+            'plan_unavailable', 'access_inputs_changed', 'unproven_dependencies', 'unproven_database_epoch'], true)
+            ? $category : 'unclassified';
     }
 
     public static function epoch(string $phase, ?string $relation = null): void
