@@ -15,7 +15,7 @@ final class EvidenceSchema
             EvidenceType::SourceFact, EvidenceType::Extracted, EvidenceType::Measured => [
                 'document_id' => 'positive_int', 'unit_type' => 'unit_type', 'unit_index' => 'positive_int',
                 'page' => 'positive_int', 'sheet' => 'positive_int', 'region_key' => 'region_ref', 'element_key' => 'element_ref',
-                'bbox' => 'bbox', 'source_key' => 'source_ref',
+                'bbox' => 'bbox', 'source_key' => 'source_ref', 'native_reference' => 'native_reference',
             ],
             EvidenceType::Inferred => ['inference_key' => 'inference_ref', 'item_key' => 'item_ref'],
             EvidenceType::WorkItem, EvidenceType::NormativeMatch, EvidenceType::Price => ['item_key' => 'item_ref'],
@@ -88,6 +88,8 @@ final class EvidenceSchema
             'region_ref' => self::boundedString($value, 87, '/^region:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
             'element_ref' => self::boundedString($value, 88, '/^element:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
             'source_ref' => self::boundedString($value, 87, '/^source:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
+            'native_reference' => is_string($value) && strlen($value) <= 500
+                && preg_match('/\A(?:xlsx:sheet:[^\r\n]{1,400}![A-Z]{1,3}[1-9][0-9]{0,6}|cad:(?:dimension|entity):[A-Za-z0-9_.:\/-]{1,300}|input_payload\.[a-z][a-z0-9_]{0,79})\z/u', $value) === 1,
             'inference_ref' => self::boundedString($value, 90, '/^inference:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
             'item_ref' => self::boundedString($value, 70, '/^item:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
             'domain_code' => is_string($value) && self::validDomainCode($value),

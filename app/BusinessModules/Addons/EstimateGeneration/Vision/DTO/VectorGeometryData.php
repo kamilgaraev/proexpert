@@ -86,7 +86,7 @@ final readonly class VectorGeometryData
         self::assertCollection($data['blocks'], ['name', 'handle', 'owner', 'entities'], ['name', 'handle', 'owner', 'entities'], 'block');
         self::assertCollection($data['entities'], ['handle', 'type', 'layer'], ['handle', 'type', 'layer', 'points', 'segments', 'center', 'radius', 'start_angle', 'end_angle', 'closed', 'block', 'transform', 'transform_lineage', 'source_lineage', 'source_member_handle', 'layout', 'owner', 'bbox', 'style', 'semantic'], 'entity');
         self::assertCollection($data['texts'], ['handle', 'type', 'layer', 'text', 'position', 'layout'], ['handle', 'type', 'layer', 'text', 'position', 'layout', 'source_operator', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner', 'bbox'], 'text');
-        self::assertCollection($data['dimensions'], ['handle', 'type', 'layer', 'text', 'layout'], ['handle', 'type', 'layer', 'text', 'layout', 'definition_points', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner'], 'dimension');
+        self::assertCollection($data['dimensions'], ['handle', 'type', 'layer', 'text', 'layout'], ['handle', 'type', 'layer', 'text', 'layout', 'definition_points', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner', 'dimension_type', 'measurement', 'measurement_space'], 'dimension');
         self::assertCollection($data['pages'], ['page_number', 'width', 'height', 'rotation', 'media_box', 'crop_box', 'transform', 'classification'], ['page_number', 'width', 'height', 'rotation', 'media_box', 'crop_box', 'transform', 'classification'], 'page');
         self::assertCollection($data['scale_candidates'], ['value', 'source'], ['value', 'source', 'confidence'], 'scale_candidate');
         self::assertCollection($data['warnings'], ['code'], ['code', 'count', 'safe_context'], 'warning');
@@ -499,6 +499,14 @@ final readonly class VectorGeometryData
             throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
         }
         self::assertCoordinates($dimension['definition_points']);
+        if (isset($dimension['dimension_type']) && (! is_int($dimension['dimension_type']) || $dimension['dimension_type'] < 0 || $dimension['dimension_type'] > 6)) {
+            throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
+        }
+        if (isset($dimension['measurement']) && (! self::isFiniteNumber($dimension['measurement'])
+            || ! in_array($dimension['dimension_type'] ?? null, [0, 1, 3, 4], true)
+            || ($dimension['measurement_space'] ?? null) !== 'entity_coordinates')) {
+            throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
+        }
         self::assertOptionalReferences($dimension, 'geometry_contract_dimension_invalid');
     }
 

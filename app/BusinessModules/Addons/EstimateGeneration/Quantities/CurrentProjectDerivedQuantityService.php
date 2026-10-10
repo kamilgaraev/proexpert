@@ -46,7 +46,7 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $assumptionFactIds = array_values(array_map(
             static fn (Fact $fact): string => $fact->id,
-            array_filter($snapshot->facts, static fn (Fact $fact): bool => $fact->origin === 'user_assumption'),
+            array_filter($snapshot->facts, static fn (Fact $fact): bool => in_array($fact->origin, ['user_assumption', 'user_input'], true)),
         ));
         if (count($assumptionFactIds) > 100) {
             return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
@@ -109,6 +109,22 @@ final readonly class CurrentProjectDerivedQuantityService
         ];
     }
 
+    public function previewInput(int $organizationId, int $projectId, int $sessionId): array
+    {
+        $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, self::MAX_FACTS + 1);
+        $snapshot = $capture['snapshot'];
+        $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, array_column($snapshot->facts, 'id'));
+        if (count($snapshot->facts) > self::MAX_FACTS) {
+            return ['quantities' => [], 'warnings' => [['code' => 'quantity_fact_budget_exceeded']]];
+        }
+        $technology = ['catalog_version' => 'input-preview:v1', 'catalog_hash' => hash('sha256', 'input-preview:v1')];
+        $completeness = ['rule_catalog_version' => 'input-preview:v1', 'rule_catalog_hash' => hash('sha256', 'input-preview:v1'),
+            'geometry_preview' => true, 'findings' => []];
+        $result = $this->calculateProjection($snapshot, $capture['token'], $technology, $completeness, $decisions);
+
+        return ['quantities' => $result['quantities'], 'warnings' => $result['warnings']];
+    }
+
     /**
      * @param  list<Decision>  $decisions
      * @return array{derived:list<DerivedQuantity>,inactive_logical_ids:list<string>,quantities:array<string,QuantityData>,warnings:list<array<string,mixed>>,context:array<string,mixed>}
@@ -158,7 +174,7 @@ final readonly class CurrentProjectDerivedQuantityService
             }
             $derived[] = $quantity;
         }
-        $quantities = $this->quantityDataMap($derived, $projectModelToken, $warnings);
+        $quantities = $this->quantityDataMap($derived, $projectModelToken, $warnings, array_column($snapshot->facts, null, 'id'));
 
         return [
             'derived' => $derived,
@@ -177,7 +193,7 @@ final readonly class CurrentProjectDerivedQuantityService
     {
         $facts = [];
         foreach ($snapshot->facts as $fact) {
-            $facts[$fact->entityId][$fact->type][] = $fact;
+            $facts[$fact->entityId][mb_strtolower(trim($fact->type))][] = $fact;
         }
         $openingsByWall = [];
         $roofChildrenByRoof = [];
@@ -377,7 +393,10 @@ final readonly class CurrentProjectDerivedQuantityService
     /** @param array<string, array<string, list<Fact>>> $facts */
     private function oneFact(array $facts, string $entityId, string $type): ?Fact
     {
-        $matches = $facts[$entityId][$type] ?? [];
+        $matches = [];
+        foreach (\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::aliases($type) as $alias) {
+            $matches = [...$matches, ...($facts[$entityId][$alias] ?? [])];
+        }
 
         return count($matches) === 1 ? $matches[0] : null;
     }
@@ -440,6 +459,9 @@ final readonly class CurrentProjectDerivedQuantityService
 
     private function requiresSitePreparation(array $completeness): bool
     {
+        if (($completeness['geometry_preview'] ?? false) === true) {
+            return true;
+        }
         foreach ($completeness['findings'] ?? [] as $finding) {
             if ($finding instanceof CompletenessFinding && $finding->ruleId === 'site_leveling'
                 && in_array($finding->status, ['unknown', 'proven_missing'], true)
@@ -645,7 +667,7 @@ final readonly class CurrentProjectDerivedQuantityService
         ];
     }
 
-    private function quantityDataMap(array $derived, string $modelVersion, array &$warnings): array
+    private function quantityDataMap(array $derived, string $modelVersion, array &$warnings, array $facts): array
     {
         $unresolvedFormulas = [];
         foreach ($warnings as $warning) {
@@ -669,13 +691,13 @@ final readonly class CurrentProjectDerivedQuantityService
         $result = [];
         foreach ($byFormula as $formula => $items) {
             if (isset($aliases[$formula]) && count($items) === 1 && ! isset($unresolvedFormulas[$formula])) {
-                $result[$aliases[$formula]] = $this->quantityData($items[0], $modelVersion, $aliases[$formula]);
+                $result[$aliases[$formula]] = $this->quantityData($items[0], $modelVersion, $aliases[$formula], $facts);
 
                 continue;
             }
             foreach ($items as $quantity) {
                 $key = $quantity->logicalId ?? $quantity->id;
-                $result[$key] = $this->quantityData($quantity, $modelVersion, $key);
+                $result[$key] = $this->quantityData($quantity, $modelVersion, $key, $facts);
             }
             if (isset($aliases[$formula]) && count($items) > 1) {
                 $warnings[] = [
@@ -693,8 +715,15 @@ final readonly class CurrentProjectDerivedQuantityService
         return $result;
     }
 
-    private function quantityData(DerivedQuantity $quantity, string $modelVersion, string $key): QuantityData
+    private function quantityData(DerivedQuantity $quantity, string $modelVersion, string $key, array $facts): QuantityData
     {
+        $assumptions = [];
+        foreach ($quantity->operands as $operand) {
+            if (($facts[$operand['fact_id']]->origin ?? null) === 'user_assumption') {
+                $assumptions[] = $operand['fact_id'];
+            }
+        }
+
         return new QuantityData(
             key: $key,
             unit: $quantity->unit,
@@ -711,9 +740,10 @@ final readonly class CurrentProjectDerivedQuantityService
                 'snapshot_identity' => $quantity->snapshotIdentity,
                 'technology_decision_id' => $quantity->technologyDecisionId,
             ],
-            source: QuantitySource::Evidenced,
+            source: $assumptions === [] ? QuantitySource::Evidenced : QuantitySource::Estimated,
             evidenceIds: $quantity->evidenceIds,
             modelVersion: $modelVersion,
+            assumptions: array_values(array_unique($assumptions)),
         );
     }
 

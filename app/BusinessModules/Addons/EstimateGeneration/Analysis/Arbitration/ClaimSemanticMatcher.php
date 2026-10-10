@@ -4,8 +4,44 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
+use Throwable;
+
 final class ClaimSemanticMatcher
 {
+    public function equivalent(ObservationClaim $left, ObservationClaim $right): bool
+    {
+        if ([$left->organizationId, $left->projectId, $left->sessionId, $left->sourceVersion]
+            !== [$right->organizationId, $right->projectId, $right->sessionId, $right->sourceVersion]
+            || (new VisualObjectIdentity)->normalizeEntityKey($left->entityKey)
+                !== (new VisualObjectIdentity)->normalizeEntityKey($right->entityKey)
+            || FactVocabulary::parameter($left->factType) !== FactVocabulary::parameter($right->factType)) {
+            return false;
+        }
+        foreach (['floor_id', 'zone_id', 'room_id', 'entity_scope'] as $field) {
+            if (($left->locator[$field] ?? null) !== ($right->locator[$field] ?? null)) {
+                return false;
+            }
+        }
+        if ($left->value['type'] === 'number' && $right->value['type'] === 'number') {
+            foreach ([$left->value['data'], $right->value['data']] as $number) {
+                if ((! is_string($number) && ! is_int($number) && ! is_float($number))
+                    || (is_float($number) && ! is_finite($number))) {
+                    return false;
+                }
+            }
+            try {
+                return FactVocabulary::measurementSignature((string) $left->value['data'], $left->unit)
+                    === FactVocabulary::measurementSignature((string) $right->value['data'], $right->unit);
+            } catch (Throwable) {
+                return false;
+            }
+        }
+
+        return $this->factSignatureForCanonical(['fact_type' => $left->factType, 'value' => $left->value, 'unit' => $left->unit])
+            === $this->factSignatureForCanonical(['fact_type' => $right->factType, 'value' => $right->value, 'unit' => $right->unit]);
+    }
+
     /** @param list<ObservationClaim> $claims @return list<list<ObservationClaim>> */
     public function groups(array $claims): array
     {
@@ -29,6 +65,18 @@ final class ClaimSemanticMatcher
             'value' => $claim->value,
             'unit' => $claim->unit,
         ]);
+    }
+
+    public function entityScope(ObservationClaim $claim): string
+    {
+        $scope = [];
+        foreach (['floor_id', 'zone_id', 'room_id', 'entity_scope'] as $field) {
+            if (isset($claim->locator[$field])) {
+                $scope[$field] = $claim->locator[$field];
+            }
+        }
+
+        return $scope === [] ? '' : '|scope:'.hash('sha256', json_encode($scope, JSON_THROW_ON_ERROR));
     }
 
     public function keyForCanonical(array $canonical): string

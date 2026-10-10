@@ -12,6 +12,7 @@ final readonly class Fact
         'document',
         'ai_inference',
         'user_assumption',
+        'user_input',
         'ai_technology_recommendation',
         'unresolved',
     ];

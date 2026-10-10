@@ -26,13 +26,6 @@ final class DerivedQuantityFactory
         'technology_work_package' => ['base_quantity', 'coefficient'],
     ];
 
-    private const UNIT_GROUPS = [
-        'length' => ['mm' => '0.001', 'cm' => '0.01', 'm' => '1'],
-        'area' => ['mm2' => '0.000001', 'cm2' => '0.0001', 'm2' => '1'],
-        'volume' => ['mm3' => '0.000000001', 'cm3' => '0.000001', 'm3' => '1'],
-        'count' => ['count' => '1'],
-    ];
-
     /** @param list<Decision> $decisions @param array<string, mixed> $request */
     public function derive(ProjectModelSnapshot $snapshot, array $decisions, array $request): QuantityReadiness
     {
@@ -385,7 +378,7 @@ final class DerivedQuantityFactory
             return ['issue' => $this->issue('decimal_value_required', $role, $fact->id)];
         }
         $group = $this->expectedGroup($formula, $role, $outputUnit);
-        $factor = self::UNIT_GROUPS[$group][$fact->unit ?? ''] ?? null;
+        $factor = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::factor($group, $fact->unit);
         if ($factor === null) {
             return ['issue' => $this->issue('unit_incompatible', $role, $fact->id)];
         }
@@ -394,11 +387,11 @@ final class DerivedQuantityFactory
         } catch (MathException) {
             return ['issue' => $this->issue('decimal_value_required', $role, $fact->id)];
         }
-        if ($sourceValue->isLessThanOrEqualTo(0)) {
+        if ($sourceValue->isLessThan(0) || ($sourceValue->isZero() && ! ($formula === 'sloped_roof_area' && $role === 'slope_rises'))) {
             return ['issue' => $this->issue('operand_not_positive', $role, $fact->id)];
         }
         $decision = null;
-        if ($fact->origin === 'user_assumption') {
+        if (in_array($fact->origin, ['user_assumption', 'user_input'], true)) {
             foreach ($decisions as $candidate) {
                 if ($candidate->selectedFactId === $fact->id
                     && $candidate->actorType === 'user'
@@ -565,11 +558,12 @@ final class DerivedQuantityFactory
             return 'decimal_value_required';
         }
         $group = $operand === 'plan_area' || $operand === 'area' ? 'area' : 'length';
-        if (! isset(self::UNIT_GROUPS[$group][$fact->unit ?? ''])) {
+        if (\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::factor($group, $fact->unit) === null) {
             return 'unit_incompatible';
         }
         try {
-            if (BigDecimal::of($fact->value)->isLessThanOrEqualTo(0)) {
+            $number = BigDecimal::of($fact->value);
+            if ($number->isLessThan(0) || ($number->isZero() && $operand !== 'slope_rise')) {
                 return 'operand_not_positive';
             }
         } catch (MathException) {

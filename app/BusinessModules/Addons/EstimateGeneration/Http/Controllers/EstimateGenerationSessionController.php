@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationSessionInputData;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialProjectFactValidationFailed;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
@@ -93,7 +94,7 @@ final class EstimateGenerationSessionController extends Controller
                     ],
                 ]),
                 'problem_flags' => [],
-            ]);
+            ], $request->user());
 
             return AdminResponse::success(
                 (new EstimateGenerationSessionResource($session->load('documents')))->resolve(),
@@ -102,6 +103,16 @@ final class EstimateGenerationSessionController extends Controller
             );
         } catch (NormativeContextPinUnavailable) {
             return AdminResponse::error(trans_message('estimate_generation.normative_context_unavailable'), 422);
+        } catch (InitialProjectFactValidationFailed $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, [
+                $exception->field => [match ($exception->field) {
+                    'floors' => 'Укажите целое количество этажей от 1 до 250.',
+                    'area' => 'Укажите корректную площадь: не более четырёх знаков после запятой.',
+                    default => 'Укажите корректную высоту: не более четырёх знаков после запятой.',
+                }],
+            ]);
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
+            return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (\Throwable $exception) {
             Log::error('[EstimateGeneration] Failed to create session', [
                 'failure_code' => 'session_create_failed',

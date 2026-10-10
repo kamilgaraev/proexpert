@@ -355,7 +355,7 @@ final readonly class ProjectCompletenessAnalyzer
         if (! $fact instanceof Fact || $fact->value === null) {
             return 'unknown';
         }
-        if ($classification === 'document_missing' && $fact->origin === 'user_assumption') {
+        if ($classification === 'document_missing' && in_array($fact->origin, ['user_assumption', 'user_input'], true)) {
             return 'unknown';
         }
         if (($condition['false_means_missing'] ?? false) === true && $fact->value === false) {

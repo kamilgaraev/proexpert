@@ -50,6 +50,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private SemanticRegionIngestor $semanticRegions = new SemanticRegionIngestor,
         private SemanticRegionCropper $semanticRegionCropper = new SemanticRegionCropper,
         private ObserverDisagreementDetector $observerDisagreement = new ObserverDisagreementDetector,
+        private NativeNumericFactFactory $nativeFacts = new NativeNumericFactFactory,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -265,7 +266,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         return new DocumentUnitOutput(
             version: hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)),
             text: $text,
-            confidence: $geometry->unitStatus === 'confirmed' ? 1.0 : 0.7,
+            confidence: null,
             normalizedPayload: [
                 'schema_version' => 1,
                 'page_number' => $context->index,
@@ -286,10 +287,11 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             sourceVersion: $context->sourceVersion,
             qualitySignals: [
                 'geometry' => [
-                    'confidence' => $geometry->unitStatus === 'confirmed' ? 1.0 : 0.7,
+                    'confidence' => null,
                     'hard_blockers' => $geometry->unitStatus === 'confirmed' ? [] : ['unit_unconfirmed'],
                 ],
             ],
+            publication: $this->nativeFacts->cad($context, $payload),
         );
     }
 
@@ -724,7 +726,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 static fn (array $element): string => trim((string) ($element['label'] ?? '')),
                 $payload['elements'],
             )))),
-            confidence: 1.0,
+            confidence: null,
             normalizedPayload: [
                 'schema_version' => 4,
                 'page_number' => $context->index,

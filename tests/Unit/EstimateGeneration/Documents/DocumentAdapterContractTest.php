@@ -86,9 +86,9 @@ final class DocumentAdapterContractTest extends TestCase
             self::assertSame(3, $page->rawPayload['native_structure']['rows']);
             self::assertSame(3, $page->rawPayload['native_structure']['columns']);
             self::assertSame([
-                ['address' => 'A2', 'value' => 'Бетон', 'formula' => null],
-                ['address' => 'B2', 'value' => '3', 'formula' => null],
-                ['address' => 'C2', 'value' => '=B2*100', 'formula' => '=B2*100'],
+                ['address' => 'A2', 'value' => 'Бетон', 'formula' => null, 'data_type' => 's', 'raw_value' => 'Бетон', 'cached_value' => null, 'numeric_status' => 'text'],
+                ['address' => 'B2', 'value' => '3', 'formula' => null, 'data_type' => 'n', 'raw_value' => 3, 'cached_value' => null, 'numeric_status' => 'literal_number'],
+                ['address' => 'C2', 'value' => '=B2*100', 'formula' => '=B2*100', 'data_type' => 'f', 'raw_value' => '=B2*100', 'cached_value' => 300, 'numeric_status' => 'cached_unverified'],
             ], array_slice($page->rawPayload['native_structure']['cells'], 3, 3));
         } finally {
             $spreadsheet->disconnectWorksheets();

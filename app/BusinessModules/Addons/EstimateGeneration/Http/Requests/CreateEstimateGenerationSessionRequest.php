@@ -45,9 +45,9 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
             'period_id' => ['nullable', 'integer', 'exists:estimate_price_periods,id'],
             'normative_dataset_version' => ['nullable', 'string', 'max:100'],
             'normative_rerank_requested' => ['nullable', 'boolean'],
-            'area' => ['nullable', 'numeric', 'min:0'],
+            'area' => ['nullable', 'numeric', 'min:0', 'decimal:0,4'],
             'floors' => ['nullable', 'integer', 'min:1', 'max:250'],
-            'height' => ['nullable', 'numeric', 'min:0.1', 'max:1000'],
+            'height' => ['nullable', 'numeric', 'min:0.1', 'max:1000', 'decimal:0,4'],
             'construction_type' => ['nullable', Rule::enum(EstimateGenerationConstructionType::class)],
             'parameters' => ['nullable', 'array'],
         ];

@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Throwable;
@@ -192,6 +193,12 @@ class SpreadsheetDocumentExtractor
                             'address' => $cell->getCoordinate(),
                             'value' => $value,
                             'formula' => $this->formula($cell),
+                            'data_type' => $cell->getDataType(),
+                            'raw_value' => is_scalar($cell->getValue()) ? $cell->getValue() : null,
+                            'cached_value' => $this->cachedValue($cell),
+                            'numeric_status' => $this->formula($cell) !== null
+                                ? ($this->cachedValue($cell) === null ? 'formula_result_missing' : 'cached_unverified')
+                                : (is_int($cell->getValue()) || is_float($cell->getValue()) ? 'literal_number' : 'text'),
                         ];
                         if ($firstPopulatedRow === null) {
                             $headings[] = $cell->getCoordinate();
@@ -248,6 +255,7 @@ class SpreadsheetDocumentExtractor
                         'limitations' => $limitations,
                         'sheet' => $worksheet->getTitle(),
                         'headings' => $headings,
+                        'header_cells' => array_values(array_filter($cells, static fn (array $cell): bool => in_array($cell['address'], $headings, true))),
                         'cells' => $cells,
                         'formulas' => array_values(array_filter(
                             $cells,
@@ -271,6 +279,10 @@ class SpreadsheetDocumentExtractor
     private function cellValue(Cell $cell): string
     {
         $value = $cell->getValue();
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
 
         if (is_scalar($value)) {
             return (string) $value;
@@ -351,6 +363,16 @@ class SpreadsheetDocumentExtractor
     {
         $value = $cell->getValue();
 
-        return is_string($value) && str_starts_with($value, '=') ? $value : null;
+        return $cell->getDataType() === DataType::TYPE_FORMULA && is_string($value) && str_starts_with($value, '=') ? $value : null;
+    }
+
+    private function cachedValue(Cell $cell): string|int|float|bool|null
+    {
+        if ($this->formula($cell) === null) {
+            return null;
+        }
+        $value = $cell->getOldCalculatedValue();
+
+        return is_scalar($value) && (! is_float($value) || is_finite($value)) ? $value : null;
     }
 }
