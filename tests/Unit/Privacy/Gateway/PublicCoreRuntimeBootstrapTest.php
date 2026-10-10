@@ -78,8 +78,15 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                 ['EXPECTED_SOURCE_SHA' => strtoupper($sha)], ['EXPECTED_SOURCE_SHA' => $sha."\n"],
                 ['EXPECTED_SOURCE_SHA' => str_repeat('f', 40)]];
             if ($job === 'deploy') {
-                foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $cases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
-                $cases[] = ['CURRENT_CANDIDATE_REVISION' => '']; $cases[] = ['CURRENT_CANDIDATE_SHA256' => ''];
+                $independenceCases = [];
+                foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $independenceCases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
+                $independenceCases[] = ['CURRENT_CANDIDATE_REVISION' => '']; $independenceCases[] = ['CURRENT_CANDIDATE_SHA256' => ''];
+                foreach ($independenceCases as $index => $change) {
+                    $result = $this->inputPreparationProcess($code, array_replace($base, ['REQUESTED_MODE' => $mode], $change));
+                    self::assertSame(0, $result['exit'], $job.'/independence/'.$index);
+                    self::assertSame("CREDENTIAL_SENTINEL\n", $result['stdout'], $job.'/independence/'.$index);
+                    self::assertSame('', $result['stderr']);
+                }
             } else {
                 $cases[] = ['PREPARATION_REF' => '']; $cases[] = ['PREPARATION_SHA' => str_repeat('f', 40)];
                 $cases[] = ['PREPARATION_PINS_SHA256' => ''];
