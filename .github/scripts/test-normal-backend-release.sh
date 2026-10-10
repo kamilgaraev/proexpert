@@ -82,7 +82,13 @@ for service in normal:
     check('profiles' not in c, service + ' ordinary startup')
     check(not c.get('group_add') and c.get('pid') != 'service:api', service + ' no protected process/group access')
     check(not any(isinstance(v,dict) and 'most-public-core' in v.get('source','') or isinstance(v,dict) and '/public-core/' in v.get('source','') for v in c.get('volumes',[])), service + ' no private mounts')
-    check(c['environment']['TIMEWEB_AI_API_KEY'] == '', service + ' unchanged inactive credentials')
+    if service in ['api', 'horizon']:
+        check(c.get('env_file') == '.env', service + ' protected existing env file')
+        check('TIMEWEB_AI_API_KEY' not in c['environment'], service + ' canonical key not overridden')
+        for key in ['OPENAI_API_KEY', 'DEEPSEEK_API_KEY', 'TIMEWEB_API_KEY', 'TIMEWEB_AI_PROXY_KEY', 'AI_RAG_EMBEDDING_API_KEY']:
+            check(c['environment'][key] == '', service + ' disabled fallback ' + key)
+    else:
+        check(c['environment']['TIMEWEB_AI_API_KEY'] == '', service + ' unchanged inactive credentials')
 for service in ['public-core-processor','public-core-gateway']:
     check(services[service]['profiles'] == ['public-core'] and services[service]['restart'] == 'no' and 'env_file' not in services[service], service + ' remains optional/inactive')
 check(compose['networks']['public-core-gateway']['internal'] == 'true', 'protected network still internal')

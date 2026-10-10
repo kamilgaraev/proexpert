@@ -591,18 +591,14 @@ class AIAssistantService
                 : (int) config('ai-assistant-credits.profiles.'.$this->activeProfile.'.max_calls', TokenBudgetService::limits($this->activeProfile)['calls']) - 1;
             $organization = null;
 
-            while (! empty($response['tool_calls']) && $loopCount < $maxLoops) {
+            while (! empty($response['function_calls']) && $loopCount < $maxLoops) {
                 if (! $organization instanceof Organization) {
                     $organization = $this->resolveOrganization($organizationId);
                 }
 
-                $messages[] = [
-                    'role' => $response['role'] ?? 'assistant',
-                    'content' => $response['content'] ?? '',
-                    'tool_calls' => $response['tool_calls'],
-                ];
+                array_push($messages, ...$response['output']);
 
-                foreach ($response['tool_calls'] as $toolCall) {
+                foreach ($response['function_calls'] as $toolCall) {
                     $this->stage('tools');
                     $toolResult = $this->handleToolCall(
                         $toolCall,
@@ -618,17 +614,16 @@ class AIAssistantService
                         $trustedDownloadUrls
                     );
 
-                    $toolName = (string) ($toolCall['function']['name'] ?? '');
+                    $toolName = (string) ($toolCall['name'] ?? '');
                     $providerResult = $this->toolResultForProvider($toolName, $toolResult);
                     $toolContent = is_string($providerResult)
                         ? $providerResult
                         : (json_encode($providerResult, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{"error":"tool_result_serialization_failed"}');
 
                     $messages[] = [
-                        'role' => 'tool',
-                        'tool_call_id' => $toolCall['id'] ?? uniqid('tool_', true),
-                        'name' => $toolCall['function']['name'] ?? 'unknown_tool',
-                        'content' => $toolContent,
+                        'type' => 'function_call_output',
+                        'call_id' => $toolCall['call_id'],
+                        'output' => $toolContent,
                     ];
 
                     $serverResult = $this->activeToolResults[0] ?? null;
@@ -684,8 +679,8 @@ class AIAssistantService
                         && $intentMatchesTool;
                     if (
                         $loopCount === 0
-                        && is_array($response['tool_calls'] ?? null)
-                        && count($response['tool_calls']) === 1
+                        && is_array($response['function_calls'] ?? null)
+                        && count($response['function_calls']) === 1
                         && count($this->activeToolResults) === 1
                         && $toolName === 'get_material_stock'
                         && $this->isTerminalReadOnlyTool($toolName)
@@ -719,14 +714,16 @@ class AIAssistantService
                         && $stockEvidence['version'] !== ''
                     ) {
                         $response['content'] = $serverAnswer;
-                        $response['tool_calls'] = [];
+                        $response['actual_model'] = $response['provider_response_ref'] = $response['api_method'] = null;
+                        $response['model_invoked'] = false;
+                        $response['function_calls'] = [];
                         break 2;
                     }
 
                     if (
                         $loopCount === 0
-                        && is_array($response['tool_calls'] ?? null)
-                        && count($response['tool_calls']) === 1
+                        && is_array($response['function_calls'] ?? null)
+                        && count($response['function_calls']) === 1
                         && count($this->activeToolResults) === 1
                         && $toolName === 'get_estimate_answer'
                         && $this->isTerminalReadOnlyTool($toolName)
@@ -775,7 +772,9 @@ class AIAssistantService
                             && ($structuredProof['text'] ?? null) === $serverAnswer
                         ) {
                             $response['content'] = $serverAnswer;
-                            $response['tool_calls'] = [];
+                            $response['actual_model'] = $response['provider_response_ref'] = $response['api_method'] = null;
+                            $response['model_invoked'] = false;
+                            $response['function_calls'] = [];
                             break 2;
                         }
                     }
@@ -787,7 +786,9 @@ class AIAssistantService
                     $budgetStopNotice = trans_message('ai_assistant.approved_budget_exceeded');
                     $toolFailures[] = $budgetStopNotice;
                     $response['content'] = trans_message('ai_assistant.budget_partial_answer');
-                    $response['tool_calls'] = [];
+                    $response['actual_model'] = $response['provider_response_ref'] = $response['api_method'] = null;
+                    $response['model_invoked'] = false;
+                    $response['function_calls'] = [];
                     $degradedMode = true;
                     break;
                 } catch (\DomainException $exception) {
@@ -797,7 +798,9 @@ class AIAssistantService
                     $budgetStopNotice = trans_message('ai_assistant.context_budget_exhausted');
                     $toolFailures[] = $budgetStopNotice;
                     $response['content'] = trans_message('ai_assistant.context_budget_exhausted');
-                    $response['tool_calls'] = [];
+                    $response['actual_model'] = $response['provider_response_ref'] = $response['api_method'] = null;
+                    $response['model_invoked'] = false;
+                    $response['function_calls'] = [];
                     $degradedMode = true;
                     break;
                 }
@@ -811,14 +814,14 @@ class AIAssistantService
                 $loopCount++;
             }
 
-            $terminalToolResponse = ! empty($response['tool_calls']);
+            $terminalToolResponse = ! empty($response['function_calls']);
             if ($terminalToolResponse) {
                 $user->refresh();
                 $this->stage('tools');
-                $toolCalls = $response['tool_calls'];
+                $toolCalls = $response['function_calls'];
                 $toolCall = is_array($toolCalls) && count($toolCalls) === 1 ? reset($toolCalls) : null;
-                $toolName = is_array($toolCall) ? (string) ($toolCall['function']['name'] ?? '') : '';
-                $advertisedTools = array_column(array_column($tools, 'function'), 'name');
+                $toolName = is_array($toolCall) ? (string) ($toolCall['name'] ?? '') : '';
+                $advertisedTools = array_column($tools, 'name');
 
                 if (is_array($toolCall) && in_array($toolName, $advertisedTools, true)
                     && $this->isTerminalReadOnlyTool($toolName) && $this->toolRegistry->getTool($toolName) !== null) {
@@ -841,7 +844,9 @@ class AIAssistantService
                 }
 
                 $response['content'] = trans_message('ai_assistant_facts.live_proof_required');
-                $response['tool_calls'] = [];
+                $response['actual_model'] = $response['provider_response_ref'] = $response['api_method'] = null;
+                $response['model_invoked'] = false;
+                $response['function_calls'] = [];
             }
 
             $toolFailures = array_values(array_unique(array_filter(
@@ -1075,6 +1080,9 @@ class AIAssistantService
                 || ($terminalToolResponse && $assistantPayload['source_refs'] === []);
             if (($structuredCheck['structured_evidence_truncated'] ?? false) === true) {
                 $assistantPayload['structured_evidence_truncated'] = true;
+            }
+            foreach (['actual_model', 'provider_response_ref', 'api_method', 'model_invoked'] as $key) {
+                $assistantPayload[$key] = $response[$key] ?? ($key === 'model_invoked' ? false : null);
             }
             $assistantPayload['request_id'] = $requestPayload['request_id'] ?? null;
             foreach (['next_actions', 'proposed_actions'] as $key) {
@@ -1650,6 +1658,7 @@ class AIAssistantService
             $payload['service_error'] = $this->requestOutcome === 'service_error';
         }
         unset($payload['confidence']);
+        $payload += ['actual_model' => null, 'provider_response_ref' => null, 'api_method' => null, 'model_invoked' => false];
         $payload['request_id'] = $this->activeRequest?->request_id ?? ($payload['request_id'] ?? null);
         $payload['actor_user_id'] = (int) $actor->id;
         $payload['request_state'] = $this->activeRequest !== null ? 'pending' : 'completed';
@@ -1682,7 +1691,7 @@ class AIAssistantService
         }
         $allowActions = (bool) ($taskPlan['request']['allow_actions'] ?? false);
         foreach ($tools as $definition) {
-            $name = $definition['function']['name'] ?? null;
+            $name = $definition['name'] ?? null;
             if (is_string($name) && $understanding instanceof AssistantRequestUnderstanding) {
                 $eligibility = $this->toolEligibilityPolicy->canExposeTool($name, $understanding, $allowActions);
                 if ($eligibility->allowed && $eligibility->category === $category) {
@@ -1941,11 +1950,11 @@ class AIAssistantService
         array &$trustedDownloadUrls
     ): array|string {
         $this->executionCheckpoint();
-        $toolName = (string) ($toolCall['function']['name'] ?? '');
+        $toolName = (string) ($toolCall['name'] ?? '');
         if ($taskPlan['image_discussion'] ?? false) {
             return ['status' => 'blocked_by_request_policy', 'error' => trans_message('ai_assistant.image_discussion_tools_unneeded'), 'tool_name' => $toolName];
         }
-        $arguments = json_decode((string) ($toolCall['function']['arguments'] ?? '{}'), true);
+        $arguments = json_decode((string) ($toolCall['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
         if ($toolName === 'get_bim_model_elements' && ! array_key_exists('project_id', $args)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
@@ -2217,6 +2226,10 @@ class AIAssistantService
             $preparedOptions['timeout'] = app(AssistantRequestExecutionContext::class)->remainingSeconds(max(1, (int) $configuredTimeout));
         }
 
+        if (! is_callable([$this->llmProvider, 'responses'])) {
+            throw new RuntimeException('assistant_native_responses_unavailable');
+        }
+
         $attempt = $this->activeRequest !== null
             ? $this->requestLifecycle?->beforeProviderCall($this->activeRequest, $user, (int) $preparedOptions['estimated_input_tokens'], (int) $preparedOptions['max_completion_tokens'])
             : 1;
@@ -2228,7 +2241,7 @@ class AIAssistantService
             $providerCallStarted = hrtime(true);
             $providerCallFailure = null;
             try {
-                $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
+                $response = $this->llmProvider->responses($preparedMessages, $preparedOptions);
             } catch (Throwable $exception) {
                 $providerCallFailure = $exception;
                 throw $exception;
@@ -2253,6 +2266,14 @@ class AIAssistantService
                 }
             }
             $this->executionCheckpoint();
+            $priorIds = array_filter(array_column($messages, 'id'));
+            $priorCalls = array_filter(array_column($messages, 'call_id'));
+            foreach ($response['output'] ?? [] as $item) {
+                if (in_array($item['id'] ?? null, $priorIds, true)
+                    || (($item['type'] ?? null) === 'function_call' && in_array($item['call_id'] ?? null, $priorCalls, true))) {
+                    throw new RuntimeException('assistant_native_replayed_output');
+                }
+            }
             if (($response['response_status'] ?? null) === 'incomplete' || ($response['finish_reason'] ?? null) === 'length') {
                 throw new AssistantResponseIncomplete($response);
             }
@@ -3532,7 +3553,7 @@ class AIAssistantService
             $toolNames = array_values(array_filter($toolNames,
                 fn (string $toolName): bool => $this->toolEligibilityPolicy->isReadOnlyTool($toolName)));
 
-            return $this->toolRegistry->getToolsDefinitions($toolNames);
+            return $this->toolRegistry->getToolsDefinitions($toolNames, true);
         }
 
         $allowedToolNames = [];
@@ -3561,7 +3582,7 @@ class AIAssistantService
             'blocked_tools' => array_slice($blockedTools, 0, 12),
         ]);
 
-        return $this->toolRegistry->getToolsDefinitions($allowedToolNames);
+        return $this->toolRegistry->getToolsDefinitions($allowedToolNames, true);
     }
 
     private function requestUnderstandingFromPlan(array $taskPlan): ?AssistantRequestUnderstanding
@@ -3660,23 +3681,29 @@ class AIAssistantService
 
     protected function normalizeMessageForProvider(array $message): ?array
     {
+        if (in_array($message['type'] ?? null, ['function_call', 'function_call_output', 'reasoning'], true)
+            || (($message['type'] ?? null) === 'message' && ($message['role'] ?? null) === 'assistant')) {
+            return $message;
+        }
         $normalized = $message;
         unset($normalized['_trusted_chat_images']);
+        if (isset($message['tool_calls']) || ($message['role'] ?? null) === 'tool') {
+            throw new RuntimeException('assistant_native_input_required');
+        }
         if (is_array($message['content'] ?? null)) {
             if (($message['_trusted_chat_images'] ?? false) !== true || ($message['role'] ?? null) !== 'user'
                 || array_slice($message['content'], 1) !== $this->currentImageParts) {
                 throw new RuntimeException('assistant_untrusted_image_parts');
             }
+            $normalized['content'] = array_map(static fn (array $part): array => match ($part['type'] ?? null) {
+                'text' => ['type' => 'input_text', 'text' => $part['text']],
+                'image_url' => ['type' => 'input_image', 'image_url' => $part['image_url']['url'], 'detail' => $part['image_url']['detail'] ?? 'auto'],
+                default => throw new RuntimeException('assistant_untrusted_image_parts'),
+            }, $message['content']);
             return $normalized;
         }
-        $content = (string) ($message['content'] ?? '');
-        $normalized['content'] = $content;
-
-        if ($normalized['content'] === '' && empty($normalized['tool_calls'])) {
-            return null;
-        }
-
-        return $normalized;
+        $normalized['content'] = (string) ($message['content'] ?? '');
+        return $normalized['content'] === '' ? null : $normalized;
     }
 
     protected function enforceMessageBudget(array $messages, int $maxChars): array

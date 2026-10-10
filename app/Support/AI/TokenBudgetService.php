@@ -145,7 +145,7 @@ final class TokenBudgetService
     {
         foreach ($messages as $message) {
             foreach (is_array($message['content'] ?? null) ? $message['content'] : [] as $part) {
-                if (($part['type'] ?? null) === 'image_url') { return true; }
+                if (in_array($part['type'] ?? null, ['image_url', 'input_image'], true)) { return true; }
             }
         }
         return false;
@@ -190,6 +190,7 @@ final class TokenBudgetService
 
     private function trimMessages(array $messages, array $tools, int $limit, float $factor): array
     {
+        self::assertNativePairs($messages);
         $toolsTokens = $this->counter->tools($tools);
         $available = $limit - (int) ceil($toolsTokens * $factor);
         if ($available < 1) {
@@ -204,7 +205,8 @@ final class TokenBudgetService
                 throw new DomainException('ai_token_budget_exhausted');
             }
             $end = $drop + 1;
-            while ($end < count($messages) && ($messages[$end]['role'] ?? null) === 'tool') {
+            while ($end < count($messages) && (($messages[$end]['role'] ?? null) === 'tool'
+                || in_array($messages[$end]['type'] ?? null, ['function_call', 'function_call_output', 'reasoning'], true))) {
                 $end++;
             }
             array_splice($messages, $drop, $end - $drop);
@@ -221,6 +223,34 @@ final class TokenBudgetService
         ];
     }
 
+    public static function assertNativePairs(array $items): void
+    {
+        $pending = [];
+        $seen = [];
+        foreach ($items as $item) {
+            $type = $item['type'] ?? null;
+            if ($type === 'function_call') {
+                $id = $item['call_id'] ?? null;
+                if (!is_string($id) || $id === '' || isset($seen[$id]) || $pending !== []) {
+                    throw new DomainException('assistant_native_pair_invalid');
+                }
+                $seen[$id] = true;
+                $pending[$id] = true;
+            } elseif ($type === 'function_call_output') {
+                $id = $item['call_id'] ?? null;
+                if (!is_string($id) || !isset($pending[$id]) || !is_string($item['output'] ?? null)) {
+                    throw new DomainException('assistant_native_pair_invalid');
+                }
+                unset($pending[$id]);
+            } elseif ($pending !== []) {
+                throw new DomainException('assistant_native_pair_invalid');
+            }
+        }
+        if ($pending !== []) {
+            throw new DomainException('assistant_native_pair_invalid');
+        }
+    }
+
     private function currentQueryIndex(array $messages): ?int
     {
         for ($index = count($messages) - 1; $index >= 0; $index--) {
@@ -235,7 +265,7 @@ final class TokenBudgetService
     private function lowestPriorityIndex(array $messages, ?int $currentQuery): ?int
     {
         foreach ($messages as $index => $message) {
-            if (is_array($message['content'] ?? null) && array_filter($message['content'], static fn (array $part): bool => ($part['type'] ?? null) === 'image_url') !== []) {
+            if (is_array($message['content'] ?? null) && array_filter($message['content'], static fn (array $part): bool => in_array($part['type'] ?? null, ['image_url', 'input_image'], true)) !== []) {
                 continue;
             }
             if (($currentQuery === null || $index < $currentQuery)

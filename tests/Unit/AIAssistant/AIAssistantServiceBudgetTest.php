@@ -29,6 +29,11 @@ use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 
+interface NativeResponsesTestProvider extends LLMProviderInterface
+{
+    public function responses(array $input, array $options = []): array;
+}
+
 class AIAssistantServiceBudgetTest extends TestCase
 {
     protected function setUp(): void
@@ -58,7 +63,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             ],
         ]);
 
-        $this->assertSame(['search_projects'], array_column(array_column($tools, 'function'), 'name'));
+        $this->assertSame(['search_projects'], array_column($tools, 'name'));
     }
 
     public function test_domain_capabilities_expose_snapshot_tools(): void
@@ -87,7 +92,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         ]);
 
         $toolNames = array_map(
-            static fn (array $definition): string => (string) $definition['function']['name'],
+            static fn (array $definition): string => (string) $definition['name'],
             $tools
         );
 
@@ -129,7 +134,7 @@ class AIAssistantServiceBudgetTest extends TestCase
             'request' => $request,
             'request_understanding' => $resolver->resolve('Что с платежами?')->toArray(),
         ];
-        $paymentToolNames = array_column(array_column($service->exposeResolveToolDefinitions($paymentPlan), 'function'), 'name');
+        $paymentToolNames = array_column($service->exposeResolveToolDefinitions($paymentPlan), 'name');
 
         $this->assertContains('assistant_domain_search', $paymentToolNames);
         $this->assertContains('get_contract_snapshot', $paymentToolNames);
@@ -151,7 +156,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $contractPlan = $paymentPlan;
         $contractPlan['task_type'] = 'summary';
         $contractPlan['request_understanding'] = $resolver->resolve('Покажи платежи по договору')->toArray();
-        $contractToolNames = array_column(array_column($service->exposeResolveToolDefinitions($contractPlan), 'function'), 'name');
+        $contractToolNames = array_column($service->exposeResolveToolDefinitions($contractPlan), 'name');
 
         $this->assertContains('get_contract_snapshot', $contractToolNames);
 
@@ -159,14 +164,14 @@ class AIAssistantServiceBudgetTest extends TestCase
         $reportPlan['task_type'] = 'summary';
         $reportPlan['request_understanding'] = $resolver->resolve('Сделай отчет по платежам')->toArray();
         $this->assertSame('generate_report', $reportPlan['request_understanding']['primary_intent']);
-        $reportToolNames = array_column(array_column($service->exposeResolveToolDefinitions($reportPlan), 'function'), 'name');
+        $reportToolNames = array_column($service->exposeResolveToolDefinitions($reportPlan), 'name');
         $this->assertContains('generate_contract_payments_report', $reportToolNames);
         $this->assertContains('get_live_project_financial_evidence', $reportToolNames);
 
         $mixedPlan = $paymentPlan;
         $mixedPlan['task_type'] = 'summary';
         $mixedPlan['request_understanding'] = $resolver->resolve('Покажи платежи проекта')->toArray();
-        $mixedToolNames = array_column(array_column($service->exposeResolveToolDefinitions($mixedPlan), 'function'), 'name');
+        $mixedToolNames = array_column($service->exposeResolveToolDefinitions($mixedPlan), 'name');
         $this->assertContains('get_project_snapshot', $mixedToolNames);
         $this->assertContains('get_live_project_financial_evidence', $mixedToolNames);
         $this->assertContains('get_estimate_answer', $mixedToolNames);
@@ -181,7 +186,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
         $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray()];
-        $call = ['function' => ['name' => 'get_contract_snapshot', 'arguments' => '{}']];
+        $call = ['type' => 'function_call', 'call_id' => 'call_contract', 'name' => 'get_contract_snapshot', 'arguments' => '{}'];
         $failures = [];
         $allowed = $this->makeService($registry, true)->exposeHandleToolCall($call, $plan, $failures);
         self::assertSame('success', $allowed['status']);
@@ -207,8 +212,8 @@ class AIAssistantServiceBudgetTest extends TestCase
         $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve('Что с платежами?')->toArray(),
             'request' => ['context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
         $failures = [];
-        $result = $service->exposeHandleToolCall(['function' => ['name' => 'assistant_domain_search',
-            'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)]], $plan, $failures);
+        $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'call_search', 'name' => 'assistant_domain_search',
+            'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
         self::assertSame('success', $result['status']);
         self::assertSame([], $failures);
     }
@@ -243,7 +248,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         ]);
 
         $toolNames = array_map(
-            static fn (array $definition): string => (string) $definition['function']['name'],
+            static fn (array $definition): string => (string) $definition['name'],
             $tools
         );
 
@@ -284,7 +289,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         ]);
 
         $toolNames = array_map(
-            static fn (array $definition): string => (string) $definition['function']['name'],
+            static fn (array $definition): string => (string) $definition['name'],
             $tools
         );
 
@@ -327,11 +332,9 @@ class AIAssistantServiceBudgetTest extends TestCase
         $toolFailures = [];
 
         $result = $service->exposeHandleToolCall([
-            'id' => 'call_report',
-            'function' => [
-                'name' => 'generate_operational_pdf_report',
-                'arguments' => '{"report_type":"projects_summary"}',
-            ],
+            'type' => 'function_call', 'call_id' => 'call_report',
+            'name' => 'generate_operational_pdf_report',
+            'arguments' => '{"report_type":"projects_summary"}',
         ], [
             'request_understanding' => [
                 'primary_intent' => 'search_knowledge',
@@ -369,7 +372,7 @@ class AIAssistantServiceBudgetTest extends TestCase
         $registry->registerTool($tool);
         $service = $this->makeService($registry, true);
         $failures = [];
-        $result = $service->exposeHandleToolCall(['function' => ['name' => 'search_projects', 'arguments' => '{}']], [], $failures);
+        $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'call_projects', 'name' => 'search_projects', 'arguments' => '{}'], [], $failures);
         $safe = trans_message('ai_assistant.tool_execute_failed');
         $this->assertSame(['error' => $safe], $result);
         $this->assertSame([$safe], $failures);
@@ -892,9 +895,67 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertTrue($service->ragQueryResolved);
     }
 
-    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false): TestableAIAssistantService
+    public function test_service_requests_native_items_and_never_chat_with_replay_guard(): void
     {
-        $llmProvider = $this->createMock(LLMProviderInterface::class);
+        $call = ['type' => 'function_call', 'id' => 'fc_service', 'status' => 'completed', 'call_id' => 'call_service',
+            'name' => 'search_projects', 'arguments' => '{}'];
+        $provider = $this->createMock(NativeResponsesTestProvider::class);
+        $provider->expects($this->never())->method('chat');
+        $provider->method('getModel')->willReturn('openai/gpt-6-luna');
+        $provider->expects($this->exactly(2))->method('responses')->willReturnCallback(function (array $input, array $options) use ($call): array {
+            self::assertInstanceOf(\App\Support\AI\PreparedTokenBudget::class, $options['_prepared_token_budget']);
+            self::assertSame('function', $options['tools'][0]['type']);
+            self::assertArrayNotHasKey('function', $options['tools'][0]);
+            self::assertSame('Запрос', $input[0]['content']);
+            return ['content' => '', 'output' => [$call], 'function_calls' => [$call], 'response_status' => 'completed',
+                'model' => 'openai/gpt-6-luna', 'input_tokens' => 10, 'output_tokens' => 5, 'tokens_used' => 15];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($this->makeTool('search_projects'));
+        $service = $this->makeService($registry, provider: $provider);
+        $tools = $registry->getToolsDefinitions(['search_projects'], true);
+        $input = [['role' => 'user', 'content' => 'Запрос']];
+        $first = $service->exposeRequestAssistantResponse($input, ['tools' => $tools]);
+        self::assertSame([$call], $first['response']['function_calls']);
+        $input = [...$input, ...$first['response']['output'], ['type' => 'function_call_output', 'call_id' => 'call_service', 'output' => '{"found":2}']];
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('assistant_native_replayed_output');
+        $service->exposeRequestAssistantResponse($input, ['tools' => $tools]);
+    }
+
+    public function test_native_preparation_preserves_full_output_and_rejects_legacy_tool_input(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $items = [['role' => 'user', 'content' => 'Запрос'],
+            ['type' => 'message', 'id' => 'msg_native', 'status' => 'completed', 'role' => 'assistant',
+                'content' => [['type' => 'output_text', 'text' => 'Проверю', 'annotations' => []]]],
+            ['type' => 'function_call', 'id' => 'fc_native', 'status' => 'completed', 'call_id' => 'same_call', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'same_call', 'output' => '{"count":2}']];
+        [$prepared] = $service->exposePrepareProviderPayload($items, []);
+        self::assertSame($items, $prepared);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('assistant_native_input_required');
+        $service->exposePrepareMessagesForProvider([['role' => 'tool', 'content' => 'legacy']]);
+    }
+
+    public function test_server_result_metadata_does_not_claim_configured_model_as_response_evidence(): void
+    {
+        $provider = $this->createMock(NativeResponsesTestProvider::class);
+        $provider->method('getModel')->willReturn('openai/gpt-6-luna');
+        $provider->expects($this->never())->method('responses');
+        $service = $this->makeService(new AIToolRegistry, provider: $provider);
+        $actor = new User;
+        $actor->id = 7;
+        $metadata = (new \ReflectionMethod(AIAssistantService::class, 'decorateMetadata'))->invoke($service, ['source_refs' => []], $actor);
+        self::assertNull($metadata['actual_model']);
+        self::assertNull($metadata['provider_response_ref']);
+        self::assertNull($metadata['api_method']);
+        self::assertFalse($metadata['model_invoked']);
+    }
+
+    private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null): TestableAIAssistantService
+    {
+        $llmProvider = $provider ?? $this->createMock(NativeResponsesTestProvider::class);
         $conversationManager = $this->createMock(ConversationManager::class);
         $contextBuilder = $this->createMock(ContextBuilder::class);
         $intentRecognizer = $this->createMock(IntentRecognizer::class);
@@ -973,6 +1034,13 @@ class TestableAIAssistantService extends AIAssistantService
         $this->ragQueryResolved = true;
 
         return parent::resolveRagSearchQuery($query, $requestPayload);
+    }
+
+    public function exposeRequestAssistantResponse(array $input, array $options): array
+    {
+        $actor = new User;
+        $actor->id = 7;
+        return $this->requestAssistantResponse($input, $options, 15, $actor);
     }
 
     public function exposePrepareProviderPayload(array $messages, array $options): array

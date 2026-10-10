@@ -150,7 +150,7 @@ final class AssistantEntitySchemaMetadata
 
     private function schemaMetadataTableReference(PostgresBuilder $schemaBuilder, \Illuminate\Database\Connection $connection, string $table): array
     {
-        [$schema, $relation] = $schemaBuilder->parseSchemaAndTable($table);
+        [$schema, $relation] = $schemaBuilder->parseSchemaAndTable($table, true);
 
         return [$schema, $connection->getTablePrefix().$relation];
     }

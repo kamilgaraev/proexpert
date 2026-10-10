@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Jobs\SendPublicContactNotification;
+use App\Models\ContactForm;
+use App\Services\Notification\TelegramService;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Mail;
+use Mockery;
 use Tests\Support\LegalAcceptanceFixture;
 use Tests\TestCase;
 
@@ -67,6 +71,71 @@ final class PublicContactSubmissionTest extends TestCase
             ->assertUnprocessable()->assertJsonValidationErrors('consent_to_personal_data');
         Bus::assertNotDispatched(SendPublicContactNotification::class);
         $this->assertDatabaseCount('legal_acceptance_events', 0);
+    }
+
+    public function test_urlencoded_submission_is_saved_and_queued_without_inline_notifications(): void
+    {
+        Bus::fake();
+        Mail::fake();
+        $telegram = Mockery::mock(TelegramService::class);
+        $telegram->shouldNotReceive('sendContactFormNotification');
+        $this->app->instance(TelegramService::class, $telegram);
+
+        $payload = array_replace($this->payload(), [
+            'name' => ' Анна & партнёры ',
+            'email' => 'contact+demo@example.test',
+            'message' => "Материалы: бетон + арматура & документы.\nВторой объект.",
+            'consent_to_personal_data' => '1',
+            'page_source' => '/contact#form',
+            'utm_source' => 'yandex',
+            'analytics_consent' => '0',
+        ]);
+        $response = $this->withHeaders([
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/x-www-form-urlencoded;charset=UTF-8',
+        ])->post('/api/public/contact', $payload);
+
+        $response->assertCreated()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.phone', '+7 900 123-45-67');
+        $contact = ContactForm::query()->findOrFail($response->json('data.id'));
+        self::assertSame('Анна & партнёры', $contact->name);
+        self::assertSame($payload['email'], $contact->email);
+        self::assertSame($payload['message'], $contact->message);
+        self::assertTrue($contact->consent_to_personal_data);
+        self::assertSame(ContactForm::CHANNEL_PUBLIC_FORM, $contact->channel);
+        self::assertSame('/contact#form', $contact->page_source);
+        self::assertNull($contact->utm_source);
+        self::assertTrue($contact->notification_delivery['pending']);
+        $this->assertDatabaseHas('legal_acceptance_events', [
+            'reference' => (string) $contact->id,
+            'document_key' => 'contactConsent',
+        ]);
+        Bus::assertDispatched(SendPublicContactNotification::class, fn ($job): bool => $job->contactFormId === $contact->id);
+        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
+    }
+
+    public function test_urlencoded_submission_without_consent_is_rejected_without_saving_or_queuing(): void
+    {
+        Bus::fake();
+        Mail::fake();
+        foreach (['0', 'false'] as $consent) {
+            $payload = array_replace($this->payload(), ['consent_to_personal_data' => $consent]);
+            $this->withHeaders([
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/x-www-form-urlencoded;charset=UTF-8',
+            ])->post('/api/public/contact', $payload)
+                ->assertUnprocessable()
+                ->assertJsonPath('success', false)
+                ->assertJsonValidationErrors('consent_to_personal_data');
+        }
+
+        $this->assertDatabaseCount('contact_forms', 0);
+        $this->assertDatabaseCount('legal_acceptance_events', 0);
+        Bus::assertNotDispatched(SendPublicContactNotification::class);
+        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
     }
 
     private function payload(): array

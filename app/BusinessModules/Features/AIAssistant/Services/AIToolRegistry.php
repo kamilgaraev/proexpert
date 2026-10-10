@@ -93,7 +93,7 @@ class AIToolRegistry
      * Format all registered tools into the standard JSON Schema array
      * expected by OpenAI-compatible providers for Function Calling.
      */
-    public function getToolsDefinitions(?array $allowedToolNames = null): array
+    public function getToolsDefinitions(?array $allowedToolNames = null, bool $nativeResponses = false): array
     {
         $definitions = [];
         $allowed = null;
@@ -115,15 +115,15 @@ class AIToolRegistry
                 continue;
             }
 
-            $definitions[] = [
-                'type' => 'function',
-                'function' => [
-                    'name' => $tool->getName(),
-                    'description' => $tool->getDescription(),
-                    'parameters' => $this->serializedSchema($tool),
-                    'strict' => str_starts_with($tool->getName(), 'assistant_domain_'),
-                ],
+            $function = [
+                'name' => $tool->getName(),
+                'description' => $tool->getDescription(),
+                'parameters' => $this->serializedSchema($tool),
+                'strict' => str_starts_with($tool->getName(), 'assistant_domain_'),
             ];
+            $definitions[] = $nativeResponses
+                ? ['type' => 'function', ...$function]
+                : ['type' => 'function', 'function' => $function];
         }
 
         return $definitions;

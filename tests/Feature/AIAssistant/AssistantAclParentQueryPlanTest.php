@@ -14,7 +14,7 @@ use Tests\TestCase;
 
 final class AssistantAclParentQueryPlanTest extends TestCase
 {
-    public function test_stored_catalog_batches_read_only_canonical_candidates_and_recheck_publication(): void
+    public function test_live_catalog_sources_are_excluded_from_stored_batches(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
         $dataset = DB::table('estimate_dataset_versions')->insertGetId([
@@ -58,7 +58,7 @@ final class AssistantAclParentQueryPlanTest extends TestCase
                 ['ai_rag_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'),
             );
             $read = static fn (): array => array_merge(...array_map(static fn ($batch): array => $batch->get()->pluck('id')->all(), $batches));
-            self::assertEqualsCanonicalizing($allowed, $read());
+            self::assertSame([], $read());
             $nativeScans = [];
             $collect = static function (array $node) use (&$collect, &$nativeScans): void {
                 if (in_array($node['Relation Name'] ?? null, ['estimate_norm_resources', 'estimate_resource_prices'], true)) { $nativeScans[] = $node; }
@@ -68,15 +68,11 @@ final class AssistantAclParentQueryPlanTest extends TestCase
                 $result = DB::selectOne('EXPLAIN (ANALYZE, TIMING FALSE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
                 $collect(json_decode($result->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
             }
-            self::assertNotEmpty($nativeScans);
-            foreach ($nativeScans as $scan) {
-                $visited = ($scan['Actual Rows'] + ($scan['Rows Removed by Filter'] ?? 0) + ($scan['Rows Removed by Index Recheck'] ?? 0)) * $scan['Actual Loops'];
-                self::assertLessThanOrEqual(4, $visited, 'A sparse stored identity batch must not read the entire native catalog.');
-            }
+            self::assertSame([], $nativeScans);
             DB::table('estimate_dataset_versions')->where('id', $dataset)->update(['status' => 'failed']);
             self::assertSame([], $read());
             DB::table('estimate_dataset_versions')->where('id', $dataset)->update(['status' => 'parsed']);
-            self::assertEqualsCanonicalizing($allowed, $read());
+            self::assertSame([], $read());
             $fixture->owner->organizations()->updateExistingPivot($fixture->organization->id, ['is_active' => false]);
             self::assertSame([], $read());
         }, fresh: true);
@@ -115,7 +111,7 @@ final class AssistantAclParentQueryPlanTest extends TestCase
             DB::statement('SET LOCAL statement_timeout = 10000');
             $rows = $query->get();
             self::assertCount(1, $rows);
-            self::assertSame(20001, (int) $rows[0]->total);
+            self::assertSame(0, (int) $rows[0]->total);
             $project = Project::withoutEvents(fn () => Project::factory()->create([
                 'organization_id' => $fixture->organization->id, 'is_archived' => false,
             ]));
@@ -125,11 +121,11 @@ final class AssistantAclParentQueryPlanTest extends TestCase
             self::assertCount(2, $batches);
             $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
             sort($counts);
-            self::assertSame([2, 20001], $counts);
+            self::assertSame([0, 2], $counts);
             Project::withoutEvents(fn () => $project->delete());
             $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
             sort($counts);
-            self::assertSame([0, 20001], $counts);
+            self::assertSame([0, 0], $counts);
         }, fresh: true);
     }
 
@@ -167,7 +163,7 @@ final class AssistantAclParentQueryPlanTest extends TestCase
             $aggregate = $policy->aggregateSourceIdentities(RagSource::query(), $fixture->owner, $fixture->organization->id,
                 ['ai_rag_sources.id'], fn ($visible) => DB::query()->fromSub($visible, 'visible_sources')->selectRaw('COUNT(*) AS total'));
             self::assertNotNull($aggregate);
-            self::assertSame(10001, (int) $aggregate->first()->total);
+            self::assertSame(0, (int) $aggregate->first()->total);
         }, fresh: true);
     }
 
