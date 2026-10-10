@@ -684,6 +684,16 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame($query, $prepared[array_key_last($prepared)]['content']);
     }
 
+    public function test_general_clarification_does_not_require_a_complete_document_corpus(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        self::assertFalse($service->exposeDocumentEvidenceRequired('Что нужно уточнить для расчёта доставки?'));
+        self::assertFalse($service->exposeDocumentEvidenceRequired('Какие параметры нужны для расчёта?'));
+        self::assertTrue($service->exposeDocumentEvidenceRequired('Что нужно уточнить по условиям моего договора?'));
+        self::assertTrue($service->exposeDocumentEvidenceRequired('Покажи весь текст договора.'));
+        self::assertTrue($service->exposeDocumentEvidenceRequired('Покажи текущие суммы проекта.'));
+    }
+
     public function test_mandatory_context_overflow_fails_without_hidden_fallback_or_truncation(): void
     {
         $service = $this->makeService(new AIToolRegistry);
@@ -1068,6 +1078,11 @@ class TestableAIAssistantService extends AIAssistantService
     public function exposeBuildMessages(\App\BusinessModules\Features\AIAssistant\Models\Conversation $conversation, array $plan, string $query): array
     {
         return $this->buildMessages($conversation, [], $plan, currentQuery: $query);
+    }
+
+    public function exposeDocumentEvidenceRequired(string $query): bool
+    {
+        return $this->documentEvidenceRequiredForAnswer($query);
     }
 
     public function exposeResolveToolDefinitions(array $taskPlan): array
