@@ -186,16 +186,16 @@ class ProcurementLifecycleService
         return $this->summary('proposal_submitted', 'select_proposal');
     }
 
-    public function forPurchaseOrder(PurchaseOrder $order): ProcurementLifecycleSummary
+    public function forPurchaseOrder(PurchaseOrder $order, ?array $paymentSummary = null): ProcurementLifecycleSummary
     {
         $order->loadMissing(['items']);
 
         return match ($order->status) {
             PurchaseOrderStatusEnum::DRAFT => $this->summary('order_draft', 'send_order'),
             PurchaseOrderStatusEnum::SENT => $this->summary('order_sent', 'confirm_order'),
-            PurchaseOrderStatusEnum::CONFIRMED => $this->receiptSummary($order, 'order_confirmed'),
-            PurchaseOrderStatusEnum::IN_DELIVERY => $this->receiptSummary($order, 'order_in_delivery'),
-            PurchaseOrderStatusEnum::PARTIALLY_DELIVERED => $this->receiptSummary($order, 'order_partially_delivered'),
+            PurchaseOrderStatusEnum::CONFIRMED => $this->receiptSummary($order, 'order_confirmed', $paymentSummary),
+            PurchaseOrderStatusEnum::IN_DELIVERY => $this->receiptSummary($order, 'order_in_delivery', $paymentSummary),
+            PurchaseOrderStatusEnum::PARTIALLY_DELIVERED => $this->receiptSummary($order, 'order_partially_delivered', $paymentSummary),
             PurchaseOrderStatusEnum::DELIVERED => $this->summary('completed', null),
             PurchaseOrderStatusEnum::CANCELLED => $this->summary('order_cancelled', null),
         };
@@ -455,9 +455,9 @@ class ProcurementLifecycleService
             ->first();
     }
 
-    private function receiptSummary(PurchaseOrder $order, string $stage): ProcurementLifecycleSummary
+    private function receiptSummary(PurchaseOrder $order, string $stage, ?array $paymentSummary = null): ProcurementLifecycleSummary
     {
-        $paymentSummary = $this->paymentGateService->summary($order);
+        $paymentSummary ??= $this->paymentGateService->summary($order);
         $canReceiveMaterials = (bool) $paymentSummary['can_receive_materials'];
 
         return $this->summary($stage, $canReceiveMaterials ? 'receive_materials' : null, [

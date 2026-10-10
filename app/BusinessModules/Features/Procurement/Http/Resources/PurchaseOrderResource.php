@@ -31,13 +31,13 @@ class PurchaseOrderResource extends JsonResource
     {
         $renderStartedAt = hrtime(true);
         $phaseStartedAt = hrtime(true);
-        $workflowSummary = app(ProcurementLifecycleService::class)
-            ->forPurchaseOrder($this->resource);
-        ApiQueryMetrics::recordProcessingPhase($request, 'order_workflow', $phaseStartedAt);
-        $phaseStartedAt = hrtime(true);
         $paymentSummary = app(PurchaseOrderPaymentGateService::class)
             ->summary($this->resource);
         ApiQueryMetrics::recordProcessingPhase($request, 'order_payment', $phaseStartedAt);
+        $phaseStartedAt = hrtime(true);
+        $workflowSummary = app(ProcurementLifecycleService::class)
+            ->forPurchaseOrder($this->resource, $paymentSummary);
+        ApiQueryMetrics::recordProcessingPhase($request, 'order_workflow', $phaseStartedAt);
         $phaseStartedAt = hrtime(true);
         $chainSummary = $this->procurementChain ?? app(ProcurementChainService::class)
             ->forPurchaseOrder($this->resource, $request->user(), includePermissions: false);

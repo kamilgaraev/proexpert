@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Procurement;
 
+use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
+use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
+use App\BusinessModules\Features\Procurement\Http\Resources\SupplierRequestResource;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
@@ -13,6 +16,9 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainResolver;
+use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\Models\Organization;
@@ -230,6 +236,122 @@ class ProcurementLifecycleServiceTest extends TestCase
         ]);
 
         $this->assertSame('delivered', $service->resolveOrderReceiptStatus($order->fresh())->value);
+    }
+
+    public function test_order_resource_calculates_payment_summary_once_per_response(): void
+    {
+        foreach (['confirmed', 'in_delivery', 'partially_delivered'] as $status) {
+            $order = $this->createPurchaseOrder($this->createPurchaseRequest('approved'), $status);
+            $order->load(ProcurementChainResolver::PURCHASE_ORDER_RELATIONS);
+            $expectedPayment = app(PurchaseOrderPaymentGateService::class)->summary($order);
+            $expectedWorkflow = app(ProcurementLifecycleService::class)->forPurchaseOrder($order)->toArray();
+
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                $payload = (new PurchaseOrderResource($order))->resolve(Request::create('/'));
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+            }
+
+            $paymentQueries = array_filter($queries, static fn (array $query): bool =>
+                str_contains($query['query'], 'from "payment_documents"')
+                || str_contains($query['query'], 'from "purchase_receipt_lines"')
+            );
+            $this->assertSame($expectedPayment, $payload['payment_summary']);
+            $this->assertSame($expectedWorkflow, $payload['workflow_summary']);
+            $this->assertCount(4, $paymentQueries, $status);
+        }
+    }
+
+    public function test_supplier_request_list_batches_workflow_reads_and_keeps_organization_scope(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        for ($index = 0; $index < 8; $index++) {
+            $this->createSupplierRequest($purchaseRequest, 'draft', [
+                'request_number' => 'SR-LIST-' . $index,
+                'public_token' => str_repeat((string) $index, 48),
+            ]);
+        }
+        $foreign = $this->createSupplierRequest($this->createPurchaseRequest('approved'), 'draft');
+        $request = Request::create('/api/v1/admin/procurement/supplier-requests', 'GET', ['per_page' => 20]);
+        $request->attributes->set('current_organization_id', $purchaseRequest->organization_id);
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $response = app(SupplierRequestController::class)->index($request);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        $this->assertSame(200, $response->getStatusCode());
+        $payload = $response->getData(true);
+        $this->assertCount(8, $payload['data']);
+        $this->assertNotContains($foreign->id, array_column($payload['data'], 'id'));
+        foreach ($payload['data'] as $item) {
+            $this->assertSame('supplier_request_draft', $item['workflow_summary']['stage']);
+            $this->assertSame('draft', $item['status']);
+        }
+        $this->assertLessThanOrEqual(12, count($queries));
+    }
+
+    public function test_supplier_request_list_preserves_expiry_updates(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'sent', [
+            'public_token_expires_at' => now()->subMinute(),
+        ]);
+        $request = Request::create('/api/v1/admin/procurement/supplier-requests', 'GET');
+        $request->attributes->set('current_organization_id', $purchaseRequest->organization_id);
+
+        $response = app(SupplierRequestController::class)->index($request);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $item = $response->getData(true)['data'][0];
+        $this->assertSame('expired', $item['status']);
+        $this->assertSame('supplier_request_expired', $item['workflow_summary']['stage']);
+        $this->assertSame('expired', $supplierRequest->fresh()->status->value);
+    }
+
+    public function test_supplier_request_list_batches_selected_proposals_and_preserves_expired_proposal_payload(): void
+    {
+        $purchaseRequest = $this->createPurchaseRequest('approved');
+        $expected = [];
+        for ($index = 0; $index < 8; $index++) {
+            $supplierRequest = $this->createSupplierRequest($purchaseRequest, 'responded', [
+                'request_number' => 'SR-SELECTED-' . $index,
+                'public_token' => str_repeat((string) $index, 48),
+            ]);
+            $proposal = $this->createProposal($supplierRequest, [
+                'valid_until' => $index === 0 ? now()->subDay()->toDateString() : now()->addDay()->toDateString(),
+            ]);
+            $this->createDecision($supplierRequest, $proposal, 'selected');
+            $supplierRequest->load(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion']);
+            $expected[$supplierRequest->id] = (new SupplierRequestResource($supplierRequest))->response()->getData(true)['data'];
+        }
+        $request = Request::create('/api/v1/admin/procurement/supplier-requests', 'GET', ['per_page' => 20]);
+        $request->attributes->set('current_organization_id', $purchaseRequest->organization_id);
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $response = app(SupplierRequestController::class)->index($request);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        $this->assertSame(200, $response->getStatusCode());
+        $payload = $response->getData(true);
+        $this->assertCount(8, $payload['data']);
+        foreach ($payload['data'] as $item) {
+            $this->assertSame($expected[$item['id']], $item);
+        }
+        $this->assertSame('proposal_expired', $expected[array_key_first($expected)]['workflow_summary']['stage']);
+        $this->assertLessThanOrEqual(12, count($queries));
     }
 
     private function createPurchaseRequest(string $status): PurchaseRequest

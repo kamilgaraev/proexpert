@@ -320,7 +320,7 @@ class SupplierRequestService
     {
         return SupplierRequest::query()
             ->forOrganization($organizationId)
-            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion'])
+            ->with(['supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'lines', 'currentVersion', 'proposals', 'proposalDecision.winningProposal'])
             ->withCount('lines')
             ->latest('id');
     }

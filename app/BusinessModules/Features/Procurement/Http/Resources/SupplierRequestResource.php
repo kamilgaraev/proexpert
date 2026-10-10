@@ -15,16 +15,24 @@ class SupplierRequestResource extends JsonResource
 {
     private readonly ?ProcurementLifecycleSummary $workflowSummary;
 
-    public function __construct(mixed $resource, mixed $workflowSummary = null)
-    {
+    private readonly bool $useLoadedWorkflowState;
+
+    public function __construct(
+        mixed $resource,
+        mixed $workflowSummary = null,
+        bool $useLoadedWorkflowState = false
+    ) {
         parent::__construct($resource);
         $this->workflowSummary = $workflowSummary instanceof ProcurementLifecycleSummary ? $workflowSummary : null;
+        $this->useLoadedWorkflowState = $useLoadedWorkflowState;
     }
 
     public function toArray(Request $request): array
     {
-        $workflowSummary = $this->workflowSummary ?? app(ProcurementLifecycleService::class)
-            ->forSupplierRequest($this->resource);
+        $lifecycleService = app(ProcurementLifecycleService::class);
+        $workflowSummary = $this->workflowSummary ?? ($this->useLoadedWorkflowState
+            ? $lifecycleService->forLoadedSupplierRequest($this->resource)
+            : $lifecycleService->forSupplierRequest($this->resource));
 
         return [
             'id' => $this->id,
