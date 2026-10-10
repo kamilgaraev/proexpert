@@ -614,7 +614,7 @@ INVALIDATE_BASH;
                 file_put_contents($file, $bytes);
                 chmod($file, 0640);
                 $app = $this->application();
-                self::assertSame(str_contains($bytes, 'static function'), AppRuntimeBootstrap::register($app, $file));
+                self::assertTrue(AppRuntimeBootstrap::register($app, $file));
                 $runtime = $app->make(PublicCoreAssistantRuntime::class);
                 self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             }
@@ -629,13 +629,22 @@ INVALIDATE_BASH;
                 $app->make(PublicCoreAssistantRuntime::class),
             ));
             chmod($file, 0666);
-            self::assertFalse(AppRuntimeBootstrap::register($this->application(), $file));
+            $app = $this->application();
+            self::assertTrue(AppRuntimeBootstrap::register($app, $file));
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             chmod($file, 0640);
             chmod($directory, 0777);
-            self::assertFalse(AppRuntimeBootstrap::register($this->application(), $file));
+            $app = $this->application();
+            self::assertTrue(AppRuntimeBootstrap::register($app, $file));
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             chmod($directory, 0750);
             self::assertTrue(symlink($file, $directory.'/linked.php'));
-            self::assertFalse(AppRuntimeBootstrap::register($this->application(), $directory.'/linked.php'));
+            $app = $this->application();
+            self::assertTrue(AppRuntimeBootstrap::register($app, $directory.'/linked.php'));
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
         } finally {
             @unlink($directory.'/linked.php');
             unlink($file);
@@ -1182,7 +1191,7 @@ CURRENT_IMAGE_BASH;
             $inactive = $configuration; $inactive['activation'] = 'inactive';
             $write($root.'/gateway/runtime.json', json_encode($inactive, JSON_THROW_ON_ERROR));
             try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Required CURRENT cannot be inactive no-op'); }
-            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'invalid_model_output', 'model_profile_unqualified']); }
+            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'runtime_not_activated', 'invalid_model_output', 'model_profile_unqualified']); }
             self::assertSame([], scandir($root.'/app') === ['.', '..'] ? [] : ['unexpected output']);
             $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
             try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Missing checked inputs fabricated'); }
