@@ -55,7 +55,9 @@ class TelegramService
     {
         $message = "🔔 *Новая заявка с сайта*\n\n";
         $message .= "👤 **Имя:** {$contactForm->name}\n";
-        $message .= "📧 **Email:** {$contactForm->email}\n";
+        if ($contactForm->email) {
+            $message .= "📧 **Email:** {$contactForm->email}\n";
+        }
         
         if ($contactForm->phone) {
             $message .= "📞 **Телефон:** {$contactForm->phone}\n";
