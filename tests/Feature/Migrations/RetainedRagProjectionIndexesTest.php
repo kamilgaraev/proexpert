@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Log;
 use PDOException;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
@@ -131,6 +132,59 @@ final class RetainedRagProjectionIndexesTest extends TestCase
             self::assertEquals($settings, $this->settings());
         } finally {
             $connection->statement('RESET ROLE');
+        }
+    }
+
+    #[TestWith([1])]
+    #[TestWith([0])]
+    #[TestWith([null])]
+    public function test_actual_permission_denial_requires_healthy_index_before_deferring(?int $afterHealth): void
+    {
+        $previous = new PDOException('index maintenance permission denied');
+        $previous->errorInfo = ['42501'];
+        $failure = new QueryException('default', 'REINDEX INDEX public.ai_rag_expected_coverage_cover_idx', [], $previous);
+        $restored = false;
+        $indexReads = 0;
+        $connection = $this->createMock(Connection::class);
+        $connection->method('selectOne')->willReturnCallback(static function (string $sql, array $bindings = []) use (&$restored, &$indexReads, $afterHealth): ?object {
+            if (str_contains($sql, 'current_setting')) {
+                return (object) ['statement_timeout' => '23s', 'lock_timeout' => '7s'];
+            }
+            if (str_contains($sql, 'set_config')) {
+                if ($bindings === ['23s', '7s']) {
+                    $restored = true;
+                }
+
+                return (object) [];
+            }
+            $indexReads++;
+            $health = $indexReads % 2 === 1 ? 1 : $afterHealth;
+
+            return $health === null ? null : (object) ['healthy' => $health, 'can_reindex' => 1];
+        });
+        $connection->expects(self::exactly($afterHealth === 1 ? 6 : 1))->method('statement')->willThrowException($failure);
+        $manager = $this->createMock(DatabaseManager::class);
+        $manager->method('connection')->willReturn($connection);
+        DB::swap($manager);
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly($afterHealth === 1 ? 6 : 0))->method('warning')
+            ->with('rag_projection_index_maintenance_deferred', self::callback(
+                static fn (array $context): bool => $context['reason'] === 'insufficient_privilege'
+                    && $context['sqlstate'] === '42501'
+                    && str_starts_with($context['index'], 'public.ai_rag_expected_'),
+            ));
+        Log::swap($logger);
+        try {
+            $this->migration()->up();
+            self::assertSame(1, $afterHealth);
+            self::assertSame(12, $indexReads);
+        } catch (RuntimeException $exception) {
+            self::assertNotSame(1, $afterHealth);
+            self::assertSame('rag_projection_index_unhealthy: public.ai_rag_expected_coverage_cover_idx', $exception->getMessage());
+            self::assertSame($failure, $exception->getPrevious());
+            self::assertSame(2, $indexReads);
+        } finally {
+            self::assertTrue($restored);
         }
     }
 
