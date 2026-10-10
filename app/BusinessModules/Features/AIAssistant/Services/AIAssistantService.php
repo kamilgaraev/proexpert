@@ -3237,10 +3237,6 @@ class AIAssistantService
         if ($this->activeEstimateSelection !== null) {
             $references['selected_estimate'] = $this->activeEstimateSelection;
         }
-        $capabilityHints = $this->precomputedCapabilityHints ?? $this->measurePhase('catalog', fn (): array => $this->buildDomainCapabilityHints($taskPlan));
-        if ($capabilityHints !== []) {
-            $references['registered_domain_capabilities'] = $capabilityHints;
-        }
         if ($this->activeActor !== null) {
             if (! $this->documentContextBlocked) {
                 $references['conversation_summary'] = $this->conversationManager->getSummary($conversation, $this->activeActor);
