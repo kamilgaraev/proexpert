@@ -71,7 +71,7 @@ class AuthorizationService
             return $result;
         } finally {
             if ($request instanceof Request && $checkpoint !== null) {
-                ApiQueryMetrics::recordProcessingPhase($request, 'authorization_current', $checkpoint['started_at'], $checkpoint);
+                ApiQueryMetrics::recordProcessingPhase($request, 'current_access_check', $checkpoint['started_at'], $checkpoint);
             }
         }
     }
