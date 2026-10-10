@@ -223,22 +223,20 @@ final class OpenAIProvider implements LLMProviderInterface
         $model = $response['model'] ?? null;
         $ref = $response['id'] ?? null;
         if (($response['status'] ?? null) !== 'completed' || ($response['error'] ?? null) !== null
-            || !is_string($model) || $model !== $expectedModel || !is_string($ref)
-            || !preg_match('/^[a-zA-Z0-9_-]{1,128}$/D', $ref)
+            || !is_string($model) || $model !== $expectedModel || !self::validNativeIdentifier($ref)
             || !is_array($response['output'] ?? null) || !array_is_list($response['output'])
             || count($response['output']) < 1 || count($response['output']) > 64) {
             $safeModel = is_string($model) && preg_match('/^[a-zA-Z0-9_.\/-]{1,100}$/D', $model) ? $model : 'invalid';
             $safeStatus = is_string($response['status'] ?? null) && preg_match('/^[a-z_]{1,24}$/D', $response['status']) ? $response['status'] : 'invalid';
-            $validReference = is_string($ref) && preg_match('/^[a-zA-Z0-9_-]{1,128}$/D', $ref);
+            $validReference = self::validNativeIdentifier($ref);
             $validOutput = is_array($response['output'] ?? null) && array_is_list($response['output']);
-            throw new \DomainException('assistant_native_response_invalid:model='.$safeModel.';status='.$safeStatus.';reference='.(int) $validReference.';output='.(int) $validOutput);
+            throw new \DomainException('assistant_native_response_invalid:model='.$safeModel.';status='.$safeStatus.';reference='.(int) $validReference.';reference_type='.get_debug_type($ref).';reference_length='.(is_string($ref) ? strlen($ref) : 0).';output='.(int) $validOutput);
         }
         $allowed = array_fill_keys(array_column($tools, 'name'), true);
         $ids = [];
         $calls = [];
         foreach ($response['output'] as $item) {
-            if (!is_array($item) || !is_string($item['id'] ?? null)
-                || !preg_match('/^[a-zA-Z0-9_-]{1,128}$/D', $item['id']) || isset($ids[$item['id']])) {
+            if (!is_array($item) || !self::validNativeIdentifier($item['id'] ?? null) || isset($ids[$item['id']])) {
                 throw new \DomainException('assistant_native_item_invalid');
             }
             $ids[$item['id']] = true;
@@ -248,8 +246,7 @@ final class OpenAIProvider implements LLMProviderInterface
             if (($item['type'] ?? null) === 'function_call') {
                 $callId = $item['call_id'] ?? null;
                 $arguments = $item['arguments'] ?? null;
-                if (($item['status'] ?? null) !== 'completed' || !is_string($callId)
-                    || !preg_match('/^[a-zA-Z0-9_-]{1,128}$/D', $callId) || isset($calls[$callId])
+                if (($item['status'] ?? null) !== 'completed' || !self::validNativeIdentifier($callId) || isset($calls[$callId])
                     || !is_string($item['name'] ?? null) || !isset($allowed[$item['name']])
                     || !is_string($arguments) || strlen($arguments) > 65536
                     || !is_object(json_decode($arguments)) || json_last_error() !== JSON_ERROR_NONE) {
@@ -291,6 +288,12 @@ final class OpenAIProvider implements LLMProviderInterface
         $result['model_invoked'] = true;
         $result['finish_reason'] = $result['function_calls'] === [] ? 'stop' : 'function_call';
         return $result;
+    }
+
+    private static function validNativeIdentifier(mixed $identifier): bool
+    {
+        return is_string($identifier) && trim($identifier) !== '' && strlen($identifier) <= 512
+            && !preg_match('/[\x00-\x1F\x7F]/', $identifier);
     }
 
     public function countTokens(string $text): int
