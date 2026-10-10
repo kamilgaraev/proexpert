@@ -144,13 +144,13 @@ final class AssistantNativeResponsesTest extends TestCase
 
     public function test_native_result_preserves_a_bounded_opaque_provider_reference(): void
     {
-        $id = 'e21bd655-1595-717a-9de7-b0d31f8cbb75';
+        $id = 'provider:response/e21bd655.1595-717a-9de7-b0d31f8cbb75';
         $response = json_decode((string) $this->wire('openai/gpt-6-luna', [self::text('Готово.')], ['id' => $id])->getBody(), true, 512, JSON_THROW_ON_ERROR);
         $result = OpenAIProvider::nativeResult($response, 'openai/gpt-6-luna', 'timeweb', []);
         self::assertSame($id, $result['provider_response_ref']);
         self::assertTrue($result['model_invoked']);
 
-        foreach (['', "id\nheader", 'bad/id', str_repeat('x', 129)] as $invalid) {
+        foreach (['', '   ', "id\nheader", "id\0header", str_repeat('x', 513)] as $invalid) {
             try {
                 OpenAIProvider::nativeResult(array_replace($response, ['id' => $invalid]), 'openai/gpt-6-luna', 'timeweb', []);
                 self::fail('Expected invalid reference rejection');
@@ -158,6 +158,20 @@ final class AssistantNativeResponsesTest extends TestCase
                 self::assertTrue(true);
             }
         }
+    }
+
+    public function test_native_roundtrip_preserves_opaque_item_and_call_identifiers(): void
+    {
+        $history = [];
+        $call = array_replace(self::call(), ['id' => 'provider:item/1.2', 'call_id' => 'provider:call/1.2']);
+        $text = array_replace(self::text('Готово.'), ['id' => 'provider:message/1.2']);
+        $provider = $this->provider('timeweb', 'openai/gpt-6-luna', [$this->wire('openai/gpt-6-luna', [$call]), $this->wire('openai/gpt-6-luna', [$text])], $history);
+        $first = $provider->responses([['role' => 'user', 'content' => 'Проверь']], ['tools' => self::tools()]);
+        $final = $provider->responses([...$first['output'], ['type' => 'function_call_output', 'call_id' => $call['call_id'], 'output' => '{}']], ['tools' => self::tools()]);
+        $payload = json_decode((string) $history[1]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertEquals($call, $payload['input'][0]);
+        self::assertSame($call['call_id'], $payload['input'][1]['call_id']);
+        self::assertEquals([$text], $final['output']);
     }
 
     private function provider(string $name, string $model, array $responses, array &$history): TimewebProvider|OpenAIProvider
