@@ -9,27 +9,35 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEsti
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Models\SystemAdmin;
+use Illuminate\Auth\Access\AuthorizationException;
 
 final readonly class ApplicationAdminSessionOperationExecutor implements AdminSessionOperationExecutor
 {
     public function __construct(
         private RetryEstimateGenerationSession $retry,
         private TransitionEstimateGenerationSession $transition,
+        private AdminSessionOperationAuthorizer $authorization,
     ) {}
 
     public function execute(
         AdminSessionOperationCommand $command,
         AdminSessionOperationSnapshot $snapshot,
     ): AdminSessionOperationResult {
+        if (! $this->authorization->canOperate($command->actorId)) {
+            throw new AuthorizationException(trans_message('estimate_generation.access_denied'));
+        }
+        $actor = SystemAdmin::query()->findOrFail($command->actorId);
         $session = match ($command->operation) {
             AdminSessionOperation::Retry => $this->retry->handle(new RetryEstimateGenerationSessionCommand(
                 $command->sessionId,
                 $command->organizationId,
                 $command->projectId,
                 $command->expectedStateVersion,
+                $actor,
             )),
-            AdminSessionOperation::Cancel => $this->transition($command, EstimateGenerationEvent::Cancelled),
-            AdminSessionOperation::Archive => $this->transition($command, EstimateGenerationEvent::Archived),
+            AdminSessionOperation::Cancel => $this->transition($command, EstimateGenerationEvent::Cancelled, $actor),
+            AdminSessionOperation::Archive => $this->transition($command, EstimateGenerationEvent::Archived, $actor),
         };
 
         return AdminSessionOperationResult::success(
@@ -46,6 +54,7 @@ final readonly class ApplicationAdminSessionOperationExecutor implements AdminSe
     private function transition(
         AdminSessionOperationCommand $command,
         EstimateGenerationEvent $event,
+        SystemAdmin $actor,
     ): EstimateGenerationSession {
         $session = EstimateGenerationSession::query()
             ->select(['id', 'organization_id', 'project_id', 'status', 'resume_status', 'state_version'])
@@ -54,7 +63,7 @@ final readonly class ApplicationAdminSessionOperationExecutor implements AdminSe
             ->where('project_id', $command->projectId)
             ->firstOrFail();
 
-        return $this->transition->handle($session, $command->expectedStateVersion, $event);
+        return $this->transition->handle($session, $command->expectedStateVersion, $event, $actor);
     }
 
     private function enumValue(mixed $value): string

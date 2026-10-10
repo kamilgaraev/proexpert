@@ -58,11 +58,12 @@ final readonly class CreateDocumentProcessingUnits
             ->get();
 
         if ($existing->isNotEmpty()) {
-            $this->synchronizeProcessingAttempt($existing, $processingAttemptId);
-            $this->publish($claim, static fn (): bool => true);
-            if (in_array((string) $document->status, ['uploaded', 'queued', 'processing'], true)) {
-                $this->ensureQueuedPages($document, $existing, $sourceVersion);
-            }
+            $this->publish($claim, function () use ($existing, $processingAttemptId, $document, $sourceVersion): void {
+                $this->synchronizeProcessingAttempt($existing, $processingAttemptId);
+                if (in_array((string) $document->status, ['uploaded', 'queued', 'processing'], true)) {
+                    $this->ensureQueuedPages($document, $existing, $sourceVersion);
+                }
+            });
 
             return $existing;
         }
@@ -216,20 +217,20 @@ final readonly class CreateDocumentProcessingUnits
     {
         return DB::transaction(function () use ($claim, $publication): mixed {
             $context = $claim->context;
-            $checkpoint = EstimateGenerationPipelineCheckpoint::query()
-                ->whereKey($claim->checkpointId)
-                ->where('session_id', $context->sessionId)
-                ->where('status', CheckpointStatus::Running->value)
-                ->where('claim_token', $claim->claimToken)
-                ->where('lease_expires_at', '>', now())
-                ->lockForUpdate()
-                ->first();
             $session = EstimateGenerationSession::query()
                 ->whereKey($context->sessionId)
                 ->where('organization_id', $context->organizationId)
                 ->where('project_id', $context->projectId)
                 ->where('state_version', $context->stateVersion)
                 ->where('status', $context->sessionStatus)
+                ->lockForUpdate()
+                ->first();
+            $checkpoint = EstimateGenerationPipelineCheckpoint::query()
+                ->whereKey($claim->checkpointId)
+                ->where('session_id', $context->sessionId)
+                ->where('status', CheckpointStatus::Running->value)
+                ->where('claim_token', $claim->claimToken)
+                ->where('lease_expires_at', '>', now())
                 ->lockForUpdate()
                 ->first();
             $document = EstimateGenerationDocument::query()

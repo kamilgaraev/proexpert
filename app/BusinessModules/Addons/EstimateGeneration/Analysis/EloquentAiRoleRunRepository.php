@@ -83,7 +83,13 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 $physicalState = $this->database->table('estimate_generation_vision_physical_attempts')
                     ->where('attempt_id', (string) $row->physical_attempt_id)
                     ->value('state');
-                if (in_array($physicalState, ['response_received', 'completed'], true)) {
+                if (in_array($physicalState, ['pre_wire', 'response_received', 'completed'], true)) {
+                    if ($physicalState === 'pre_wire') {
+                        $this->database->table('estimate_generation_vision_physical_attempts')
+                            ->where('attempt_id', (string) $row->physical_attempt_id)
+                            ->where('state', 'pre_wire')
+                            ->update(['owner_token' => $ownerUuid, 'lease_expires_at' => $leaseExpiresAt, 'updated_at' => $now]);
+                    }
                     $query->update([
                         'owner_uuid' => $ownerUuid,
                         'lease_expires_at' => $leaseExpiresAt,
@@ -120,9 +126,25 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
         $this->assertUuid($ownerUuid);
         $this->assertUuid($physicalAttemptId);
         $now = new DateTimeImmutable;
-        $updated = $this->database->transaction(function () use ($runId, $ownerUuid, $physicalAttemptId, $now): int {
+        $scope = $this->database->table(self::TABLE)->where('id', $runId)
+            ->first(['organization_id', 'project_id', 'session_id']);
+        if ($scope === null) {
+            throw new UsageInvariantViolation('AI role run physical attempt ownership lost.');
+        }
+        $updated = $this->database->transaction(function () use ($runId, $ownerUuid, $physicalAttemptId, $now, $scope): int {
+            $session = $this->database->table('estimate_generation_sessions')
+                ->where('id', (int) $scope->session_id)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
+                ->lockForUpdate()->first(['id']);
+            if ($session === null) {
+                return 0;
+            }
             $run = $this->database->table(self::TABLE)
                 ->where('id', $runId)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
+                ->where('session_id', (int) $scope->session_id)
                 ->where('status', 'running')
                 ->where('owner_uuid', $ownerUuid)
                 ->where('lease_expires_at', '>', $now)
@@ -140,10 +162,9 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 'session_id' => (int) $run->session_id,
                 'document_id' => $run->document_id,
                 'page_id' => $run->page_id,
-                'state' => 'wire_started',
+                'state' => 'pre_wire',
                 'owner_token' => $ownerUuid,
                 'lease_expires_at' => $run->lease_expires_at,
-                'wire_started_at' => $now,
                 'usage_recorded' => false,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -160,6 +181,11 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 || $this->nullableInt($attempt->page_id) !== $this->nullableInt($run->page_id)
                 || ! $this->physicalAttemptMatchesRun($attempt, $run)) {
                 throw new UsageInvariantViolation('AI role run physical attempt scope collision.');
+            }
+            if ((string) $attempt->state === 'pre_wire') {
+                $this->database->table('estimate_generation_vision_physical_attempts')
+                    ->where('attempt_id', $physicalAttemptId)->where('state', 'pre_wire')
+                    ->update(['owner_token' => $ownerUuid, 'lease_expires_at' => $run->lease_expires_at, 'updated_at' => $now]);
             }
 
             return $this->database->table(self::TABLE)
@@ -239,25 +265,50 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
     {
         $this->assertUuid($ownerUuid);
         $now = new DateTimeImmutable;
-        $query = $this->database->table(self::TABLE)
-            ->where('id', $runId)
-            ->where('status', 'running')
-            ->where('owner_uuid', $ownerUuid)
-            ->where('lease_expires_at', '>', $now);
-        if ($failure->physicalAttemptId !== null) {
-            $query->where('physical_attempt_id', $failure->physicalAttemptId);
-        }
-        $updated = $query->update([
-            'status' => $failure->ambiguous ? 'ambiguous' : 'failed',
-            'failure_code' => $failure->code,
-            'owner_uuid' => null,
-            'lease_expires_at' => null,
-            'failed_at' => $now,
-            'updated_at' => $now,
-        ]);
-        if ($updated !== 1) {
-            throw new UsageInvariantViolation('AI role run failure collision.');
-        }
+        $this->database->transaction(function () use ($runId, $ownerUuid, $failure, $now): void {
+            $query = $this->database->table(self::TABLE)
+                ->where('id', $runId)->where('status', 'running')
+                ->where('owner_uuid', $ownerUuid)->where('lease_expires_at', '>', $now);
+            if ($failure->physicalAttemptId !== null) {
+                $query->where('physical_attempt_id', $failure->physicalAttemptId);
+            }
+            $run = (clone $query)->lockForUpdate()->first();
+            if ($run === null) {
+                throw new UsageInvariantViolation('AI role run failure collision.');
+            }
+            $ambiguous = $failure->ambiguous && ! $failure->wireNotStarted;
+            if ($failure->physicalAttemptId !== null) {
+                $physicalQuery = $this->database->table('estimate_generation_vision_physical_attempts')
+                    ->where('attempt_id', $failure->physicalAttemptId)->where('organization_id', $run->organization_id)
+                    ->where('project_id', $run->project_id)->where('session_id', $run->session_id);
+                $physical = (clone $physicalQuery)->lockForUpdate()->first(['state', 'owner_token', 'unit_id', 'response_payload']);
+                if ($failure->wireNotStarted && $physical !== null && (string) $physical->state === 'wire_started') {
+                    if ($physical->unit_id === null && (string) $physical->owner_token === $ownerUuid && $physical->response_payload === null) {
+                        $physicalQuery->where('state', 'wire_started')->where('owner_token', $ownerUuid)->update([
+                            'state' => 'pre_wire', 'wire_started_at' => null, 'cost_reservation_amount' => null,
+                            'cost_reservation_currency' => null, 'updated_at' => $now,
+                        ]);
+                        $physical->state = 'pre_wire';
+                    } else {
+                        $ambiguous = true;
+                    }
+                }
+                if ($physical !== null && in_array((string) $physical->state, ['pre_wire', 'response_received', 'completed'], true)) {
+                    $ambiguous = false;
+                }
+            }
+            $updated = $query->update([
+                'status' => $ambiguous ? 'ambiguous' : 'failed',
+                'failure_code' => $failure->code,
+                'owner_uuid' => null,
+                'lease_expires_at' => null,
+                'failed_at' => $now,
+                'updated_at' => $now,
+            ]);
+            if ($updated !== 1) {
+                throw new UsageInvariantViolation('AI role run failure collision.');
+            }
+        }, 3);
     }
 
     public function loadCurrent(AiRoleRunInput $input): ?AiRoleRunClaim

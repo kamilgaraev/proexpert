@@ -27,7 +27,20 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
     public function reconcile(int $documentId, string $sourceVersion): void
     {
         $claim = $this->database->transaction(function () use ($documentId, $sourceVersion): ?array {
-            $document = $this->documentQuery()->with('session')->lockForUpdate()->find($documentId);
+            $scope = $this->documentQuery()->find($documentId);
+            if (! $scope instanceof EstimateGenerationDocument) {
+                return null;
+            }
+            $session = $this->database->table('estimate_generation_sessions')
+                ->where('id', $scope->session_id)->where('organization_id', $scope->organization_id)
+                ->where('project_id', $scope->project_id)->lockForUpdate()->first(['status', 'resume_status']);
+            if ($session === null || in_array((string) $session->status, ['cancelled', 'archived', 'applied', 'applying'], true)
+                || ((string) $session->status === 'failed' && (string) $session->resume_status !== 'processing_documents')) {
+                return null;
+            }
+            $document = $this->documentQuery()->with('session')->where('organization_id', $scope->organization_id)
+                ->where('project_id', $scope->project_id)->where('session_id', $scope->session_id)
+                ->lockForUpdate()->find($documentId);
 
             if (! $document instanceof EstimateGenerationDocument
                 || (string) $document->source_version !== $sourceVersion

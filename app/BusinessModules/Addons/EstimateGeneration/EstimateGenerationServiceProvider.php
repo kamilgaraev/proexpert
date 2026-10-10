@@ -129,8 +129,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\BackfillNor
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\QualityEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\PruneRegionalPriceCatalogsCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\QualityEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsBuildingResourcePricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
@@ -181,7 +181,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPip
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineExecutionPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPublishDraftOnce;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
@@ -191,7 +190,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineExecutionPlan
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishDraftOnce;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishValidatedDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\S3PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\AssembleResourcesStage;
@@ -768,7 +766,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
-        $this->app->singleton(PublishDraftOnce::class, EloquentPublishDraftOnce::class);
         $this->app->singleton(PipelineDefinitionGraph::class, static fn (): PipelineDefinitionGraph => PipelineDefinitionGraph::standard());
         $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);
         $this->app->singleton(PipelineCheckpointStore::class, fn ($app) => new EloquentPipelineCheckpointStore(
@@ -810,6 +807,14 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             static fn ($app): SessionAiCostGuard => new SessionAiCostGuard($app->make('db')->connection()),
         );
         $this->app->singleton(RerankWireClient::class, TimewebRerankWireClient::class);
+        $this->app->bind(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer::class,
+        );
+        $this->app->bind(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SessionProcessingStopper::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing::class,
+        );
         $this->app->singleton(OcrDocumentStorageService::class);
         $this->app->singleton(OcrPreflightService::class);
         $this->app->singleton(SpreadsheetDocumentExtractor::class);

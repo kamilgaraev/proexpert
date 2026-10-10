@@ -11,18 +11,28 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexingState;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 $app = require dirname(__DIR__, 2).'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
+if (! $app->environment('testing') || DB::getDriverName() !== 'pgsql'
+    || DB::connection()->getConfig('host') !== '127.0.0.1'
+    || (string) DB::connection()->getConfig('port') !== '55433'
+    || ! str_ends_with((string) DB::getDatabaseName(), '_testing')) {
+    throw new RuntimeException('explicit_retry_worker_environment_unsafe');
+}
+$indexingState = app(AssistantIndexingState::class);
+$indexingState->beginMigration();
 
 [$script, $sessionId, $documentId, $sourceVersion, $stateVersion, $idempotencyKey] = $argv;
 $authorization = Mockery::mock(AuthorizationService::class);
-$authorization->allows('can')->andReturnTrue();
+$authorization->allows('canCurrent')->andReturnTrue();
 $reconciler = Mockery::mock(DocumentMutationSessionReconciler::class);
 $reconciler->allows('changed')->andReturnUsing(static fn (EstimateGenerationSession $session): EstimateGenerationSession => $session);
 $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
@@ -35,8 +45,7 @@ $service = new RetryEstimateGenerationDocument(
     new ExplicitDocumentRetryEligibility,
     new ResetDocumentProcessingUnitsForAttempt,
 );
-$actor = new User;
-$actor->forceFill(['id' => 7, 'current_organization_id' => 38]);
+$actor = User::query()->findOrFail(7);
 Queue::fake();
 
 fwrite(STDOUT, "READY\n");
@@ -60,3 +69,4 @@ fwrite(STDOUT, 'RESULT '.json_encode([
     'dispatches' => $dispatches,
 ], JSON_THROW_ON_ERROR)."\n");
 Mockery::close();
+$indexingState->endMigration();

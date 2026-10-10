@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use InvalidArgumentException;
 
 final readonly class EstimateAuditInput
@@ -19,6 +20,7 @@ final readonly class EstimateAuditInput
         public array $draft,
         public array $evidence,
         public string $contractVersion,
+        public ?AiSessionWireScope $wireScope = null,
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -85,6 +87,7 @@ final readonly class EstimateAuditInput
             $draft,
             $this->evidence,
             $this->contractVersion,
+            $this->wireScope,
         );
     }
 

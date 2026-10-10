@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope;
 use InvalidArgumentException;
 
 final readonly class EstimateAuditInputFactory
@@ -21,7 +22,7 @@ final readonly class EstimateAuditInputFactory
         }
     }
 
-    public function capture(int $organizationId, int $projectId, int $sessionId, array $draft): EstimateAuditInput
+    public function capture(int $organizationId, int $projectId, int $sessionId, array $draft, ?AiSessionWireScope $wireScope = null): EstimateAuditInput
     {
         $capture = $this->models->snapshotForPlanning($organizationId, $projectId, $sessionId, $this->maxFacts + 1);
         $snapshot = $capture['snapshot'];
@@ -67,6 +68,7 @@ final readonly class EstimateAuditInputFactory
                 $factSet,
             ),
             RunEstimateAudit::PROMPT_CONTRACT,
+            $wireScope,
         );
     }
 

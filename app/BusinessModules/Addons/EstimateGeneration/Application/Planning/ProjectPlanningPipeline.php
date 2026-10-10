@@ -21,6 +21,7 @@ final readonly class ProjectPlanningPipeline
         int $sessionId,
         string $checkpointClaimToken,
         int $logicalAttempt,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope $wireScope = null,
     ): ProjectPlanningResult {
         $understanding = $this->understanding->refresh(
             $organizationId,
@@ -28,6 +29,7 @@ final readonly class ProjectPlanningPipeline
             $sessionId,
             $checkpointClaimToken,
             $logicalAttempt,
+            $wireScope,
         );
         $planning = $this->planning->refresh(
             $organizationId,

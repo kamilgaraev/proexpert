@@ -86,6 +86,8 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'checkpoint_claim_token' => $context->claimToken,
                         'input_version' => $context->priorOutputs->require(ProcessingStage::PlanWorkItems)->version,
                         'logical_attempt' => $context->stageAttempt,
+                        'state_version' => $context->stateVersion,
+                        'generation_attempt_id' => $context->generationAttemptId,
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,

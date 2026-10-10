@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 
 final readonly class ConfirmEstimateGenerationDocumentCost
@@ -32,21 +35,18 @@ final readonly class ConfirmEstimateGenerationDocumentCost
         [$lockedSession, $lockedDocument, $disposition, $attemptId, $limitIncreased] = DB::transaction(function () use (
             $session, $document, $actor, $expectedVersion, $expectedSourceVersion, $keyHash,
         ): array {
-            $lockedSession = EstimateGenerationSession::query()->lockForUpdate()->findOrFail($session->getKey());
+            $lockedSession = EstimateGenerationSession::query()->where('organization_id', $session->organization_id)
+                ->where('project_id', $session->project_id)->lockForUpdate()->findOrFail($session->getKey());
             $lockedDocument = EstimateGenerationDocument::query()
                 ->where('organization_id', $lockedSession->organization_id)
                 ->where('project_id', $lockedSession->project_id)
                 ->where('session_id', $lockedSession->id)
                 ->lockForUpdate()
                 ->findOrFail($document->getKey());
-            if ((int) $lockedSession->state_version !== $expectedVersion) {
-                throw new DocumentProcessingControlConflict('stale_session');
-            }
-            if ((int) $actor->current_organization_id !== (int) $lockedDocument->organization_id
-                || ! $this->authorization->can($actor, 'estimate_generation.review', [
-                    'organization_id' => (int) $lockedDocument->organization_id,
-                    'project_id' => (int) $lockedDocument->project_id,
-                ])) {
+            try {
+                (new EstimateGenerationActionAuthorizer($this->authorization))
+                    ->authorize($actor, $lockedSession, 'estimate_generation.review');
+            } catch (AuthorizationException) {
                 throw new DocumentProcessingControlConflict('forbidden');
             }
             if (! hash_equals((string) $lockedDocument->source_version, $expectedSourceVersion)) {
@@ -63,11 +63,22 @@ final readonly class ConfirmEstimateGenerationDocumentCost
                 : [];
             $attemptId = is_string($meta['processing_attempt_id'] ?? null)
                 ? $meta['processing_attempt_id'] : null;
-            if (($current['idempotency_hash'] ?? null) === $keyHash
-                || collect($history)->contains(
-                    static fn (array $entry): bool => ($entry['idempotency_hash'] ?? null) === $keyHash,
-                )) {
+            $replay = collect([$current, ...$history])->first(
+                static fn (array $entry): bool => ($entry['idempotency_hash'] ?? null) === $keyHash,
+            );
+            if (is_array($replay)) {
+                if (($replay['source_version'] ?? null) !== $expectedSourceVersion
+                    || (isset($replay['request_state_version']) && (int) $replay['request_state_version'] !== $expectedVersion)) {
+                    throw new DocumentProcessingControlConflict('stale_session');
+                }
+
                 return [$lockedSession, $lockedDocument, 'replayed', $attemptId, false];
+            }
+            if ((int) $lockedSession->state_version !== $expectedVersion) {
+                throw new DocumentProcessingControlConflict('stale_session');
+            }
+            if (! EstimateGenerationMutationPolicy::canMutateDocuments($lockedSession)) {
+                throw new DocumentProcessingControlConflict('stale_session');
             }
             if ((string) $lockedDocument->processing_control_status !== 'paused'
                 || ! in_array((string) $lockedDocument->processing_control_reason, [
@@ -108,6 +119,7 @@ final readonly class ConfirmEstimateGenerationDocumentCost
             $confirmation = [
                 'idempotency_hash' => $keyHash,
                 'source_version' => $expectedSourceVersion,
+                'request_state_version' => $expectedVersion,
                 'attempt_id' => $attemptId,
                 'confirmed_at' => $now->toISOString(),
                 'version' => $documentConfirmation ? $documentConfirmationVersion : $sessionConfirmationVersion,

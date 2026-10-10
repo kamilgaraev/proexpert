@@ -18,6 +18,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentWireAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
@@ -43,7 +46,6 @@ use App\Services\Billing\CommercialQuotaService;
 use DateTimeImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -51,9 +53,10 @@ use Illuminate\Support\Str;
 use Mockery;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class DocumentProcessingControlPostgresTest extends TestCase
+final class DocumentProcessingControlPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     public function createApplication(): Application
     {
@@ -97,7 +100,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $fixture = $this->fixture();
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->twice()->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->times(3)->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
@@ -132,6 +135,107 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 ->where('event_type', 'document_processing_stopped')
                 ->count());
             self::assertSame('superseded', $fixture['unit']->fresh()->status->value);
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function cancelled_session_stops_inflight_units_and_retains_late_physical_response_without_publication(): void
+    {
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture();
+            $permissions = Mockery::mock(AuthorizationService::class);
+            $permissions->allows('canCurrent')->andReturnTrue();
+            $this->app->instance(AuthorizationService::class, $permissions);
+            $units = app(DocumentProcessingUnitStore::class);
+            $now = new DateTimeImmutable;
+            $claim = $units->claim((int) $fixture['unit']->id, $fixture['sourceVersion'], $now, $now->modify('+180 seconds'), 3);
+            self::assertTrue($claim->acquired());
+            [$physical, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+            $physical->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
+            app(TransitionEstimateGenerationSession::class)->handle($fixture['session'], 0, EstimateGenerationEvent::Cancelled, $fixture['user']);
+            self::assertSame('superseded', $fixture['unit']->fresh()->status->value);
+            self::assertSame('cancelled', $fixture['document']->fresh()->processing_control_status);
+            $physical->storeResponse($context->attemptId, $fingerprint, $owner,
+                ['parsed_envelope' => ['status' => 'ok']], 'succeeded', 200, 10, 'fixture-model', []);
+            DB::table('estimate_generation_ai_usage')->insert($this->usageRow($fixture, $context->attemptId, '0.001'));
+            $physical->markUsageRecorded($context->attemptId, $fingerprint);
+            self::assertFalse($units->publish($claim, new DocumentUnitOutput(
+                version: 'cancelled-late-v1', text: 'Late provider response', confidence: 0.95,
+                normalizedPayload: ['independent_observations' => [], 'limitations' => []],
+                unitType: $fixture['unit']->unit_type, unitIndex: 1, sourceVersion: $fixture['sourceVersion'],
+            ), $now));
+            self::assertSame('completed', DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $context->attemptId)->value('state'));
+            self::assertSame('cancelled', $fixture['session']->fresh()->status->value);
+            self::assertSame(0, $fixture['unit']->fresh()->output_count);
+            self::assertSame([], app(DocumentUnitDispatchStore::class)->dueForDocument((int) $fixture['document']->id, $fixture['sourceVersion'], $now, 10));
+            [$next, $nextContext, $nextFingerprint, $nextOwner] = $this->physicalAttempt($fixture);
+            try {
+                $next->markWireStarted($nextContext->attemptId, $nextFingerprint, $nextOwner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
+                self::fail('A cancelled session cannot send another request.');
+            } catch (DocumentUnitProcessingException $exception) {
+                self::assertSame('document_processing_stopped', $exception->safeCode);
+            }
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function fourth_physical_send_for_the_same_document_request_is_denied_across_recovery(): void
+    {
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture();
+            [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+            foreach (range(1, 3) as $ordinal) {
+                DB::table('estimate_generation_vision_physical_attempts')->insert([
+                    'attempt_id' => (string) Str::uuid(), 'request_fingerprint' => $fingerprint,
+                    'logical_request_fingerprint' => $fingerprint,
+                    'organization_id' => $fixture['organization']->id, 'project_id' => $fixture['project']->id,
+                    'session_id' => $fixture['session']->id, 'document_id' => $fixture['document']->id,
+                    'page_id' => $fixture['page']->id, 'unit_id' => $fixture['unit']->id,
+                    'processing_lineage_id' => $fixture['lineage'], 'state' => 'completed',
+                    'usage_recorded' => false, 'wire_started_at' => now()->subSeconds($ordinal),
+                    'cost_reservation_amount' => '0.01', 'cost_reservation_currency' => 'RUB',
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+            $now = new DateTimeImmutable;
+            try {
+                $store->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
+                self::fail('Fourth physical send must be denied.');
+            } catch (DocumentUnitProcessingException $exception) {
+                self::assertSame('physical_attempt_limit_reached', $exception->safeCode);
+            }
+            self::assertNull(DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $context->attemptId)->value('wire_started_at'));
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    #[Test]
+    public function failed_session_for_another_stage_cannot_start_an_existing_document_wire_claim(): void
+    {
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture();
+            [$store, $context, $fingerprint, $owner] = $this->physicalAttempt($fixture);
+            $fixture['session']->forceFill(['status' => 'failed', 'resume_status' => 'generating'])->save();
+            self::assertSame([], app(DocumentUnitDispatchStore::class)->dueForDocument((int) $fixture['document']->id, $fixture['sourceVersion'], new DateTimeImmutable, 10));
+            $now = new DateTimeImmutable;
+            try {
+                $store->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
+                self::fail('Another-stage failure must prohibit document wire.');
+            } catch (DocumentUnitProcessingException $exception) {
+                self::assertSame('document_processing_stopped', $exception->safeCode);
+            }
+            self::assertNull(DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $context->attemptId)->value('wire_started_at'));
+            $fixture['session']->forceFill(['resume_status' => 'processing_documents'])->save();
+            $store->markWireStarted($context->attemptId, $fingerprint, $owner, $now, $now->modify('+180 seconds'), new AiCost('0.01', 'RUB', 'available'));
+            self::assertNotNull(DB::table('estimate_generation_vision_physical_attempts')->where('attempt_id', $context->attemptId)->value('wire_started_at'));
         } finally {
             DB::rollBack();
         }
@@ -188,7 +292,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             ])->save();
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->twice()->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->times(4)->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
@@ -273,7 +377,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $fixture = $this->fixture();
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->twice()->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->twice()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->times(3)->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(AuthorizationService::class, $authorization);
@@ -337,7 +441,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 ],
             ])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->times(6)->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->times(6)->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->times(6)->andReturn(['summary' => []]);
             $service = new ConfirmEstimateGenerationDocumentCost(
@@ -371,7 +475,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['session'],
                 $fixture['document']->fresh(),
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'cost-confirmation-key-b',
             );
@@ -395,7 +499,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['session'],
                 $fixture['document']->fresh(),
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'session-cost-confirmation-key',
             );
@@ -412,7 +516,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $fixture['session']->fresh(),
                 $document,
                 $fixture['user'],
-                0,
+                (int) $fixture['session']->fresh()->state_version,
                 $fixture['sourceVersion'],
                 'session-cost-confirmation-key-b',
             );
@@ -559,7 +663,8 @@ final class DocumentProcessingControlPostgresTest extends TestCase
                 $this->usageRow($fixture, (string) Str::uuid(), '4.57096500'),
             ]);
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->twice()->andReturnTrue();
+            $authorization->shouldReceive('can')->once()->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->once()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->once()->andReturn(['summary' => []]);
             $service = new ConfirmEstimateGenerationDocumentCost(
@@ -1229,7 +1334,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $store->markUsageRecorded($context->attemptId, $fingerprint);
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->once()->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->once()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->once()->andReturn(['summary' => []]);
             $stop = new StopEstimateGenerationDocumentProcessing(
@@ -1283,6 +1388,80 @@ final class DocumentProcessingControlPostgresTest extends TestCase
     }
 
     #[Test]
+    public function operator_stop_waits_for_role_before_locking_its_physical_attempt(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture('100.00000000');
+        $now = new DateTimeImmutable;
+        $claim = app(DocumentProcessingUnitStore::class)->claim(
+            (int) $fixture['unit']->id, $fixture['sourceVersion'], $now, $now->modify('+180 seconds'), 3,
+        );
+        self::assertTrue($claim->acquired());
+        [, $context, , $owner] = $this->physicalAttempt($fixture);
+        $this->attachActiveRoleRun($fixture, $context->attemptId, $owner);
+        $worker = null;
+        $probe = null;
+        DB::beginTransaction();
+        try {
+            DB::table('estimate_generation_ai_role_runs')->where('physical_attempt_id', $context->attemptId)
+                ->lockForUpdate()->firstOrFail();
+            $environment = array_replace(getenv(), array_filter($_ENV, static fn (mixed $value): bool => is_string($value)));
+            $worker = proc_open([
+                PHP_BINARY, dirname(__DIR__, 3).'/Support/DocumentRoleStopConcurrentWorker.php',
+                (string) $fixture['session']->id, (string) $fixture['document']->id,
+                (string) $fixture['user']->id, $fixture['sourceVersion'], (string) $fixture['session']->state_version,
+            ], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes, dirname(__DIR__, 4), $environment);
+            self::assertIsResource($worker);
+            $ready = $this->waitForProcessToken($worker, $pipes[1], $pipes[2], 'READY ');
+            self::assertSame(1, preg_match('/READY (\d+)/', $ready, $match));
+            fwrite($pipes[0], "GO\n");
+            fclose($pipes[0]);
+            $deadline = microtime(true) + 5;
+            do {
+                $blocked = DB::selectOne('SELECT cardinality(pg_blocking_pids(?)) AS count', [(int) $match[1]]);
+                if ((int) $blocked->count > 0) {
+                    break;
+                }
+                usleep(10_000);
+            } while (microtime(true) < $deadline);
+            self::assertGreaterThan(0, (int) $blocked->count);
+            $configuration = DB::connection()->getConfig();
+            $probe = pg_connect(sprintf('host=%s port=%s dbname=%s user=%s password=%s connect_timeout=5',
+                $configuration['host'], $configuration['port'], $configuration['database'],
+                $configuration['username'], $configuration['password'],
+            ), PGSQL_CONNECT_FORCE_NEW);
+            self::assertInstanceOf(\PgSql\Connection::class, $probe);
+            self::assertNotFalse(pg_query($probe, 'BEGIN'));
+            self::assertNotFalse(pg_query_params($probe,
+                'SELECT attempt_id FROM estimate_generation_vision_physical_attempts WHERE attempt_id = $1 FOR UPDATE NOWAIT',
+                [$context->attemptId],
+            ));
+            self::assertNotFalse(pg_query($probe, 'ROLLBACK'));
+            DB::commit();
+            $output = $this->waitForProcessToken($worker, $pipes[1], $pipes[2], 'RESULT ');
+            $error = stream_get_contents($pipes[2]);
+            self::assertSame(0, proc_close($worker), $error);
+            $worker = null;
+            self::assertStringContainsString('RESULT accepted', $output);
+            self::assertSame('failed', DB::table('estimate_generation_ai_role_runs')
+                ->where('physical_attempt_id', null)->where('document_id', $fixture['document']->id)->value('status'));
+            self::assertFalse(DB::table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $context->attemptId)->exists());
+        } finally {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            if ($probe instanceof \PgSql\Connection) {
+                pg_close($probe);
+            }
+            if (is_resource($worker)) {
+                proc_terminate($worker);
+                proc_close($worker);
+            }
+        }
+    }
+
+    #[Test]
     public function historical_completed_attempt_does_not_protect_the_current_pre_wire_stage_from_stop(): void
     {
         $this->requirePostgres();
@@ -1326,7 +1505,7 @@ final class DocumentProcessingControlPostgresTest extends TestCase
             $this->attachActiveRoleRun($fixture, $currentContext->attemptId, $currentOwner);
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
             $authorization = Mockery::mock(AuthorizationService::class);
-            $authorization->shouldReceive('can')->once()->andReturnTrue();
+            $authorization->shouldReceive('canCurrent')->once()->andReturnTrue();
             $readiness = Mockery::mock(DocumentGenerationReadinessService::class);
             $readiness->shouldReceive('evaluate')->twice()->andReturn($this->reviewRequiredReadiness());
             $this->app->instance(DocumentGenerationReadinessService::class, $readiness);
@@ -1427,7 +1606,8 @@ final class DocumentProcessingControlPostgresTest extends TestCase
     {
         $organization = Organization::factory()->create();
         $project = Project::factory()->for($organization)->create();
-        $user = User::factory()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
+        $user->organizations()->syncWithoutDetaching([$organization->id => ['is_active' => true, 'is_owner' => false, 'project_access_mode' => 'all_projects']]);
         $sourceVersion = 'sha256:'.hash('sha256', (string) Str::uuid());
         $lineage = (string) Str::uuid();
         $session = EstimateGenerationSession::query()->create([
@@ -1623,9 +1803,13 @@ final class DocumentProcessingControlPostgresTest extends TestCase
         $fingerprint = hash('sha256', 'wire-'.$context->attemptId);
         $owner = (string) Str::uuid();
         $now = new DateTimeImmutable;
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('canCurrent')->withArgs(static fn (User $user, string $permission, array $scope): bool => (int) $user->id === (int) $fixture['user']->id && $permission === 'estimate_generation.generate'
+            && $scope === ['organization_id' => (int) $fixture['organization']->id, 'project_id' => (int) $fixture['project']->id])
+            ->andReturnTrue();
         $store = new EloquentVisionPhysicalAttemptStore(
             DB::connection(),
-            new DocumentWireAuthorization(DB::connection()),
+            new DocumentWireAuthorization(DB::connection(), new EstimateGenerationActionAuthorizer($authorization)),
         );
         $store->claim($context, $fingerprint, $owner, $now, $now->modify('+180 seconds'));
 
@@ -1721,9 +1905,8 @@ final class DocumentProcessingControlPostgresTest extends TestCase
 
     private function requirePostgres(): void
     {
-        if (getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql') {
-            self::markTestSkipped('Requires explicit isolated PostgreSQL contract environment.');
-        }
+        self::assertSame('pgsql', DB::getDriverName());
+        self::assertStringEndsWith('_testing', DB::getDatabaseName());
     }
 
     private function waitForProcessToken($process, $stdout, $stderr, string $token): string

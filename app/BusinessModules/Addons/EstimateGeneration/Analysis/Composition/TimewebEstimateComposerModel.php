@@ -10,11 +10,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
-use RuntimeException;
 use Throwable;
 
 final readonly class TimewebEstimateComposerModel implements EstimateComposerCorrectionModel, EstimateComposerModel
@@ -63,9 +63,11 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
         $started = hrtime(true);
         $usageRecorded = false;
         try {
-            $replay = $this->responses?->replay($attemptId, $input->fingerprint());
+            $replay = $this->responses?->replayBeforeWire($attemptId, $input->fingerprint());
             if ($replay !== null) {
-                $response = $replay['provider_response'];
+                $response = [...$replay['provider_response'], 'physical_attempt_receipt' => [
+                    'duration_ms' => $replay['duration_ms'], 'price_snapshot' => $replay['price_snapshot'], 'usage_recorded' => $replay['usage_recorded'],
+                ]];
                 $usageRecorded = $replay['usage_recorded'];
                 $status = 'succeeded';
 
@@ -79,10 +81,12 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,
                     'session_id' => $input->sessionId,
+                    ...($input->wireScope?->toArray() ?? []),
                 ],
             ]);
             $decoded = json_decode($this->normalizedContent((string) ($response['content'] ?? '')), true);
@@ -100,7 +104,13 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             );
 
             return $decoded;
+        } catch (AiWireNotStarted $exception) {
+            $usageRecorded = true;
+            throw $exception;
         } catch (RerankWireException $exception) {
+            if ($exception->providerResponse !== []) {
+                $response = $exception->providerResponse;
+            }
             $status = $exception->attemptStatus;
             $httpCode = $exception->httpCode;
             throw $exception;
@@ -143,9 +153,11 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
         $started = hrtime(true);
         $usageRecorded = false;
         try {
-            $replay = $this->responses?->replay($attemptId, $input->fingerprint());
+            $replay = $this->responses?->replayBeforeWire($attemptId, $input->fingerprint());
             if ($replay !== null) {
-                $response = $replay['provider_response'];
+                $response = [...$replay['provider_response'], 'physical_attempt_receipt' => [
+                    'duration_ms' => $replay['duration_ms'], 'price_snapshot' => $replay['price_snapshot'], 'usage_recorded' => $replay['usage_recorded'],
+                ]];
                 $usageRecorded = $replay['usage_recorded'];
                 $status = 'succeeded';
 
@@ -159,10 +171,12 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
                 'estimate_generation_scope' => [
                     'organization_id' => $audit->organizationId,
                     'project_id' => $audit->projectId,
                     'session_id' => $audit->sessionId,
+                    ...($audit->wireScope?->toArray() ?? []),
                 ],
             ]);
             $decoded = json_decode($this->normalizedContent((string) ($response['content'] ?? '')), true);
@@ -180,7 +194,13 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             );
 
             return $decoded;
+        } catch (AiWireNotStarted $exception) {
+            $usageRecorded = true;
+            throw $exception;
         } catch (RerankWireException $exception) {
+            if ($exception->providerResponse !== []) {
+                $response = $exception->providerResponse;
+            }
             $status = $exception->attemptStatus;
             $httpCode = $exception->httpCode;
             throw $exception;
@@ -239,6 +259,13 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
         AiPriceSnapshot $price,
     ): void {
         try {
+            $receipt = is_array($response['physical_attempt_receipt'] ?? null) ? $response['physical_attempt_receipt'] : null;
+            if (($receipt['usage_recorded'] ?? false) === true) {
+                return;
+            }
+            $durationMs = is_int($receipt['duration_ms'] ?? null) ? $receipt['duration_ms']
+                : (int) max(0, round((hrtime(true) - $started) / 1_000_000));
+            $price = is_array($receipt['price_snapshot'] ?? null) ? AiPriceSnapshot::fromArray($receipt['price_snapshot']) : $price;
             $measured = ($response['usage_available'] ?? false) === true;
             $this->usage->record(new AiUsageData(
                 context: $context,
@@ -248,10 +275,12 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 status: in_array($status, ['succeeded', 'http_failed', 'connection_failed', 'malformed_response'], true)
                     ? $status
                     : 'connection_failed',
-                durationMs: (int) max(0, round((hrtime(true) - $started) / 1_000_000)),
+                durationMs: $durationMs,
                 usageStatus: $measured ? 'measured' : 'unavailable',
                 inputTokens: $measured ? max(0, (int) ($response['input_tokens'] ?? 0)) : 0,
                 outputTokens: $measured ? max(0, (int) ($response['output_tokens'] ?? 0)) : 0,
+                cachedInputTokens: $measured ? max(0, (int) ($response['cached_input_tokens'] ?? 0)) : 0,
+                reasoningTokens: $measured ? max(0, (int) ($response['reasoning_tokens'] ?? 0)) : 0,
                 httpCode: $httpCode,
                 priceSnapshot: $price,
             ));
@@ -263,8 +292,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 ]);
             } catch (Throwable) {
             }
-
-            throw new RuntimeException('usage_recording_failed', previous: $exception);
+            throw $exception;
         }
     }
 }

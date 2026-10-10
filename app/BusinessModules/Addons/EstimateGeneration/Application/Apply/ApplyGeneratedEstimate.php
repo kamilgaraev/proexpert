@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -18,16 +20,23 @@ class ApplyGeneratedEstimate
     public function __construct(
         private GeneratedEstimateWriter $writer,
         private EstimateGenerationWorkflow $workflow,
+        private ?EstimateGenerationActionAuthorization $authorizer = null,
     ) {}
 
     public function handle(ApplyGeneratedEstimateCommand $command): ApplyGeneratedEstimateResult
     {
+        if ($command->actor === null) {
+            throw new AuthorizationException(trans_message('estimate_generation.access_denied'));
+        }
+
         return $this->transaction(function () use ($command): ApplyGeneratedEstimateResult {
             $session = $this->loadLockedSession(
                 $command->sessionId,
                 $command->organizationId,
                 $command->projectId,
             );
+            ($this->authorizer ?? app(EstimateGenerationActionAuthorization::class))
+                ->authorize($command->actor, $session, 'estimate_generation.apply');
 
             if ($session->applied_estimate_id !== null) {
                 if (! $this->replayMatches((int) $session->applied_estimate_id, $command)) {

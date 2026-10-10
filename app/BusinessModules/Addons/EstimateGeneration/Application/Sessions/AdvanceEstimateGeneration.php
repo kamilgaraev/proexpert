@@ -287,8 +287,7 @@ final class AdvanceEstimateGeneration
                 'input_payload' => $this->withoutPlanningReview($session),
             ]);
         }
-        if ($session->status === EstimateGenerationStatus::Draft
-            || $session->status === EstimateGenerationStatus::ProcessingDocuments) {
+        if ($session->status === EstimateGenerationStatus::Draft) {
             return $this->documentsStarted($session);
         }
 
@@ -298,7 +297,7 @@ final class AdvanceEstimateGeneration
             'last_error' => null,
             'failure_code' => null,
             'input_payload' => [
-                ...$this->withoutPlanningReview($session),
+                ...$this->withoutGenerationActor($session),
                 'generation_attempt_id' => null,
                 'generation_requested' => $resumeRequestedGeneration,
             ],
@@ -318,6 +317,14 @@ final class AdvanceEstimateGeneration
     {
         $payload = is_array($session->input_payload) ? $session->input_payload : [];
         unset($payload['planning_review']);
+
+        return $payload;
+    }
+
+    private function withoutGenerationActor(EstimateGenerationSession $session): array
+    {
+        $payload = $this->withoutPlanningReview($session);
+        unset($payload['generation_actor_id'], $payload['generation_actor_type']);
 
         return $payload;
     }

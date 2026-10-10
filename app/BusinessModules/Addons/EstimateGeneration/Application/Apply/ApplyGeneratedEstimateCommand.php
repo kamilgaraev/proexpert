@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
+use App\Models\User;
+
 final readonly class ApplyGeneratedEstimateCommand
 {
     public function __construct(
@@ -16,5 +18,6 @@ final readonly class ApplyGeneratedEstimateCommand
         public ?string $estimateDate = null,
         public ?string $idempotencyKey = null,
         public ?string $artifactHash = null,
+        public ?User $actor = null,
     ) {}
 }

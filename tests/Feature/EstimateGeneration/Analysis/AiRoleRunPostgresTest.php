@@ -15,15 +15,13 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use DateTimeImmutable;
-use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\PostgresConnection;
 use Illuminate\Database\QueryException;
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
-final class AiRoleRunPostgresTest extends TestCase
+final class AiRoleRunPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     private int $organizationId;
 
@@ -36,14 +34,6 @@ final class AiRoleRunPostgresTest extends TestCase
     private int $documentId;
 
     private int $pageId;
-
-    public function createApplication(): Application
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
-
-        return $app;
-    }
 
     public function test_exact_replay_is_immutable_and_source_versions_are_isolated(): void
     {
@@ -64,7 +54,13 @@ final class AiRoleRunPostgresTest extends TestCase
                 $claim->ownerUuid,
                 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
             );
+            $connection->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+                ->update(['state' => 'completed']);
             $repository->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $result->physicalAttemptId);
+            $connection->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $result->physicalAttemptId)
+                ->update(['state' => 'response_received']);
             $repository->complete($claim->runId, $claim->ownerUuid, $result);
             self::assertSame($result->physicalAttemptId, $connection->table('estimate_generation_ai_role_runs')
                 ->where('id', $claim->runId)->value('physical_attempt_id'));
@@ -108,6 +104,9 @@ final class AiRoleRunPostgresTest extends TestCase
                 $successor,
                 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
             );
+            $connection->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+                ->update(['state' => 'wire_started', 'wire_started_at' => new DateTimeImmutable]);
             $connection->table('estimate_generation_ai_role_runs')->where('id', $taken->runId)->update([
                 'lease_expires_at' => new DateTimeImmutable('-1 minute'),
             ]);
@@ -251,11 +250,7 @@ final class AiRoleRunPostgresTest extends TestCase
         $connection = DB::connection();
         self::assertInstanceOf(PostgresConnection::class, $connection);
         self::assertSame('pgsql', $connection->getDriverName());
-        self::assertTrue(
-            $connection->getDatabaseName() === 'most_backend_testing'
-                || ($connection->getDatabaseName() === 'most_ai_estimator_contract'
-                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
-        );
+        self::assertStringEndsWith('_testing', $connection->getDatabaseName());
         $connection->statement("SET statement_timeout TO '5000ms'");
         $connection->statement("SET lock_timeout TO '5000ms'");
         $schema = 'public';

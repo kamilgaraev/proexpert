@@ -22,7 +22,6 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private EstimateGenerationPackagePersistenceService $packages,
         private EstimateGenerationAuditService $audit,
         private AdvanceEstimateGeneration $advance,
-        private PublishDraftOnce $publishDraftOnce,
         private EstimateGenerationNotificationService $notifications,
         private DraftReadinessInspector $readiness,
         private TargetedPackageRebuildOperationService $targetedRebuilds,
@@ -89,15 +88,6 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             $claim->context->inputVersion,
             $artifactHash,
         ]));
-        if ($publishable) {
-            $publication = $this->publishDraftOnce->publish(
-                (string) $claim->context->sessionId,
-                $claim->context->inputVersion,
-                $artifactHash,
-            );
-            $idempotencyKey = $publication->idempotencyKey();
-            $published->refresh();
-        }
         $this->notifications->notifyFinished($published, $idempotencyKey);
     }
 }

@@ -86,7 +86,7 @@ final class EstimateComposerPostgresTest extends TestCase
     {
         [$connection, $schema] = $this->fixture();
         try {
-            $wire = new RecordedComposerWireClient;
+            $wire = new RecordedComposerWireClient($connection);
             $usage = $this->createMock(AiUsageStore::class);
             $prices = $this->createMock(AiPriceSnapshotResolver::class);
             $prices->method('resolve')->willReturn(AiPriceSnapshot::fromArray([]));
@@ -148,11 +148,7 @@ final class EstimateComposerPostgresTest extends TestCase
         $connection = $this->app->make('db')->connection();
         self::assertInstanceOf(PostgresConnection::class, $connection);
         self::assertSame('pgsql', $connection->getDriverName());
-        self::assertTrue(
-            $connection->getDatabaseName() === 'most_backend_testing'
-                || ($connection->getDatabaseName() === 'most_ai_estimator_contract'
-                    && getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT') === '1'),
-        );
+        self::assertStringEndsWith('_testing', $connection->getDatabaseName());
         $connection->statement("SET statement_timeout TO '5000ms'");
         $connection->statement("SET lock_timeout TO '5000ms'");
         $schema = 'most_ci_estimate_composer_'.bin2hex(random_bytes(8));
@@ -237,6 +233,8 @@ final class PostgresRecordedEstimateComposerModel implements EstimateComposerMod
 
 final class RecordedComposerWireClient implements RerankWireClient
 {
+    public function __construct(private readonly PostgresConnection $connection) {}
+
     public int $calls = 0;
 
     public function provider(): string
@@ -247,6 +245,9 @@ final class RecordedComposerWireClient implements RerankWireClient
     public function call(string $model, array $messages, array $options): array
     {
         $this->calls++;
+        $this->connection->table('estimate_generation_vision_physical_attempts')
+            ->where('attempt_id', $options['estimate_generation_attempt']['attempt_id'])
+            ->where('state', 'pre_wire')->update(['state' => 'wire_started', 'wire_started_at' => now()]);
 
         return [
             'content' => json_encode(['work_intents' => [[

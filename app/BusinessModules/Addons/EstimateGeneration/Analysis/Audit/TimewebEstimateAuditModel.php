@@ -9,11 +9,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
-use RuntimeException;
 use Throwable;
 
 final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
@@ -39,7 +39,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
         if (strlen($payload) > $this->maxInputBytes) {
             throw new InvalidArgumentException('estimate_auditor_input_limit_exceeded');
         }
-        $attemptId = AiOperationContext::deterministicId('estimate-auditor-attempt|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
+        $attemptId = AiOperationContext::deterministicId('estimate-auditor-attempt|'.$input->fingerprint());
         $onAttemptStarted($attemptId);
         $context = new AiOperationContext(
             AiOperationContext::deterministicId('estimate-auditor|'.$input->fingerprint()),
@@ -56,6 +56,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
         $status = 'connection_failed';
         $httpCode = null;
         $started = hrtime(true);
+        $wireStarted = true;
         try {
             $response = $this->wire->call($this->modelName, [
                 ['role' => 'system', 'content' => $this->prompt()],
@@ -65,10 +66,12 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,
                     'session_id' => $input->sessionId,
+                    ...($input->wireScope?->toArray() ?? []),
                 ],
             ]);
             $decoded = json_decode($this->normalizedContent((string) ($response['content'] ?? '')), true);
@@ -78,12 +81,20 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
             $status = 'succeeded';
 
             return $decoded;
+        } catch (AiWireNotStarted $exception) {
+            $wireStarted = false;
+            throw $exception;
         } catch (RerankWireException $exception) {
+            if ($exception->providerResponse !== []) {
+                $response = $exception->providerResponse;
+            }
             $status = $exception->attemptStatus;
             $httpCode = $exception->httpCode;
             throw $exception;
         } finally {
-            $this->record($context, $status, $httpCode, $response, $started, $price);
+            if ($wireStarted) {
+                $this->record($context, $status, $httpCode, $response, $started, $price);
+            }
         }
     }
 
@@ -115,6 +126,13 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
     private function record(AiOperationContext $context, string $status, ?int $httpCode, array $response, int $started, AiPriceSnapshot $price): void
     {
         try {
+            $receipt = is_array($response['physical_attempt_receipt'] ?? null) ? $response['physical_attempt_receipt'] : null;
+            if (($receipt['usage_recorded'] ?? false) === true) {
+                return;
+            }
+            $durationMs = is_int($receipt['duration_ms'] ?? null) ? $receipt['duration_ms']
+                : (int) max(0, round((hrtime(true) - $started) / 1_000_000));
+            $price = is_array($receipt['price_snapshot'] ?? null) ? AiPriceSnapshot::fromArray($receipt['price_snapshot']) : $price;
             $measured = ($response['usage_available'] ?? false) === true;
             $this->usage->record(new AiUsageData(
                 context: $context,
@@ -122,10 +140,12 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 requestedModel: $this->modelName,
                 reportedModel: is_string($response['model'] ?? null) ? $response['model'] : null,
                 status: in_array($status, ['succeeded', 'http_failed', 'connection_failed', 'malformed_response'], true) ? $status : 'connection_failed',
-                durationMs: (int) max(0, round((hrtime(true) - $started) / 1_000_000)),
+                durationMs: $durationMs,
                 usageStatus: $measured ? 'measured' : 'unavailable',
                 inputTokens: $measured ? max(0, (int) ($response['input_tokens'] ?? 0)) : 0,
                 outputTokens: $measured ? max(0, (int) ($response['output_tokens'] ?? 0)) : 0,
+                cachedInputTokens: $measured ? max(0, (int) ($response['cached_input_tokens'] ?? 0)) : 0,
+                reasoningTokens: $measured ? max(0, (int) ($response['reasoning_tokens'] ?? 0)) : 0,
                 httpCode: $httpCode,
                 priceSnapshot: $price,
             ));
@@ -137,7 +157,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 ]);
             } catch (Throwable) {
             }
-            throw new RuntimeException('usage_recording_failed', previous: $exception);
+            throw $exception;
         }
     }
 }

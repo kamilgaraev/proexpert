@@ -20,15 +20,16 @@ use App\Models\User;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
-use Tests\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
-final class ReuseEstimateGenerationDocumentsTest extends TestCase
+final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanonicalPostgresTestCase
 {
     public function test_documents_are_copied_as_fresh_sources_and_reuse_is_idempotent(): void
     {
         Queue::fake();
         $organization = Organization::factory()->create();
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $user = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
+        $user->organizations()->syncWithoutDetaching([$organization->id => ['is_active' => true, 'is_owner' => false, 'project_access_mode' => 'all_projects']]);
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $source = $this->makeSession($organization, $project, $user);
         $target = $this->makeSession($organization, $project, $user);
@@ -38,12 +39,13 @@ final class ReuseEstimateGenerationDocumentsTest extends TestCase
         ]);
         $this->app->instance(EffectiveSettingsResolver::class, $this->settingsResolver((int) $organization->id));
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($organization, $project, $user): void {
-            $mock->shouldReceive('can')
-                ->twice()
-                ->with($user, 'estimate_generation.upload_documents', [
-                    'organization_id' => (int) $organization->id,
-                    'project_id' => (int) $project->id,
-                ])
+            $mock->shouldReceive('canCurrent')
+                ->times(4)
+                ->withArgs(static fn (User $actor, string $permission, array $scope): bool => (int) $actor->id === (int) $user->id && $permission === 'estimate_generation.upload_documents'
+                    && $scope === [
+                        'organization_id' => (int) $organization->id,
+                        'project_id' => (int) $project->id,
+                    ])
                 ->andReturnTrue();
         });
         $copyIndex = 0;
@@ -80,7 +82,7 @@ final class ReuseEstimateGenerationDocumentsTest extends TestCase
         )->all());
         Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 2);
 
-        $freshTarget = $target->freshOrFail();
+        $freshTarget = EstimateGenerationSession::query()->findOrFail($target->id);
         $second = app(ReuseEstimateGenerationDocuments::class)->handle(
             $freshTarget,
             (int) $freshTarget->state_version,

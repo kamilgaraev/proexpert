@@ -46,7 +46,10 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             return null;
         }
 
-        return $this->database->transaction(function () use ($claim): DocumentUnitExecutionContext {
+        return $this->database->transaction(function () use ($claim): ?DocumentUnitExecutionContext {
+            if (! $this->lockActiveSession($claim->organizationId, $claim->projectId, $claim->sessionId)) {
+                return null;
+            }
             $unit = $this->query()->with('document.session')->lockForUpdate()->find($claim->unitId);
             $now = now()->toDateTimeImmutable();
 
@@ -130,6 +133,9 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         return $this->database->transaction(function () use ($unitId, $sourceVersion, $now, $leaseExpiresAt, $maxAttempts): DocumentProcessingUnitClaim {
             $scope = $this->query()->find($unitId);
             if (! $scope instanceof EstimateGenerationProcessingUnit) {
+                return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Stale);
+            }
+            if (! $this->lockActiveSession((int) $scope->organization_id, (int) $scope->project_id, (int) $scope->session_id)) {
                 return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Stale);
             }
             $this->documentQuery()
@@ -261,6 +267,9 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
     public function publish(DocumentProcessingUnitClaim $claim, DocumentUnitOutput $output, DateTimeImmutable $now): bool
     {
         return $this->database->transaction(function () use ($claim, $output, $now): bool {
+            if (! $this->lockActiveSession($claim->organizationId, $claim->projectId, $claim->sessionId)) {
+                return false;
+            }
             $scope = $this->claimQuery($claim)->first(['document_id']);
             if (! $scope instanceof EstimateGenerationProcessingUnit) {
                 return false;
@@ -602,6 +611,17 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             && $unit->document->status !== 'ignored';
     }
 
+    private function lockActiveSession(int $organizationId, int $projectId, int $sessionId): bool
+    {
+        $session = $this->database->table('estimate_generation_sessions')
+            ->where('id', $sessionId)->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)->lockForUpdate()->first(['status', 'resume_status']);
+
+        return $session !== null
+            && ! in_array((string) $session->status, ['cancelled', 'archived', 'applied', 'applying'], true)
+            && ((string) $session->status !== 'failed' || (string) $session->resume_status === 'processing_documents');
+    }
+
     private function record(EstimateGenerationProcessingUnit $unit): DocumentProcessingUnitRecord
     {
         $failureCategory = FailureCategory::tryFrom((string) (((array) $unit->metadata)['failure_category'] ?? ''));
@@ -650,8 +670,17 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             ->where('unit_id', $unitId)
             ->where('processing_lineage_id', $attemptId)
             ->where('state', 'pre_wire')
-            ->lockForUpdate()
             ->pluck('attempt_id');
+        if ($attemptIds->isEmpty()) {
+            return;
+        }
+
+        $this->database->table('estimate_generation_ai_role_runs')
+            ->whereIn('physical_attempt_id', $attemptIds)
+            ->orderBy('id')->lockForUpdate()->get(['id']);
+        $attemptIds = $this->database->table('estimate_generation_vision_physical_attempts')
+            ->whereIn('attempt_id', $attemptIds)->where('state', 'pre_wire')
+            ->orderBy('attempt_id')->lockForUpdate()->pluck('attempt_id');
         if ($attemptIds->isEmpty()) {
             return;
         }
