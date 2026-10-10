@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -40,7 +41,21 @@ return new class extends Migration
                     Log::warning('rag_projection_index_maintenance_deferred', ['index' => 'public.'.$name, 'reason' => 'non_owner']);
                     continue;
                 }
-                $connection->statement('REINDEX INDEX public.'.$name);
+                try {
+                    $connection->statement('REINDEX INDEX public.'.$name);
+                } catch (QueryException $exception) {
+                    if (($exception->errorInfo[0] ?? null) !== '42501') {
+                        throw $exception;
+                    }
+                    if ((int) ($this->indexState($name)->healthy ?? 0) !== 1) {
+                        throw new RuntimeException('rag_projection_index_unhealthy: public.'.$name, 0, $exception);
+                    }
+                    Log::warning('rag_projection_index_maintenance_deferred', [
+                        'index' => 'public.'.$name, 'reason' => 'insufficient_privilege', 'sqlstate' => '42501',
+                    ]);
+
+                    continue;
+                }
                 if ((int) ($this->indexState($name)->healthy ?? 0) !== 1) {
                     throw new RuntimeException('rag_projection_index_unhealthy: public.'.$name);
                 }
