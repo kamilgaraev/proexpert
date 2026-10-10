@@ -50,6 +50,23 @@ final class PreparedTokenBudgetTest extends TestCase
         }
     }
 
+    public function test_native_preparation_reuse_binds_exact_call_output_items_and_flat_tools(): void
+    {
+        $budget = new TokenBudgetService(new TokenCounter(new class {
+            public function encode(string $text): array { return array_fill(0, mb_strlen($text), 1); }
+        }));
+        $items = [['role' => 'user', 'content' => 'Запрос'],
+            ['type' => 'function_call', 'id' => 'fc_1', 'call_id' => 'call_1', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'call_1', 'output' => '{"count":2}']];
+        $tools = [['type' => 'function', 'name' => 'lookup', 'parameters' => ['type' => 'object'], 'strict' => false]];
+        $prepared = PreparedTokenBudget::create($budget, $items, $tools, 'normal', null);
+        self::assertSame($prepared->prepared, $budget->resolvePrepared($prepared, $items, $tools));
+        $items[2]['output'] = '{"count":3}';
+        $fresh = $budget->resolvePrepared($prepared, $items, $tools);
+        self::assertSame($items, $fresh['messages']);
+        self::assertNotSame($prepared->prepared['messages'], $fresh['messages']);
+    }
+
     public function test_reports_warmed_cpu_measurements_without_provider_calls(): void
     {
         $budget = new TokenBudgetService;

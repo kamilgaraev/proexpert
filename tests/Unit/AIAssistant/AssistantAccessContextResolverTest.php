@@ -116,11 +116,12 @@ class AssistantAccessContextResolverTest extends TestCase
         $user->shouldNotReceive('getPermissions');
         $resolver = new AssistantAccessContextResolver($authorization);
         $first = $resolver->resolve($user, 15);
+        $this->assertSame(1, $this->connection->selects);
         $second = $resolver->resolve($user, 15);
         $this->assertFalse($first['is_read_only']);
         $this->assertTrue($second['is_read_only']);
         $this->assertFalse($resolver->hasPermission($second, 'projects.edit'));
-        $this->assertSame(4, $this->connection->selects);
+        $this->assertSame(2, $this->connection->selects);
     }
 }
 
