@@ -53,7 +53,8 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                         $valid = $event === 'workflow_dispatch' && $ref === 'refs/heads/main' && $expected === $sha;
                         $expectedOutput = 'allowed='.($valid && $mode === 'release' ? 'true' : 'false')."\n"
                             .'input_allowed='.($valid && $mode === 'input-only' ? 'true' : 'false')."\n"
-                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n";
+                            .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n"
+                            ."namespace_allowed=false\n";
                         self::assertSame(0, $result['exit']); self::assertSame('', $result['stderr']);
                         self::assertSame($expectedOutput, $result['stdout'], $mode.'/'.$event.'/'.$ref.'/'.$expected);
                     }
@@ -78,8 +79,15 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                 ['EXPECTED_SOURCE_SHA' => strtoupper($sha)], ['EXPECTED_SOURCE_SHA' => $sha."\n"],
                 ['EXPECTED_SOURCE_SHA' => str_repeat('f', 40)]];
             if ($job === 'deploy') {
-                foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $cases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
-                $cases[] = ['CURRENT_CANDIDATE_REVISION' => '']; $cases[] = ['CURRENT_CANDIDATE_SHA256' => ''];
+                $independenceCases = [];
+                foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $independenceCases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
+                $independenceCases[] = ['CURRENT_CANDIDATE_REVISION' => '']; $independenceCases[] = ['CURRENT_CANDIDATE_SHA256' => ''];
+                foreach ($independenceCases as $index => $change) {
+                    $result = $this->inputPreparationProcess($code, array_replace($base, ['REQUESTED_MODE' => $mode], $change));
+                    self::assertSame(0, $result['exit'], $job.'/independence/'.$index);
+                    self::assertSame("CREDENTIAL_SENTINEL\n", $result['stdout'], $job.'/independence/'.$index);
+                    self::assertSame('', $result['stderr']);
+                }
             } else {
                 $cases[] = ['PREPARATION_REF' => '']; $cases[] = ['PREPARATION_SHA' => str_repeat('f', 40)];
                 $cases[] = ['PREPARATION_PINS_SHA256' => ''];
@@ -606,7 +614,7 @@ INVALIDATE_BASH;
                 file_put_contents($file, $bytes);
                 chmod($file, 0640);
                 $app = $this->application();
-                self::assertSame(str_contains($bytes, 'static function'), AppRuntimeBootstrap::register($app, $file));
+                self::assertTrue(AppRuntimeBootstrap::register($app, $file));
                 $runtime = $app->make(PublicCoreAssistantRuntime::class);
                 self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             }
@@ -621,13 +629,22 @@ INVALIDATE_BASH;
                 $app->make(PublicCoreAssistantRuntime::class),
             ));
             chmod($file, 0666);
-            self::assertFalse(AppRuntimeBootstrap::register($this->application(), $file));
+            $app = $this->application();
+            self::assertTrue(AppRuntimeBootstrap::register($app, $file));
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             chmod($file, 0640);
             chmod($directory, 0777);
-            self::assertFalse(AppRuntimeBootstrap::register($this->application(), $file));
+            $app = $this->application();
+            self::assertTrue(AppRuntimeBootstrap::register($app, $file));
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
             chmod($directory, 0750);
             self::assertTrue(symlink($file, $directory.'/linked.php'));
-            self::assertFalse(AppRuntimeBootstrap::register($this->application(), $directory.'/linked.php'));
+            $app = $this->application();
+            self::assertTrue(AppRuntimeBootstrap::register($app, $directory.'/linked.php'));
+            $runtime = $app->make(PublicCoreAssistantRuntime::class);
+            self::assertNull((new \ReflectionProperty($runtime, 'nativePortFactory'))->getValue($runtime));
         } finally {
             @unlink($directory.'/linked.php');
             unlink($file);
@@ -1174,7 +1191,7 @@ CURRENT_IMAGE_BASH;
             $inactive = $configuration; $inactive['activation'] = 'inactive';
             $write($root.'/gateway/runtime.json', json_encode($inactive, JSON_THROW_ON_ERROR));
             try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Required CURRENT cannot be inactive no-op'); }
-            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'invalid_model_output', 'model_profile_unqualified']); }
+            catch (LogicException $error) { self::assertContains($error->getMessage(), ['candidate_unavailable', 'runtime_not_activated', 'invalid_model_output', 'model_profile_unqualified']); }
             self::assertSame([], scandir($root.'/app') === ['.', '..'] ? [] : ['unexpected output']);
             $write($root.'/gateway/runtime.json', json_encode($configuration, JSON_THROW_ON_ERROR));
             try { $publish($root, str_repeat('a', 40), 'sha256:'.str_repeat('b', 64)); self::fail('Missing checked inputs fabricated'); }
