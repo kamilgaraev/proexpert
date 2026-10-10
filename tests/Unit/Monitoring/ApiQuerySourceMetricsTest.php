@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Monitoring;
 
 use App\Services\Monitoring\ApiQueryMetrics;
+use App\Services\Logging\SensitiveDataRedactor;
 use App\Domain\Authorization\Services\RoleScanner;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
@@ -20,6 +21,27 @@ use PHPUnit\Framework\TestCase;
 final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
+
+    public function test_numeric_access_and_acl_phases_survive_production_redaction(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile'] as $phase) {
+            $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+            self::assertNotNull($checkpoint);
+            ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
+        }
+        $summary = $metrics->summary();
+        $summary['authorization'] = 'Bearer private-token';
+        $redacted = (new SensitiveDataRedactor)->redact($summary);
+        self::assertSame($summary['processing_phases'], $redacted['processing_phases']);
+        self::assertSame('[REDACTED]', $redacted['authorization']);
+        self::assertArrayNotHasKey('authorization_current', $redacted['processing_phases']);
+        foreach ($redacted['processing_phases'] as $phase) {
+            self::assertSame(1, $phase['count']);
+            self::assertSame(0, $phase['sql_count']);
+            self::assertArrayNotHasKey('metrics', $phase);
+        }
+    }
 
     public function test_processing_phases_are_numeric_closed_request_local_and_opt_in(): void
     {

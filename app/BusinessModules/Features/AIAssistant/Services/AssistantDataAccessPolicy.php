@@ -12,6 +12,8 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
+use Illuminate\Http\Request;
 use App\Modules\Core\AccessController;
 use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Eloquent\Builder;
@@ -595,53 +597,68 @@ final class AssistantDataAccessPolicy
 
         $compiled = [];
         $this->compileAcl($user, $organizationId, function () use ($query, $user, $organizationId, $columns, $aggregate, $checkpoint, $expectedProjection, $joinSourceIds, $batchSize, &$compiled): ?Builder {
-            $query = clone $query;
-            $table = $query->getModel()->getTable();
-            $query->where($table.'.organization_id', $organizationId);
-            $identitySources = $joinSourceIds ? DB::query()->from($query->getQuery()->from)->where($table.'.organization_id', $organizationId) : null;
-            $projects = $this->entityQuery($user, $organizationId, 'project');
-            $query->where(static function (Builder $scope) use ($projects, $table): void {
-                $scope->where($table.'.source_type', 'file_document')->orWhereNull($table.'.project_id');
-                if ($projects !== null) { $scope->orWhereIn($table.'.project_id', $projects->select('projects.id')); }
-            });
-            $candidateColumns = in_array($table.'.*', $columns, true) ? $columns : array_values(array_unique(array_merge($columns,
-                array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
-            if ($expectedProjection && $joinSourceIds) { $candidateColumns = [$table.'.*']; }
-            $query->select($candidateColumns);
-            if (! $expectedProjection) {
-                $revised = array_keys(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revisions());
-                $guarded = (clone $query)->whereIn($table.'.entity_type', $revised);
-                \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($guarded, $table);
-                $query->whereNotIn($table.'.entity_type', $revised)->unionAll($guarded);
-            }
-            $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query, [], materialize: false);
-            $checkpoint?->__invoke();
-            $sourceCounts = $batchSize === null ? null : [];
-            $identities = $this->discoverSourceIdentities($candidates, $sourceCounts);
-            $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection);
-            foreach ($planned as $entry) {
-                $types = $entry['types'];
-                $batch = clone $candidates;
-                $batchIdentities = $identities;
-                if ($types !== null) {
-                    $batch->whereIn($table.'.source_type', $types);
-                    $batchIdentities = array_map(static fn (array $identity): array => array_intersect_key($identity, array_fill_keys($types, true)), $identities);
+            $metricsRequest = app()->bound('request') ? app('request') : null;
+            $processingPhase = 'rag_acl_discovery';
+            $processingCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
+            $nextProcessingPhase = static function (?string $next) use ($metricsRequest, &$processingPhase, &$processingCheckpoint): void {
+                if ($metricsRequest instanceof Request && $processingPhase !== null && $processingCheckpoint !== null) {
+                    ApiQueryMetrics::recordProcessingPhase($metricsRequest, $processingPhase, $processingCheckpoint['started_at'], $processingCheckpoint);
                 }
-                if ($entry['entity'] !== null) {
-                    $batch->where($table.'.entity_type', $entry['entity']);
-                    $batchIdentities = array_intersect_key($batchIdentities, [$entry['entity'] => true]);
+                $processingPhase = $next;
+                $processingCheckpoint = $next !== null && $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
+            };
+            try {
+                $query = clone $query;
+                $table = $query->getModel()->getTable();
+                $query->where($table.'.organization_id', $organizationId);
+                $identitySources = $joinSourceIds ? DB::query()->from($query->getQuery()->from)->where($table.'.organization_id', $organizationId) : null;
+                $projects = $this->entityQuery($user, $organizationId, 'project');
+                $query->where(static function (Builder $scope) use ($projects, $table): void {
+                    $scope->where($table.'.source_type', 'file_document')->orWhereNull($table.'.project_id');
+                    if ($projects !== null) { $scope->orWhereIn($table.'.project_id', $projects->select('projects.id')); }
+                });
+                $candidateColumns = in_array($table.'.*', $columns, true) ? $columns : array_values(array_unique(array_merge($columns,
+                    array_map(static fn (string $column): string => $table.'.'.$column, ['id', 'organization_id', 'source_type', 'entity_type', 'entity_id', 'project_id']))));
+                if ($expectedProjection && $joinSourceIds) { $candidateColumns = [$table.'.*']; }
+                $query->select($candidateColumns);
+                if (! $expectedProjection) {
+                    $revised = array_keys(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::revisions());
+                    $guarded = (clone $query)->whereIn($table.'.entity_type', $revised);
+                    \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($guarded, $table);
+                    $query->whereNotIn($table.'.entity_type', $revised)->unionAll($guarded);
                 }
-                $batchIdentitySources = $expectedProjection && $joinSourceIds
-                    ? $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($table.'.*'), [], materialize: true)->select([])->toBase()
-                    : $identitySources;
-                $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
-                    splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
+                $candidates = $this->aclCompiler->register('__assistant_source_candidates', $query, [], materialize: false);
                 $checkpoint?->__invoke();
-                $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
-                $compiled[] = $this->aclCompiler->finish($result)->toBase();
-            }
+                $sourceCounts = $batchSize === null ? null : [];
+                $identities = $this->discoverSourceIdentities($candidates, $sourceCounts);
+                $planned = $this->sourceQueries->planBatches($identities, $sourceCounts ?? [], $batchSize, $expectedProjection);
+                foreach ($planned as $entry) {
+                    $nextProcessingPhase('rag_acl_batch_compile');
+                    $types = $entry['types'];
+                    $batch = clone $candidates;
+                    $batchIdentities = $identities;
+                    if ($types !== null) {
+                        $batch->whereIn($table.'.source_type', $types);
+                        $batchIdentities = array_map(static fn (array $identity): array => array_intersect_key($identity, array_fill_keys($types, true)), $identities);
+                    }
+                    if ($entry['entity'] !== null) {
+                        $batch->where($table.'.entity_type', $entry['entity']);
+                        $batchIdentities = array_intersect_key($batchIdentities, [$entry['entity'] => true]);
+                    }
+                    $batchIdentitySources = $expectedProjection && $joinSourceIds
+                        ? $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($table.'.*'), [], materialize: true)->select([])->toBase()
+                        : $identitySources;
+                    $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
+                        splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
+                    $checkpoint?->__invoke();
+                    $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
+                    $compiled[] = $this->aclCompiler->finish($result)->toBase();
+                }
 
-            return null;
+                return null;
+            } finally {
+                $nextProcessingPhase(null);
+            }
         }, compact: true, inlineTypes: $joinSourceIds
             ? ($expectedProjection
                 ? ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'estimate_item', 'estimate_item_resource']
