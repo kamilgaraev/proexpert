@@ -13,6 +13,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
     public function __construct(
         private DocumentUnitContentReader $reader,
         private OcrClientInterface $ocr,
+        private NativeNumericFactFactory $nativeFacts = new NativeNumericFactFactory,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -37,7 +38,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             return new DocumentUnitOutput(
                 version: substr(hash('sha256', $content), 0, 64),
                 text: $content,
-                confidence: 1.0,
+                confidence: null,
                 normalizedPayload: ['source' => 'source_manifest'],
                 unitType: $context->type,
                 unitIndex: $context->index,
@@ -55,7 +56,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             return new DocumentUnitOutput(
                 version: hash('sha256', $content),
                 text: (string) ($payload['text'] ?? ''),
-                confidence: ($payload['geometry']['vector_elements'] ?? []) !== [] ? 1.0 : 0.8,
+                confidence: null,
                 normalizedPayload: $payload,
                 width: is_int($payload['geometry']['width'] ?? null) ? $payload['geometry']['width'] : null,
                 height: is_int($payload['geometry']['height'] ?? null) ? $payload['geometry']['height'] : null,
@@ -72,18 +73,19 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 || ($payload['source_kind'] ?? null) !== 'spreadsheet'
                 || ! is_string($payload['text'] ?? null)
                 || ! is_array($payload['native_structure'] ?? null)
-                || ($payload['native_structure']['status'] ?? null) !== 'available') {
+                || ! in_array($payload['native_structure']['status'] ?? null, ['available', 'partial'], true)) {
                 throw new DocumentUnitProcessingException('spreadsheet_native_structure_contract_invalid');
             }
 
             return new DocumentUnitOutput(
                 version: hash('sha256', $content),
                 text: $payload['text'],
-                confidence: 1.0,
+                confidence: null,
                 normalizedPayload: $payload,
                 unitType: $context->type,
                 unitIndex: $context->index,
                 sourceVersion: $context->sourceVersion,
+                publication: $this->nativeFacts->spreadsheet($context, $payload['native_structure']),
             );
         }
 

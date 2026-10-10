@@ -89,6 +89,9 @@ final readonly class ArbitrationIntentIngestor
         $hasExplicitEvidence = false;
         foreach (array_values(array_unique([$claimId, ...$support])) as $id) {
             $supportingClaim = $claimsById[$id];
+            if ($status === 'accepted' && ! (new ClaimSemanticMatcher)->equivalent($claimsById[$claimId], $supportingClaim)) {
+                continue;
+            }
             if ($supportingClaim->evidenceRef !== null) {
                 $supportingEvidence[$supportingClaim->evidenceRef] = true;
             }
@@ -114,7 +117,8 @@ final readonly class ArbitrationIntentIngestor
         return new ArbitrationDecision(
             $claimId,
             $status,
-            array_values(array_unique([$claimId, ...$support])),
+            array_values(array_filter(array_unique([$claimId, ...$support]),
+                static fn (string $id): bool => $status !== 'accepted' || (new ClaimSemanticMatcher)->equivalent($claim, $claimsById[$id]))),
             array_values($evidence),
             'arbiter_reason_'.substr(hash('sha256', $claimId.'|'.trim($reason)), 0, 16),
             $canonicalClaim,

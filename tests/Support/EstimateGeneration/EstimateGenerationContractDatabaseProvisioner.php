@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '2f5034026c27f5473281d08423e7a74107656a56305549febd6f217082ae11a3',
-        'training' => '50a31609a779db0e16094f013cb1db2ddc5edcaf4aa14538b06b31561e9ee82f',
-        'pricing' => '50a31609a779db0e16094f013cb1db2ddc5edcaf4aa14538b06b31561e9ee82f',
+        'geometry' => '9bb3830167bcf5bb8491b1c4a209fa83c7106b6fd2946cee34ed5468d49df67c',
+        'training' => '6a627dabce2b513e805c47c560fdf4299406e85ae6ee20021f0625d1f037daa3',
+        'pricing' => '6a627dabce2b513e805c47c560fdf4299406e85ae6ee20021f0625d1f037daa3',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '76a42645f40e82601833ee8692d53a65d317e0cc75bf1e1ec038f84edbc42c82';
+    private const FRESH_INVENTORY_DIGEST = 'd9a0eb6222cdc83392dae956f5d40c64044cc9bc102e76f55162f4e49cad3b24';
 
     private const SUBJECT = [
         'geometry' => [
@@ -205,6 +205,9 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000610_secure_estimate_project_model_v2_schema.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000630_finalize_estimate_project_model_v2_constraints.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000100_allow_user_input_project_facts.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000200_allow_fact_based_geometry_entities.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000300_allow_exact_native_evidence_references.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000700_create_technology_planning_projections.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000710_create_completeness_planning_projections.php',
         'database/migrations/2026_08_12_000002_create_estimate_change_proposals.php',

@@ -39,6 +39,7 @@ final class CanonicalFactReducer
             $key = $visualKey ?? (is_array($canonical)
                 ? 'canonical|'.$this->matcher->keyForCanonical($canonical)
                 : 'claim|'.$decision->claimId);
+            $key .= $this->matcher->entityScope($byId[$decision->claimId]);
             $groups[$key][] = $decision;
         }
         $groups = $this->coalesceCanonicalGroups($groups);
@@ -136,6 +137,8 @@ final class CanonicalFactReducer
                 continue;
             }
             $signature = $this->matcher->factSignatureForCanonical($canonical);
+            $scopeOffset = strpos($key, '|scope:');
+            $signature .= $scopeOffset === false ? '' : substr($key, $scopeOffset);
             $support = $this->supportSet($group);
             $target = null;
             foreach ($metadata as $candidateKey => $candidate) {

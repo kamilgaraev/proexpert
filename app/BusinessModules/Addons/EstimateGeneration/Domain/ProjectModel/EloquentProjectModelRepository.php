@@ -2819,7 +2819,7 @@ SQL, [
         return match ($origin) {
             'document' => 'reconciled_geometry',
             'ai_inference', 'ai_technology_recommendation', 'unresolved' => 'ai_candidate',
-            'user_assumption' => 'reconciled_geometry',
+            'user_assumption', 'user_input' => 'reconciled_geometry',
             default => throw new InvalidArgumentException('Project model fact origin is invalid.'),
         };
     }

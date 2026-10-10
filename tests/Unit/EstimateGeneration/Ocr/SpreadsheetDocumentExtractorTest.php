@@ -19,6 +19,50 @@ final class SpreadsheetDocumentExtractorTest extends TestCase
 {
     private Container $previousContainer;
 
+    #[Test]
+    public function typed_cells_preserve_saved_cache_literal_formula_text_and_false_without_recalculation(): void
+    {
+        $workbook = new Spreadsheet;
+        $sheet = $workbook->getActiveSheet();
+        $sheet->setCellValue('A1', 3);
+        $sheet->setCellValue('B1', '=A1*100');
+        $sheet->getCell('B1')->setCalculatedValue(909);
+        $sheet->setCellValueExplicit('C1', '=A1*200', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        $sheet->setCellValue('D1', false);
+        $path = tempnam(sys_get_temp_dir(), 'typed-xlsx-');
+        try {
+            self::assertIsString($path);
+            $writer = new Xlsx($workbook);
+            $writer->setPreCalculateFormulas(false);
+            $writer->save($path);
+            $zip = new ZipArchive;
+            self::assertTrue($zip->open($path));
+            $xml = $zip->getFromName('xl/worksheets/sheet1.xml');
+            self::assertIsString($xml);
+            $xml = preg_replace_callback('~(<c\b[^>]*\br="B1"[^>]*>)(.*?)(</c>)~s',
+                static fn (array $match): string => $match[1].preg_replace('~<v>.*?</v>~s', '', $match[2]).'<v>909</v>'.$match[3], $xml, 1, $replaced);
+            self::assertSame(1, $replaced);
+            self::assertTrue($zip->addFromString('xl/worksheets/sheet1.xml', $xml));
+            self::assertTrue($zip->close());
+            $page = (new SpreadsheetDocumentExtractor)->extractFile($this->document(), $path)->pages[0];
+            $cells = array_column($page->rawPayload['native_structure']['cells'], null, 'address');
+            self::assertSame(3, $cells['A1']['raw_value']);
+            self::assertSame('literal_number', $cells['A1']['numeric_status']);
+            self::assertSame('909', $cells['B1']['cached_value']);
+            self::assertSame('cached_unverified', $cells['B1']['numeric_status']);
+            self::assertSame('=A1*100', $cells['B1']['formula']);
+            self::assertNull($cells['C1']['formula']);
+            self::assertSame('text', $cells['C1']['numeric_status']);
+            self::assertSame(false, $cells['D1']['raw_value']);
+            self::assertSame('false', $cells['D1']['value']);
+        } finally {
+            $workbook->disconnectWorksheets();
+            if (is_string($path) && is_file($path)) {
+                unlink($path);
+            }
+        }
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

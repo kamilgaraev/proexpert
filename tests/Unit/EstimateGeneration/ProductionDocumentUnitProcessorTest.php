@@ -447,7 +447,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         $output = $processor->process($context);
 
         self::assertSame('Смета', $output->text);
-        self::assertSame(1.0, $output->confidence);
+        self::assertNull($output->confidence);
         self::assertSame('available', $output->normalizedPayload['native_structure']['status']);
         self::assertSame(0, $ocr->calls);
     }

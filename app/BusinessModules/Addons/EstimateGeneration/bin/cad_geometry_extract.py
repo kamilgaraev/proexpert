@@ -170,6 +170,13 @@ def map_dxf_entity(
             "source_member_handle": member_handle,
             "definition_points": points,
         }
+        dimension_type = int(entity.dimtype)
+        dimension["dimension_type"] = dimension_type
+        if dimension_type in (0, 1, 3, 4):
+            measurement = entity.get_measurement()
+            if isinstance(measurement, (int, float)) and math.isfinite(measurement):
+                dimension["measurement"] = measurement
+                dimension["measurement_space"] = "entity_coordinates"
         if block is not None:
             dimension["block"] = block
         return None, None, dimension

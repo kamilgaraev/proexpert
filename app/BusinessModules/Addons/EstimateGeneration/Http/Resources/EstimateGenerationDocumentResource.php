@@ -48,6 +48,12 @@ class EstimateGenerationDocumentResource extends JsonResource
             ],
             'quality' => [
                 'score' => $document->quality_score,
+                'accuracy_calibrated' => false,
+                'verification_status' => match ($processingOutcome['readiness']) {
+                    'processing' => 'processing',
+                    'review_required', 'blocked' => 'requires_review',
+                    default => 'processed_unverified',
+                },
                 'level' => $document->quality_level,
                 'flags' => $document->quality_flags ?? [],
             ],

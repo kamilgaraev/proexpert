@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQua
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelFactIdentityCollision;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalSourceDecimal;
@@ -80,6 +81,9 @@ final readonly class ProjectModelEvidenceWriter
                     $supportingClaim = $byId[$supportingClaimId]
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
+                    if ($decision->status === 'accepted' && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
+                        continue;
+                    }
                     if ($supportingClaim->evidenceRef === null
                         || ! in_array($supportingClaim->evidenceRef, $decision->evidenceRefs, true)) {
                         continue;
@@ -117,6 +121,13 @@ final readonly class ProjectModelEvidenceWriter
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
+                $entityScope = (new ClaimSemanticMatcher)->entityScope($claim);
+                $entityIdentity .= $entityScope;
+                foreach (['floor_id' => 'floor_id', 'zone_id' => 'zone_id'] as $locatorField => $attribute) {
+                    if (isset($projection['attributes']['semantic_type']) && is_string($claim->locator[$locatorField] ?? null)) {
+                        $projection['attributes'][$attribute] = $claim->locator[$locatorField];
+                    }
+                }
                 $visualInventoryFact = in_array($claim->factType, [
                     'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
                 ], true) || ($claim->factType === 'equipment' && $this->isPlanObservation($claim));
@@ -153,7 +164,7 @@ final readonly class ProjectModelEvidenceWriter
                         $scope->sourceVersion,
                         $projection['type'],
                         $entityId,
-                        $legacyEntityIds,
+                        $entityScope === '' ? $legacyEntityIds : [],
                     );
                 }
                 $entities[$entityId] = new Entity(
@@ -175,7 +186,7 @@ final readonly class ProjectModelEvidenceWriter
                     };
                 $factIdentity = $visualInventoryFact
                     ? 'visual|'.$projection['type'].'|'.$entityIdentity
-                    : (new ClaimSemanticMatcher)->key($claim);
+                    : (new ClaimSemanticMatcher)->key($claim).$entityScope;
                 $factId = 'fact:'.hash('sha256', implode('|', [
                     $factIdentity,
                     $projectedStatus,
@@ -362,7 +373,7 @@ final readonly class ProjectModelEvidenceWriter
             'page' => $pageNumber,
             'element_key' => 'element:'.$hash,
         ];
-        foreach (['unit_type', 'unit_index', 'sheet', 'region_key', 'bbox', 'source_key'] as $field) {
+        foreach (['unit_type', 'unit_index', 'sheet', 'region_key', 'bbox', 'source_key', 'native_reference'] as $field) {
             if (array_key_exists($field, $claim->locator)) {
                 $locator[$field] = $claim->locator[$field];
             }
@@ -448,8 +459,8 @@ final readonly class ProjectModelEvidenceWriter
             && CanonicalSourceDecimal::isValid($value);
         $nonNegativeNumeric = $canonicalNumeric && CanonicalSourceDecimal::isNonNegative($value);
         $positiveNumeric = $canonicalNumeric && CanonicalSourceDecimal::isPositive($value);
-        $unit = $claim->unit;
-        $allowedUnits = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
+        $unit = FactVocabulary::unit($claim->unit);
+        $allowedUnits = ['mm', 'cm', 'm', 'in', 'ft', 'mm2', 'cm2', 'm2', 'mm3', 'cm3', 'm3', 'count', 'kg', 't', 'h'];
         if ($type === 'area' && $positiveNumeric && $unit === 'm2'
             && $claim->entityKey === 'building_area_total') {
             return [
@@ -469,21 +480,12 @@ final readonly class ProjectModelEvidenceWriter
                 'attributes' => ['semantic_type' => 'room'],
             ];
         }
-        $semanticType = $this->semanticEntityType($claim->entityKey);
-        $semanticFactTypes = [
-            'room' => ['length', 'width'],
-            'wall' => ['wall_length', 'wall_height'],
-            'site' => ['area', 'depth'],
-            'roof' => ['plan_area', 'slope_rise', 'slope_run'],
-            'roof_facet' => ['plan_area', 'slope_rise', 'slope_run'],
-            'opening' => ['opening_width', 'opening_height'],
-            'roof_opening' => ['area'],
-        ];
+        $semanticType = FactVocabulary::entityType($claim->entityKey);
         if ($semanticType !== null
-            && in_array($type, $semanticFactTypes[$semanticType], true)
+            && FactVocabulary::supports($semanticType, $type)
             && $positiveNumeric && is_string($unit) && in_array($unit, $allowedUnits, true)) {
             return [
-                'type' => $semanticType,
+                'type' => in_array($semanticType, Entity::TYPES, true) ? $semanticType : 'quantity',
                 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
                 'attributes' => ['semantic_type' => $semanticType],
             ];
@@ -505,7 +507,7 @@ final readonly class ProjectModelEvidenceWriter
             return [
                 'type' => $kind,
                 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
-                'attributes' => ['measurement_kind' => $type],
+                'attributes' => $kind === 'quantity' ? ['semantic_type' => 'quantity'] : ['measurement_kind' => $type],
             ];
         }
 
@@ -546,17 +548,6 @@ final readonly class ProjectModelEvidenceWriter
         return in_array($claim->locator['document_role'] ?? null, ['floor_plan', 'plan'], true);
     }
 
-    private function semanticEntityType(string $entityKey): ?string
-    {
-        foreach (['roof_opening', 'roof_facet', 'opening', 'room', 'wall', 'site', 'roof'] as $type) {
-            if (preg_match('/^'.preg_quote($type, '/').'[:._-]/D', mb_strtolower($entityKey)) === 1) {
-                return $type;
-            }
-        }
-
-        return null;
-    }
-
     private function domainEvidence(EvidenceNode $node): Evidence
     {
         $page = $node->locator['page'] ?? $node->locator['unit_index'] ?? null;
@@ -580,7 +571,7 @@ final readonly class ProjectModelEvidenceWriter
             $node->sourceType->value,
             $page,
             $region,
-            'evidence-node:'.$node->id,
+            is_string($node->locator['native_reference'] ?? null) ? $node->locator['native_reference'] : 'evidence-node:'.$node->id,
         );
     }
 }
