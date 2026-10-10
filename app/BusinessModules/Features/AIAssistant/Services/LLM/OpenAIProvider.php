@@ -227,7 +227,11 @@ final class OpenAIProvider implements LLMProviderInterface
             || !preg_match('/^resp_[a-zA-Z0-9_-]{1,120}$/D', $ref)
             || !is_array($response['output'] ?? null) || !array_is_list($response['output'])
             || count($response['output']) < 1 || count($response['output']) > 64) {
-            throw new \DomainException('assistant_native_response_invalid');
+            $safeModel = is_string($model) && preg_match('/^[a-zA-Z0-9_.\/-]{1,100}$/D', $model) ? $model : 'invalid';
+            $safeStatus = is_string($response['status'] ?? null) && preg_match('/^[a-z_]{1,24}$/D', $response['status']) ? $response['status'] : 'invalid';
+            $validReference = is_string($ref) && preg_match('/^resp_[a-zA-Z0-9_-]{1,120}$/D', $ref);
+            $validOutput = is_array($response['output'] ?? null) && array_is_list($response['output']);
+            throw new \DomainException('assistant_native_response_invalid:model='.$safeModel.';status='.$safeStatus.';reference='.(int) $validReference.';output='.(int) $validOutput);
         }
         $allowed = array_fill_keys(array_column($tools, 'name'), true);
         $ids = [];
