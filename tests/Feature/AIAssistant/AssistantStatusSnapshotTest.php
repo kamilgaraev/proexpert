@@ -60,7 +60,7 @@ final class AssistantStatusSnapshotTest extends TestCase
     public function test_source_counts_stay_current_while_indexed_chunks_change(): void
     {
         [$organization, $actor, $project, $service] = $this->scope();
-        $metrics = new ApiQueryMetrics;
+        $metrics = new ApiQueryMetrics(true);
         request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $source = RagSource::query()->create([
             'organization_id' => $organization->id, 'project_id' => $project->id,
@@ -81,6 +81,12 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame(1, $status['indexed_source_count']);
         self::assertTrue($status['ready']);
         self::assertSame('fresh_read', $metrics->summary()['assistant_snapshot']['phase']);
+        foreach (['rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts', 'rag_finalize'] as $phase) {
+            self::assertArrayHasKey($phase, $metrics->summary()['processing_phases']);
+            self::assertGreaterThanOrEqual(0, $metrics->summary()['processing_phases'][$phase]['sql_count']);
+        }
+        self::assertNull($status['expected_source_count']);
+        self::assertArrayNotHasKey('rag_expected_counts', $metrics->summary()['processing_phases']);
 
         DB::table('ai_rag_chunks')->where('id', $chunkId)->update(['embedding' => null]);
         $status = $service->status($organization->id, $actor, 'sources');
@@ -161,6 +167,8 @@ final class AssistantStatusSnapshotTest extends TestCase
     public function test_live_source_status_keeps_the_existing_budget_and_reports_unknown_on_expiry(): void
     {
         [$organization, $actor, , $service] = $this->scope();
+        $metrics = new ApiQueryMetrics(true);
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $delayed = false;
         DB::listen(static function ($query) use (&$delayed): void {
             if (! $delayed && str_contains(strtolower($query->sql), 'accessible_sources.source_type, count(*) as stored_count')) {
@@ -173,6 +181,8 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertTrue($delayed);
         self::assertFalse($status['status_available']);
         self::assertNull($status['source_count']);
+        self::assertArrayHasKey('rag_source_counts', $metrics->summary()['processing_phases']);
+        self::assertGreaterThanOrEqual(2500, $metrics->summary()['processing_phases']['rag_source_counts']['total_ms']);
         Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
@@ -228,8 +238,13 @@ final class AssistantStatusSnapshotTest extends TestCase
         $stateStore = app(RagCoverageStateStore::class);
         $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id), $projection);
         Cache::put($coverageKey, $projection, 300);
-        $metrics = new ApiQueryMetrics;
+        $metrics = new ApiQueryMetrics(true);
         request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $live = $service->status($organization->id, $actor, 'sources');
+        self::assertTrue($live['status_available']);
+        self::assertSame(1, $live['expected_source_count']);
+        self::assertArrayHasKey('rag_expected_counts', $metrics->summary()['processing_phases']);
+        self::assertGreaterThanOrEqual(0, $metrics->summary()['processing_phases']['rag_expected_counts']['sql_count']);
         self::assertFalse($service->status($organization->id, $actor, 'all')['status_available']);
         self::assertSame('snapshot_missing', $metrics->summary()['assistant_snapshot']['phase']);
         self::assertTrue($metrics->summary()['assistant_snapshot']['refresh_queued']);

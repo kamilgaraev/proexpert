@@ -36,7 +36,16 @@ final class TracingServiceProvider extends ServiceProvider
             }
         });
         if (config('monitoring.tracing_enabled') && $tracing->supportsSpans()) {
-            DB::listen(static fn (QueryExecuted $event) => $tracing->recordSql($event));
+            DB::listen(static function (QueryExecuted $event) use ($tracing): void {
+                $startedAt = hrtime(true);
+                try {
+                    $tracing->recordSql($event);
+                } finally {
+                    if (app()->bound('request')) {
+                        ApiQueryMetrics::recordProcessingPhase(app('request'), 'sql_tracing', $startedAt);
+                    }
+                }
+            });
             Event::listen(CommandExecuted::class, static fn (CommandExecuted $event) => $tracing->recordRedis($event));
             $redis = $this->app->make('redis');
             if ($redis instanceof RedisManager) {
