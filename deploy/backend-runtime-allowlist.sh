@@ -327,6 +327,60 @@ except Exception:
 PYCURRENT
 }
 
+# Ordinary release validates its immutable image and helper without PublicCore inputs.
+verify_backend_release_image() {
+  local image_ref="$1" release_sha="$2" source embedded helper
+  [[ "${image_ref}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] \
+    && [[ "${release_sha}" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "${BACKEND_HELPER_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  source="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image_ref}")" || return 1
+  [ "${source}" = "${release_sha}" ] || return 1
+  embedded="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 82:82 --entrypoint php "${image_ref}" -r 'echo json_decode(file_get_contents("/etc/most/release.json"), true, 8, JSON_THROW_ON_ERROR)["sha"];')" || return 1
+  [ "${embedded}" = "${release_sha}" ] || return 1
+  helper="$(timeout --signal=TERM --kill-after=5s 10s docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 82:82 --entrypoint php "${image_ref}" -r 'echo hash_file("sha256", "deploy/backend-runtime-allowlist.sh");')" || return 1
+  [ "${helper}" = "${BACKEND_HELPER_SHA256}" ] || return 1
+}
+
+# Ordinary release has no lease to stop, disconnect or rewrite protected resources.
+# Reject active/foreign/colliding configurations and failed discovery; absent is valid.
+assert_public_core_inactive_for_backend_release() {
+  local role ids named container_id observed networks network_id bridge matches=0 links
+  for role in "${MOST_PUBLIC_CORE_SERVICES[@]}"; do
+    named="$(docker ps -aq --filter "name=^/prohelper-${role}(-[0-9]+)?$")" || return 1
+    ids="$(docker ps -aq --filter label=com.docker.compose.project=prohelper --filter "label=com.docker.compose.service=${role}")" || return 1
+    for container_id in ${named} ${ids}; do
+      [[ "${container_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+      observed="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}:{{index .Config.Labels "com.docker.compose.service"}}' "${container_id}")" || return 1
+      [ "${observed}" = "prohelper:${role}" ] || return 1
+      observed="$(docker inspect --format '{{.State.Running}}:{{.State.Pid}}:{{.HostConfig.RestartPolicy.Name}}' "${container_id}")" || return 1
+      [ "${observed}" = 'false:0:no' ] || return 1
+      observed="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.EndpointID}}{{.IPAddress}}{{.GlobalIPv6Address}}{{end}}' "${container_id}")" || return 1
+      [ -z "${observed}" ] || return 1
+      if [ "${role}" = public-core-processor ]; then
+        observed="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${container_id}")" || return 1
+        [ "${observed}" = none ] || return 1
+      fi
+    done
+  done
+  networks="$(docker network ls --format '{{.ID}}')" || return 1
+  for network_id in ${networks}; do
+    [[ "${network_id}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    bridge="$(docker network inspect --format '{{index .Options "com.docker.network.bridge.name"}}' "${network_id}")" || return 1
+    observed="$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}:{{index .Labels "com.docker.compose.network"}}' "${network_id}")" || return 1
+    # Labels without the expected bridge are also a collision, not an absent route.
+    if [ "${bridge}" != br-most-pc ]; then
+      [ "${observed}" != prohelper:public-core-gateway ] || return 1
+      continue
+    fi
+    [ "${observed}" = prohelper:public-core-gateway ] || return 1
+    matches=$((matches + 1)); [ "${matches}" -eq 1 ] || return 1
+    observed="$(docker network inspect --format '{{range $id, $member := .Containers}}{{$id}} {{end}}' "${network_id}")" || return 1
+    [ -z "${observed}" ] || return 1
+  done
+  links="$(ip -o link show)" || return 1
+  if [[ "${links}" =~ [[:space:]]br-most-pc: ]]; then [ "${matches}" -eq 1 ] || return 1; fi
+}
+
 # Read-only exact image/source gate runs before any managed store mutation.
 verify_public_core_candidate_image() {
   local image_ref="$1" release_sha="$2" source embedded helper runtime

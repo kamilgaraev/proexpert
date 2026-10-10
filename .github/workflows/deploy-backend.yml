@@ -321,21 +321,9 @@ jobs:
         env:
           REQUESTED_MODE: ${{ inputs.mode }}
           EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
-          CURRENT_CANDIDATE_REVISION: ${{ vars.PUBLIC_CORE_CURRENT_REVISION }}
-          CURRENT_CANDIDATE_SHA256: ${{ vars.PUBLIC_CORE_CURRENT_SHA256 }}
-          ACCEPTED_MAIN_SHA: ${{ vars.PUBLIC_CORE_ACCEPTED_MAIN_SHA }}
         shell: bash
         run: |
           set -euo pipefail
-          # Values must be installed by the checked managed acceptance handoff, never dispatch inputs.
-          [[ "${CURRENT_CANDIDATE_REVISION:-}" =~ ^[1-9][0-9]{0,8}$ ]]
-          [[ "${CURRENT_CANDIDATE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
-          if ! [[ "${ACCEPTED_MAIN_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
-            exit 1
-          fi
-          if [ "${ACCEPTED_MAIN_SHA:-}" != "${GITHUB_SHA:-}" ]; then
-            exit 1
-          fi
           test "${GITHUB_REF:-}" = refs/heads/main
           test "${REQUESTED_MODE:-}" = release
           test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
@@ -346,13 +334,13 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Pin reviewed managed helpers from exact source
-        id: current_helpers
+        id: release_helpers
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git diff --exit-code -- deploy/backend-runtime-allowlist.sh docker/public-core/runtime.php
-          printf 'helper_sha256=%s\nruntime_sha256=%s\n' "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" "$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          git diff --exit-code -- deploy/backend-runtime-allowlist.sh
+          printf 'helper_sha256=%s\n' "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -389,11 +377,8 @@ jobs:
       - name: Deploy exact image digest
         uses: appleboy/ssh-action@v1.0.3
         env:
-          CURRENT_CANDIDATE_REVISION: ${{ vars.PUBLIC_CORE_CURRENT_REVISION }}
-          CURRENT_CANDIDATE_SHA256: ${{ vars.PUBLIC_CORE_CURRENT_SHA256 }}
-          ACCEPTED_MAIN_SHA: ${{ vars.PUBLIC_CORE_ACCEPTED_MAIN_SHA }}
-          PUBLIC_CORE_HELPER_SHA256: ${{ steps.current_helpers.outputs.helper_sha256 }}
-          PUBLIC_CORE_RUNTIME_SHA256: ${{ steps.current_helpers.outputs.runtime_sha256 }}
+          BACKEND_HELPER_SHA256: ${{ steps.release_helpers.outputs.helper_sha256 }}
+          MANAGED_MODE: ${{ inputs.mode }}
           MANAGED_REF: ${{ github.ref }}
           MANAGED_EVENT: ${{ github.event_name }}
           MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
@@ -412,20 +397,17 @@ jobs:
           key: ${{ secrets.DEPLOY }}
           timeout: 3h
           command_timeout: 3h
-          envs: CURRENT_CANDIDATE_REVISION,CURRENT_CANDIDATE_SHA256,ACCEPTED_MAIN_SHA,PUBLIC_CORE_HELPER_SHA256,PUBLIC_CORE_RUNTIME_SHA256,MANAGED_REF,MANAGED_EVENT,MANAGED_EXPECTED_SHA,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
+          envs: BACKEND_HELPER_SHA256,MANAGED_MODE,MANAGED_REF,MANAGED_EVENT,MANAGED_EXPECTED_SHA,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
           script: |
             set -euo pipefail
             umask 077
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
 
+            test "${MANAGED_MODE}" = release
             test "${MANAGED_REF}" = refs/heads/main
             test "${MANAGED_EVENT}" = workflow_dispatch
             test "${MANAGED_EXPECTED_SHA}" = "${RELEASE_SHA}"
-            test "${ACCEPTED_MAIN_SHA}" = "${RELEASE_SHA}"
-            [[ "${CURRENT_CANDIDATE_REVISION}" =~ ^[1-9][0-9]{0,8}$ ]]
-            [[ "${CURRENT_CANDIDATE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
-            [[ "${PUBLIC_CORE_HELPER_SHA256}" =~ ^[0-9a-f]{64}$ ]]
-            [[ "${PUBLIC_CORE_RUNTIME_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+            [[ "${BACKEND_HELPER_SHA256}" =~ ^[0-9a-f]{64}$ ]]
             test "${IMAGE_REPO}" = ghcr.io/kamilgaraev/proexpert/prohelper
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
             [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -437,12 +419,10 @@ jobs:
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
             source .github/scripts/atomic-env.sh
-            test "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" = "${PUBLIC_CORE_HELPER_SHA256}"
-            test "$(sha256sum docker/public-core/runtime.php | cut -d' ' -f1)" = "${PUBLIC_CORE_RUNTIME_SHA256}"
+            test "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" = "${BACKEND_HELPER_SHA256}"
             source deploy/backend-runtime-allowlist.sh
-            public_core_current_control_guard "${RELEASE_SHA}" "${IMAGE_DIGEST}" "${CURRENT_CANDIDATE_REVISION}" "${CURRENT_CANDIDATE_SHA256}"
             BACKEND_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
-            BACKEND_STOP_SERVICES="${MOST_COMPOSE_STOP_SERVICES[*]}"
+            BACKEND_STOP_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
             trap cleanup_deployment_temporary_files EXIT
             ensure_immutable_audit_writer_secret() {
               local current_secret=''
@@ -733,9 +713,7 @@ jobs:
               local exit_code=$?
               trap - ERR
               set +e
-              quiesce_public_core_gateway_route
-              invalidate_public_core_projections
-              prepare_public_core_deny_policy
+              assert_public_core_inactive_for_backend_release
               systemctl stop nginx
               docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}
               stop_legacy_supervisor_processes
@@ -744,13 +722,13 @@ jobs:
               exit "${exit_code}"
             }
 
-            # Install denial/cleanup before any new protected-store write.
+            # Fail closed on ordinary release errors; leave PublicCore stores/policy untouched.
             trap deployment_failed ERR
             echo "${GHCR_PAT}" | docker login ghcr.io -u "${DEPLOY_ACTOR}" --password-stdin
             docker pull "${IMAGE_REF}"
-            verify_public_core_candidate_image "${IMAGE_REF}" "${RELEASE_SHA}"
+            verify_backend_release_image "${IMAGE_REF}" "${RELEASE_SHA}"
+            assert_public_core_inactive_for_backend_release
             initialize_secure_env
-            prepare_public_core_inactive_runtime
 
             if [ -n "${YOOKASSA_SHOP_ID:-}" ] && [ -n "${YOOKASSA_SECRET_KEY:-}" ]; then
               upsert_env YOOKASSA_MODE yookassa_test
@@ -767,9 +745,6 @@ jobs:
             else
               upsert_env YOOKASSA_MODE disabled
             fi
-
-            prepare_public_core_deny_policy
-            prepare_public_core_image_inputs "${IMAGE_REF}" "${RELEASE_SHA}" "${PREVIOUS_RELEASE_SHA}"
 
             upsert_env MOST_IMAGE_REF "${IMAGE_REF}"
             upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
@@ -815,12 +790,8 @@ jobs:
             assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
-            MOST_PUBLIC_CORE_STAGED_API=''
-            # Image input preparation may install wrappers; full invalidation holds them null until publication.
-            invalidate_public_core_projections
-            intake_public_core_current_candidate "${IMAGE_REF}" "${RELEASE_SHA}" "${CURRENT_CANDIDATE_REVISION}" "${CURRENT_CANDIDATE_SHA256}"
-            stage_public_core_approved_runtime "${IMAGE_REF}" "${RELEASE_SHA}"
-            resume_public_core_backend_writers "${IMAGE_REF}" "${BACKEND_SERVICES}"
+            assert_public_core_inactive_for_backend_release
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${BACKEND_SERVICES}
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
             if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
               docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
@@ -828,7 +799,6 @@ jobs:
             fi
 
             for attempt in $(seq 1 24); do
-              verify_public_core_staged_tuple
               if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
                 && docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
@@ -838,10 +808,9 @@ jobs:
                 docker compose exec -T api php artisan assets:reconcile --format=json || true
                 docker compose exec -T api php artisan assets:verify-cutover --format=json --details || true
                 docker compose exec -T scheduler tail -n 24 storage/logs/asset-registry-cutover.log || true
-                verify_public_core_staged_tuple
+                assert_public_core_inactive_for_backend_release
                 systemctl start nginx
                 systemctl is-active --quiet nginx
-                verify_public_core_staged_tuple
                 trap - ERR
                 echo "Backend deployment successful: ${IMAGE_REF}"
                 exit 0
