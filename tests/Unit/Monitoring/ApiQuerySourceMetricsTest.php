@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace Tests\Unit\Monitoring;
 
 use App\Services\Monitoring\ApiQueryMetrics;
+use App\Domain\Authorization\Services\RoleScanner;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 
 final class ApiQuerySourceMetricsTest extends TestCase
@@ -93,6 +98,56 @@ final class ApiQuerySourceMetricsTest extends TestCase
         self::assertSame([], $other->summary()['processing_phases']);
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, new ApiQueryMetrics);
         self::assertNull(ApiQueryMetrics::processingCheckpoint($request));
+    }
+
+    public function test_processing_cpu_measurement_is_numeric_optional_and_does_not_include_wait_time(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+        self::assertNotNull($checkpoint);
+        usleep(30_000);
+        ApiQueryMetrics::recordProcessingPhase($request, 'rag_prepare', $checkpoint['started_at'], $checkpoint);
+        $phase = $metrics->summary()['processing_phases']['rag_prepare'];
+        self::assertGreaterThanOrEqual(25, $phase['total_ms']);
+        if ($checkpoint['process_cpu_ms'] !== null) {
+            self::assertIsFloat($phase['process_cpu_ms']);
+            self::assertGreaterThanOrEqual(0, $phase['process_cpu_ms']);
+            self::assertLessThan($phase['total_ms'] + 20, $phase['process_cpu_ms']);
+        }
+        $invalid = array_replace($checkpoint, ['process_cpu_ms' => NAN]);
+        ApiQueryMetrics::recordProcessingPhase($request, 'role_catalog', $invalid['started_at'], $invalid);
+        self::assertArrayNotHasKey('process_cpu_ms', $metrics->summary()['processing_phases']['role_catalog']);
+    }
+
+    public function test_role_catalog_diagnostics_preserve_result_and_exception_without_logging_catalog(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        $previousFacadeApp = Facade::getFacadeApplication();
+        Facade::setFacadeApplication(Container::getInstance());
+        try {
+            $cache = new Repository(new ArrayStore);
+            Cache::swap($cache);
+            $catalog = collect(['private-role-fixture' => ['slug' => 'private-role-fixture']]);
+            $cache->put('authorization_roles:v2', $catalog, 60);
+            app()->instance('request', $request);
+            self::assertSame($catalog, (new RoleScanner)->getAllRoles());
+            $failure = $this->createMock(Repository::class);
+            $failure->expects(self::once())->method('remember')->willThrowException(new \RuntimeException('catalog-read-fixture'));
+            Cache::swap($failure);
+            try {
+                (new RoleScanner)->getAllRoles();
+                self::fail('Expected catalog read exception');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('catalog-read-fixture', $exception->getMessage());
+            }
+            $summary = $metrics->summary();
+            self::assertSame(2, $summary['processing_phases']['role_catalog']['count']);
+            self::assertSame(0, $summary['processing_phases']['role_catalog']['sql_count']);
+            self::assertStringNotContainsString('private-role-fixture', json_encode($summary, JSON_THROW_ON_ERROR));
+        } finally {
+            Facade::clearResolvedInstance('cache');
+            Facade::setFacadeApplication($previousFacadeApp);
+        }
     }
 
     protected function setUp(): void

@@ -10,6 +10,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Services\Logging\LoggingService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Support\Collection;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Cache;
@@ -58,13 +59,21 @@ class AuthorizationService
 
     public function canCurrent(User $user, string $permission, ?array $context = null): bool
     {
-        if ($this->trustedDecisionInputs !== []) { $context = array_replace($this->trustedDecisionInputs, $context ?? []); }
-        $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks();
-        $result = $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
-            fn (): bool => $scope->checkPermission($user, $permission, $context));
-        $this->currentDecisionObserver?->__invoke($user, $permission, $context, $result);
+        $request = app()->bound('request') ? app('request') : null;
+        $checkpoint = $request instanceof Request ? ApiQueryMetrics::processingCheckpoint($request) : null;
+        try {
+            if ($this->trustedDecisionInputs !== []) { $context = array_replace($this->trustedDecisionInputs, $context ?? []); }
+            $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks();
+            $result = $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
+                fn (): bool => $scope->checkPermission($user, $permission, $context));
+            $this->currentDecisionObserver?->__invoke($user, $permission, $context, $result);
 
-        return $result;
+            return $result;
+        } finally {
+            if ($request instanceof Request && $checkpoint !== null) {
+                ApiQueryMetrics::recordProcessingPhase($request, 'authorization_current', $checkpoint['started_at'], $checkpoint);
+            }
+        }
     }
 
     public function captureCurrentDecisions(array $trustedInputs, callable $operation): array

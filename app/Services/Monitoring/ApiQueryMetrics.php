@@ -88,7 +88,8 @@ final class ApiQueryMetrics
             return null;
         }
 
-        return ['metrics' => $metrics, 'started_at' => hrtime(true), 'sql_count' => $metrics->count, 'sql_total_ms' => $metrics->total];
+        return ['metrics' => $metrics, 'started_at' => hrtime(true), 'sql_count' => $metrics->count,
+            'sql_total_ms' => $metrics->total, 'process_cpu_ms' => self::processCpuMilliseconds()];
     }
 
     public static function recordProcessingPhase(Request $request, string $phase, int $startedAt, ?array $checkpoint = null): void
@@ -101,6 +102,7 @@ final class ApiQueryMetrics
             'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',
             'rag_expected_counts', 'rag_documents', 'rag_finalize',
             'sql_tracing',
+            'authorization_current', 'role_catalog',
         ], true)) {
             return;
         }
@@ -121,6 +123,11 @@ final class ApiQueryMetrics
         if ($checkpoint !== null) {
             $metrics->processingPhases[$phase]['sql_count'] = ($metrics->processingPhases[$phase]['sql_count'] ?? 0) + $metrics->count - $checkpoint['sql_count'];
             $metrics->processingPhases[$phase]['sql_total_ms'] = ($metrics->processingPhases[$phase]['sql_total_ms'] ?? 0) + $metrics->total - $checkpoint['sql_total_ms'];
+            $cpu = self::processCpuMilliseconds();
+            $startedCpu = $checkpoint['process_cpu_ms'] ?? null;
+            if ($cpu !== null && is_float($startedCpu) && is_finite($startedCpu) && $startedCpu >= 0 && $cpu >= $startedCpu) {
+                $metrics->processingPhases[$phase]['process_cpu_ms'] = ($metrics->processingPhases[$phase]['process_cpu_ms'] ?? 0) + $cpu - $startedCpu;
+            }
         }
     }
 
@@ -154,6 +161,9 @@ final class ApiQueryMetrics
                 if (isset($phase['sql_total_ms'])) {
                     $phase['sql_total_ms'] = round($phase['sql_total_ms'], 2);
                 }
+                if (isset($phase['process_cpu_ms'])) {
+                    $phase['process_cpu_ms'] = round($phase['process_cpu_ms'], 2);
+                }
 
                 return $phase;
             }, $this->processingPhases);
@@ -170,7 +180,7 @@ final class ApiQueryMetrics
 
     public function recordAssistantSnapshot(array $context): void
     {
-        if (! in_array($context['phase'] ?? null, ['missing_release', 'ready', 'snapshot_rejected', 'snapshot_missing', 'fresh_read'], true)
+        if (! in_array($context['phase'] ?? null, ['missing_release', 'ready', 'snapshot_rejected', 'snapshot_missing', 'fresh_read', 'fresh_read_unavailable'], true)
             || ! in_array($context['section'] ?? null, ['all', 'sources', 'documents'], true)) {
             return;
         }
@@ -184,6 +194,23 @@ final class ApiQueryMetrics
         $queued = $context['refresh_queued'] ?? null;
         $snapshot['refresh_queued'] = is_bool($queued) ? $queued : null;
         $this->assistantSnapshot = $snapshot;
+    }
+
+    private static function processCpuMilliseconds(): ?float
+    {
+        if (! function_exists('getrusage')) { return null; }
+        try {
+            $usage = getrusage();
+            foreach (['ru_utime.tv_sec', 'ru_utime.tv_usec', 'ru_stime.tv_sec', 'ru_stime.tv_usec'] as $field) {
+                if (! is_int($usage[$field] ?? null) || $usage[$field] < 0) { return null; }
+            }
+            $milliseconds = ($usage['ru_utime.tv_sec'] + $usage['ru_stime.tv_sec']) * 1000.0
+                + ($usage['ru_utime.tv_usec'] + $usage['ru_stime.tv_usec']) / 1000.0;
+
+            return is_finite($milliseconds) ? $milliseconds : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     public function recordAssistantSnapshotEpoch(string $phase, ?string $relation): void

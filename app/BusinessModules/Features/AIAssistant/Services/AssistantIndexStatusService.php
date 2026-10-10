@@ -57,7 +57,7 @@ final class AssistantIndexStatusService
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
-        $phase = (object) ['value' => 'schema'];
+        $phase = (object) ['value' => 'schema', 'missing_release' => false];
         $started = hrtime(true);
         $metricsRequest = request();
         $processingPhase = 'rag_prepare';
@@ -88,6 +88,7 @@ final class AssistantIndexStatusService
                             if (! $this->access->canReadDomain($actor, $organizationId, 'assistant')) { throw new AuthorizationException; }
                             $inputs = $this->snapshotInputs ?? app(AssistantStatusSnapshotInputs::class);
                             if ($inputs->fingerprint($actor, $organizationId, $this->currentSurface(), $section, request()->ip(), $authorization) === null) {
+                                $phase->missing_release = true;
                                 AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
 
                                 return $this->unavailableStatus();
@@ -113,7 +114,11 @@ final class AssistantIndexStatusService
 
                         $canReindex = $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]);
                         $budget->checkDeadline();
-                        if ($checkCurrentAccess && ! $inputs->isUnexpired($validUntil)) { return $this->unavailableStatus(); }
+                        if ($checkCurrentAccess && ! $inputs->isUnexpired($validUntil)) {
+                            AssistantStatusSnapshotDiagnostics::request('fresh_read_unavailable', $section);
+
+                            return $this->unavailableStatus();
+                        }
 
                         return array_merge($coverage, $documents, [
                             'status_available' => true,
@@ -134,6 +139,7 @@ final class AssistantIndexStatusService
                 'phase' => $phase->value, 'elapsed_ms' => (int) ((hrtime(true) - $started) / 1_000_000),
             ]);
             $result = $this->unavailableStatus();
+            if ($checkCurrentAccess && ! $phase->missing_release) { AssistantStatusSnapshotDiagnostics::request('fresh_read_unavailable', $section); }
         } finally {
             $setProcessingPhase(null);
         }

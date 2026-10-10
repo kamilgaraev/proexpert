@@ -2,6 +2,8 @@
 
 namespace App\Domain\Authorization\Services;
 
+use App\Services\Monitoring\ApiQueryMetrics;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
@@ -26,9 +28,17 @@ class RoleScanner
      */
     public function getAllRoles(): Collection
     {
-        return Cache::remember(self::CACHE_KEY, self::CACHE_TTL, function () {
-            return $this->scanRoles();
-        });
+        $request = app()->bound('request') ? app('request') : null;
+        $checkpoint = $request instanceof Request ? ApiQueryMetrics::processingCheckpoint($request) : null;
+        try {
+            return Cache::remember(self::CACHE_KEY, self::CACHE_TTL, function () {
+                return $this->scanRoles();
+            });
+        } finally {
+            if ($request instanceof Request && $checkpoint !== null) {
+                ApiQueryMetrics::recordProcessingPhase($request, 'role_catalog', $checkpoint['started_at'], $checkpoint);
+            }
+        }
     }
 
     /**

@@ -183,6 +183,8 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertNull($status['source_count']);
         self::assertArrayHasKey('rag_source_counts', $metrics->summary()['processing_phases']);
         self::assertGreaterThanOrEqual(2500, $metrics->summary()['processing_phases']['rag_source_counts']['total_ms']);
+        self::assertSame('fresh_read_unavailable', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertSame(str_repeat('a', 40), $metrics->summary()['assistant_snapshot']['release_sha']);
         Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
@@ -426,6 +428,20 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame(str_repeat('a', 40), $events[0]['release_sha']);
     }
 
+    public function test_missing_release_survives_the_final_budget_checkpoint(): void
+    {
+        [$organization, $actor, , $service, , $permissions] = $this->scope();
+        config(['ai-assistant.status_snapshot_release' => 'invalid-release']);
+        $permissions->assistantDelayMicroseconds = 2_600_000;
+        $metrics = new ApiQueryMetrics;
+        request()->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+
+        self::assertFalse($service->status($organization->id, $actor, 'sources')['status_available']);
+        self::assertSame('missing_release', $metrics->summary()['assistant_snapshot']['phase']);
+        self::assertNull($metrics->summary()['assistant_snapshot']['release_sha']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
+    }
+
     public function test_snapshot_controller_keeps_its_service_gate_on_all_surfaces(): void
     {
         [$organization, $actor, , $service, $policy, $permissions] = $this->scope();
@@ -481,13 +497,14 @@ final class AssistantStatusSnapshotTest extends TestCase
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'assigned_projects']);
         $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]));
         $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
-        $permissions = (object) ['denied' => []];
+        $permissions = (object) ['denied' => [], 'assistantDelayMicroseconds' => 0];
         $authorization = new class(Mockery::mock(RoleScanner::class), Mockery::mock(PermissionResolver::class), Mockery::mock(LoggingService::class), $permissions) extends AuthorizationService {
             public function __construct(RoleScanner $roles, PermissionResolver $resolver, LoggingService $logging, private readonly object $permissions)
             { parent::__construct($roles, $resolver, $logging); }
             public function getUserRoles(User $user, ?AuthorizationContext $context = null): Collection { return collect(); }
             protected function checkPermission(User $user, string $permission, ?array $context = null): bool
-            { return in_array($permission, ['projects.view', 'contracts.view', 'finance.view', 'ai_assistant.chat', 'admin.ai_assistant.rag.manage'], true)
+            { if ($permission === 'ai_assistant.chat') { usleep($this->permissions->assistantDelayMicroseconds); }
+                return in_array($permission, ['projects.view', 'contracts.view', 'finance.view', 'ai_assistant.chat', 'admin.ai_assistant.rag.manage'], true)
                 && ! in_array($permission, $this->permissions->denied, true); }
             public function forCurrentChecks(bool $memoizeReads = false): AuthorizationService { return clone $this; }
         };
