@@ -61,7 +61,7 @@ final class RetainedRagProjectionIndexesTest extends TestCase
         $before = $this->indexes();
         $settings = $this->settings();
         $connection->statement('SET ROLE pg_database_owner');
-        $repository = new DatabaseMigrationRepository($this->capsule->getDatabaseManager(), 'migrations');
+        $repository = new DatabaseMigrationRepository($this->capsule->getDatabaseManager(), 'rag_reindex_test_migrations');
         $repository->createRepository();
         $migrator = new Migrator($repository, $this->capsule->getDatabaseManager(), new Filesystem);
         $migrator->run([$this->migrationPath()]);
