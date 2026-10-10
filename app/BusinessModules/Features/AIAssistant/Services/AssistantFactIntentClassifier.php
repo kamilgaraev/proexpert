@@ -22,10 +22,24 @@ final class AssistantFactIntentClassifier
 
     public static function isNarrative(string $query): bool
     {
+        if (self::isConversationNumberRequest($query)) {
+            return true;
+        }
         $financialExplanation = preg_match(self::FINANCIAL_RECORD, $query)
             && preg_match(self::FINANCIAL_EXPLANATION, $query);
 
         return (bool) $financialExplanation || (bool) preg_match('/(?:как\s+(?:изменить|создать|настроить|добавить|удалить|рассчитать|утвердить|согласовать|закрыть|одобрить|завершить|назначить)|объясни\s+(?:как|правила)|(?:дай|покажи|составь|напиши)\s+инструкци[яю]|^\s*инструкци[яю]\s+(?:по|для|как)|(?:правил[а-яё]*|порядок|процедур[а-яё]*)\s+(?:утверждени|согласовани|закрыти|одобрени|завершени|назначени)|что\s+такое|как\s+(?:формируется|определяется)|(?:покажи|прочитай|выведи|дай)\s+(?:полный\s+)?(?:текст|содержани[ея]|описани[ея])|что\s+написан|цитат|перескажи|выдержк|из\s+текста|содержани[ея]\s+(?:документ|стать|смет|договор)|^\s*(?:назначь|утверди|согласуй|закрой|одобри|заверши))/iu', $query);
+    }
+
+    public static function isConversationNumberRequest(string $query): bool
+    {
+        if (preg_match(self::STATUS, $query) || preg_match(self::DATE, $query)
+            || preg_match(self::OVERDUE, $query) || preg_match(self::OWNER, $query)
+            || preg_match('/(?:смет|склад|остат|фактич|стоимост|цен[а-яё]*|бюджет|позиц|договор|плат[её]ж|оплат)/iu', $query)) {
+            return false;
+        }
+
+        return (bool) preg_match('/(?:учебн[а-яё]*\s+(?:арифметическ[а-яё]*\s+)?пример|условн[а-яё]*\s+(?:числ[а-яё]*|объ[её]м[а-яё]*)[^.!?]{0,100}(?:предыдущ[а-яё]*\s+сообщен[а-яё]*|(?:я|мы)\s+(?:назвал[а-яё]*|обсуждал[а-яё]*)))/iu', $query);
     }
 
     public static function requiresStructuredRead(string $query): bool
