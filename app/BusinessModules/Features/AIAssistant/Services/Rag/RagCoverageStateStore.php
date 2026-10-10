@@ -39,6 +39,22 @@ final class RagCoverageStateStore
         return is_array($snapshot) ? $snapshot : null;
     }
 
+    public function invalidateMany(array $organizationIds, callable $checkpoint): void
+    {
+        $organizationIds = array_values(array_unique(array_map('intval', $organizationIds)));
+        sort($organizationIds, SORT_NUMERIC);
+        if ($organizationIds === []) { return; }
+        DB::transaction(function () use ($organizationIds, $checkpoint): void {
+            $checkpoint();
+            DB::table('ai_rag_coverage_states')->insertOrIgnore(array_map(static fn (int $id): array => [
+                'organization_id' => $id, 'revision' => 0, 'created_at' => now(), 'updated_at' => now(),
+            ], $organizationIds));
+            $checkpoint();
+            DB::table('ai_rag_coverage_states')->whereIn('organization_id', $organizationIds)
+                ->increment('revision', 1, ['acknowledged_index_version' => DB::raw('index_version'), 'updated_at' => now()]);
+        });
+    }
+
     public function markIndexChanged(int $organizationId): void
     {
         DB::table('ai_rag_coverage_states')->insertOrIgnore([

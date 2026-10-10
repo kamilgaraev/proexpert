@@ -120,6 +120,30 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertSame($dataset->id,(new OrganizationReportingRagSource)->scopedQuery('approved_estimate_dataset',$fixture->organization->id)->orderBy('id')->limit(1)->firstOrFail()->id);
     }
 
+    public function test_live_catalog_tool_searches_published_norms_without_embeddings_and_rechecks_permission(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
+        $permissions = ['ai-assistant' => ['ai_assistant.chat'], 'ai-estimates' => ['estimate_generation.select_normative']];
+        $fixture->memberRole->update(['module_permissions' => $permissions]);
+        $dataset = EstimateDatasetVersion::withoutEvents(fn () => EstimateDatasetVersion::query()->create([
+            'source_type' => 'fsnb_2022', 'version_key' => 'growth-proof-'.Str::uuid(), 'status' => 'parsed',
+            'bucket' => 'private', 'prefix' => 'test', 'finished_at' => now(), 'rows_imported' => 1, 'errors_count' => 0,
+        ]));
+        $collection = EstimateNormCollection::withoutEvents(fn () => EstimateNormCollection::query()->create([
+            'dataset_version_id' => $dataset->id, 'code' => 'growth-proof', 'name' => 'growth-proof', 'norm_type' => 'gesn', 'source_file' => 'test.xml',
+        ]));
+        $arguments = ['domain' => 'normative_lookup', 'entity_type' => 'approved_estimate_norm_collection',
+            'query' => 'growth-proof', 'fields' => ['id', 'name'], 'limit' => 3];
+        $reader = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class);
+        $result = $reader->execute('search', $arguments, $fixture->member, $fixture->organization->id);
+        self::assertSame([$collection->id], array_column($result['results'], 'id'));
+        self::assertSame(0, DB::table('ai_rag_sources')->where('entity_type', 'approved_estimate_norm_collection')->count());
+        $permissions['ai-estimates'] = [];
+        $fixture->memberRole->update(['module_permissions' => $permissions]);
+        $this->expectException(\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException::class);
+        $reader->execute('search', $arguments, $fixture->member, $fixture->organization->id);
+    }
+
     public function test_norm_resource_pagination_keeps_only_published_parents_and_same_collection_sections(): void
     {
         $source = new OrganizationReportingRagSource;
@@ -160,7 +184,7 @@ final class AssistantOrganizationReportingTest extends TestCase
         self::assertSame([], $source->scopedQuery('approved_estimate_norm_resource', 1, 1)->get()->all());
     }
 
-    public function test_construction_resource_collection_reads_published_dataset_pages_and_rechecks_publication(): void
+    public function test_construction_resource_live_lookup_reads_published_dataset_pages_and_rechecks_publication(): void
     {
         $expected = [];
         $currentDatasets = [];
@@ -183,27 +207,25 @@ final class AssistantOrganizationReportingTest extends TestCase
         $source = new OrganizationReportingRagSource;
         DB::enableQueryLog();
         try {
-            $chunks = [...$source->collectForOrganization(1)];
+            $resources = [...$source->scopedQuery('approved_construction_resource', 1)->lazyById(50)];
             $resourceQueries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool => str_starts_with($query['query'], 'select "construction_resources".')));
-            self::assertCount(6, $resourceQueries);
+            self::assertCount(4, $resourceQueries);
             foreach ($resourceQueries as $query) {
-                self::assertStringContainsString('"construction_resources"."dataset_version_id" = ?', $query['query']);
                 self::assertStringContainsString('limit 50', $query['query']);
             }
         } finally {
             DB::disableQueryLog();
             DB::flushQueryLog();
         }
-        $resources = array_values(array_filter($chunks, static fn ($chunk): bool => $chunk->entityType === 'approved_construction_resource'));
-        self::assertSame($expected, array_map(static fn ($chunk): int => (int) $chunk->entityId, $resources));
+        self::assertSame($expected, array_map(static fn ($resource): int => (int) $resource->id, $resources));
+        self::assertSame([], [...$source->collectEntity(1, 'approved_construction_resource', $expected[0])]);
         self::assertSame([], [...$source->collectForOrganization(0)]);
         self::assertSame([], array_values(array_filter([...$source->collectForOrganization(1, 1)], static fn ($chunk): bool => $chunk->entityType === 'approved_construction_resource')));
 
         $firstDatasetIds = array_slice($expected, 0, 50);
         $seen = [];
-        foreach ($source->collectForOrganization(1) as $chunk) {
-            if ($chunk->entityType !== 'approved_construction_resource') { continue; }
-            $seen[] = (int) $chunk->entityId;
+        foreach ($source->scopedQuery('approved_construction_resource', 1)->lazyById(50) as $resource) {
+            $seen[] = (int) $resource->id;
             if (count($seen) === 50) { DB::table('estimate_dataset_versions')->where('id', $currentDatasets[0])->update(['errors_count' => 1]); }
         }
         self::assertSame([...$firstDatasetIds, ...array_slice($expected, 65)], $seen);

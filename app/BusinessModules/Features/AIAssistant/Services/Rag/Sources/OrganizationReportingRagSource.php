@@ -20,7 +20,8 @@ final class OrganizationReportingRagSource implements RagSourceCollectorInterfac
     public function enabled(): bool { return true; }
     public function entities(): array
     {
-        return array_map(static fn (array $row): array => ['model' => $row[0],'fields' => $row[1]], Metadata::records());
+        return array_map(static fn (array $row): array => ['model' => $row[0],'fields' => $row[1]],
+            array_diff_key(Metadata::records(), Metadata::retrievalCoverageDefinitions()));
     }
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
