@@ -142,6 +142,24 @@ final class AssistantNativeResponsesTest extends TestCase
         }
     }
 
+    public function test_native_result_preserves_a_bounded_opaque_provider_reference(): void
+    {
+        $id = 'e21bd655-1595-717a-9de7-b0d31f8cbb75';
+        $response = json_decode((string) $this->wire('openai/gpt-6-luna', [self::text('Готово.')], ['id' => $id])->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        $result = OpenAIProvider::nativeResult($response, 'openai/gpt-6-luna', 'timeweb', []);
+        self::assertSame($id, $result['provider_response_ref']);
+        self::assertTrue($result['model_invoked']);
+
+        foreach (['', "id\nheader", 'bad/id', str_repeat('x', 129)] as $invalid) {
+            try {
+                OpenAIProvider::nativeResult(array_replace($response, ['id' => $invalid]), 'openai/gpt-6-luna', 'timeweb', []);
+                self::fail('Expected invalid reference rejection');
+            } catch (\DomainException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
     private function provider(string $name, string $model, array $responses, array &$history): TimewebProvider|OpenAIProvider
     {
         config()->set("ai-assistant.llm.{$name}.api_key", 'test-key');
