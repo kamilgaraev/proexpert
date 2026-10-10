@@ -191,19 +191,22 @@ class AuthorizationService
             $query = $user->roleAssignments()
                 ->active()
                 ->with('customRole');
+            $hierarchy = null;
             
             if ($context) {
-                $contextIds = $this->getContextHierarchy($context)->pluck('id');
+                $hierarchy = $this->getContextHierarchy($context);
+                $contextIds = $hierarchy->pluck('id');
                 
                 // Для проектных контекстов также добавляем все проектные контексты организации
                 // (роли могут быть назначены в разных проектных контекстах)
                 if ($context->type === AuthorizationContext::TYPE_PROJECT && $context->parent_context_id) {
                     try {
-                        $orgContext = AuthorizationContext::find($context->parent_context_id);
+                        $orgContext = $hierarchy->firstWhere('id', $context->parent_context_id);
                         if ($orgContext) {
-                            $projectContexts = AuthorizationContext::where('parent_context_id', $orgContext->id)
+                            $projectContexts = $this->rememberRead('sibling_project_contexts_'.$orgContext->id,
+                                fn (): Collection => AuthorizationContext::where('parent_context_id', $orgContext->id)
                                 ->where('type', AuthorizationContext::TYPE_PROJECT)
-                                ->pluck('id');
+                                ->pluck('id'));
                             $contextIds = $contextIds->merge($projectContexts)->unique();
                         }
                     } catch (\Exception $e) {
@@ -214,14 +217,42 @@ class AuthorizationService
                 $query->whereIn('context_id', $contextIds);
             }
             
-            return $this->loadRoleContexts($query->get(), $query->getModel()->getConnectionName());
+            $knownHierarchy = $this->currentChecks && $this->readCache !== null
+                && $context?->type === AuthorizationContext::TYPE_ORGANIZATION
+                && $this->readCache->get($this->authContextReadKey(['organization_id' => (int) $context->resource_id])) === $context
+                && $hierarchy?->firstWhere('id', $context->id) === $context ? $hierarchy : null;
+
+            return $this->loadRoleContexts(
+                $query->get(),
+                $query->getModel()->getConnectionName(),
+                $knownHierarchy,
+            );
         });
     }
 
-    private function loadRoleContexts(Collection $roles, ?string $connection): Collection
+    private function loadRoleContexts(Collection $roles, ?string $connection, ?Collection $hierarchy = null): Collection
     {
         $ids = $roles->pluck('context_id')->filter(static fn ($id): bool => $id !== null)->unique()->values()->all();
-        $contexts = $ids === [] ? collect() : AuthorizationContext::on($connection)
+        $contexts = null;
+        if ($hierarchy !== null) {
+            $knownContexts = $hierarchy->keyBy('id');
+            $connectionName = (new AuthorizationContext)->setConnection($connection)->getConnection()->getName();
+            $contexts = collect();
+            foreach ($ids as $id) {
+                $context = $knownContexts->get($id);
+                $parent = $context instanceof AuthorizationContext ? $knownContexts->get($context->parent_context_id) : null;
+                if (! $context instanceof AuthorizationContext || $context->getConnection()->getName() !== $connectionName
+                    || ($context->parent_context_id !== null && (! $parent instanceof AuthorizationContext || $parent->getConnection()->getName() !== $connectionName))) {
+                    $contexts = null;
+                    break;
+                }
+                $contexts->put($id, clone $context);
+                if ($parent instanceof AuthorizationContext) {
+                    $contexts->put($parent->id, clone $parent);
+                }
+            }
+        }
+        $contexts ??= $ids === [] ? collect() : AuthorizationContext::on($connection)
             ->whereIn('id', $ids)
             ->orWhereIn('id', AuthorizationContext::on($connection)->select('parent_context_id')->whereIn('id', $ids))
             ->get()->keyBy('id');

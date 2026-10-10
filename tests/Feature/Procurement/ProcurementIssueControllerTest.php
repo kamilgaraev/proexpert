@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Procurement;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\Procurement\Http\Middleware\EnsureProcurementActive;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
@@ -11,12 +16,16 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementIssueService;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
+use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Http\Middleware\JwtMiddleware;
 use App\Models\Organization;
 use App\Models\Supplier;
-use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Mockery;
+use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
 final class ProcurementIssueControllerTest extends TestCase
@@ -29,10 +38,9 @@ final class ProcurementIssueControllerTest extends TestCase
             EnsureProcurementActive::class,
         ]);
 
-        $organization = Organization::factory()->create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
         $otherOrganization = Organization::factory()->create();
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
-        $user->organizations()->attach($organization->id, ['is_owner' => true, 'is_active' => true]);
 
         $pendingRequest = $this->createPurchaseRequest($organization, 'PENDING', 'pending');
         $approvedRequest = $this->createPurchaseRequest($organization, 'APPROVED', 'approved');
@@ -43,7 +51,7 @@ final class ProcurementIssueControllerTest extends TestCase
 
         $this->createPurchaseRequest($otherOrganization, 'OUTSIDE', 'pending');
 
-        $response = $this->actingAs($user, 'api_admin')
+        $response = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/issues?per_page=10');
 
         $response
@@ -84,14 +92,13 @@ final class ProcurementIssueControllerTest extends TestCase
             EnsureProcurementActive::class,
         ]);
 
-        $organization = Organization::factory()->create();
-        $user = User::factory()->create(['current_organization_id' => $organization->id]);
-        $user->organizations()->attach($organization->id, ['is_owner' => true, 'is_active' => true]);
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $organization = $context->organization;
 
         $this->createPurchaseRequest($organization, 'PENDING', 'pending');
         $this->createPurchaseOrder($organization, 'DRAFT', 'draft');
 
-        $response = $this->actingAs($user, 'api_admin')
+        $response = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/issues?scope=purchase_orders');
 
         $response
@@ -145,6 +152,65 @@ final class ProcurementIssueControllerTest extends TestCase
 
         $this->assertNotNull($route);
         $this->assertContains('authorize:procurement.view', $route->gatherMiddleware());
+    }
+
+    public function test_issue_facts_are_loaded_once_per_entity_and_payment_changes_remain_fresh(): void
+    {
+        $organization = Organization::factory()->create();
+        $foreign = Organization::factory()->create();
+        $approved = $this->createPurchaseRequest($organization, 'BUDGET', 'approved');
+        $secondApproved = $this->createPurchaseRequest($organization, 'BUDGET-SECOND', 'approved');
+        $order = $this->createPurchaseOrder($organization, 'BUDGET', 'confirmed');
+        $outside = $this->createPurchaseOrder($foreign, 'OUTSIDE', 'confirmed');
+        $lifecycle = Mockery::mock(ProcurementLifecycleService::class, [app(PurchaseOrderPaymentGateService::class)])->makePartial();
+        foreach ([$approved, $secondApproved] as $requestForSummary) {
+            $lifecycle->shouldReceive('forPurchaseRequest')->with(Mockery::on(static fn (PurchaseRequest $request): bool => $request->id === $requestForSummary->id && $request->relationLoaded('lines')))->once()->passthru();
+        }
+        $lifecycle->shouldReceive('forPurchaseOrder')->with(Mockery::on(static fn (PurchaseOrder $purchaseOrder): bool => $purchaseOrder->id === $order->id))->twice()->passthru();
+        $service = new ProcurementIssueService($lifecycle);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $first = $service->paginate((int) $organization->id, 'all', 1, 50);
+            $queries = DB::getQueryLog();
+            self::assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'purchase_request_lines')));
+            self::assertCount(2, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'payment_documents')));
+            self::assertCount(1, array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'purchase_receipt_lines')));
+            self::assertSame(4, $first['summary']['total']);
+            self::assertEqualsCanonicalizing([
+                'purchase_request_without_order', 'purchase_request_without_order', 'purchase_order_confirmed_without_contract', 'purchase_order_confirmed_waiting_delivery',
+            ], array_column($first['items'], 'type'));
+            self::assertNotContains('PO-ISSUE-OUTSIDE', array_column($first['items'], 'entity_number'));
+            self::assertSame(0, $first['summary']['waiting_receipt']);
+            self::assertSame(2, $first['summary']['approved_without_order']);
+            $approved->update(['status' => 'pending']);
+            $secondApproved->update(['status' => 'pending']);
+            PaymentDocument::query()->create([
+                'organization_id' => $organization->id, 'payer_organization_id' => $organization->id,
+                'document_type' => PaymentDocumentType::PAYMENT_ORDER, 'document_number' => 'PAY-ISSUE-FRESH',
+                'document_date' => now()->toDateString(), 'direction' => InvoiceDirection::OUTGOING,
+                'invoice_type' => InvoiceType::MATERIAL_PURCHASE, 'amount' => 1000, 'currency' => 'RUB',
+                'paid_amount' => 1000, 'remaining_amount' => 0, 'status' => PaymentDocumentStatus::PAID,
+                'paid_at' => now(), 'metadata' => ['purchase_order_id' => $order->id],
+            ]);
+            DB::flushQueryLog();
+            $second = $service->paginate((int) $organization->id, 'all', 1, 50);
+            $secondQueries = DB::getQueryLog();
+            self::assertCount(0, array_filter($secondQueries, static fn (array $query): bool => str_contains($query['query'], 'purchase_request_lines')));
+            self::assertCount(2, array_filter($secondQueries, static fn (array $query): bool => str_contains($query['query'], 'payment_documents')));
+            self::assertCount(1, array_filter($secondQueries, static fn (array $query): bool => str_contains($query['query'], 'purchase_receipt_lines')));
+            self::assertEqualsCanonicalizing([
+                'purchase_request_pending', 'purchase_request_pending', 'purchase_order_confirmed_without_contract', 'purchase_order_confirmed_waiting_delivery',
+            ], array_column($second['items'], 'type'));
+            $orderIssues = collect($second['items'])->where('scope', 'purchase_orders');
+            self::assertCount(2, $orderIssues);
+            foreach ($orderIssues as $issue) {
+                self::assertSame(trans_message('procurement.lifecycle.actions.receive_materials'), $issue['next_action']);
+            }
+            self::assertSame('confirmed', $outside->fresh()->status->value);
+        } finally {
+            DB::disableQueryLog();
+        }
     }
 
     private function createPurchaseRequest(Organization $organization, string $suffix, string $status): PurchaseRequest

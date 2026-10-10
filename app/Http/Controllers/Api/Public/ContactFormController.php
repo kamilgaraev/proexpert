@@ -32,13 +32,10 @@ class ContactFormController extends Controller
             );
         } catch (\Throwable $exception) {
             Log::error('Public contact form submission error', [
-                'error' => $exception->getMessage(),
-                'email' => $request->input('email'),
+                'exception_class' => $exception::class,
                 'page_source' => $request->input('page_source'),
                 'company_role' => $request->input('company_role'),
                 'company_size' => $request->input('company_size'),
-                'ip' => $request->ip(),
-                'user_agent' => $request->userAgent(),
             ]);
 
             return LandingResponse::error(

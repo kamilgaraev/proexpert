@@ -12,6 +12,9 @@ use App\Services\Privacy\Contracts\AuthenticatedPrivateContext;
 use Closure;
 use LogicException;
 use Throwable;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
+use App\BusinessModules\Features\AIAssistant\Services\Runtime\PublicCoreGatewayModelDriver;
 
 final readonly class AssistantLocalLoop
 {
@@ -25,6 +28,7 @@ final readonly class AssistantLocalLoop
         private ?AssistantLoopLimits $limits = null,
         private ?Closure $clock = null,
         private ?Closure $finalGuard = null,
+        private ?Closure $completionEvidence = null,
     ) {
     }
 
@@ -38,6 +42,9 @@ final readonly class AssistantLocalLoop
             return $this->runGuarded($profileRef, AssistantContextSourceBinding::detached($request), $trace);
         } catch (Throwable) {
             return $this->blocked('loop_guard_blocked', $trace);
+        } finally {
+            $driver = (new \ReflectionFunction($this->modelDriver))->getClosureThis();
+            if ($driver instanceof PublicCoreGatewayModelDriver) { $driver->resetRun(); }
         }
     }
 
@@ -133,6 +140,10 @@ final readonly class AssistantLocalLoop
         $calls = 0;
         $repairs = 0;
         $repair = null;
+        $nativeHistory = [];
+        $nativeIds = [];
+        $nativeCalls = [];
+        $pendingResult = null;
         $tools = [
             ['name' => 'material.search', 'arguments' => ['query' => 'string', 'limit' => 'integer:1..10'], 'effect' => 'read'],
             ['name' => 'material.read_selected', 'arguments' => ['ref' => 'current-selection-reference'], 'effect' => 'read'],
@@ -141,9 +152,12 @@ final readonly class AssistantLocalLoop
             $checkTime();
             $profile = $receipt->profile();
             $counter = new AssistantContextTokenCounter($profile, $this->tokenizer);
-            $input = ['schemaVersion' => 'assistant-loop-input/1', 'context' => $receipt->payload(), 'contextScope' => $receipt->contextScope(), 'tools' => $tools, 'toolReferences' => $latest?->modelMetadata(), 'repair' => $repair];
+            $input = ['schemaVersion' => 'assistant-loop-input/2', 'context' => $receipt->payload(), 'contextScope' => $receipt->contextScope(), 'tools' => $tools, 'toolReferences' => $latest?->modelMetadata(), 'repair' => $repair, 'nativeHistory' => $nativeHistory];
             $fresh(false);
-            $inputTokens = $counter->count($input);
+            $wire = PublicCoreGatewayModelDriver::wireBodyBytes($profile->modelPayload(), $input);
+            $wireValue = GatewayModelRequest::decodeJson($wire);
+            if (AssistantContextSourceBinding::canonical($wireValue) !== $wire) { throw new LogicException('wire_count_changed'); }
+            $inputTokens = $counter->count($wireValue);
             $fresh(false);
             if ($inputTokens > $profile->inputBudget() || $inputTokens + $profile->modelPayload()['maxOutputTokens'] > $limits->totalTokens - $tokens) {
                 throw new LogicException('loop_token_limit');
@@ -151,7 +165,8 @@ final readonly class AssistantLocalLoop
             $tokens += $inputTokens;
             $checkTime();
             $fresh(false);
-            $output = ($this->modelDriver)(AssistantContextSourceBinding::detached($input));
+            $output = ($this->modelDriver)(AssistantContextSourceBinding::detached($input), $pendingResult, $receipt);
+            $pendingResult = null;
             if (!is_array($output) && !is_string($output)) {
                 throw new LogicException('model_output_invalid');
             }
@@ -164,7 +179,17 @@ final readonly class AssistantLocalLoop
                 throw new LogicException('loop_token_limit');
             }
             $checkTime();
-            $action = AssistantModelAction::parse($output);
+            if (!is_array($output) || !array_is_list($output)) { throw new LogicException('model_output_invalid'); }
+            $output = GatewayModelResponse::outputItems(GatewayModelRequest::canonicalJson($output));
+            foreach ($output as $item) {
+                if (isset($nativeIds[$item['id']]) || ($item['type'] === 'function_call' && isset($nativeCalls[$item['call_id']]))) {
+                    throw new LogicException('native_history_replayed');
+                }
+                $nativeIds[$item['id']] = true;
+                if ($item['type'] === 'function_call') { $nativeCalls[$item['call_id']] = true; }
+            }
+            $nativeHistory = [...$nativeHistory, ...$output];
+            $action = AssistantModelAction::native($output);
             $value = $action->values();
             $trace->add($action->type(), $step, $tokens);
             if ($action->type() === 'plan') {
@@ -192,10 +217,15 @@ final readonly class AssistantLocalLoop
                     $fresh(false);
                 }
                 $callRef = AssistantToolResult::opaqueRef();
+                if ($callRef === $value['nativeItem']['call_id']) { throw new LogicException('native_call_collision'); }
                 $trace->add('tool', $step, $tokens, $callRef);
                 $latest = $this->toolAdapter->adapt($value['tool'], $arguments, $receipt, $callRef, $fresh);
                 $results[] = $latest;
                 $receipt = $this->prepare($profileRef, $request, $receipt, true);
+                $fresh(false);
+                $nativeHistory[] = ['type' => 'function_call_output', 'call_id' => $value['nativeItem']['call_id'],
+                    'output' => GatewayModelRequest::canonicalJson($latest->modelMetadata())];
+                $pendingResult = $latest;
                 $repair = null;
                 continue;
             }
@@ -217,7 +247,18 @@ final readonly class AssistantLocalLoop
                 }
                 $trace->add('ready', $step, $tokens);
 
-                return ['status' => 'READY', 'mode' => 'offline-synthetic', 'transportAllowed' => false, 'reply' => $value['text'], 'trace' => $trace->events()];
+                $result = ['status' => 'READY', 'mode' => 'offline-synthetic', 'transportAllowed' => false, 'reply' => $value['text'], 'trace' => $trace->events()];
+                if ($this->completionEvidence !== null) {
+                    $completed = ($this->completionEvidence)($value, $receipt, $results, $trace->events());
+                    if (!is_array($completed) || !AssistantModelContextProfile::hasExactKeys($completed, ['actual_model', 'tools', 'sources'])) {
+                        throw new LogicException('completion_evidence_invalid');
+                    }
+                    $result += $completed;
+                    $fresh(false);
+                    $checkTime();
+                }
+
+                return $result;
             }
             if ($verdict['status'] === 'blocked' || ++$repairs > $limits->repairs) {
                 throw new LogicException('reply_validation_blocked');

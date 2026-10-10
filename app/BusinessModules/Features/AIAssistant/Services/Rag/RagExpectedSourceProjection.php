@@ -16,9 +16,11 @@ use RuntimeException;
 
 final class RagExpectedSourceProjection
 {
+    public const MAX_PRUNE_ROWS = 1000000;
+
     private const DELETE_BATCH_SIZE = 1000;
 
-    private const ORPHAN_GRACE_HOURS = 24;
+    private const ORPHAN_GRACE_HOURS = 3;
 
     public function __construct(private readonly RagIndexer $indexer) {}
 
@@ -77,7 +79,11 @@ final class RagExpectedSourceProjection
             if ($collectProof) {
                 $query->leftJoin('ai_rag_sources as matched_sources', $joinIdentity);
             } else {
-                $matchedSources = DB::table('ai_rag_sources')->leftJoin('ai_rag_status_sources as matched_status_cache', 'matched_status_cache.id', '=', 'ai_rag_sources.id')
+                $matchedSources = DB::table('ai_rag_sources')->leftJoin('ai_rag_status_sources as matched_status_cache', static function (JoinClause $join): void {
+                    $join->on('matched_status_cache.id', '=', 'ai_rag_sources.id')
+                        ->on('matched_status_cache.organization_id', '=', 'ai_rag_sources.organization_id')
+                        ->whereRaw('matched_status_cache.project_id IS NOT DISTINCT FROM ai_rag_sources.project_id');
+                })
                     ->where('ai_rag_sources.organization_id', $organizationId)->whereIn('ai_rag_sources.source_type', $batchTypes ?? $types)
                     ->select(['ai_rag_sources.id', 'ai_rag_sources.organization_id', 'ai_rag_sources.project_id', 'ai_rag_sources.identity_project_id', 'ai_rag_sources.identity_part_key',
                         'ai_rag_sources.source_type', 'ai_rag_sources.entity_type', 'ai_rag_sources.entity_id', 'ai_rag_sources.checksum', 'matched_status_cache.indexed_chunk_count']);
@@ -125,7 +131,15 @@ final class RagExpectedSourceProjection
 
     public function prune(int $organizationId, string $generation): void
     {
-        $this->deleteOldGenerations($organizationId, $generation, 100000, microtime(true) + 5);
+        $lease = Cache::lock('ai-rag-projection-retention:'.$organizationId, 120);
+        if (! $lease->get()) {
+            return;
+        }
+        try {
+            $this->deleteOldGenerations($organizationId, $generation, 100000, microtime(true) + 5);
+        } finally {
+            $lease->release();
+        }
     }
 
     public function discard(int $organizationId, string $generation, int $maxRows = PHP_INT_MAX, ?float $deadline = null): int
@@ -144,7 +158,7 @@ final class RagExpectedSourceProjection
             $query->orderBy($column);
         }
         $deleted = $this->deleteBatches($organizationId, $query, $maxRows, $deadline ?? microtime(true) + 40, $cursorColumns);
-        if (! $query->exists()) {
+        if ((clone $query)->reorder('generation')->toBase()->selectRaw('1 AS remaining')->first() === null) {
             $pending = (array) Cache::get($key, []);
             unset($pending[$generation]);
             if ($pending === []) {
@@ -158,9 +172,9 @@ final class RagExpectedSourceProjection
     }
 
     /** @return array{deleted: int, locked: bool} */
-    public function pruneOrganization(int $organizationId, int $maxRows = 100000, ?float $deadline = null): array
+    public function pruneOrganization(int $organizationId, int $maxRows = 500000, ?float $deadline = null): array
     {
-        $lease = Cache::lock('ai-rag-coverage-projection:'.$organizationId, 7500);
+        $lease = Cache::lock('ai-rag-projection-retention:'.$organizationId, 120);
         if (! $lease->get()) {
             return ['deleted' => 0, 'locked' => true];
         }
@@ -171,10 +185,10 @@ final class RagExpectedSourceProjection
         }
     }
 
-    public function pruneWhileLocked(int $organizationId, int $maxRows = 100000, ?float $deadline = null): int
+    public function pruneWhileLocked(int $organizationId, int $maxRows = 500000, ?float $deadline = null): int
     {
         $deadline ??= microtime(true) + 50;
-        $maxRows = max(0, min(100000, $maxRows));
+        $maxRows = max(0, min(self::MAX_PRUNE_ROWS, $maxRows));
         $deleted = 0;
         $active = $this->activeGeneration($organizationId);
         foreach (array_keys((array) Cache::get($this->discardKey($organizationId), [])) as $generation) {
@@ -196,7 +210,9 @@ final class RagExpectedSourceProjection
     {
         $query = RagExpectedSource::query()->where('organization_id', $organizationId)
             ->where('created_at', '<', now()->subHours(self::ORPHAN_GRACE_HOURS))
-            ->when($active !== null, static fn (Builder $query): Builder => $query->where('generation', '<>', $active))
+            ->when($active !== null, static fn (Builder $query): Builder => $query->where(
+                static fn (Builder $generations): Builder => $generations->where('generation', '<', $active)->orWhere('generation', '>', $active)
+            ))
             ->orderBy('created_at')->orderBy('id');
 
         return $this->deleteBatches($organizationId, $query, $maxRows, $deadline, ['created_at', 'id']);
@@ -229,6 +245,10 @@ final class RagExpectedSourceProjection
 
     private function activeGeneration(int $organizationId): ?string
     {
+        $generation = app(RagCoverageStateStore::class)->activeGeneration($organizationId);
+        if ($generation !== null) {
+            return $generation;
+        }
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organizationId, 0);
         $snapshot = Cache::get('ai-rag-coverage:'.$organizationId.':0:*:'.$revision);
 

@@ -32,7 +32,7 @@ final class RegistrationConsentTest extends TestCase
             ->assertJsonValidationErrors('terms_accepted');
     }
 
-    public function test_registration_records_server_versioned_consent_evidence_atomically(): void
+    public function test_registration_with_empty_requisites_records_versioned_evidence_atomically(): void
     {
         Notification::fake();
         config([
@@ -48,35 +48,47 @@ final class RegistrationConsentTest extends TestCase
             ->where('email', 'consent-record@example.test')
             ->value('id');
 
-        $this->assertDatabaseHas('user_consents', [
+        $this->assertDatabaseHas('legal_acceptance_events', [
             'user_id' => $userId,
-            'type' => 'terms',
-            'version' => 'terms-2026-08-24',
+            'document_key' => 'offer',
+            'version' => config('legal.version'),
         ]);
-        $this->assertDatabaseHas('user_consents', [
+        $this->assertDatabaseHas('legal_acceptance_events', [
             'user_id' => $userId,
-            'type' => 'privacy',
-            'version' => 'privacy-2026-08-24',
+            'document_key' => 'privacy',
+            'action' => 'acknowledged',
+            'version' => config('legal.version'),
         ]);
-        $this->assertDatabaseCount('user_consents', 2);
+        $this->assertDatabaseCount('legal_acceptance_events', 3);
+        $this->assertDatabaseCount('user_consents', 0);
+        $snapshot = $this->app['db']->table('legal_acceptance_events')->where('document_key', 'offer')->value('snapshot');
+        self::assertSame('', json_decode($snapshot, true, 512, JSON_THROW_ON_ERROR)['provider']['name']);
     }
 
     public function test_consent_persistence_failure_rolls_back_user_organization_and_attempt(): void
     {
         Notification::fake();
-        config([
-            'web_auth.registration.terms_version' => 'terms-valid',
-            'web_auth.registration.privacy_version' => str_repeat('x', 65),
-        ]);
+        \Illuminate\Support\Facades\Event::listen('eloquent.creating: App\\Models\\LegalAcceptanceEvent', static function ($event): void {
+            if ($event->document_key === 'processing') {
+                throw new \RuntimeException('Simulated evidence persistence failure');
+            }
+        });
+        $organizationsBefore = $this->app['db']->table('organizations')->pluck('name', 'id')->all();
 
-        $this->registrationRequest('consent-rollback-key')
-            ->postJson('/api/v1/landing/auth/register', $this->payload('consent-rollback@example.test'))
-            ->assertServerError();
+        try {
+            $this->registrationRequest('consent-rollback-key')
+                ->postJson('/api/v1/landing/auth/register', $this->payload('consent-rollback@example.test'))
+                ->assertServerError();
+        } finally {
+            \Illuminate\Support\Facades\Event::forget('eloquent.creating: App\\Models\\LegalAcceptanceEvent');
+        }
 
         $this->assertDatabaseCount('users', 0);
-        $this->assertDatabaseCount('organizations', 0);
+        self::assertSame($organizationsBefore, $this->app['db']->table('organizations')->pluck('name', 'id')->all());
+        $this->assertDatabaseMissing('organizations', ['name' => 'Consent Organization']);
         $this->assertDatabaseCount('organization_user', 0);
         $this->assertDatabaseCount('user_consents', 0);
+        $this->assertDatabaseCount('legal_acceptance_events', 0);
         $this->assertDatabaseCount('auth_registration_attempts', 0);
     }
 
@@ -97,6 +109,7 @@ final class RegistrationConsentTest extends TestCase
             'password' => 'Password1',
             'password_confirmation' => 'Password1',
             'organization_name' => 'Consent Organization',
+            ...\Tests\Support\LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']),
             'terms_accepted' => true,
             'privacy_accepted' => true,
         ];

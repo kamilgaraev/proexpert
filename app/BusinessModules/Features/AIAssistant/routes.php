@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantMemoryCon
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AssistantSharingController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\ProjectPulseController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\PublicCoreTestController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Route;
@@ -49,7 +50,7 @@ $assistantRoutes = static function (): void {
     Route::get('usage', [AIAssistantController::class, 'usage'])->name('usage');
 };
 
-Route::middleware(['auth:api', 'organization.context', SubstituteBindings::class])
+Route::middleware(['auth.web:lk', 'auth:api_landing', 'auth.jwt:api_landing', 'organization.context', SubstituteBindings::class])
     ->prefix('api/v1/ai-assistant')->name('lk.ai-assistant.')->group($assistantRoutes);
 
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
@@ -66,6 +67,14 @@ Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
     ->prefix('api/v1/admin/ai-reports')->name('admin.ai-reports.')->group(static function (): void {
         Route::get('download/{token}', [AiReportsDownloadController::class, 'download'])->name('download');
+    });
+
+Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
+    ->prefix('api/v1/admin/ai-assistant/public-core')->name('admin.ai-assistant.public-core.')->group(static function (): void {
+        Route::get('readiness', [PublicCoreTestController::class, 'readiness'])->name('readiness');
+        Route::post('requests', [PublicCoreTestController::class, 'submit'])->name('submit');
+        Route::get('requests/{request_ref}', [PublicCoreTestController::class, 'poll'])
+            ->where('request_ref', '[A-Za-z0-9_-]{20,160}')->name('poll');
     });
 
 Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))

@@ -37,6 +37,7 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
             $firstQueries = $connection->getQueryLog();
             $this->assertNotEmpty($this->authorizationReads($firstQueries));
             $this->assertCount(1, $this->effectiveModuleListReads($firstQueries));
+            $this->assertCount(2, array_filter($firstQueries, static fn (array $query): bool => str_contains(strtolower($query['query']), 'from "authorization_contexts"')));
 
             $connection->flushQueryLog();
             $this->assertTrue($authorization->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => $organizationId]));
@@ -52,6 +53,53 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $this->assertTrue($authorization->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
         $this->assertFalse(app(AuthorizationService::class)->forCurrentChecks(true)->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
         $this->assertTrue(app(AuthorizationService::class)->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+    }
+
+    public function test_fresh_role_reads_refresh_metadata_and_parents_even_with_a_stale_context_model(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $context = AuthorizationContext::findOrFail($fixture->memberAssignment->context_id);
+        $context->update(['metadata' => ['revision' => 'original']]);
+        $originalParent = $context->parentContext;
+        $scope = app(AuthorizationService::class)->forCurrentChecks(true);
+        $originalRoles = $scope->getUserRoles($fixture->member, $context);
+        $originalRoleContext = $originalRoles->firstOrFail()->context;
+
+        $this->assertNotSame($context, $originalRoleContext);
+        $this->assertSame($originalParent, $context->parentContext);
+        $this->assertSame('original', $originalRoleContext->metadata['revision']);
+
+        $newParent = AuthorizationContext::getOrganizationContext($fixture->foreignOrganization->id);
+        $context->fresh()->update([
+            'metadata' => ['revision' => 'updated'],
+            'parent_context_id' => $newParent->id,
+        ]);
+
+        $freshRoles = app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoles($fixture->member, $context);
+        $freshRoleContext = $freshRoles->firstOrFail()->context;
+        $this->assertSame('updated', $freshRoleContext->metadata['revision']);
+        $this->assertSame((int) $newParent->id, (int) $freshRoleContext->parentContext->id);
+        $this->assertFalse($freshRoleContext->parentContext->relationLoaded('parentContext'));
+        $this->assertSame('original', $originalRoleContext->metadata['revision']);
+        $this->assertSame($originalParent, $context->parentContext);
+
+        $fixture->memberAssignment->update(['is_active' => false]);
+        $this->assertCount(0, app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoles($fixture->member, $context));
+    }
+
+    public function test_fresh_permission_reads_do_not_reuse_hierarchy_from_a_different_context_instance(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $context = AuthorizationContext::findOrFail($fixture->memberAssignment->context_id);
+        $context->update(['metadata' => ['revision' => 'original']]);
+        $scope = app(AuthorizationService::class)->forCurrentChecks(true);
+        $scope->getUserRoles($fixture->owner, $context);
+        $context->fresh()->update(['metadata' => ['revision' => 'updated']]);
+
+        $this->assertTrue($scope->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => (int) $fixture->organization->id]));
+        $roles = $scope->getUserRoles($fixture->member, $context);
+        $this->assertSame('updated', $roles->firstOrFail()->context->metadata['revision']);
+        $this->assertSame('original', $context->metadata['revision']);
     }
 
     public function test_current_role_slugs_reuse_permission_reads_and_refresh_after_revocation(): void
@@ -79,6 +127,43 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $this->assertSame([], app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoleSlugs($fixture->member, $context));
     }
 
+    public function test_project_role_reads_reuse_sibling_contexts_only_within_one_current_scope(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $projects = Project::withoutEvents(fn () => Project::factory()->count(3)->create([
+            'organization_id' => $fixture->organization->id,
+        ]));
+        $contexts = $projects->map(fn (Project $project): AuthorizationContext =>
+            AuthorizationContext::getProjectContext($project->id, $fixture->organization->id));
+        $organizationContext = AuthorizationContext::findOrganizationContext($fixture->organization->id);
+        $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            foreach ($contexts as $context) {
+                $this->assertContains('organization_owner', $authorization->getUserRoles($fixture->owner, $context)->pluck('role_slug')->all());
+            }
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $siblings = array_filter($queries, static fn (array $query): bool =>
+            str_starts_with($query['query'], 'select "id" from "authorization_contexts" where "parent_context_id" = ?'));
+        $parents = array_filter($queries, static fn (array $query): bool =>
+            str_starts_with($query['query'], 'select * from "authorization_contexts" where "authorization_contexts"."id" = ?')
+            && (int) ($query['bindings'][0] ?? 0) === (int) $organizationContext->id);
+        $this->assertCount(1, $siblings);
+        $this->assertLessThanOrEqual($contexts->count(), count($parents));
+
+        $fixture->ownerAssignment->update(['is_active' => false]);
+        $fresh = app(AuthorizationService::class)->forCurrentChecks(true);
+        foreach ($contexts as $context) {
+            $this->assertContains('organization_owner', $authorization->getUserRoles($fixture->owner, $context)->pluck('role_slug')->all());
+            $this->assertNotContains('organization_owner', $fresh->getUserRoles($fixture->owner, $context)->pluck('role_slug')->all());
+        }
+    }
+
     public function test_current_role_slugs_fail_closed_without_creating_an_organization_context(): void
     {
         $fixture = AssistantRealAuthorizationFixture::create();
@@ -91,6 +176,36 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
         $this->assertSame([], $authorization->getUserRoleSlugs($fixture->member, $context));
         $this->assertSame([], $authorization->getUserRoleSlugs($fixture->member, $context));
         $this->assertSame($contextCount, AuthorizationContext::query()->count());
+    }
+
+    public function test_sibling_project_roles_are_isolated_and_refresh_after_reparenting(): void
+    {
+        $fixture = AssistantRealAuthorizationFixture::create();
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $sibling = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]));
+        $context = AuthorizationContext::getProjectContext($project->id, $fixture->organization->id);
+        $siblingContext = AuthorizationContext::getProjectContext($sibling->id, $fixture->organization->id);
+        $foreignContext = AuthorizationContext::getProjectContext($foreign->id, $fixture->foreignOrganization->id);
+        $siblingRole = $fixture->ownerAssignment->replicate();
+        $siblingRole->forceFill(['context_id' => $siblingContext->id, 'role_slug' => 'organization_admin'])->save();
+        $foreignRole = $fixture->ownerAssignment->replicate();
+        $foreignRole->forceFill(['context_id' => $foreignContext->id, 'role_slug' => 'organization_admin'])->save();
+        $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+        $roles = $authorization->getUserRoles($fixture->owner, $context)->modelKeys();
+        $this->assertContains($siblingRole->id, $roles);
+        $this->assertNotContains($foreignRole->id, $roles);
+
+        $siblingContext->update(['parent_context_id' => $foreignContext->parent_context_id]);
+        $this->assertContains($siblingRole->id, $authorization->getUserRoles($fixture->owner, $context)->modelKeys());
+        $freshRoles = app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoles($fixture->owner, $context->fresh())->modelKeys();
+        $this->assertNotContains($siblingRole->id, $freshRoles);
+        $this->assertNotContains($foreignRole->id, $freshRoles);
+
+        $siblingContext->update(['parent_context_id' => $context->parent_context_id]);
+        $restored = app(AuthorizationService::class)->forCurrentChecks(true)->getUserRoles($fixture->owner, $context->fresh())->modelKeys();
+        $this->assertContains($siblingRole->id, $restored);
+        $this->assertNotContains($foreignRole->id, $restored);
     }
 
     public function test_current_scopes_ignore_stale_shared_decisions_and_do_not_publish_them(): void

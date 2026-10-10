@@ -54,8 +54,18 @@ final class RagEmbeddingCompatibilityTest extends TestCase
         $this->indexer(new CompatibilityEmbeddingProvider('timeweb', 'openai/text-embedding-3-large', 256))->indexChunk($this->chunk($project));
         $before = DB::table('ai_rag_chunks')->orderBy('id')->get()->toArray();
         $migration = require base_path('app/BusinessModules/Features/AIAssistant/migrations/2026_10_02_000001_allow_mixed_ai_rag_embedding_dimensions.php');
+        $triggers = DB::select("SELECT tgname, tgenabled, pg_get_triggerdef(oid) AS definition FROM pg_trigger WHERE tgrelid = 'ai_rag_chunks'::regclass AND NOT tgisinternal");
+        foreach ($triggers as $trigger) {
+            DB::statement('DROP TRIGGER "'.str_replace('"', '""', $trigger->tgname).'" ON ai_rag_chunks');
+        }
         $migration->down();
         $migration->up();
+        foreach ($triggers as $trigger) {
+            DB::statement($trigger->definition);
+            if ($trigger->tgenabled === 'A') {
+                DB::statement('ALTER TABLE ai_rag_chunks ENABLE ALWAYS TRIGGER "'.str_replace('"', '""', $trigger->tgname).'"');
+            }
+        }
         $this->assertEquals($before, DB::table('ai_rag_chunks')->orderBy('id')->get()->toArray());
         $indexes = DB::select('SELECT indexname FROM pg_indexes WHERE tablename = ?', ['ai_rag_chunks']);
         $this->assertContains('ai_rag_chunks_embedding_256_hnsw_idx', array_column($indexes, 'indexname'));
@@ -260,6 +270,8 @@ final class RagEmbeddingCompatibilityTest extends TestCase
     {
         if (DB::connection()->getDriverName() !== 'pgsql') return;
         self::assertGreaterThan(0, DB::connection()->transactionLevel());
+        $column = DB::selectOne("SELECT atttypmod FROM pg_attribute WHERE attrelid = 'ai_rag_chunks'::regclass AND attname = 'embedding'");
+        if ((int) $column->atttypmod === -1) return;
         DB::statement('DROP INDEX IF EXISTS ai_rag_chunks_embedding_hnsw_idx');
         DB::statement('ALTER TABLE ai_rag_chunks ALTER COLUMN embedding TYPE vector USING embedding::vector');
     }

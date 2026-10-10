@@ -121,6 +121,24 @@ class ConversationManager
     public function getHistoryPage(Conversation $conversation, User $actor, int $perPage = 30, int $page = 1): LengthAwarePaginator
     {
         $this->assertAccessible($conversation, $actor);
+
+        return $this->paginateAccessibleHistory($conversation, $actor, $perPage, $page);
+    }
+
+    public function findAccessibleConversationPage(int $conversationId, User $actor, int $organizationId, int $perPage = 30, int $page = 1): ?array
+    {
+        $conversation = $this->findAccessibleConversation($conversationId, $actor, $organizationId);
+        if ($conversation === null) {
+            return null;
+        }
+        $history = $this->paginateAccessibleHistory($conversation, $actor, $perPage, $page);
+        $conversation->load('participants');
+
+        return ['conversation' => $conversation, 'page' => $history];
+    }
+
+    private function paginateAccessibleHistory(Conversation $conversation, User $actor, int $perPage, int $page): LengthAwarePaginator
+    {
         $result = $conversation->messages()->orderByDesc('created_at')->orderByDesc('id')->paginate(max(1, min($perPage, 100)), ['*'], 'page', max(1, $page));
         $result->setCollection($this->visibleHistory($result->getCollection(), $conversation, $actor));
 

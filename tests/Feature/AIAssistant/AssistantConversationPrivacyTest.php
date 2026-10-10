@@ -183,6 +183,25 @@ final class AssistantConversationPrivacyTest extends TestCase
         $this->manager->getHistoryPage($conversation, $this->viewer);
     }
 
+    public function test_conversation_page_service_rechecks_sharing_and_preserves_the_public_history_guard(): void
+    {
+        $conversation = $this->conversation();
+        $this->share($conversation);
+        $this->manager->addMessage($conversation, 'user', 'Вопрос');
+        $result = $this->manager->findAccessibleConversationPage($conversation->id, $this->viewer, $this->organization->id);
+        $this->assertNotNull($result);
+        $this->assertCount(1, $result['page']->items());
+        $this->assertTrue($result['conversation']->relationLoaded('participants'));
+        $this->assertNull($this->manager->findAccessibleConversationPage($conversation->id, $this->viewer, $this->organization->id + 100));
+        $this->assistantEnabled = false;
+        $this->assertNull($this->manager->findAccessibleConversationPage($conversation->id, $this->viewer, $this->organization->id));
+        $this->assistantEnabled = true;
+        $this->manager->updateParticipants($conversation, $this->owner, $this->organization->id, []);
+        $this->assertNull($this->manager->findAccessibleConversationPage($conversation->id, $this->viewer, $this->organization->id));
+        $this->expectException(RuntimeException::class);
+        $this->manager->getHistoryPage($result['conversation'], $this->viewer);
+    }
+
     public function test_list_previews_recheck_sources_and_sharing_between_responses(): void
     {
         $this->app->instance(AssistantDataAccessPolicy::class, $this->policy);

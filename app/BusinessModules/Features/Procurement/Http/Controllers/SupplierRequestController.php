@@ -42,7 +42,12 @@ class SupplierRequestController extends Controller
             $supplierRequests = $query->paginate($perPage);
 
             return AdminResponse::paginated(
-                SupplierRequestResource::collection($supplierRequests->getCollection()),
+                SupplierRequestResource::collection($supplierRequests->getCollection()->map(
+                    fn (SupplierRequest $supplierRequest) => new SupplierRequestResource(
+                        $supplierRequest,
+                        useLoadedWorkflowState: true,
+                    )
+                )),
                 [
                     'current_page' => $supplierRequests->currentPage(),
                     'per_page' => $supplierRequests->perPage(),

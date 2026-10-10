@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Loop;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantContextSourceBinding;
 use App\BusinessModules\Features\AIAssistant\Services\Context\AssistantModelContextProfile;
 use LogicException;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelRequest;
+use App\Services\Privacy\Gateway\Contracts\GatewayModelResponse;
 
 final readonly class AssistantModelAction
 {
@@ -21,7 +23,6 @@ final readonly class AssistantModelAction
         }
         $keys = match ($value['type']) {
             'plan' => ['type', 'plan'],
-            'tool' => ['type', 'tool', 'arguments'],
             'refine', 'summary' => ['type', 'ref'],
             'final' => ['type', 'text', 'claims', 'sourceRefs', 'claimScope'],
             default => throw new LogicException('model_action_invalid'),
@@ -32,21 +33,6 @@ final readonly class AssistantModelAction
         foreach (['plan', 'text', 'ref'] as $key) {
             if (isset($value[$key]) && (!is_string($value[$key]) || $value[$key] === '' || strlen($value[$key]) > 32768 || preg_match('//u', $value[$key]) !== 1 || str_contains($value[$key], "\0"))) {
                 throw new LogicException('model_action_invalid');
-            }
-        }
-        if ($value['type'] === 'tool') {
-            if (!in_array($value['tool'], ['material.search', 'material.read_selected'], true) || !is_array($value['arguments'])) {
-                throw new LogicException('tool_not_allowed');
-            }
-            $args = $value['arguments'];
-            if ($value['tool'] === 'material.search') {
-                if (!AssistantModelContextProfile::hasExactKeys($args, ['query', 'limit']) || !is_string($args['query']) || trim($args['query']) === '' || strlen($args['query']) > 512 || preg_match('//u', $args['query']) !== 1 || str_contains($args['query'], "\0") || !is_int($args['limit']) || $args['limit'] < 1 || $args['limit'] > 10) {
-                    throw new LogicException('tool_arguments_invalid');
-                }
-            } elseif (!AssistantModelContextProfile::hasExactKeys($args, ['ref'])) {
-                throw new LogicException('tool_arguments_invalid');
-            } else {
-                AssistantContextSourceBinding::references([$args['ref']]);
             }
         }
         if ($value['type'] === 'final') {
@@ -63,6 +49,22 @@ final readonly class AssistantModelAction
         }
 
         return new self(AssistantContextSourceBinding::detached($value));
+    }
+
+    public static function native(array $items): self
+    {
+        $items = GatewayModelResponse::outputItems(GatewayModelRequest::canonicalJson($items));
+        foreach ($items as $item) {
+            if ($item['type'] === 'function_call') {
+                return new self(['type' => 'tool', 'tool' => $item['name'] === 'material_search' ? 'material.search' : 'material.read_selected',
+                    'arguments' => GatewayModelResponse::functionArguments($item['name'], $item['arguments']),
+                    'nativeItem' => $item]);
+            }
+        }
+        foreach ($items as $item) {
+            if ($item['type'] === 'message') { return self::parse(GatewayModelRequest::decodeJson($item['content'][0]['text'], 32768)); }
+        }
+        throw new LogicException('model_action_invalid');
     }
 
     public function type(): string

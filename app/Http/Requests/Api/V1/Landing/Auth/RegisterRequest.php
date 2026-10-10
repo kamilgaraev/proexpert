@@ -94,6 +94,12 @@ class RegisterRequest extends FormRequest
             'organization_country' => 'nullable|string|max:100|min:2',
             'terms_accepted' => ['required', 'accepted'],
             'privacy_accepted' => ['required', 'accepted'],
+            'processing_accepted' => ['required', 'accepted'],
+            'representative_authority' => ['required', 'accepted'],
+            'legal_documents' => ['required', 'array:offer,processing,privacy'],
+            'legal_documents.offer' => ['required', new \App\Rules\CurrentLegalDocument('offer')],
+            'legal_documents.processing' => ['required', new \App\Rules\CurrentLegalDocument('processing')],
+            'legal_documents.privacy' => ['required', new \App\Rules\CurrentLegalDocument('privacy')],
             'idempotency_key' => ['required', 'string', 'min:8', 'max:128', 'regex:/^[A-Za-z0-9._:-]+$/'],
         ];
     }

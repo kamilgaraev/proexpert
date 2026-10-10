@@ -295,6 +295,13 @@ Schedule::command('ai-assistant:prune-rag-projections')
     ->runInBackground()
     ->appendOutputTo(storage_path('logs/schedule-ai-assistant-rag-prune.log'));
 
+Schedule::command('ai-assistant:prune-storage')
+    ->everyMinute()
+    ->onOneServer()
+    ->withoutOverlapping(2)
+    ->runInBackground()
+    ->appendOutputTo(storage_path('logs/schedule-ai-assistant-storage-prune.log'));
+
 Schedule::command('estimates:regional-prices:sync-fgiscs --all-regions --latest-only')
     ->dailyAt('01:00')
     ->withoutOverlapping(720)

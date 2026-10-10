@@ -17,6 +17,43 @@ use Illuminate\Support\Collection;
 
 final class ProcurementChainResolver
 {
+    public const PURCHASE_REQUEST_RELATIONS = [
+        'siteRequest',
+        'lines',
+        'supplierRequests.proposals',
+        'supplierRequests.proposalDecision.winningProposal',
+        'purchaseOrders.items',
+        'purchaseOrders.receipts.lines',
+        'purchaseOrders.acceptedSupplierProposal',
+        'siteRequest.materialDeliveries.latestEvent',
+    ];
+
+    public const PURCHASE_ORDER_RELATIONS = [
+        'purchaseRequest.siteRequest',
+        'purchaseRequest.lines',
+        'purchaseRequest.supplierRequests.proposals',
+        'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
+        'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
+        'items',
+        'receipts.lines',
+        'receipts.warehouse',
+        'acceptedSupplierProposal',
+        'supplier',
+        'externalSupplierContact',
+        'supplierParty',
+        'contract',
+    ];
+
+    public const SITE_REQUEST_RELATIONS = [
+        'purchaseRequests.lines',
+        'purchaseRequests.supplierRequests.proposals',
+        'purchaseRequests.supplierRequests.proposalDecision.winningProposal',
+        'purchaseRequests.purchaseOrders.items',
+        'purchaseRequests.purchaseOrders.receipts.lines',
+        'purchaseRequests.purchaseOrders.acceptedSupplierProposal',
+        'materialDeliveries.latestEvent',
+    ];
+
     public function __construct(
         private readonly PurchaseOrderPaymentGateService $paymentGateService
     ) {
@@ -27,15 +64,7 @@ final class ProcurementChainResolver
      */
     public function fromSiteRequest(SiteRequest $siteRequest): array
     {
-        $siteRequest->loadMissing([
-            'purchaseRequests.lines',
-            'purchaseRequests.supplierRequests.proposals',
-            'purchaseRequests.supplierRequests.proposalDecision.winningProposal',
-            'purchaseRequests.purchaseOrders.items',
-            'purchaseRequests.purchaseOrders.receipts.lines',
-            'purchaseRequests.purchaseOrders.acceptedSupplierProposal',
-            'materialDeliveries.latestEvent',
-        ]);
+        $siteRequest->loadMissing(self::SITE_REQUEST_RELATIONS);
 
         $purchaseRequest = $siteRequest->purchaseRequests
             ->sortByDesc('id')
@@ -49,16 +78,7 @@ final class ProcurementChainResolver
      */
     public function fromPurchaseRequest(PurchaseRequest $purchaseRequest): array
     {
-        $purchaseRequest->loadMissing([
-            'siteRequest',
-            'lines',
-            'supplierRequests.proposals',
-            'supplierRequests.proposalDecision.winningProposal',
-            'purchaseOrders.items',
-            'purchaseOrders.receipts.lines',
-            'purchaseOrders.acceptedSupplierProposal',
-            'siteRequest.materialDeliveries.latestEvent',
-        ]);
+        $purchaseRequest->loadMissing(self::PURCHASE_REQUEST_RELATIONS);
 
         return $this->graph($purchaseRequest->siteRequest, $purchaseRequest);
     }
@@ -68,21 +88,7 @@ final class ProcurementChainResolver
      */
     public function fromPurchaseOrder(PurchaseOrder $purchaseOrder): array
     {
-        $purchaseOrder->loadMissing([
-            'purchaseRequest.siteRequest',
-            'purchaseRequest.lines',
-            'purchaseRequest.supplierRequests.proposals',
-            'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
-            'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
-            'items',
-            'receipts.lines',
-            'receipts.warehouse',
-            'acceptedSupplierProposal',
-            'supplier',
-            'externalSupplierContact',
-            'supplierParty',
-            'contract',
-        ]);
+        $purchaseOrder->loadMissing(self::PURCHASE_ORDER_RELATIONS);
 
         return $this->graph($purchaseOrder->purchaseRequest?->siteRequest, $purchaseOrder->purchaseRequest, $purchaseOrder);
     }

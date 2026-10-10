@@ -2,11 +2,6 @@ name: Deploy Backend to Production
 
 permissions:
   contents: read
-  packages: write
-
-concurrency:
-  group: prod-backend-deploy
-  cancel-in-progress: false
 
 on:
   push:
@@ -33,14 +28,319 @@ on:
       - 'routes/**'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Release from main, or credential-free image qualification only
+        type: choice
+        required: true
+        default: release
+        options: [release, qualification-only, input-only, input-prepare, namespace-observe]
+      expected_source_sha:
+        description: Full exact source SHA required for every dispatched mode
+        type: string
+        required: false
+        default: ''
+      input_image_ref:
+        description: Existing exact-source immutable image for input-only; no build or pull
+        type: string
+        required: false
+        default: ''
 
 jobs:
+  release_mode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    permissions: {}
+    outputs:
+      allowed: ${{ steps.guard.outputs.allowed }}
+      input_allowed: ${{ steps.guard.outputs.input_allowed }}
+      prepare_allowed: ${{ steps.guard.outputs.prepare_allowed }}
+      namespace_allowed: ${{ steps.guard.outputs.namespace_allowed }}
+    steps:
+      - name: Select literal main release without credentials
+        id: guard
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          OBS_IMAGE_REF: ${{ inputs.input_image_ref }}
+          TARGET_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          TARGET_PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          TARGET_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed=false
+          input_allowed=false
+          prepare_allowed=false
+          namespace_allowed=false
+          # A source-only main push must NEVER release or acquire inputs.
+          if [ "${GITHUB_REF:-}" = refs/heads/main ] && [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] \
+            && [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}" ]; then
+            case "${REQUESTED_MODE:-}" in
+              release) allowed=true ;;
+              input-only) input_allowed=true ;;
+              input-prepare) prepare_allowed=true ;;
+              namespace-observe)
+                if [ "${OBS_IMAGE_REF:-}" = '' ] \
+                  && [ "${TARGET_SHA:-}" = c4bfba3854fbe3bb87eaa213bced44ccc25cc3ed ] \
+                  && [ "${TARGET_PREPARATION_REF:-}" = ref_6d788644c6ab42f9bddd47dcb8d88c8e ] \
+                  && [ "${TARGET_PINS_SHA256:-}" = 70f882c343fe9c4adf3c51e294c3acb157391bb213e4bc538dac7b2ee4819e06 ]; then
+                  namespace_allowed=true
+                fi ;;
+            esac
+          fi
+          printf 'allowed=%s\ninput_allowed=%s\nprepare_allowed=%s\nnamespace_allowed=%s\n' "$allowed" "$input_allowed" "$prepare_allowed" "$namespace_allowed" >> "$GITHUB_OUTPUT"
+
+  namespace_observe:
+    needs: release_mode
+    if: needs.release_mode.outputs.namespace_allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'namespace-observe' && inputs.expected_source_sha == github.sha && inputs.input_image_ref == ''
+    permissions: {}
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate literal namespace observation before managed credentials
+        env:
+          OBSERVER_SHA: ${{ github.sha }}
+          OBS_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+          OBS_REF: ${{ github.ref }}
+          OBS_EVENT: ${{ github.event_name }}
+          OBS_MODE: ${{ inputs.mode }}
+          OBS_IMAGE_REF: ${{ inputs.input_image_ref }}
+          TARGET_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          TARGET_PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          TARGET_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+          OBS_RUN_ID: ${{ github.run_id }}
+          OBS_RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${OBSERVER_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${OBS_EXPECTED_SHA:-}" = "$OBSERVER_SHA"
+          test "${OBS_REF:-}" = refs/heads/main
+          test "${OBS_EVENT:-}" = workflow_dispatch
+          test "${OBS_MODE:-}" = namespace-observe
+          test "${OBS_IMAGE_REF:-}" = ''
+          test "${TARGET_SHA:-}" = c4bfba3854fbe3bb87eaa213bced44ccc25cc3ed
+          test "${TARGET_PREPARATION_REF:-}" = ref_6d788644c6ab42f9bddd47dcb8d88c8e
+          test "${TARGET_PINS_SHA256:-}" = 70f882c343fe9c4adf3c51e294c3acb157391bb213e4bc538dac7b2ee4819e06
+          [[ "${OBS_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "${OBS_RUN_ATTEMPT:-}" = 1
+
+      - name: Observe fixed namespace metadata only through existing managed custodian
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          OBSERVER_SHA: ${{ github.sha }}
+          OBS_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+          OBS_REF: ${{ github.ref }}
+          OBS_EVENT: ${{ github.event_name }}
+          OBS_MODE: ${{ inputs.mode }}
+          OBS_IMAGE_REF: ${{ inputs.input_image_ref }}
+          TARGET_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          TARGET_PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          TARGET_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+          OBS_RUN_ID: ${{ github.run_id }}
+          OBS_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          envs: OBSERVER_SHA,OBS_EXPECTED_SHA,OBS_REF,OBS_EVENT,OBS_MODE,OBS_IMAGE_REF,TARGET_SHA,TARGET_PREPARATION_REF,TARGET_PINS_SHA256,OBS_RUN_ID,OBS_RUN_ATTEMPT
+          command_timeout: 30s
+          script_stop: false
+          script: |
+            set -eu
+            python3 - <<'PYNAMESPACE'
+            import datetime, errno, json, os, re, stat, sys
+
+            TARGET = 'c4bfba3854fbe3bb87eaa213bced44ccc25cc3ed'
+            PREPARATION = 'ref_6d788644c6ab42f9bddd47dcb8d88c8e'
+            PINS = '70f882c343fe9c4adf3c51e294c3acb157391bb213e4bc538dac7b2ee4819e06'
+
+            def checked_binding():
+                e = os.environ
+                w = e.get('OBSERVER_SHA', '')
+                if not (re.fullmatch('[0-9a-f]{40}', w)
+                        and e.get('OBS_EXPECTED_SHA') == w
+                        and e.get('OBS_REF') == 'refs/heads/main'
+                        and e.get('OBS_EVENT') == 'workflow_dispatch'
+                        and e.get('OBS_MODE') == 'namespace-observe'
+                        and e.get('OBS_IMAGE_REF', '') == ''
+                        and e.get('TARGET_SHA') == TARGET
+                        and e.get('TARGET_PREPARATION_REF') == PREPARATION
+                        and e.get('TARGET_PINS_SHA256') == PINS
+                        and re.fullmatch('[1-9][0-9]{0,19}', e.get('OBS_RUN_ID', ''))
+                        and e.get('OBS_RUN_ATTEMPT') == '1'):
+                    raise SystemExit(1)
+                return dict(observerSourceSha=w, targetSourceSha=TARGET,
+                            preparationRef=PREPARATION, pinsSha256=PINS,
+                            runId=int(e['OBS_RUN_ID']), runAttempt=1)
+
+            def utc():
+                return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+
+            def empty_slot(name):
+                return dict(slot=name, status='BLOCKED_UNOBSERVED', exists=None, type=None,
+                            uidIsRoot=None, gidIsRoot=None, noSymlink=None,
+                            groupOtherNonWritable=None, mode0700=None, reason='ANCESTOR_STOP')
+
+            def observe(binding):
+                result = dict(schemaVersion='public-core-namespace-observation/1', **binding,
+                              observedStartUtc=utc(), observedEndUtc=None,
+                              observationStatus='COMPLETE', stoppedAt=None,
+                              slots=[empty_slot(x) for x in 'ABCD'], historicalCleanup='UNKNOWN')
+                handles, anchors = [], []
+                active = 'ROOT_PREFIX'
+
+                def stop(status, where, reason=None):
+                    result['observationStatus'], result['stoppedAt'] = status, where
+                    first = 'ABCD'.find(where) if where in 'ABCD' else -1
+                    if first >= 0 and reason:
+                        result['slots'][first] = dict(empty_slot(where),
+                            status='CHANGED' if status == 'CHANGED_DURING_OBSERVATION' else 'UNOBSERVABLE', reason=reason)
+                    for i in range(first + 1, 4):
+                        result['slots'][i] = empty_slot('ABCD'[i])
+
+                def snapshot(s):
+                    return (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_gid,
+                            s.st_size, s.st_nlink, s.st_mtime_ns, s.st_ctime_ns)
+
+                def predicates(name, s):
+                    kind = ('DIRECTORY' if stat.S_ISDIR(s.st_mode) else 'SYMLINK' if stat.S_ISLNK(s.st_mode)
+                            else 'REGULAR' if stat.S_ISREG(s.st_mode) else 'OTHER')
+                    reason = ('SYMLINK' if kind == 'SYMLINK' else 'NON_DIRECTORY' if kind != 'DIRECTORY'
+                              else 'NON_ROOT_UID' if s.st_uid != 0 else 'NON_ROOT_GID' if s.st_gid != 0
+                              else 'WRITABLE' if s.st_mode & 0o022 else 'NONE')
+                    return dict(slot=name, status='DIR_PROTECTED' if reason == 'NONE' else 'UNSAFE',
+                                exists=True, type=kind, uidIsRoot=s.st_uid == 0, gidIsRoot=s.st_gid == 0,
+                                noSymlink=kind != 'SYMLINK', groupOtherNonWritable=not bool(s.st_mode & 0o022),
+                                mode0700=stat.S_IMODE(s.st_mode) == 0o700, reason=reason)
+
+                def metadata(parent, name):
+                    return os.stat(name, dir_fd=parent, follow_symlinks=False)
+
+                try:
+                    flags = ('O_PATH', 'O_DIRECTORY', 'O_NOFOLLOW', 'O_CLOEXEC')
+                    if (sys.platform != 'linux' or any(not hasattr(os, x) for x in flags)
+                            or os.open not in os.supports_dir_fd or os.stat not in os.supports_dir_fd
+                            or os.stat not in os.supports_follow_symlinks or os.geteuid() != 0):
+                        stop('UNOBSERVABLE', active)
+                    else:
+                        open_flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+                        parent = None
+                        for active, name in [('ROOT_PREFIX', '/'), ('ETC_PREFIX', 'etc'),
+                                             ('A', 'most'), ('B', 'public-core'), ('C', 'input-source'), ('D', TARGET)]:
+                            try:
+                                s = metadata(parent, name)
+                            except OSError as error:
+                                if error.errno == errno.ENOENT:
+                                    anchors.append((active, parent, name, None, None))
+                                    if active in 'ABCD':
+                                        result['slots']['ABCD'.index(active)] = dict(empty_slot(active),
+                                            status='MISSING', exists=False, reason='NONE')
+                                    stop('STOPPED_MISSING', active)
+                                else:
+                                    stop('UNOBSERVABLE', active,
+                                         'INACCESSIBLE' if error.errno in (errno.EACCES, errno.EPERM) else 'IO_ERROR')
+                                break
+                            row = predicates(active, s)
+                            anchors.append((active, parent, name, snapshot(s), None))
+                            if active in 'ABCD':
+                                result['slots']['ABCD'.index(active)] = row
+                            if row['status'] == 'UNSAFE':
+                                stop('STOPPED_UNSAFE', active)
+                                break
+                            try:
+                                fd = os.open(name, open_flags, dir_fd=parent)
+                            except OSError as error:
+                                stop('CHANGED_DURING_OBSERVATION' if error.errno in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+                                     else 'UNOBSERVABLE', active,
+                                     'CHANGED' if error.errno in (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+                                     else 'INACCESSIBLE' if error.errno in (errno.EACCES, errno.EPERM) else 'IO_ERROR')
+                                break
+                            handles.append(fd)
+                            if snapshot(os.fstat(fd)) != snapshot(s):
+                                stop('CHANGED_DURING_OBSERVATION', active, 'CHANGED')
+                                break
+                            anchors[-1] = (active, parent, name, snapshot(s), fd)
+                            parent = fd
+                        # Recheck only measured anchors, in order; never probe a blocked descendant.
+                        if result['observationStatus'] not in ('UNOBSERVABLE', 'CHANGED_DURING_OBSERVATION'):
+                            for active, parent, name, initial, fd in anchors:
+                                try:
+                                    current = metadata(parent, name)
+                                except OSError as error:
+                                    if error.errno == errno.ENOENT and initial is None:
+                                        continue
+                                    stop('CHANGED_DURING_OBSERVATION' if error.errno == errno.ENOENT else 'UNOBSERVABLE', active,
+                                         'CHANGED' if error.errno == errno.ENOENT else
+                                         'INACCESSIBLE' if error.errno in (errno.EACCES, errno.EPERM) else 'IO_ERROR')
+                                    break
+                                if initial is None or snapshot(current) != initial or (fd is not None and snapshot(os.fstat(fd)) != initial):
+                                    stop('CHANGED_DURING_OBSERVATION', active, 'CHANGED')
+                                    break
+                except (OSError, NotImplementedError):
+                    stop('UNOBSERVABLE', active, 'IO_ERROR')
+                except Exception:
+                    # Unexpected runtime/primitive faults never expose exception text or grant absence.
+                    stop('UNOBSERVABLE', active, 'IO_ERROR')
+                finally:
+                    for fd in reversed(handles):
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            stop('UNOBSERVABLE', active, 'IO_ERROR')
+                    result['observedEndUtc'] = utc()
+                code = 0 if result['observationStatus'] in ('COMPLETE', 'STOPPED_MISSING', 'STOPPED_UNSAFE') else 1
+                return result, code
+
+            if __name__ == '__main__':
+                receipt, code = observe(checked_binding())
+                raw = json.dumps(receipt, separators=(',', ':'))
+                if len(raw.encode('utf-8')) > 4096:
+                    raise SystemExit(1)
+                print(raw)
+                raise SystemExit(code)
+            PYNAMESPACE
+
   deploy:
+    needs: release_mode
+    if: needs.release_mode.outputs.allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'release' && inputs.expected_source_sha == github.sha
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      - name: Enforce exact main release mode before credentials
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF:-}" = refs/heads/main
+          test "${REQUESTED_MODE:-}" = release
+          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
+
       - name: Checkout exact release
         uses: actions/checkout@v7
+
+      - name: Pin reviewed managed helpers from exact source
+        id: release_helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git diff --exit-code -- deploy/backend-runtime-allowlist.sh
+          printf 'helper_sha256=%s\n' "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -77,6 +377,17 @@ jobs:
       - name: Deploy exact image digest
         uses: appleboy/ssh-action@v1.0.3
         env:
+          BACKEND_HELPER_SHA256: ${{ steps.release_helpers.outputs.helper_sha256 }}
+          MANAGED_MODE: ${{ inputs.mode }}
+          MANAGED_REF: ${{ github.ref }}
+          MANAGED_EVENT: ${{ github.event_name }}
+          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+          RELEASE_SHA: ${{ steps.meta.outputs.release_sha }}
+          IMAGE_REPO: ${{ steps.meta.outputs.image_repo }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          REVERB_APP_KEY: ${{ secrets.REVERB_APP_KEY }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          DEPLOY_ACTOR: ${{ github.actor }}
           YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}
           YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}
           YOOKASSA_TEST_ORGANIZATION_IDS: ${{ secrets.YOOKASSA_TEST_ORGANIZATION_IDS }}
@@ -86,16 +397,18 @@ jobs:
           key: ${{ secrets.DEPLOY }}
           timeout: 3h
           command_timeout: 3h
-          envs: YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS
+          envs: BACKEND_HELPER_SHA256,MANAGED_MODE,MANAGED_REF,MANAGED_EVENT,MANAGED_EXPECTED_SHA,YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS,RELEASE_SHA,IMAGE_REPO,IMAGE_DIGEST,REVERB_APP_KEY,GHCR_PAT,DEPLOY_ACTOR
           script: |
             set -euo pipefail
             umask 077
-            RELEASE_SHA="${{ steps.meta.outputs.release_sha }}"
-            IMAGE_REPO="${{ steps.meta.outputs.image_repo }}"
-            IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
-            REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"
 
+            test "${MANAGED_MODE}" = release
+            test "${MANAGED_REF}" = refs/heads/main
+            test "${MANAGED_EVENT}" = workflow_dispatch
+            test "${MANAGED_EXPECTED_SHA}" = "${RELEASE_SHA}"
+            [[ "${BACKEND_HELPER_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+            test "${IMAGE_REPO}" = ghcr.io/kamilgaraev/proexpert/prohelper
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
             [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
             [[ "${REVERB_APP_KEY}" =~ ^[0-9a-f]{64}$ ]]
@@ -106,11 +419,11 @@ jobs:
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
             source .github/scripts/atomic-env.sh
+            test "$(sha256sum deploy/backend-runtime-allowlist.sh | cut -d' ' -f1)" = "${BACKEND_HELPER_SHA256}"
             source deploy/backend-runtime-allowlist.sh
             BACKEND_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
+            BACKEND_STOP_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
             trap cleanup_deployment_temporary_files EXIT
-            initialize_secure_env
-
             ensure_immutable_audit_writer_secret() {
               local current_secret=''
               local secret_lines=0
@@ -354,10 +667,10 @@ jobs:
 
             assert_legacy_runtime_stopped() {
               local process_directory process_id command_line working_directory cgroup unit unit_state supervisor_status running_services
-              running_services="$(docker compose ps --status running -q ${BACKEND_SERVICES})"
+              running_services="$(docker compose ps --status running -q ${BACKEND_STOP_SERVICES})"
               if [ -n "${running_services}" ]; then
                 echo 'MOST backend compose writers remain active; refusing deployment'
-                docker compose ps --status running ${BACKEND_SERVICES}
+                docker compose ps --status running ${BACKEND_STOP_SERVICES}
                 return 1
               fi
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
@@ -400,13 +713,22 @@ jobs:
               local exit_code=$?
               trap - ERR
               set +e
+              assert_public_core_inactive_for_backend_release
               systemctl stop nginx
-              docker compose stop --timeout 30 ${BACKEND_SERVICES}
+              docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}
               stop_legacy_supervisor_processes
               stop_legacy_systemd_processes
               stop_legacy_writer_processes
               exit "${exit_code}"
             }
+
+            # Fail closed on ordinary release errors; leave PublicCore stores/policy untouched.
+            trap deployment_failed ERR
+            echo "${GHCR_PAT}" | docker login ghcr.io -u "${DEPLOY_ACTOR}" --password-stdin
+            docker pull "${IMAGE_REF}"
+            verify_backend_release_image "${IMAGE_REF}" "${RELEASE_SHA}"
+            assert_public_core_inactive_for_backend_release
+            initialize_secure_env
 
             if [ -n "${YOOKASSA_SHOP_ID:-}" ] && [ -n "${YOOKASSA_SECRET_KEY:-}" ]; then
               upsert_env YOOKASSA_MODE yookassa_test
@@ -423,9 +745,6 @@ jobs:
             else
               upsert_env YOOKASSA_MODE disabled
             fi
-
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            docker pull "${IMAGE_REF}"
 
             upsert_env MOST_IMAGE_REF "${IMAGE_REF}"
             upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
@@ -453,12 +772,11 @@ jobs:
             done
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps geometry-worker /usr/local/bin/geometry-runtime-smoke
 
-            trap deployment_failed ERR
             systemctl stop nginx
             stop_legacy_supervisor_processes
             stop_legacy_systemd_processes
             stop_legacy_writer_processes
-            docker compose stop --timeout 30 ${BACKEND_SERVICES}
+            docker compose stop --timeout 30 ${BACKEND_STOP_SERVICES}
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
@@ -472,7 +790,8 @@ jobs:
             assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
-            MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            assert_public_core_inactive_for_backend_release
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${BACKEND_SERVICES}
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
             if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
               docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
@@ -489,6 +808,7 @@ jobs:
                 docker compose exec -T api php artisan assets:reconcile --format=json || true
                 docker compose exec -T api php artisan assets:verify-cutover --format=json --details || true
                 docker compose exec -T scheduler tail -n 24 storage/logs/asset-registry-cutover.log || true
+                assert_public_core_inactive_for_backend_release
                 systemctl start nginx
                 systemctl is-active --quiet nginx
                 trap - ERR
@@ -503,3 +823,815 @@ jobs:
             docker compose logs --tail=200 horizon
             docker compose logs --tail=200 geometry-worker
             exit 1
+
+  model_input:
+    needs: release_mode
+    if: needs.release_mode.outputs.input_allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'input-only'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Validate literal main input-only before managed credentials
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          INPUT_IMAGE_REF: ${{ inputs.input_image_ref }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          test "${GITHUB_REF:-}" = refs/heads/main
+          test "${REQUESTED_MODE:-}" = input-only
+          [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_REF:-}" =~ ^ref_[0-9a-f]{32}$ ]]
+          [[ "${PREPARATION_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${PREPARATION_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_PINS_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${INPUT_IMAGE_REF:-}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
+      - name: Checkout exact input source without persisted credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin checked exact-main source transport
+        id: source
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCONTEXT'
+          import hashlib,os,pathlib,re,subprocess,tarfile
+          sha=os.environ['GITHUB_SHA']; assert re.fullmatch('[0-9a-f]{40}',sha)
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==sha
+          assert not subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],text=True).strip()
+          paths=['deploy/backend-runtime-allowlist.sh','docker/public-core/runtime.php','app/BusinessModules/Features/AIAssistant/config/ai-assistant.php','app/Support/AI/LunaModelPolicy.php','app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php','.github/workflows/deploy-backend.yml','Dockerfile.prod','.dockerignore']
+          assert all(pathlib.Path(v).is_file() and not pathlib.Path(v).is_symlink() for v in paths)
+          pins=':'.join(hashlib.sha256(pathlib.Path(v).read_bytes()).hexdigest() for v in paths)
+          assert hashlib.sha256(pins.encode()).hexdigest()==os.environ['PREPARATION_PINS_SHA256']
+          assert os.environ['PREPARATION_SHA']==sha and re.fullmatch('ref_[0-9a-f]{32}',os.environ['PREPARATION_REF'])
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
+          if os.environ['REQUESTED_MODE']=='input-prepare':
+           root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir(mode=0o700);archive=root/'source.tar'
+           subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
+           with tarfile.open(archive) as tar:
+            for member in tar.getmembers():
+             path=pathlib.PurePosixPath(member.name);name=path.name
+             assert not path.is_absolute() and '..' not in path.parts and (member.isfile() or member.isdir() or member.issym())
+             assert not (name=='.env' or (name.startswith('.env.') and name!='.env.example') or name in ['.npmrc','.netrc','auth.json','id_rsa','id_ed25519'] or path.suffix.lower() in ['.pem','.key','.p12','.pfx'])
+             if member.issym():assert (context/path.parent/member.linkname).resolve().is_relative_to(context.resolve())
+           subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
+           # Preserve export-ignore; add only the independently pinned literal workflow blob.
+           workflow_source=subprocess.run(['git','show',sha+':.github/workflows/deploy-backend.yml'],check=True,stdout=subprocess.PIPE).stdout
+           assert hashlib.sha256(workflow_source).hexdigest()==pins.split(':')[5]
+           directory_flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+           owned_fds=[]
+           try:
+            root_fd=os.open(root,directory_flags);owned_fds.append(root_fd)
+            context_fd=os.open('context',directory_flags,dir_fd=root_fd);owned_fds.append(context_fd)
+            for fd in [root_fd,context_fd]:
+             st=os.fstat(fd);assert st.st_uid==os.geteuid() and st.st_mode&0o022==0
+            os.mkdir('.github',mode=0o700,dir_fd=context_fd)
+            github_fd=os.open('.github',directory_flags,dir_fd=context_fd);owned_fds.append(github_fd)
+            os.mkdir('workflows',mode=0o700,dir_fd=github_fd)
+            workflows_fd=os.open('workflows',directory_flags,dir_fd=github_fd);owned_fds.append(workflows_fd)
+            flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW
+            with os.fdopen(os.open('deploy-backend.yml',flags,0o600,dir_fd=workflows_fd),'wb') as workflow_file:
+             assert workflow_file.write(workflow_source)==len(workflow_source)
+           finally:
+            for fd in reversed(owned_fds):os.close(fd)
+           assert set(['/.git','/.env','/.env.*','/vendor','/node_modules','/storage/*.key']).issubset((context/'.dockerignore').read_text().splitlines())
+           missing=[v for v in paths if not (context/v).is_file() or (context/v).is_symlink()]
+           assert not missing,'required context file missing or non-regular/symlink: '+','.join(missing)
+           assert ':'.join(hashlib.sha256((context/v).read_bytes()).hexdigest() for v in paths)==pins
+           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('context='+str(context)+'\n')
+          PYCONTEXT
+      - name: Describe pinned staged input through existing managed custodian
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          INPUT_SHA: ${{ github.sha }}
+          INPUT_IMAGE_REF: ${{ inputs.input_image_ref }}
+          INPUT_PINS: ${{ steps.source.outputs.pins }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+          MANAGED_REF: ${{ github.ref }}
+          MANAGED_EVENT: ${{ github.event_name }}
+          MANAGED_MODE: ${{ inputs.mode }}
+          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          envs: INPUT_SHA,INPUT_IMAGE_REF,INPUT_PINS,PREPARATION_REF,PREPARATION_SHA,PREPARATION_PINS_SHA256,MANAGED_REF,MANAGED_EVENT,MANAGED_MODE,MANAGED_EXPECTED_SHA
+          command_timeout: 180s
+          script_stop: true
+          script: |
+            set -euo pipefail
+            # BEGIN fixed input transport. Mirrored literally in the managed workflow BEFORE
+            # sourcing any extracted helper. Authority is the separately checked CI assignment
+            # and exact-main pins, never a supplied staging manifest or a verified status enum.
+            public_core_input_assignment_guard() {
+              local release="$1" pins="$2" assignment="$3" accepted="$4" expected_pins="$5" digest
+              [ "${MANAGED_REF:-}" = refs/heads/main ] && [ "${MANAGED_EVENT:-}" = workflow_dispatch ] || return 1
+              case "${MANAGED_MODE:-}" in input-prepare|input-only) ;; *) return 1 ;; esac
+              [[ "${release}" =~ ^[0-9a-f]{40}$ ]] && [ "${release}" = "${accepted}" ] && [ "${release}" = "${MANAGED_EXPECTED_SHA:-}" ] || return 1
+              [[ "${assignment}" =~ ^ref_[0-9a-f]{32}$ ]] && [[ "${expected_pins}" =~ ^[0-9a-f]{64}$ ]] || return 1
+              [[ "${pins}" =~ ^[0-9a-f]{64}(:[0-9a-f]{64}){7}$ ]] || return 1
+              digest="$(printf '%s' "${pins}" | sha256sum)" || return 1
+              [ "${digest%% *}" = "${expected_pins}" ] || return 1
+            }
+
+            public_core_input_image_identity() {
+              local image="$1" release="$2" runtime="$3" id revision digests embedded
+              [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+              id="$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null)" || return 1
+              [[ "${id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+              revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}" 2>/dev/null)" || return 1
+              [ "${revision}" = "${release}" ] || return 1
+              # Read only the expected same-repository digest, never unrelated image aliases.
+              digests="$(docker image inspect --format "{{range .RepoDigests}}{{if eq . \"${image}\"}}{{print .}}{{end}}{{end}}" "${image}" 2>/dev/null)" || return 1
+              [ "${digests}" = "${image}" ] || return 1
+              embedded="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+                --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image}" -r \
+                '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
+              [ "${embedded}" = "${release}|${runtime}" ] || return 1
+              printf '%s' "${id}"
+            }
+
+            # Fixed, flat stage: five source files plus our bounded tuple, no caller paths.
+            # Stable reads/ancestor ownership and full directory equality reject foreign or
+            # mutable files. The tuple is compared to external CI pins on EVERY use.
+            public_core_input_stage_check() {
+              python3 - "$@" <<'PYSTAGE'
+            import sys,os,pathlib,stat,hashlib,json,re
+            try:
+             mode,release,image,image_id,pins,assignment=sys.argv[1:]
+             assert mode in ['write','read','parent'] and re.fullmatch('[0-9a-f]{40}',release)
+             assert re.fullmatch('ghcr.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}',image)
+             assert re.fullmatch('sha256:[0-9a-f]{64}',image_id) and re.fullmatch('ref_[0-9a-f]{32}',assignment)
+             hashes=pins.split(':'); assert len(hashes)==8 and all(re.fullmatch('[0-9a-f]{64}',v) for v in hashes)
+             root=pathlib.Path('/etc/most/public-core/input-source'); stage=root/release
+             def stable(s):return (s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+             def directory(p,exact=False):
+              s=p.lstat(); assert stat.S_ISDIR(s.st_mode) and s.st_uid==0 and s.st_gid==0 and not s.st_mode&0o022
+              if exact:assert stat.S_IMODE(s.st_mode)==0o700
+              return stable(s)
+             for a in [pathlib.Path('/'),pathlib.Path('/etc'),pathlib.Path('/etc/most'),pathlib.Path('/etc/most/public-core'),root]:directory(a)
+             if mode=='parent':sys.exit(0)
+             initial=directory(stage,True)
+             names=['allowlist.sh','runtime.php','config.php','policy.php','provider.php']
+             assert set(os.listdir(stage))==set(names+(['source.json'] if mode=='read' else []))
+             def read(name,limit):
+              path=stage/name; s=path.lstat(); assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o600 and 0<s.st_size<=limit
+              fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+              with os.fdopen(fd,'rb') as f:
+               assert stable(os.fstat(f.fileno()))==stable(s); raw=f.read(limit+1); assert stable(os.fstat(f.fileno()))==stable(s)
+              assert len(raw)==s.st_size and stable(path.lstat())==stable(s)
+              return raw
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             tuple={'schemaVersion':'public-core-input-source/1','sourceSha':release,'imageRef':image,'imageId':image_id,'assignmentRef':assignment,'sourcePins':hashes}
+             if mode=='read':
+              def unique(pairs):
+               d={}
+               for k,v in pairs:
+                assert k not in d; d[k]=v
+               return d
+              assert json.loads(read('source.json',4096),object_pairs_hook=unique)==tuple
+             else:
+              raw=json.dumps(tuple,separators=(',',':')).encode(); assert len(raw)<=4096
+              fd=os.open(stage/'source.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+              with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+             # Directory changes only by our exclusive manifest creation in write mode.
+             if mode=='read':assert directory(stage,True)==initial
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             print(hashlib.sha256(json.dumps(tuple,separators=(',',':')).encode()).hexdigest())
+            except Exception:sys.exit(1)
+            PYSTAGE
+            }
+
+            validate_public_core_input_source() {
+              local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6" image_id
+              public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+              local helper runtime config policy provider workflow dockerfile ignore
+              IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+              image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+              public_core_input_stage_check read "${release}" "${image}" "${image_id}" "${pins}" "${assignment}" || return 1
+            }
+
+            validate_public_core_input_source "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}" >/dev/null || exit 1
+            # Sourcing is legal only after independent literal validator/CI tuple and byte pins.
+            exec 3<"/etc/most/public-core/input-source/${INPUT_SHA}/allowlist.sh" || exit 1
+            helper_hash="$(sha256sum /proc/self/fd/3)" || exit 1
+            test "${helper_hash%% *}" = "${INPUT_PINS%%:*}"
+            source /proc/self/fd/3 || exit 1
+            exec 3<&- || exit 1
+            describe_managed_model_input "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}"
+
+  model_input_prepare:
+    needs: release_mode
+    if: needs.release_mode.outputs.prepare_allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'input-prepare'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: prod-backend-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Validate assigned exact-main preparation before credentials
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          test "${GITHUB_REF:-}" = refs/heads/main
+          test "${REQUESTED_MODE:-}" = input-prepare
+          [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_REF:-}" =~ ^ref_[0-9a-f]{32}$ ]]
+          [[ "${PREPARATION_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
+          test "${PREPARATION_SHA:-}" = "${GITHUB_SHA:-}"
+          [[ "${PREPARATION_PINS_SHA256:-}" =~ ^[0-9a-f]{64}$ ]]
+      - name: Checkout exact preparation source without persisted credentials
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin checked exact-main source transport
+        id: source
+        env:
+          REQUESTED_MODE: ${{ inputs.mode }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCONTEXT'
+          import hashlib,os,pathlib,re,subprocess,tarfile
+          sha=os.environ['GITHUB_SHA']; assert re.fullmatch('[0-9a-f]{40}',sha)
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==sha
+          assert not subprocess.check_output(['git','status','--porcelain','--untracked-files=all'],text=True).strip()
+          paths=['deploy/backend-runtime-allowlist.sh','docker/public-core/runtime.php','app/BusinessModules/Features/AIAssistant/config/ai-assistant.php','app/Support/AI/LunaModelPolicy.php','app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php','.github/workflows/deploy-backend.yml','Dockerfile.prod','.dockerignore']
+          assert all(pathlib.Path(v).is_file() and not pathlib.Path(v).is_symlink() for v in paths)
+          pins=':'.join(hashlib.sha256(pathlib.Path(v).read_bytes()).hexdigest() for v in paths)
+          assert hashlib.sha256(pins.encode()).hexdigest()==os.environ['PREPARATION_PINS_SHA256']
+          assert os.environ['PREPARATION_SHA']==sha and re.fullmatch('ref_[0-9a-f]{32}',os.environ['PREPARATION_REF'])
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pins='+pins+'\n')
+          if os.environ['REQUESTED_MODE']=='input-prepare':
+           root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+           root.mkdir(mode=0o700);context=root/'context';context.mkdir(mode=0o700);archive=root/'source.tar'
+           subprocess.run(['git','archive','--format=tar','--output',str(archive),sha],check=True)
+           with tarfile.open(archive) as tar:
+            for member in tar.getmembers():
+             path=pathlib.PurePosixPath(member.name);name=path.name
+             assert not path.is_absolute() and '..' not in path.parts and (member.isfile() or member.isdir() or member.issym())
+             assert not (name=='.env' or (name.startswith('.env.') and name!='.env.example') or name in ['.npmrc','.netrc','auth.json','id_rsa','id_ed25519'] or path.suffix.lower() in ['.pem','.key','.p12','.pfx'])
+             if member.issym():assert (context/path.parent/member.linkname).resolve().is_relative_to(context.resolve())
+           subprocess.run(['tar','-xf',str(archive),'-C',str(context)],check=True)
+           # Preserve export-ignore; add only the independently pinned literal workflow blob.
+           workflow_source=subprocess.run(['git','show',sha+':.github/workflows/deploy-backend.yml'],check=True,stdout=subprocess.PIPE).stdout
+           assert hashlib.sha256(workflow_source).hexdigest()==pins.split(':')[5]
+           directory_flags=os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW
+           owned_fds=[]
+           try:
+            root_fd=os.open(root,directory_flags);owned_fds.append(root_fd)
+            context_fd=os.open('context',directory_flags,dir_fd=root_fd);owned_fds.append(context_fd)
+            for fd in [root_fd,context_fd]:
+             st=os.fstat(fd);assert st.st_uid==os.geteuid() and st.st_mode&0o022==0
+            os.mkdir('.github',mode=0o700,dir_fd=context_fd)
+            github_fd=os.open('.github',directory_flags,dir_fd=context_fd);owned_fds.append(github_fd)
+            os.mkdir('workflows',mode=0o700,dir_fd=github_fd)
+            workflows_fd=os.open('workflows',directory_flags,dir_fd=github_fd);owned_fds.append(workflows_fd)
+            flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW
+            with os.fdopen(os.open('deploy-backend.yml',flags,0o600,dir_fd=workflows_fd),'wb') as workflow_file:
+             assert workflow_file.write(workflow_source)==len(workflow_source)
+           finally:
+            for fd in reversed(owned_fds):os.close(fd)
+           assert set(['/.git','/.env','/.env.*','/vendor','/node_modules','/storage/*.key']).issubset((context/'.dockerignore').read_text().splitlines())
+           missing=[v for v in paths if not (context/v).is_file() or (context/v).is_symlink()]
+           assert not missing,'required context file missing or non-regular/symlink: '+','.join(missing)
+           assert ':'.join(hashlib.sha256((context/v).read_bytes()).hexdigest() for v in paths)==pins
+           with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('context='+str(context)+'\n')
+          PYCONTEXT
+      - name: Set up existing builder
+        uses: docker/setup-buildx-action@v4
+      - name: Existing registry custodian login
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - name: Build and push only assigned exact-main source image
+        id: build
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: 'false'
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: ${{ steps.source.outputs.context }}
+          file: ${{ steps.source.outputs.context }}/Dockerfile.prod
+          push: true
+          provenance: false
+          sbom: false
+          github-token: ''
+          build-args: MOST_RELEASE_SHA=${{ github.sha }}
+          tags: ghcr.io/kamilgaraev/proexpert/prohelper:${{ github.sha }}
+      - name: Acquire fixed source transport only through existing managed custodian
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          INPUT_SHA: ${{ github.sha }}
+          INPUT_IMAGE_REF: ghcr.io/kamilgaraev/proexpert/prohelper@${{ steps.build.outputs.digest }}
+          INPUT_PINS: ${{ steps.source.outputs.pins }}
+          PREPARATION_REF: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_REF }}
+          PREPARATION_SHA: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_SHA }}
+          PREPARATION_PINS_SHA256: ${{ vars.PUBLIC_CORE_INPUT_PREPARATION_PINS_SHA256 }}
+          MANAGED_REF: ${{ github.ref }}
+          MANAGED_EVENT: ${{ github.event_name }}
+          MANAGED_MODE: ${{ inputs.mode }}
+          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          DEPLOY_ACTOR: ${{ github.actor }}
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          envs: INPUT_SHA,INPUT_IMAGE_REF,INPUT_PINS,PREPARATION_REF,PREPARATION_SHA,PREPARATION_PINS_SHA256,MANAGED_REF,MANAGED_EVENT,MANAGED_MODE,MANAGED_EXPECTED_SHA,GHCR_PAT,DEPLOY_ACTOR
+          command_timeout: 180s
+          script_stop: true
+          script: |
+            set -euo pipefail
+            # BEGIN fixed input transport. Mirrored literally in the managed workflow BEFORE
+            # sourcing any extracted helper. Authority is the separately checked CI assignment
+            # and exact-main pins, never a supplied staging manifest or a verified status enum.
+            public_core_input_assignment_guard() {
+              local release="$1" pins="$2" assignment="$3" accepted="$4" expected_pins="$5" digest
+              [ "${MANAGED_REF:-}" = refs/heads/main ] && [ "${MANAGED_EVENT:-}" = workflow_dispatch ] || return 1
+              case "${MANAGED_MODE:-}" in input-prepare|input-only) ;; *) return 1 ;; esac
+              [[ "${release}" =~ ^[0-9a-f]{40}$ ]] && [ "${release}" = "${accepted}" ] && [ "${release}" = "${MANAGED_EXPECTED_SHA:-}" ] || return 1
+              [[ "${assignment}" =~ ^ref_[0-9a-f]{32}$ ]] && [[ "${expected_pins}" =~ ^[0-9a-f]{64}$ ]] || return 1
+              [[ "${pins}" =~ ^[0-9a-f]{64}(:[0-9a-f]{64}){7}$ ]] || return 1
+              digest="$(printf '%s' "${pins}" | sha256sum)" || return 1
+              [ "${digest%% *}" = "${expected_pins}" ] || return 1
+            }
+
+            public_core_input_image_identity() {
+              local image="$1" release="$2" runtime="$3" id revision digests embedded
+              [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+              id="$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null)" || return 1
+              [[ "${id}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+              revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${image}" 2>/dev/null)" || return 1
+              [ "${revision}" = "${release}" ] || return 1
+              # Read only the expected same-repository digest, never unrelated image aliases.
+              digests="$(docker image inspect --format "{{range .RepoDigests}}{{if eq . \"${image}\"}}{{print .}}{{end}}{{end}}" "${image}" 2>/dev/null)" || return 1
+              [ "${digests}" = "${image}" ] || return 1
+              embedded="$(timeout --signal=TERM --kill-after=5s 45s docker run --pull never --rm --network none --read-only --cap-drop ALL \
+                --security-opt no-new-privileges --user 0:0 --log-driver none --entrypoint php "${image}" -r \
+                '$r=json_decode(file_get_contents("/etc/most/release.json"),true,8,JSON_THROW_ON_ERROR);echo ($r["sha"]??"")."|".hash_file("sha256","docker/public-core/runtime.php");' 2>/dev/null)" || return 1
+              [ "${embedded}" = "${release}|${runtime}" ] || return 1
+              printf '%s' "${id}"
+            }
+
+            # Fixed, flat stage: five source files plus our bounded tuple, no caller paths.
+            # Stable reads/ancestor ownership and full directory equality reject foreign or
+            # mutable files. The tuple is compared to external CI pins on EVERY use.
+            public_core_input_stage_check() {
+              python3 - "$@" <<'PYSTAGE'
+            import sys,os,pathlib,stat,hashlib,json,re
+            try:
+             mode,release,image,image_id,pins,assignment=sys.argv[1:]
+             assert mode in ['write','read','parent'] and re.fullmatch('[0-9a-f]{40}',release)
+             assert re.fullmatch('ghcr.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}',image)
+             assert re.fullmatch('sha256:[0-9a-f]{64}',image_id) and re.fullmatch('ref_[0-9a-f]{32}',assignment)
+             hashes=pins.split(':'); assert len(hashes)==8 and all(re.fullmatch('[0-9a-f]{64}',v) for v in hashes)
+             root=pathlib.Path('/etc/most/public-core/input-source'); stage=root/release
+             def stable(s):return (s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+             def directory(p,exact=False):
+              s=p.lstat(); assert stat.S_ISDIR(s.st_mode) and s.st_uid==0 and s.st_gid==0 and not s.st_mode&0o022
+              if exact:assert stat.S_IMODE(s.st_mode)==0o700
+              return stable(s)
+             for a in [pathlib.Path('/'),pathlib.Path('/etc'),pathlib.Path('/etc/most'),pathlib.Path('/etc/most/public-core'),root]:directory(a)
+             if mode=='parent':sys.exit(0)
+             initial=directory(stage,True)
+             names=['allowlist.sh','runtime.php','config.php','policy.php','provider.php']
+             assert set(os.listdir(stage))==set(names+(['source.json'] if mode=='read' else []))
+             def read(name,limit):
+              path=stage/name; s=path.lstat(); assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_gid==0 and stat.S_IMODE(s.st_mode)==0o600 and 0<s.st_size<=limit
+              fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+              with os.fdopen(fd,'rb') as f:
+               assert stable(os.fstat(f.fileno()))==stable(s); raw=f.read(limit+1); assert stable(os.fstat(f.fileno()))==stable(s)
+              assert len(raw)==s.st_size and stable(path.lstat())==stable(s)
+              return raw
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             tuple={'schemaVersion':'public-core-input-source/1','sourceSha':release,'imageRef':image,'imageId':image_id,'assignmentRef':assignment,'sourcePins':hashes}
+             if mode=='read':
+              def unique(pairs):
+               d={}
+               for k,v in pairs:
+                assert k not in d; d[k]=v
+               return d
+              assert json.loads(read('source.json',4096),object_pairs_hook=unique)==tuple
+             else:
+              raw=json.dumps(tuple,separators=(',',':')).encode(); assert len(raw)<=4096
+              fd=os.open(stage/'source.json',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+              with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
+             # Directory changes only by our exclusive manifest creation in write mode.
+             if mode=='read':assert directory(stage,True)==initial
+             for name,expected in zip(names,hashes[:5]):assert hashlib.sha256(read(name,2*1024*1024)).hexdigest()==expected
+             print(hashlib.sha256(json.dumps(tuple,separators=(',',':')).encode()).hexdigest())
+            except Exception:sys.exit(1)
+            PYSTAGE
+            }
+
+            validate_public_core_input_source() {
+              local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6" image_id
+              public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+              local helper runtime config policy provider workflow dockerfile ignore
+              IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+              image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+              public_core_input_stage_check read "${release}" "${image}" "${image_id}" "${pins}" "${assignment}" || return 1
+            }
+
+            prepare_public_core_input_source() (
+              local image="$1" release="$2" pins="$3" assignment="$4" accepted="$5" expected_pins="$6"
+              local helper runtime config policy provider workflow dockerfile ignore image_id cid='' owned_stage=false owned_parent=false stage stage_identity='' parent_identity='' observed hash output
+              public_core_input_assignment_guard "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" || return 1
+              [ "${MANAGED_MODE}" = input-prepare ] || return 1
+              [[ "${image}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]] || return 1
+              IFS=: read -r helper runtime config policy provider workflow dockerfile ignore <<< "${pins}"
+              stage="/etc/most/public-core/input-source/${release}"
+              # Root custodian only. Never create/repair foreign ancestors or reuse a stage.
+              observed="$(id -u)" || return 1
+              [ "${observed}" = 0 ] || return 1
+              cleanup_input_source() {
+                local code=$? cleanup_failed=false
+                trap - EXIT
+                if [ -n "${cid}" ]; then docker rm -- "${cid}" >/dev/null 2>&1 || cleanup_failed=true; fi
+                if [ "${code}" -ne 0 ] && [ "${owned_stage}" = true ]; then
+                  local current_identity
+                  current_identity="$(stat -c '%d:%i' -- "${stage}")" || exit 1
+                  [ ! -L "${stage}" ] && [ "${current_identity}" = "${stage_identity}" ] || exit 1
+                  rm -f -- "${stage}/allowlist.sh" "${stage}/runtime.php" "${stage}/config.php" "${stage}/policy.php" "${stage}/provider.php" "${stage}/source.json" || cleanup_failed=true
+                  rmdir -- "${stage}" || cleanup_failed=true
+                fi
+                if [ "${code}" -ne 0 ] && [ "${owned_parent}" = true ]; then
+                  local current_parent
+                  current_parent="$(stat -c '%d:%i' -- /etc/most/public-core/input-source)" || exit 1
+                  [ ! -L /etc/most/public-core/input-source ] && [ "${current_parent}" = "${parent_identity}" ] || exit 1
+                  rmdir -- /etc/most/public-core/input-source || cleanup_failed=true
+                fi
+                if [ "${cleanup_failed}" = true ]; then exit 1; fi
+                exit "${code}"
+              }
+              trap cleanup_input_source EXIT
+              if [ ! -e /etc/most/public-core/input-source ] && [ ! -L /etc/most/public-core/input-source ]; then
+                mkdir -m 0700 -- /etc/most/public-core/input-source || return 1
+                owned_parent=true
+                parent_identity="$(stat -c '%d:%i' -- /etc/most/public-core/input-source)" || return 1
+              fi
+              public_core_input_stage_check parent "${release}" "${image}" "sha256:$(printf '%064d' 0)" "${pins}" "${assignment}" >/dev/null || return 1
+              [ ! -e "${stage}" ] && [ ! -L "${stage}" ] || return 1
+              docker pull "${image}" >/dev/null 2>&1 || return 1
+              image_id="$(public_core_input_image_identity "${image}" "${release}" "${runtime}")" || return 1
+              mkdir -m 0700 -- "${stage}" || return 1
+              owned_stage=true
+              stage_identity="$(stat -c '%d:%i' -- "${stage}")" || return 1
+              cid="$(docker create --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+                --label "most.input-preparation=${assignment}" --entrypoint /bin/true "${image}" 2>/dev/null)" || { cid=''; return 1; }
+              [[ "${cid}" =~ ^[0-9a-f]{64}$ ]] || { cid=''; return 1; }
+              observed="$(docker inspect --format '{{.State.Running}}|{{.State.Pid}}|{{.Image}}|{{index .Config.Labels "most.input-preparation"}}' "${cid}" 2>/dev/null)" || return 1
+              [ "${observed}" = "false|0|${image_id}|${assignment}" ] || return 1
+              # No loop over supplied source names: exactly the five agreed literal copies.
+              docker cp "${cid}:/var/www/html/deploy/backend-runtime-allowlist.sh" "${stage}/allowlist.sh" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/docker/public-core/runtime.php" "${stage}/runtime.php" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/app/BusinessModules/Features/AIAssistant/config/ai-assistant.php" "${stage}/config.php" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/app/Support/AI/LunaModelPolicy.php" "${stage}/policy.php" >/dev/null 2>&1 || return 1
+              docker cp "${cid}:/var/www/html/app/BusinessModules/Features/AIAssistant/Services/LLM/TimewebProvider.php" "${stage}/provider.php" >/dev/null 2>&1 || return 1
+              local name expected
+              for name in allowlist.sh runtime.php config.php policy.php provider.php; do
+                [ -f "${stage}/${name}" ] && [ ! -L "${stage}/${name}" ] || return 1
+                chmod 0600 -- "${stage}/${name}" || return 1
+                case "${name}" in allowlist.sh) expected="$helper" ;; runtime.php) expected="$runtime" ;; config.php) expected="$config" ;; policy.php) expected="$policy" ;; provider.php) expected="$provider" ;; esac
+                hash="$(sha256sum -- "${stage}/${name}")" || return 1
+                [ "${hash%% *}" = "${expected}" ] || return 1
+              done
+              observed="$(docker inspect --format '{{.State.Running}}|{{.State.Pid}}|{{.Image}}|{{index .Config.Labels "most.input-preparation"}}' "${cid}" 2>/dev/null)" || return 1
+              [ "${observed}" = "false|0|${image_id}|${assignment}" ] || return 1
+              output="$(public_core_input_stage_check write "${release}" "${image}" "${image_id}" "${pins}" "${assignment}")" || return 1
+              [[ "${output}" =~ ^[0-9a-f]{64}$ ]] || return 1
+              validate_public_core_input_source "${image}" "${release}" "${pins}" "${assignment}" "${accepted}" "${expected_pins}" >/dev/null || return 1
+              docker rm -- "${cid}" >/dev/null 2>&1 || return 1
+              cid=''
+              # No store read, helper sourcing or activation occurs in preparation.
+              python3 - "${release}" "${image}" "${image_id}" "${pins}" "${output}" <<'PYOUTPUT'
+            import sys,json
+            release,image,image_id,pins,staging=sys.argv[1:]; h=pins.split(':')
+            print(json.dumps(dict(schemaVersion='public-core-input-preparation/1',sourceSha=release,workflowDigest=h[5],allowlistDigest=h[0],runtimeDigest=h[1],configDigest=h[2],policyDigest=h[3],providerDigest=h[4],dockerfileDigest=h[6],imageRef=image,imageId=image_id,ociRevision=release,embeddedSourceSha=release,stagingDigest=staging,preparationOnly=True,storeRead=False,providerCalled=False,runtimeActivated=False),separators=(',',':')))
+            PYOUTPUT
+            )
+            # END fixed input transport.
+            public_core_input_assignment_guard "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}"
+            [[ "${INPUT_IMAGE_REF}" =~ ^ghcr\.io/kamilgaraev/proexpert/prohelper@sha256:[0-9a-f]{64}$ ]]
+            # Registry auth stays in an owned temporary config; production docker config unchanged.
+            registry_config="$(mktemp -d)" || exit 1
+            trap 'rm -f -- "$registry_config/config.json"; rmdir -- "$registry_config"' EXIT
+            printf '%s' "$GHCR_PAT" | docker --config "$registry_config" login ghcr.io -u "$DEPLOY_ACTOR" --password-stdin >/dev/null 2>&1
+            export DOCKER_CONFIG="$registry_config"
+            unset GHCR_PAT
+            prepare_public_core_input_source "${INPUT_IMAGE_REF}" "${INPUT_SHA}" "${INPUT_PINS}" "${PREPARATION_REF}" "${PREPARATION_SHA}" "${PREPARATION_PINS_SHA256}"
+      - name: Clean only own runner tracked context
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCLEAN'
+          import os,pathlib,shutil
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/('most-input-prepare-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT'])
+          if root.exists():
+           assert not root.is_symlink() and root.parent.resolve()==pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+           shutil.rmtree(root)
+          PYCLEAN
+
+  qualification:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'qualification-only' && startsWith(github.ref, 'refs/heads/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: backend-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+      cancel-in-progress: false
+    env:
+      QUALIFICATION_IMAGE: most-backend-qualification:${{ github.sha }}
+    steps:
+      - name: Initialize own runner temporary directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'QUALIFICATION_DIR=%s/most-qualification-%s-%s\n' "$RUNNER_TEMP" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Checkout exact qualification source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          set-safe-directory: false
+
+      - name: Validate source and create tracked build context
+        id: source
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$QUALIFICATION_DIR/evidence" "$QUALIFICATION_DIR/context"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile
+          root = pathlib.Path(os.environ['QUALIFICATION_DIR'])
+          evidence = root / 'evidence'
+          receipt = {'qualification': 'NEEDS_EVIDENCE', 'status': 'rejected'}
+          try:
+              sha = os.environ['GITHUB_SHA']
+              expected = os.environ['EXPECTED_SOURCE_SHA']
+              if os.environ['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or os.environ['REQUESTED_MODE'] != 'qualification-only' or not os.environ['GITHUB_REF'].startswith('refs/heads/'):
+                  raise ValueError('qualification_mode_required')
+              if re.fullmatch(r'[0-9a-f]{40}', expected) is None or expected != sha:
+                  raise ValueError('expected_source_sha_mismatch')
+              if subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() != sha:
+                  raise ValueError('checkout_sha_mismatch')
+              if subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], text=True).strip():
+                  raise ValueError('unclean_context')
+              archive = root / 'source.tar'
+              subprocess.run(['git', 'archive', '--format=tar', '--output', str(archive), sha], check=True)
+              context = root / 'context'
+              with tarfile.open(archive) as tar:
+                  for member in tar.getmembers():
+                      path = pathlib.PurePosixPath(member.name)
+                      name = path.name
+                      if path.is_absolute() or '..' in path.parts or not (member.isfile() or member.isdir() or member.issym()):
+                          raise ValueError('unsafe_archive_member')
+                      if (name == '.env' or (name.startswith('.env.') and name != '.env.example') or name in ['.npmrc', '.netrc', 'auth.json', 'id_rsa', 'id_ed25519'] or path.suffix.lower() in ['.pem', '.key', '.p12', '.pfx']):
+                          raise ValueError('credential_path_in_context')
+                      if member.issym() and not (context / path.parent / member.linkname).resolve().is_relative_to(context.resolve()):
+                          raise ValueError('external_context_symlink')
+              subprocess.run(['tar', '-xf', str(archive), '-C', str(context)], check=True)
+              patterns = (context / '.dockerignore').read_text().splitlines()
+              if not set(['/.git', '/.env', '/.env.*', '/vendor', '/node_modules', '/storage/*.key']).issubset(patterns):
+                  raise ValueError('dockerignore_boundary_missing')
+              digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+              receipt.update(status='accepted_source_only', sourceSha=sha, sourceArchiveSha256=digest(archive), dockerfileSha256=digest(context / 'Dockerfile.prod'), dockerignoreSha256=digest(context / '.dockerignore'), context='tracked exact SHA archive, no checkout credentials/untracked files')
+          except Exception:
+              receipt['reason'] = 'source_or_context_validation_failed'
+              raise
+          finally:
+              (evidence / 'source.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+
+      - name: Build exact qualification image without registry push
+        id: build
+        timeout-minutes: 30
+        uses: docker/build-push-action@v7
+        env:
+          DOCKER_BUILD_SUMMARY: 'false'
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          builder: default
+          context: ${{ env.QUALIFICATION_DIR }}/context
+          file: ${{ env.QUALIFICATION_DIR }}/context/Dockerfile.prod
+          push: false
+          load: true
+          provenance: false
+          sbom: false
+          github-token: ''
+          build-args: MOST_RELEASE_SHA=${{ github.sha }}
+          tags: ${{ env.QUALIFICATION_IMAGE }}
+
+      - name: Record build outcome without private metadata
+        if: always() && steps.source.conclusion == 'success'
+        env:
+          BUILD_CONCLUSION: ${{ steps.build.conclusion }}
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          digest = lambda value: value if re.fullmatch(r'sha256:[0-9a-f]{64}', value) else None
+          receipt = {'sourceSha': os.environ['GITHUB_SHA'], 'buildConclusion': os.environ['BUILD_CONCLUSION'], 'imageId': digest(os.environ['BUILD_IMAGE_ID']), 'buildDigest': digest(os.environ['BUILD_DIGEST']), 'registryPush': False, 'actualRuntimeVerified': False}
+          pathlib.Path(os.environ['QUALIFICATION_DIR'], 'evidence', 'build.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+
+      - name: Verify immutable image ID and embedded source SHA
+        id: mapping
+        if: success() && steps.build.conclusion == 'success'
+        timeout-minutes: 1
+        env:
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          observed_id="$(docker image inspect --format '{{.Id}}' "$QUALIFICATION_IMAGE")"
+          revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$BUILD_IMAGE_ID")"
+          image_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$BUILD_IMAGE_ID")"
+          test "$observed_id" = "$BUILD_IMAGE_ID"
+          test "$revision" = "$GITHUB_SHA"
+          test "$image_platform" = linux/amd64
+          embedded_sha="$(timeout --signal=TERM --kill-after=5s 20s docker run --rm \
+            --name "most-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-mapping" \
+            --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --user 82:82 \
+            --entrypoint php "$BUILD_IMAGE_ID" -r 'echo json_decode(file_get_contents("/etc/most/release.json"), true, 8, JSON_THROW_ON_ERROR)["sha"];')"
+          test "$embedded_sha" = "$GITHUB_SHA"
+          printf '{"sourceSha":"%s","imageId":"%s","embeddedReleaseSha":"%s","imagePlatform":"%s","sourceImageVerified":true,"actualRuntimeVerified":false}\n' "$GITHUB_SHA" "$BUILD_IMAGE_ID" "$embedded_sha" "$image_platform" > "$QUALIFICATION_DIR/evidence/mapping.json"
+
+      - name: Inspect bounded native capability and unavailable guards
+        id: native
+        if: success() && steps.mapping.conclusion == 'success'
+        timeout-minutes: 2
+        env:
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cat > "$QUALIFICATION_DIR/native.php" <<'PHP'
+          <?php
+          declare(strict_types=1);
+          require '/var/www/html/vendor/autoload.php';
+          require '/var/www/html/docker/public-core/runtime.php';
+          use Most\PublicCore\ProcessIdentity;
+          use Most\PublicCore\ParkedRoleBootstrap;
+          use Most\PublicCore\GatewayRuntimeBootstrap;
+          $role = getenv('PROBE_ROLE');
+          $expectedUid = ['app' => 82, 'processor' => 41002, 'gateway' => 41003][$role];
+          $result = ['qualification' => 'native_fixture_only', 'actualRuntimeVerified' => false, 'actualModelVerified' => false, 'role' => $role, 'php' => PHP_VERSION];
+          try {
+              foreach (['sockets', 'pcntl', 'posix'] as $extension) {
+                  $result[$extension] = extension_loaded($extension);
+                  if (!$result[$extension]) { throw new LogicException('capability_missing'); }
+              }
+              $result['SO_PASSCRED'] = defined('SO_PASSCRED');
+              $result['SCM_CREDENTIALS'] = defined('SCM_CREDENTIALS');
+              $result['nativeChannelAvailable'] = App\Services\Privacy\PublicCore\Transport\AuthenticatedPublicCoreChannel::isNativeAvailable();
+              if (!$result['nativeChannelAvailable']) { throw new LogicException('capability_missing'); }
+              $peer = ['pid' => getmypid(), 'uid' => posix_geteuid(), 'gid' => posix_getegid()];
+              $result['peer'] = $peer;
+              if ($peer['uid'] !== $expectedUid || $peer['gid'] !== $expectedUid) { throw new LogicException('identity_mismatch'); }
+              $result['embeddedReleaseSha'] = json_decode(file_get_contents('/etc/most/release.json'), true, 8, JSON_THROW_ON_ERROR)['sha'];
+              if ($result['embeddedReleaseSha'] !== getenv('EXPECTED_SOURCE_SHA')) { throw new LogicException('source_mismatch'); }
+              $lifetime = ProcessIdentity::lifetime($peer);
+              $result['lifetimeStable'] = hash_equals($lifetime, ProcessIdentity::lifetime($peer));
+              $result['wrongUidDenied'] = false;
+              try { ProcessIdentity::lifetime(array_replace($peer, ['uid' => 0])); } catch (LogicException) { $result['wrongUidDenied'] = true; }
+              $pair = [];
+              if (!socket_create_pair(AF_UNIX, SOCK_DGRAM, 0, $pair) || !socket_set_option($pair[0], SOL_SOCKET, SO_PASSCRED, 1) || !socket_set_option($pair[0], SOL_SOCKET, SO_RCVTIMEO, ['sec' => 2, 'usec' => 0])) { throw new LogicException('socket_unavailable'); }
+              $child = pcntl_fork();
+              if ($child === -1) { throw new LogicException('fork_unavailable'); }
+              if ($child === 0) { socket_close($pair[0]); exit(socket_sendmsg($pair[1], ['iov' => ['x']], 0) === 1 ? 0 : 1); }
+              socket_close($pair[1]);
+              $message = ['buffer_size' => 1, 'controllen' => socket_cmsg_space(SOL_SOCKET, SCM_CREDENTIALS)];
+              $received = socket_recvmsg($pair[0], $message, 0);
+              socket_close($pair[0]);
+              pcntl_waitpid($child, $status);
+              $control = $message['control'][0] ?? [];
+              $result['kernelCredentialMatch'] = $received === 1 && count($message['control'] ?? []) === 1 && ($control['level'] ?? null) === SOL_SOCKET && ($control['type'] ?? null) === SCM_CREDENTIALS && ($control['data'] ?? null) === ['pid' => $child, 'uid' => $expectedUid, 'gid' => $expectedUid] && pcntl_wifexited($status) && pcntl_wexitstatus($status) === 0;
+              if ($role === 'app') {
+                  $result['inactiveBootstrap'] = (require '/etc/most/public-core/app/bootstrap.php') === null;
+              } else {
+                  if ($role === 'gateway') {
+                      $result['inactiveManifest'] = GatewayRuntimeBootstrap::configurationState(GatewayRuntimeBootstrap::DEFAULT_CONFIGURATION) === 'inactive';
+                  } else {
+                      $result['inactiveBootstrap'] = (require '/etc/most/public-core/processor/bootstrap.php') === null;
+                  }
+                  $start = hrtime(true);
+                  $result['parkedUnavailable'] = false;
+                  try { ParkedRoleBootstrap::wait($role, 100); } catch (LogicException $error) { $result['parkedUnavailable'] = $error->getMessage() === 'runtime_not_activated'; }
+                  $result['parkedMilliseconds'] = (hrtime(true) - $start) / 1000000;
+                  $result['samePid'] = getmypid() === $peer['pid'];
+                  if (!$result['parkedUnavailable'] || !$result['samePid'] || $result['parkedMilliseconds'] < 100 || $result['parkedMilliseconds'] > 2000) { throw new LogicException('parked_guard_failed'); }
+              }
+              if (!$result['lifetimeStable'] || !$result['wrongUidDenied'] || !$result['kernelCredentialMatch'] || !($result['inactiveBootstrap'] ?? $result['inactiveManifest'] ?? false)) { throw new LogicException('native_guard_failed'); }
+              $result['status'] = 'passed_fixture_only';
+          } catch (Throwable) { $result['status'] = 'failed'; }
+          echo json_encode($result, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT)."\n";
+          exit($result['status'] === 'passed_fixture_only' ? 0 : 1);
+          PHP
+          chmod 0644 "$QUALIFICATION_DIR/native.php"
+          native_exit=0
+          for role in app processor gateway; do
+            case "$role" in app) uid=82 ;; processor) uid=41002 ;; gateway) uid=41003 ;; esac
+            probe_exit=0
+            timeout --signal=TERM --kill-after=5s 20s docker run --rm \
+              --name "most-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${role}" \
+              --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 \
+              --user "${uid}:${uid}" --mount "type=bind,source=${QUALIFICATION_DIR}/native.php,target=/probe.php,readonly" \
+              --env "EXPECTED_SOURCE_SHA=${GITHUB_SHA}" --env "PROBE_ROLE=${role}" \
+              --entrypoint php "$BUILD_IMAGE_ID" /probe.php > "$QUALIFICATION_DIR/evidence/${role}.json" || probe_exit=$?
+            printf '{"exit":%s}\n' "$probe_exit" > "$QUALIFICATION_DIR/evidence/${role}-exit.json"
+            test "$probe_exit" -eq 0 || native_exit=1
+          done
+          exit "$native_exit"
+
+      - name: Save exact image within repository qualification artifact
+        if: always() && steps.mapping.conclusion == 'success'
+        timeout-minutes: 5
+        env:
+          BUILD_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          NATIVE_CONCLUSION: ${{ steps.native.conclusion }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image save "$BUILD_IMAGE_ID" | gzip -1 > "$QUALIFICATION_DIR/image.tar.gz.partial"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['QUALIFICATION_DIR'], 'evidence')
+          digest = hashlib.sha256()
+          archive = pathlib.Path(os.environ['QUALIFICATION_DIR'], 'image.tar.gz.partial')
+          with archive.open('rb') as stream:
+              for block in iter(lambda: stream.read(1048576), b''): digest.update(block)
+          archive.replace(root / 'image.tar.gz')
+          (root / 'image.json').write_text(json.dumps({'sourceSha': os.environ['GITHUB_SHA'], 'imageId': os.environ['BUILD_IMAGE_ID'], 'imageArchiveSha256': digest.hexdigest(), 'registryDigest': None, 'qualification': 'source_image_only', 'nativeConclusion': os.environ['NATIVE_CONCLUSION'], 'actualRuntimeVerified': False}, indent=2) + '\n')
+          PY
+
+      - name: Remove only own disposable probes
+        if: always()
+        shell: bash
+        run: |
+          for role in mapping app processor gateway; do
+            name="most-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${role}"
+            if docker container inspect "$name" >/dev/null 2>&1; then docker rm --force "$name" >/dev/null; fi
+          done
+
+      - name: Upload bounded qualification evidence and image
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-qualification-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.QUALIFICATION_DIR }}/evidence/*.json
+            ${{ env.QUALIFICATION_DIR }}/evidence/image.tar.gz
+          if-no-files-found: ignore
+          include-hidden-files: false
+          compression-level: 0
+          retention-days: 3

@@ -126,6 +126,11 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             ->find($packageId);
     }
 
+    public function findPackageForComposition(int $organizationId, int $packageId): ?DesignPackage
+    {
+        return DesignPackage::forOrganization($organizationId)->find($packageId);
+    }
+
     private function materializeCompositionSections(DesignPackage $package, array $composition): void
     {
         $stage = $this->value($package->project_stage);

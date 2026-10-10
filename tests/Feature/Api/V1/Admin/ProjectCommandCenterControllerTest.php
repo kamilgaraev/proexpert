@@ -11,6 +11,7 @@ use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Project\ProjectParticipantService;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -68,8 +69,19 @@ final class ProjectCommandCenterControllerTest extends TestCase
             $ownerContext->user,
         );
 
-        $response = $this->withHeaders($participantContext->authHeaders())
-            ->getJson('/api/v1/admin/project-command-center?project_id='.$project->id);
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $response = $this->withHeaders($participantContext->authHeaders())
+                ->getJson('/api/v1/admin/project-command-center?project_id='.$project->id);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $systemLookups = array_filter($queries, static fn (array $query): bool =>
+            str_starts_with($query['query'], 'select * from "authorization_contexts" where ("type" = ? and "resource_id" is null'));
+        self::assertLessThanOrEqual(1, count($systemLookups), 'Organization and project lookups must not each reload the system context');
 
         $response->assertOk();
         $response->assertJsonPath('success', true);

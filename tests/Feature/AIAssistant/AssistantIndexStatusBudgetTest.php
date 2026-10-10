@@ -13,6 +13,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantIndexStatusService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
@@ -282,7 +283,8 @@ final class AssistantIndexStatusBudgetTest extends TestCase
         $this->assertSame(1, $first['source_count']);
 
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
-        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, [
+        $legacySnapshot = [
+            'projection_generation' => null,
             'eligible_count_known' => true,
             'coverage_complete' => true,
             'stored_source_count' => 1,
@@ -295,7 +297,10 @@ final class AssistantIndexStatusBudgetTest extends TestCase
                 'indexed_count' => 1,
                 'expected_count' => 1,
             ]],
-        ], 300);
+        ];
+        $stateStore = app(RagCoverageStateStore::class);
+        $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id), $legacySnapshot);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, $legacySnapshot, 300);
 
         $coverage = new RagCoverageService($registry, new RagIndexer(Mockery::mock(RagEmbeddingProviderInterface::class), $registry), $policy);
         $projectionProof = null;
@@ -528,9 +533,12 @@ final class AssistantIndexStatusBudgetTest extends TestCase
             'pending_since' => now(),
         ]);
         $revision = (int) Cache::get('ai-rag-coverage-revision:'.$organization->id, 0);
-        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, ['projection_generation' => $generation,
+        $projectionSnapshot = ['projection_generation' => $generation,
             'eligible_count_known' => true, 'snapshot_at' => now()->toAtomString(),
-            'source_catalog' => app(RagSourceRegistry::class)->sourceCatalog()], 300);
+            'source_catalog' => app(RagSourceRegistry::class)->sourceCatalog()];
+        $stateStore = app(RagCoverageStateStore::class);
+        $stateStore->publish((int) $organization->id, $stateStore->revision((int) $organization->id), $projectionSnapshot);
+        Cache::put('ai-rag-coverage:'.$organization->id.':0:*:'.$revision, $projectionSnapshot, 300);
         $snapshotKey = 'ai-rag-status:'.$organization->id.':'.$actor->id.':lk';
         $snapshot = Cache::get($snapshotKey);
         $snapshot['proof']['rag']['generation'] = $generation;

@@ -8,7 +8,9 @@ use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingDimensionMismatch;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantExtendedDomainRegistry;
 use BackedEnum;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -27,6 +29,8 @@ class RagIndexer
 
     private const COVERAGE_CHUNK_PACKET_SIZE = 200;
 
+    private int $coverageMutationVersion = 0;
+
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly RagSourceRegistry $sourceRegistry,
@@ -34,8 +38,16 @@ class RagIndexer
         private readonly ?RagEmbeddingProviderRegistry $embeddingProviderRegistry = null
     ) {}
 
+    public function coverageMutationVersion(): int
+    {
+        return $this->coverageMutationVersion;
+    }
+
     public function indexChunk(RagChunkData $chunk, ?DateTimeInterface $reconciledAt = null, ?callable $guard = null): void
     {
+        if (in_array(AssistantExtendedDomainRegistry::retrievalMode($chunk->entityType), ['live_only', 'unavailable'], true)) {
+            return;
+        }
         Cache::lock($this->sourceIndexLockKey($chunk), $this->sourceIndexLockTtlSeconds())
             ->block($this->sourceIndexLockWaitSeconds(), function () use ($chunk, $reconciledAt, $guard): void {
                 $this->indexChunkUnderLock($chunk, $reconciledAt, $guard);
@@ -75,6 +87,7 @@ class RagIndexer
             && in_array($existing->checksum, [$checksum, $this->sourceFingerprint($chunk)], true);
 
         if ($existing instanceof RagSource && $sourceChecksumMatches && $vectorsCompatible) {
+            $checksumChanged = $existing->checksum !== $checksum;
             $values = $existing->checksum === $checksum ? [] : [
                 'source_version' => $this->sourceVersion($chunk),
                 'title' => $this->sourceTitle($chunk->title),
@@ -84,13 +97,24 @@ class RagIndexer
             if ($reconciledAt instanceof DateTimeInterface) {
                 $values['last_reconciled_at'] = $reconciledAt;
             }
-            if ($values !== []) $existing->forceFill($values)->save();
+            if ($checksumChanged) {
+                $changed = DB::transaction(function () use ($existing, $values, $chunk, $checksum): bool {
+                    $existing->forceFill($values)->save();
+                    return $this->recordCoverageChange($chunk, $checksum);
+                });
+                if ($changed) {
+                    $this->coverageMutationVersion++;
+                }
+            } elseif ($values !== []) {
+                $existing->forceFill($values)->save();
+            }
 
             return;
         }
 
         if ($existing instanceof RagSource && $vectorsCompatible) {
-            $reused = DB::transaction(function () use ($existing, $chunk, $checksum, $contentChunks, $reconciledAt, $guard, $embeddingProvider): bool {
+            $coverageChanged = false;
+            $reused = DB::transaction(function () use ($existing, $chunk, $checksum, $contentChunks, $reconciledAt, $guard, $embeddingProvider, &$coverageChanged): bool {
                 if ($guard !== null) {
                     $guard();
                 }
@@ -116,17 +140,22 @@ class RagIndexer
                     ])->save();
                 }
 
+                $coverageChanged = $this->recordCoverageChange($chunk, $checksum);
                 return true;
             });
 
             if ($reused) {
+                if ($coverageChanged) {
+                    $this->coverageMutationVersion++;
+                }
                 return;
             }
         }
 
-        $embeddedChunks = $this->embedContentChunks($chunk, $contentChunks, $embeddingProvider);
+        $embeddedChunks = $this->embedContentChunks($chunk, $contentChunks, $embeddingProvider, $loadedChunks, $guard);
 
-        DB::transaction(function () use ($chunk, $checksum, $embeddedChunks, $reconciledAt, $guard, $embeddingProvider): void {
+        $coverageChanged = false;
+        DB::transaction(function () use ($chunk, $checksum, $embeddedChunks, $reconciledAt, $guard, $embeddingProvider, &$coverageChanged): void {
             if ($guard !== null) {
                 $guard();
             }
@@ -158,11 +187,30 @@ class RagIndexer
                     ]),
                     'embedding_provider' => $embeddingProvider->provider(),
                     'embedding_model' => $embeddingProvider->model(),
-                    'embedding_created_at' => now(),
+                    'embedding_created_at' => $embeddedChunk['created_at'],
                     'embedding' => $embeddedChunk['vector'],
                 ]);
             }
+            $coverageChanged = $this->recordCoverageChange($chunk, $checksum);
         });
+        if ($coverageChanged) {
+            $this->coverageMutationVersion++;
+        }
+        app(RagEmbeddingCheckpointStore::class)->discard($chunk->organizationId, $this->sourceIndexLockKey($chunk));
+    }
+
+    private function recordCoverageChange(RagChunkData $chunk, string $checksum): bool
+    {
+        $generation = app(RagCoverageStateStore::class)->activeGeneration($chunk->organizationId);
+        $changed = $generation === null || ! RagExpectedSource::query()->where('organization_id', $chunk->organizationId)
+            ->where('generation', $generation)->where('identity_project_id', $chunk->projectId ?? 0)
+            ->where('identity_part_key', $this->partKey($chunk))->where('source_type', $chunk->sourceType)
+            ->where('entity_type', $chunk->entityType)->where('entity_id', (string) $chunk->entityId)
+            ->where('checksum', $checksum)->exists();
+        if ($changed) {
+            app(RagCoverageStateStore::class)->markIndexChanged($chunk->organizationId);
+        }
+        return $changed;
     }
 
     private function sourceIndexLockKey(RagChunkData $chunk): string
@@ -337,8 +385,8 @@ class RagIndexer
                 $query->whereNull('last_reconciled_at')->orWhere('last_reconciled_at', '<', $reconciledAt);
             })
             ->lazyById(100)
-            ->each(static function (RagSource $source) use ($guard, $reconciledAt): void {
-                DB::transaction(static function () use ($source, $guard, $reconciledAt): void {
+            ->each(function (RagSource $source) use ($guard, $reconciledAt): void {
+                $deleted = DB::transaction(static function () use ($source, $guard, $reconciledAt): bool {
                     if ($guard !== null) {
                         $guard();
                     }
@@ -347,9 +395,17 @@ class RagIndexer
                     })->lockForUpdate()->first();
                     if ($current !== null) {
                         $current->chunks()->delete();
-                        $current->delete();
+                        $deleted = (bool) $current->delete();
+                        if ($deleted) {
+                            app(RagCoverageStateStore::class)->markIndexChanged($current->organization_id);
+                        }
+                        return $deleted;
                     }
+                    return false;
                 });
+                if ($deleted) {
+                    $this->coverageMutationVersion++;
+                }
             });
     }
 
@@ -370,16 +426,24 @@ class RagIndexer
     private function deleteSources(Builder $query, ?callable $guard): void
     {
         foreach ($query->lazyById(100) as $source) {
-            DB::transaction(static function () use ($source, $guard): void {
+            $deleted = DB::transaction(static function () use ($source, $guard): bool {
                 if ($guard !== null) {
                     $guard();
                 }
                 $current = RagSource::query()->whereKey($source->id)->lockForUpdate()->first();
                 if ($current !== null) {
                     $current->chunks()->delete();
-                    $current->delete();
+                    $deleted = (bool) $current->delete();
+                    if ($deleted) {
+                        app(RagCoverageStateStore::class)->markIndexChanged($current->organization_id);
+                    }
+                    return $deleted;
                 }
+                return false;
             });
+            if ($deleted) {
+                $this->coverageMutationVersion++;
+            }
         }
     }
 
@@ -905,11 +969,47 @@ class RagIndexer
      * @param  array<int, string>  $contentChunks
      * @return array<int, array{content: string, vector: string}>
      */
-    private function embedContentChunks(RagChunkData $chunk, array $contentChunks, RagEmbeddingProviderInterface $embeddingProvider): array
+    private function embedContentChunks(RagChunkData $chunk, array $contentChunks, RagEmbeddingProviderInterface $embeddingProvider, ?\Illuminate\Database\Eloquent\Collection $storedChunks = null, ?callable $guard = null): array
     {
         $embeddedChunks = [];
+        $sourceKey = $this->sourceIndexLockKey($chunk);
+        $profileKey = hash('sha256', $this->json([$embeddingProvider->provider(), $embeddingProvider->model(), $embeddingProvider->dimensions(), RagEmbeddingProviderInterface::PURPOSE_DOCUMENT]));
+        $hashes = array_map(fn (string $content): string => hash('sha256', $this->normalizeText($content)), $contentChunks);
+        $checkpoints = app(RagEmbeddingCheckpointStore::class);
+        $vectors = $checkpoints->load($chunk->organizationId, $sourceKey, $profileKey, $hashes, $embeddingProvider->dimensions());
+        $reusableIds = [];
+        foreach ($storedChunks ?? [] as $storedChunk) {
+            $hash = hash('sha256', $this->normalizeText((string) $storedChunk->content));
+            if (! hash_equals($hash, (string) $storedChunk->content_hash)
+                || $storedChunk->embedding_provider !== $embeddingProvider->provider()
+                || $storedChunk->embedding_model !== $embeddingProvider->model()
+                || $this->chunkDimensions($storedChunk) !== $embeddingProvider->dimensions()) {
+                continue;
+            }
+            $reusableIds[] = $storedChunk->id;
+        }
+        if ($reusableIds !== []) {
+            $rows = DB::table('ai_rag_chunks')->where('organization_id', $chunk->organizationId)->whereIn('id', $reusableIds)
+                ->where('embedding_provider', $embeddingProvider->provider())->where('embedding_model', $embeddingProvider->model())
+                ->whereNotNull('embedding')->whereRaw('vector_dims(embedding) = ?', [$embeddingProvider->dimensions()])
+                ->select(['content_hash', 'content', 'embedding_created_at'])->selectRaw('embedding::text AS vector')->get();
+            foreach ($rows as $row) {
+                $hash = hash('sha256', $this->normalizeText($row->content));
+                if (hash_equals($hash, $row->content_hash)) {
+                    $vectors[$hash] = ['vector' => $row->vector, 'created_at' => $row->embedding_created_at];
+                }
+            }
+        }
 
         foreach ($contentChunks as $index => $content) {
+            if ($guard !== null) {
+                $guard();
+            }
+            $hash = $hashes[$index];
+            if (isset($vectors[$hash])) {
+                $embeddedChunks[] = ['content' => $content] + $vectors[$hash];
+                continue;
+            }
             try {
                 $embedding = $embeddingProvider->embed(
                     $content,
@@ -934,11 +1034,10 @@ class RagIndexer
             }
 
             $this->recordEmbeddingUsage($chunk, $content, $index, $embeddingProvider);
-
-            $embeddedChunks[] = [
-                'content' => $content,
-                'vector' => $this->vectorLiteral($embedding),
-            ];
+            $vector = $this->vectorLiteral($embedding);
+            $checkpoints->save($chunk->organizationId, $sourceKey, $profileKey, $hash, $vector);
+            $vectors[$hash] = ['vector' => $vector, 'created_at' => now()];
+            $embeddedChunks[] = ['content' => $content] + $vectors[$hash];
         }
 
         return $embeddedChunks;

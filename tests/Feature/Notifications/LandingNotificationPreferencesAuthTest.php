@@ -13,6 +13,12 @@ use Tests\TestCase;
 
 final class LandingNotificationPreferencesAuthTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Tests\Support\LegalAcceptanceFixture::enable();
+    }
+
     use RefreshDatabase;
 
     public function test_web_login_supplies_organization_and_removed_membership_loses_access(): void
@@ -29,7 +35,8 @@ final class LandingNotificationPreferencesAuthTest extends TestCase
                 'password' => 'Password1',
                 'password_confirmation' => 'Password1',
                 'organization_name' => 'Notification Test Organization',
-                'terms_accepted' => true,
+                ...\Tests\Support\LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']),
+            'terms_accepted' => true,
                 'privacy_accepted' => true,
             ])->assertCreated();
         $user = User::where('email', 'notification-preferences@example.test')->firstOrFail();

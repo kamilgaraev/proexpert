@@ -30,6 +30,7 @@ final class WebRefreshMembershipTest extends TestCase
             'password' => 'Password1',
             'password_confirmation' => 'Password1',
             'organization_name' => 'LK Refresh Organization',
+            ...\Tests\Support\LegalAcceptanceFixture::payload(['offer', 'processing', 'privacy']),
             'terms_accepted' => true,
             'privacy_accepted' => true,
         ])->assertCreated();
@@ -70,6 +71,7 @@ final class WebRefreshMembershipTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        \Tests\Support\LegalAcceptanceFixture::enable();
         Notification::fake();
         Queue::fake();
         Cache::clear();

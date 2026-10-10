@@ -11,6 +11,7 @@ use App\Models\SupplementaryAgreement;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use Carbon\Carbon;
 use Exception;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -381,6 +382,48 @@ class ContractStateEventService
     public function getCurrentState(Contract $contract): array
     {
         $activeEvents = $this->eventRepository->findActiveEvents($contract->id, ['specification', 'createdBy']);
+
+        return $this->projectCurrentState($contract, $activeEvents);
+    }
+
+    public function getCurrentStateFromLoadedEvents(Contract $contract, Collection $events): array
+    {
+        foreach ($events as $event) {
+            if (! $event instanceof ContractStateEvent
+                || (int) $event->contract_id !== (int) $contract->id
+                || ! array_key_exists('superseded_by_events_exists', $event->getAttributes())
+                || ! $event->relationLoaded('specification')
+                || ! $event->relationLoaded('createdBy')) {
+                return $this->getCurrentState($contract);
+            }
+        }
+
+        $activeEvents = $events
+            ->filter(static fn (ContractStateEvent $event): bool => ! (bool) $event->getAttribute('superseded_by_events_exists'))
+            ->sort(static function (ContractStateEvent $left, ContractStateEvent $right): int {
+                $leftEffective = $left->effective_from;
+                $rightEffective = $right->effective_from;
+                $effectiveOrder = $leftEffective === null
+                    ? ($rightEffective === null ? 0 : 1)
+                    : ($rightEffective === null ? -1 : $leftEffective <=> $rightEffective);
+
+                if ($effectiveOrder !== 0) {
+                    return $effectiveOrder;
+                }
+                $leftCreated = $left->created_at;
+                $rightCreated = $right->created_at;
+
+                return $leftCreated === null
+                    ? ($rightCreated === null ? 0 : 1)
+                    : ($rightCreated === null ? -1 : $leftCreated <=> $rightCreated);
+            })
+            ->values();
+
+        return $this->projectCurrentState($contract, $activeEvents);
+    }
+
+    private function projectCurrentState(Contract $contract, Collection $activeEvents): array
+    {
 
         // Рассчитываем сумму из событий, влияющих на сумму контракта
         // PAYMENT_CREATED не влияет на total_amount контракта (это платежи, не изменения суммы договора)

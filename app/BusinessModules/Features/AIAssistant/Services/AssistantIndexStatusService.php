@@ -16,6 +16,7 @@ use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshAssistantIndexStatusJob;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotEpoch;
 use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotInputs;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -50,7 +51,8 @@ final class AssistantIndexStatusService
             throw new AuthorizationException;
         }
 
-        if ($this->checksAssistantAccess()) {
+        $checkCurrentAccess = $this->checksAssistantAccess();
+        if ($checkCurrentAccess && $section !== 'sources') {
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
@@ -58,26 +60,51 @@ final class AssistantIndexStatusService
         $started = hrtime(true);
         try {
             $budget = new RagStatusBudget(DB::connection(), 2500);
-            $result = $this->inRepeatableRead(fn (): array => $budget->run(fn (callable $checkpoint): array => $this->access->withCurrentChecks(
-                $actor,
-                $organizationId,
-                function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase): array {
-                    $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
-                    $projectionProof = null;
-                    $coverage = $section === 'documents' ? [] : $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true,
-                        progress: static function (string $value) use ($phase): void { $phase->value = $value; });
-                    $phase->value = 'documents';
-                    $documents = $section === 'sources' ? [] : $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
+            $result = $this->inRepeatableRead(fn (): array => $budget->run(function (callable $checkpoint) use ($organizationId, $actor, $budget, $section, $phase, $checkCurrentAccess): array {
+                if ($checkCurrentAccess) {
+                    $actor = User::query()->find($actor->id);
+                    if ($actor === null || ! $actor->is_active || (int) $actor->current_organization_id !== $organizationId) {
+                        throw new AuthorizationException;
+                    }
+                }
 
-                    return array_merge($coverage, $documents, [
-                        'status_available' => true,
-                        'can_reindex' => $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]),
-                        'stale_after_seconds' => self::SNAPSHOT_TTL_SECONDS,
-                    ]);
-                },
-                fresh: true,
-                checkpoint: $budget->checkDeadline(...),
-            )));
+                return $this->access->withCurrentChecks(
+                    $actor,
+                    $organizationId,
+                    function (AuthorizationService $authorization) use ($organizationId, $actor, $checkpoint, $budget, $section, $phase, $checkCurrentAccess): array {
+                        $validUntil = null;
+                        if ($checkCurrentAccess) {
+                            if (! $this->access->canReadDomain($actor, $organizationId, 'assistant')) { throw new AuthorizationException; }
+                            $inputs = $this->snapshotInputs ?? app(AssistantStatusSnapshotInputs::class);
+                            if ($inputs->fingerprint($actor, $organizationId, $this->currentSurface(), $section, request()->ip(), $authorization) === null) {
+                                AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
+
+                                return $this->unavailableStatus();
+                            }
+                            $capturedAt = DB::selectOne('SELECT LEAST(transaction_timestamp(), clock_timestamp())::text AS captured_at')->captured_at;
+                            $validUntil = $inputs->validUntil($capturedAt, self::SNAPSHOT_TTL_SECONDS, $organizationId, (int) $actor->id);
+                        }
+                        $this->access->prefetchEntitySchemaMetadata($checkpoint, $budget->checkDeadline(...));
+                        $projectionProof = null;
+                        $coverage = $section === 'documents' ? [] : $this->coverage->coverageForActor($organizationId, $actor, $checkpoint, $budget->checkDeadline(...), $projectionProof, countsOnly: true,
+                            progress: static function (string $value) use ($phase): void { $phase->value = $value; });
+                        $phase->value = 'documents';
+                        $documents = $section === 'sources' ? [] : $this->documents->coverage($organizationId, $actor, $checkpoint, $budget->checkDeadline(...));
+
+                        $canReindex = $authorization->canCurrent($actor, 'admin.ai_assistant.rag.manage', ['organization_id' => $organizationId]);
+                        $budget->checkDeadline();
+                        if ($checkCurrentAccess && ! $inputs->isUnexpired($validUntil)) { return $this->unavailableStatus(); }
+
+                        return array_merge($coverage, $documents, [
+                            'status_available' => true,
+                            'can_reindex' => $canReindex,
+                            'stale_after_seconds' => self::SNAPSHOT_TTL_SECONDS,
+                        ]);
+                    },
+                    fresh: true,
+                    checkpoint: $budget->checkDeadline(...),
+                );
+            }));
         } catch (RagStatusBudgetExceeded|QueryException $exception) {
             if ($exception instanceof QueryException && ($exception->errorInfo[0] ?? null) !== '57014') {
                 throw $exception;
@@ -88,6 +115,8 @@ final class AssistantIndexStatusService
             ]);
             $result = $this->unavailableStatus();
         }
+
+        if ($checkCurrentAccess && ($result['status_available'] ?? false)) { AssistantStatusSnapshotDiagnostics::request('fresh_read', $section); }
 
         return $result;
     }
@@ -113,7 +142,11 @@ final class AssistantIndexStatusService
             return $this->access->withCurrentChecks($currentActor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $currentActor, $section, $surface, $ip, $epoch, $inputs): array {
                 if (! $this->access->canReadDomain($currentActor, $organizationId, 'assistant')) { throw new AuthorizationException; }
                 $fingerprint = $inputs->fingerprint($currentActor, $organizationId, $surface, $section, $ip, $authorization);
-                if ($fingerprint === null) { return $this->unavailableStatus(); }
+                if ($fingerprint === null) {
+                    AssistantStatusSnapshotDiagnostics::request('missing_release', $section);
+
+                    return $this->unavailableStatus();
+                }
                 $key = $this->snapshotKey($organizationId, (int) $currentActor->id, $surface).':'.$section.':'.$fingerprint;
                 $snapshot = Cache::get($key);
                 $age = $inputs->age(is_array($snapshot) ? ($snapshot['generated_at'] ?? null) : null);
@@ -123,10 +156,11 @@ final class AssistantIndexStatusService
                     && $inputs->isUnexpired($snapshot['valid_until'] ?? null)
                     && $age !== null
                     && ($snapshot['projection_generation'] ?? null) === $this->currentProjectionGeneration($organizationId)
-                    && $epoch->isValid($snapshot['epoch'], self::SNAPSHOT_TTL_SECONDS)
+                    && $epoch->isValid($snapshot['epoch'], self::SNAPSHOT_TTL_SECONDS, $organizationId)
                     && $inputs->decisionsMatch($snapshot['decisions'], $currentActor, $authorization)
                     && $this->access->withCurrentChecks($currentActor, $organizationId,
                         static fn (AuthorizationService $current): bool => $current === $authorization)) {
+                    AssistantStatusSnapshotDiagnostics::request('ready', $section, $key, $age);
                     $status = $snapshot['status'];
                     $status['can_reindex'] = $canReindex;
                     if (is_numeric($status['lag_seconds'] ?? null)
@@ -137,7 +171,9 @@ final class AssistantIndexStatusService
 
                     return $status;
                 }
-                if (Cache::add($key.':queued', true, 90)) {
+                $queued = Cache::add($key.':queued', true, 90);
+                AssistantStatusSnapshotDiagnostics::request(is_array($snapshot) ? 'snapshot_rejected' : 'snapshot_missing', $section, $key, $age, $queued);
+                if ($queued) {
                     try {
                         RefreshAssistantIndexStatusJob::dispatch($organizationId, (int) $currentActor->id, $surface, $key, $section, $ip)->afterCommit();
                     } catch (Throwable $exception) {

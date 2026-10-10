@@ -105,6 +105,17 @@ final class AssistantOrganizationReportingMetadata
         return $result;
     }
     public static function sourceClasses(): array { return [OrganizationReportingRagSource::class]; }
+    public static function retrievalCoverageDefinitions(): array
+    {
+        $definitions = [];
+        foreach (self::records() as $type => $record) {
+            if (in_array($record[2], ['normative_lookup', 'normative_prices'], true)) {
+                $definitions[$type] = ['indexed' => false, 'mode' => 'live_only',
+                    'reason' => 'Shared published catalogs use current permission-scoped database lookup without per-organization embeddings.'];
+            }
+        }
+        return $definitions;
+    }
     public static function sourcePermissions(): array { return []; }
     public static function organizationColumns(): array { return ['organization_group_card' => 'parent_organization_id']; }
     public static function globalCatalogEntities(): array

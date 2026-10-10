@@ -44,6 +44,16 @@ final class AssistantSourceIdentityQueryBuilder
             ->selectRaw($table.'.id AS admitted_source_id, '.$table.'.entity_id AS admitted_entity_id');
         $grammar = $entities->getQuery()->getGrammar();
 
+        if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource'], true)) {
+            $entityId = $grammar->wrap($table.'.entity_id');
+            $sources->selectRaw('CASE WHEN pg_input_is_valid('.$entityId.", 'bigint') THEN CASE WHEN CAST(".$entityId.'::bigint AS text) COLLATE "C" = '.$entityId.' COLLATE "C" THEN '.$entityId.'::bigint END END AS admitted_entity_key');
+            $keys = DB::query()->fromSub(clone $sources, 'native_candidate_ids')->selectRaw('ARRAY_AGG(native_candidate_ids.admitted_entity_key)');
+            $entities->whereRaw($grammar->wrap($key).' = ANY(CAST(('.$keys->toSql().') AS bigint[]))', $keys->getBindings());
+
+            return $entities->distinct()->select('eligible_identity_source.admitted_source_id AS source_id')
+                ->joinSub($sources, 'eligible_identity_source', static fn (\Illuminate\Database\Query\JoinClause $join) => $join
+                    ->on('eligible_identity_source.admitted_entity_key', '=', $key))->toBase();
+        }
         if (! in_array($entityType, ['design_ifc_model_element', 'approved_estimate_norm', 'approved_construction_resource'], true)) { $entities->distinct(); }
         return $entities->select('eligible_identity_source.admitted_source_id AS source_id')
             ->joinSub($sources, 'eligible_identity_source', static fn (\Illuminate\Database\Query\JoinClause $join) => $join

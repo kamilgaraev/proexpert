@@ -31,6 +31,7 @@ use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
@@ -131,10 +132,23 @@ final class DesignManagementApiTest extends TestCase
         }
         $pirReadable = $pir && ! in_array('design-management.view', $denied, true);
         $qualityReadable = $quality && ! in_array('quality-control.view', $denied, true);
-        $pirList = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $pirList = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+            $listQueries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
         $pirList->assertStatus($pirReadable ? 200 : 403);
         if ($pirReadable) {
             $pirList->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $issues['project']->id);
+            $pirList->assertJsonPath('data.0.author_id', $context->user->id);
+            $unusedRelations = array_filter($listQueries, static fn (array $query): bool =>
+                str_contains($query['query'], 'quality_defect_status_histories')
+                || str_contains($query['query'], '"users"."id" in ('));
+            self::assertSame([], $unusedRelations, 'The issue list returns scalar actor IDs and does not use user or status-history relations');
         }
         foreach ($issues as $kind => $issue) {
             $pirResponse = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/issues/{$issue->id}");
@@ -149,6 +163,91 @@ final class DesignManagementApiTest extends TestCase
             }
         }
         $this->assertSame(2, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
+    }
+
+    public function test_project_issue_snapshot_queries_do_not_grow_with_list_size(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->attachProjectUser($project, $context->user);
+        $this->allowAdminAccess();
+        $this->mock(AccessController::class)->shouldReceive('hasModuleAccess')->andReturn(true);
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->times(10)
+            ->with(Mockery::type('string'), 60, Mockery::on(fn ($organization): bool => $organization instanceof \App\Models\Organization && $organization->id === $context->organization->id))
+            ->andReturn('https://storage.example/snapshot.png?signature=test');
+
+        $foreign = AdminApiTestContext::create(roleSlug: 'project_manager');
+        \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+            'organization_id' => $foreign->organization->id, 'project_id' => $project->id,
+            'kind' => 'project', 'created_by' => $foreign->user->id, 'defect_number' => 'FOREIGN-SNAPSHOT',
+            'title' => 'Foreign snapshot', 'severity' => 'major', 'status' => 'open',
+            'metadata' => ['design_issue_context' => ['snapshot' => ['path' => 'org-'.$foreign->organization->id.'/snapshot.png']]],
+        ]);
+
+        $organizationReads = [];
+        $created = 0;
+        foreach ([1, 9] as $count) {
+            while ($created < $count) {
+                $created++;
+                $issue = \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+                    'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                    'kind' => 'project', 'created_by' => $context->user->id, 'defect_number' => 'SNAPSHOT-'.$created,
+                    'title' => 'Project snapshot '.$created, 'severity' => 'major', 'status' => 'open', 'metadata' => [],
+                ]);
+                $issue->update(['metadata' => ['design_issue_context' => ['snapshot' => [
+                    'path' => "org-{$context->organization->id}/design-management/issues/{$issue->id}/snapshot.png",
+                ]]]]);
+            }
+
+            DB::enableQueryLog();
+            DB::flushQueryLog();
+            try {
+                $response = $this->withHeaders($context->authHeaders())
+                    ->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+                $queries = DB::getQueryLog();
+            } finally {
+                DB::disableQueryLog();
+                DB::flushQueryLog();
+            }
+
+            $response->assertOk()->assertJsonCount($count, 'data');
+            foreach ($response->json('data') as $row) {
+                self::assertSame('https://storage.example/snapshot.png?signature=test', $row['snapshot_url']);
+                self::assertSame($context->user->id, $row['author_id']);
+            }
+            $organizationReads[$count] = count(array_filter($queries, static fn (array $query): bool =>
+                str_contains($query['query'], 'from "organizations"')));
+        }
+
+        self::assertLessThanOrEqual($organizationReads[1], $organizationReads[9],
+            'Organization SELECTs must not scale with snapshots: '.json_encode($organizationReads));
+    }
+
+    public function test_project_issue_snapshot_does_not_reload_a_missing_organization(): void
+    {
+        $path = 'org-999999/design-management/issues/1/snapshot.png';
+        $issue = new \App\BusinessModules\Features\QualityControl\Models\QualityDefect([
+            'organization_id' => 999999, 'project_id' => 1, 'kind' => 'project',
+            'title' => 'Missing organization snapshot', 'severity' => 'major', 'status' => 'open',
+            'metadata' => ['design_issue_context' => ['snapshot' => ['path' => $path]]],
+        ]);
+        $issue->setRelation('organization', null);
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->once()
+            ->with($path, 60, null)->andReturn(null);
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $data = (new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource($issue))
+                ->resolve(\Illuminate\Http\Request::create('/'));
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        self::assertNull($data['snapshot_url']);
+        self::assertSame([], $queries);
     }
 
     public function test_link_context_opens_the_exact_historical_source_and_rechecks_access(): void
@@ -1828,6 +1927,51 @@ final class DesignManagementApiTest extends TestCase
         ])->assertCreated();
         $this->assertSame($artifact->id, DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-01')->sole()->id);
         $this->assertSame(['AR-01', 'AR-02'], DesignArtifact::query()->where('package_id', $packageId)->where('section_id', $artifact->section_id)->orderBy('document_code')->pluck('document_code')->all());
+    }
+
+    public function test_composition_read_avoids_the_package_detail_graph_and_rejects_a_foreign_package(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()
+            ->where('package_id', $packageId)->sole();
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+
+        try {
+            $response = $this->withHeaders($context->authHeaders())
+                ->getJson('/api/v1/admin/design-management/composition/packages/'.$packageId.'/composition');
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $response->assertOk()->assertJsonPath('data.revision.id', $revision->id)
+            ->assertJsonPath('data.revision.state_version', 1)
+            ->assertJsonPath('data.revision.composition', $revision->composition)
+            ->assertJsonPath('data.revision.author.id', $context->user->id);
+        $packageDetails = array_filter($queries, static fn (array $query): bool =>
+            preg_match('/from "(?:design_artifacts|design_artifact_versions|design_package_sections)"/', $query['query']) === 1);
+        self::assertSame([], $packageDetails, 'Composition reads must not load unrelated package artifacts or sections');
+
+        $foreignProject = Project::factory()->create();
+        $foreignPackage = DesignPackage::query()->create([
+            'organization_id' => $foreignProject->organization_id,
+            'project_id' => $foreignProject->id,
+            'created_by' => $context->user->id,
+            'updated_by' => $context->user->id,
+            'title' => 'Foreign package',
+            'project_stage' => 'rd',
+            'object_type' => 'non_linear_non_production',
+            'status' => 'draft',
+        ]);
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/design-management/composition/packages/'.$foreignPackage->id.'/composition')
+            ->assertNotFound();
     }
 
     public function test_composition_state_version_rejects_stale_mutations_without_writing(): void

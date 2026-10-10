@@ -30,15 +30,22 @@ final class DesignProjectIssueService
         $this->project($organizationId, $projectId);
         $this->authorize($actor, 'design-management.view', $organizationId, $projectId);
 
-        return QualityDefect::query()
+        $issues = QualityDefect::query()
             ->forOrganization($organizationId)
             ->projectIssues()
             ->where('project_id', $projectId)
             ->when(isset($filters['status']), static fn ($query) => $query->where('status', $filters['status']))
             ->when(isset($filters['version_id']), static fn ($query) => $query->whereJsonContains('metadata->design_issue_context->version_id', (int) $filters['version_id']))
-            ->with(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy'])
             ->latest('id')
             ->get();
+
+        $issues->filter(static function (QualityDefect $issue): bool {
+            $path = ($issue->metadata ?? [])['design_issue_context']['snapshot']['path'] ?? null;
+
+            return is_string($path) && $path !== '';
+        })->load('organization');
+
+        return $issues;
     }
 
     public function find(User $actor, int $organizationId, int $issueId): ?QualityDefect

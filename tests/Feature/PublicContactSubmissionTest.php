@@ -10,6 +10,7 @@ use App\Services\Notification\TelegramService;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Mail;
 use Mockery;
+use Tests\Support\LegalAcceptanceFixture;
 use Tests\TestCase;
 
 class PublicContactSubmissionTest extends TestCase
@@ -35,7 +36,7 @@ class PublicContactSubmissionTest extends TestCase
         self::assertTrue($contact->consent_to_personal_data);
         self::assertSame(ContactForm::CHANNEL_PUBLIC_FORM, $contact->channel);
         self::assertSame('/contact#form', $contact->page_source);
-        self::assertSame('yandex', $contact->utm_source);
+        self::assertNull($contact->utm_source);
         self::assertTrue($contact->notification_delivery['pending']);
         Bus::assertDispatched(SendPublicContactNotification::class, fn ($job) => $job->contactFormId === $contact->id);
         Mail::assertNothingSent();
@@ -52,7 +53,8 @@ class PublicContactSubmissionTest extends TestCase
             'Content-Type' => 'application/x-www-form-urlencoded;charset=UTF-8',
         ])->post('/api/public/contact', $payload)
             ->assertUnprocessable()
-            ->assertJsonPath('success', false);
+            ->assertJsonPath('success', false)
+            ->assertJsonValidationErrors('consent_to_personal_data');
 
         $this->assertDatabaseMissing('contact_forms', ['email' => $payload['email']]);
         Bus::assertNotDispatched(SendPublicContactNotification::class);
@@ -67,9 +69,11 @@ class PublicContactSubmissionTest extends TestCase
             'subject' => 'Запрос демонстрации',
             'message' => "Материалы: бетон + арматура & документы.\nВторой объект.",
             'consent_to_personal_data' => 'true',
-            'consent_version' => 'test',
+            'consent_version' => config('legal.version'),
             'page_source' => '/contact#form',
             'utm_source' => 'yandex',
+            'analytics_consent' => '0',
+            'legal_documents' => LegalAcceptanceFixture::payload(['contactConsent'])['legal_documents'],
         ];
     }
 }
