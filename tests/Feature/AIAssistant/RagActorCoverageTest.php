@@ -528,6 +528,55 @@ final class RagActorCoverageTest extends TestCase
         $this->assertSame(1, $this->collector->collections);
     }
 
+    public function test_refresh_job_reports_unknown_counts_without_claiming_publication(): void
+    {
+        [$organization] = $this->scope();
+        $events = [];
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->with('assistant_rag_coverage_refresh', Mockery::on(static function (array $context) use (&$events): bool {
+            $events[] = $context;
+
+            return true;
+        }));
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
+        $job = new RefreshRagCoverageJob($organization->id, null, null, 'private_obsolete_key_fixture');
+        Cache::put($job->cacheKey.':queued', true, 100);
+        $job->handle($this->coverage);
+        self::assertSame(['started', 'queued', 'finished'], array_column($events, 'phase'));
+        self::assertFalse($events[2]['counts_known']);
+        self::assertFalse($events[2]['generation_present']);
+        self::assertGreaterThanOrEqual(0, $events[2]['duration_ms']);
+        self::assertSame(0, $this->collector->collections);
+        self::assertFalse(Cache::has($job->cacheKey.':queued'));
+        self::assertStringNotContainsString('private_', json_encode($events, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_refresh_job_preserves_the_original_failure_and_cleanup_when_logging_fails(): void
+    {
+        [$organization] = $this->scope();
+        $keyMethod = new \ReflectionMethod(RagCoverageService::class, 'key');
+        $key = $keyMethod->invoke($this->coverage, $organization->id, null, null);
+        $job = new RefreshRagCoverageJob($organization->id, null, null, $key);
+        Cache::put($key.':queued', true, 100);
+        $failure = new \RuntimeException('private_refresh_failure_fixture');
+        $cache = Mockery::mock(Cache::getFacadeRoot())->makePartial();
+        $cache->shouldReceive('lock')->once()->andReturnUsing(static function () use ($failure): never {
+            throw $failure;
+        });
+        Cache::swap($cache);
+        $logger = Mockery::mock();
+        $logger->shouldReceive('info')->twice()->andThrow(new \RuntimeException('private_logger_failure_fixture'));
+        \Illuminate\Support\Facades\Log::partialMock()->shouldReceive('channel')->with('api_latency')->andReturn($logger);
+        try {
+            $job->handle($this->coverage);
+            self::fail('The refresh failure was swallowed');
+        } catch (\Throwable $actual) {
+            self::assertSame($failure, $actual, 'Actual exception: '.$actual::class);
+        }
+        self::assertFalse(Cache::has($key.':queued'));
+        self::assertSame(0, $this->collector->collections);
+    }
+
     public function test_foreign_organization_collector_record_does_not_publish_coverage(): void
     {
         [$organization, $actor, $visible] = $this->scope();
