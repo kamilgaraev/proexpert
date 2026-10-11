@@ -16,6 +16,8 @@ class StoreJournalEntryRequest extends ConstructionJournalFormRequest
         $prefix = $partial ? 'sometimes|' : '';
 
         return [
+            'source_entry_id' => 'prohibited',
+            'source_entry_snapshot' => 'prohibited',
             'idempotency_key' => $partial ? 'prohibited' : 'required|string|max:100',
             'submit_after_create' => $partial ? 'prohibited' : 'sometimes|boolean',
             'status' => 'prohibited',

@@ -35,6 +35,9 @@
         <p><strong>Журнал №:</strong> {{ $entry->journal->journal_number ?? $entry->journal->id }}</p>
         <p><strong>Запись №:</strong> {{ $entry->entry_number }}</p>
         <p><strong>Дата:</strong> {{ $entry->entry_date->format('d.m.Y') }}</p>
+        @if($entry->source_entry_id)
+            <p><strong>Источник:</strong> {{ $entry->source_entry_snapshot['source']['organization_name'] ?? '-' }}, журнал №{{ $entry->source_entry_snapshot['source']['journal_number'] ?? '-' }}, запись №{{ $entry->source_entry_snapshot['source']['entry_number'] ?? '-' }} от {{ $entry->source_entry_snapshot['source']['entry_date'] ?? '-' }}. Принятые объёмы приведены для отчёта без повторного учёта.</p>
+        @endif
         <p><strong>Статус:</strong> 
             <span class="status-badge status-{{ $entry->status->value }}">
                 {{ $entry->status->label() }}

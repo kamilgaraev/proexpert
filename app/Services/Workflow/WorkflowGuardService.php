@@ -42,6 +42,15 @@ class WorkflowGuardService
             }
         }
 
+        if ($entry->isReportingEntry()) {
+            try {
+                app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->assertReady($entry);
+            } catch (DomainException) {
+                $blockers[] = $this->blocker('reporting_source_invalid', trans_message('construction_journal.errors.reporting_unavailable'), 'reporting_source_invalid', false, [], null);
+            }
+            return $blockers;
+        }
+
         if ((float) $entry->workVolumes->sum('quantity') <= 0) {
             $blockers[] = $this->blocker(
                 'missing_work_volume',

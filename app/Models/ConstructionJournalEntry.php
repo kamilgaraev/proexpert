@@ -38,6 +38,8 @@ class ConstructionJournalEntry extends Model
     ];
 
     protected $casts = [
+        'source_entry_id' => 'integer',
+        'source_entry_snapshot' => 'array',
         'entry_date' => 'date',
         'approved_at' => 'datetime',
         'weather_conditions' => 'array',
@@ -47,6 +49,16 @@ class ConstructionJournalEntry extends Model
     public function journal(): BelongsTo
     {
         return $this->belongsTo(ConstructionJournal::class, 'journal_id');
+    }
+
+    public function sourceEntry(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'source_entry_id');
+    }
+
+    public function isReportingEntry(): bool
+    {
+        return $this->source_entry_id !== null;
     }
 
     public function scheduleTask(): BelongsTo

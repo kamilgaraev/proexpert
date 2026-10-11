@@ -310,7 +310,9 @@ class JournalApprovalService
             $errors[] = trans_message('construction_journal.errors.validation_entry_date');
         }
 
-        if ((float) $entry->workVolumes()->sum('quantity') <= 0) {
+        if ($entry->isReportingEntry()) {
+            app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->assertReady($entry);
+        } elseif ((float) $entry->workVolumes()->sum('quantity') <= 0) {
             $errors[] = trans_message('construction_journal.errors.validation_work_volumes');
         }
 

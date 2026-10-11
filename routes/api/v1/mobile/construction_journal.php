@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Mobile\ConstructionJournalController;
 use App\Http\Controllers\Api\V1\Mobile\ConstructionJournalEntryController;
 use App\Http\Controllers\Api\V1\Mobile\JournalEntryAttachmentController;
 use App\Http\Controllers\Api\V1\Mobile\JournalExportController;
+use App\Http\Controllers\Api\V1\Mobile\JournalEntryReportingController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware([
@@ -13,6 +14,8 @@ Route::middleware([
     'can:access-mobile-app',
     'budget-estimates.active',
 ])->group(function () {
+    Route::get('/projects/{project}/participants/hierarchy', [\App\Http\Controllers\Api\V1\Mobile\ProjectHierarchyController::class, 'show'])->whereNumber('project');
+    Route::put('/projects/{project}/participants/hierarchy', [\App\Http\Controllers\Api\V1\Mobile\ProjectHierarchyController::class, 'update'])->whereNumber('project');
     Route::get('/construction-journals', [ConstructionJournalController::class, 'index'])->name('construction-journals.index');
     Route::get('/construction-journals/form-options', [ConstructionJournalController::class, 'formOptions'])
         ->name('construction-journals.form-options');
@@ -31,6 +34,8 @@ Route::middleware([
         ->name('construction-journals.entries.store');
 
     Route::get('/journal-entries/{entry}', [ConstructionJournalEntryController::class, 'show'])->name('journal-entries.show');
+    Route::get('/journal-entries/{entry}/reporting-targets', [JournalEntryReportingController::class, 'targets']);
+    Route::post('/journal-entries/{entry}/include-in-journal', [JournalEntryReportingController::class, 'include']);
     Route::get('/journal-entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'index']);
     Route::post('/journal-entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'store']);
     Route::get('/journal-entries/{entry}/attachments/{attachment}/download', [JournalEntryAttachmentController::class, 'download'])->whereUuid('attachment');

@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\ConstructionJournalFormOptionsController;
 use App\Http\Controllers\Api\GeneralJournalDocumentController;
 use App\Http\Controllers\Api\JournalEntryAttachmentController;
 use App\Http\Controllers\Api\JournalExportController;
+use App\Http\Controllers\Api\JournalEntryReportingController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -61,6 +62,8 @@ Route::middleware(['auth:api_admin'])->group(function () {
 
     // Записи журнала (отдельные операции)
     Route::prefix('journal-entries/{entry}')->group(function () {
+        Route::get('reporting-targets', [JournalEntryReportingController::class, 'targets']);
+        Route::post('include-in-journal', [JournalEntryReportingController::class, 'include']);
         Route::get('/', [ConstructionJournalEntryController::class, 'show'])
             ->name('journal-entries.show');
         Route::put('/', [ConstructionJournalEntryController::class, 'update'])
