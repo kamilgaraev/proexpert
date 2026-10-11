@@ -52,6 +52,31 @@ final class ConversationNumberHistoryTest extends TestCase
         self::assertSame('', $this->context(['validation_status' => 'partial'], actorId: 8));
     }
 
+    public function test_classroom_history_excludes_business_requests_and_verified_answers(): void
+    {
+        $manager = (new ReflectionClass(ConversationManager::class))->newInstanceWithoutConstructor();
+        $actor = new User;
+        $actor->id = 7;
+        $userMessage = new Message;
+        $userMessage->role = 'user';
+        $userMessage->content = 'Покажи наши договоры и суммы.';
+        $method = new ReflectionMethod(ConversationManager::class, 'contextContent');
+        self::assertSame('', $method->invoke($manager, $userMessage, $actor, 1, false, true));
+        $userMessage->content = 'Для учебного примера вычисли 12 + 8 + 5.';
+        self::assertSame($userMessage->content, $method->invoke($manager, $userMessage, $actor, 1, false, true));
+        foreach (['Запомни условное число 7319.', 'Условный объём бетона — 12 м³.'] as $content) {
+            $userMessage->content = $content;
+            self::assertSame($content, $method->invoke($manager, $userMessage, $actor, 1, false, true));
+        }
+        $userMessage->content = 'Запомни условное число 7319 и покажи наши проекты.';
+        self::assertSame('', $method->invoke($manager, $userMessage, $actor, 1, false, true));
+        $businessAnswer = new Message;
+        $businessAnswer->role = 'assistant';
+        $businessAnswer->content = 'Договор на 100 рублей.';
+        $businessAnswer->metadata = ['validation_status' => 'verified', 'source_refs' => [['entity_type' => 'contract']], 'actor_user_id' => 7];
+        self::assertSame('', $method->invoke($manager, $businessAnswer, $actor, 1, false, true));
+    }
+
     private function context(array $metadata = [], ?int $actorId = 7): string
     {
         $manager = (new ReflectionClass(ConversationManager::class))->newInstanceWithoutConstructor();

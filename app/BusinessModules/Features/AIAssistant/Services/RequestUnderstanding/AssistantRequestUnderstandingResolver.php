@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding
 
 use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantCapabilityRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantFactIntentClassifier;
 
 final class AssistantRequestUnderstandingResolver
 {
@@ -13,6 +14,13 @@ final class AssistantRequestUnderstandingResolver
 
     public function resolve(string $message, array $context = []): AssistantRequestUnderstanding
     {
+        if (AssistantFactIntentClassifier::isConversationNumberRequest($message)) {
+            return new AssistantRequestUnderstanding(
+                primaryIntent: 'question', outputFormat: 'text', actionPolicy: 'read_only',
+                constraints: ['no_actions', 'no_navigation'], requestedEntities: [], confidence: 1.0,
+                evidence: [['type' => 'conversation_number_request', 'value' => true]],
+            );
+        }
         $normalized = $this->normalize($message);
         $constraints = $this->resolveConstraints($normalized);
         $requestedEntities = $this->resolveRequestedEntities($normalized);

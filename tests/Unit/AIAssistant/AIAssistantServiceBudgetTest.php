@@ -66,6 +66,38 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame(['search_projects'], array_column($tools, 'name'));
     }
 
+    public function test_classroom_calculation_has_no_business_tools_or_reference_context(): void
+    {
+        $query = 'Для учебного примера вычисли 12 + 8 + 5. Это условные числа, не данные сметы или проекта.';
+        $registry = new AIToolRegistry;
+        $registry->registerTool($this->makeTool('search_projects'));
+        $registry->registerTool($this->makeTool('get_contract_snapshot'));
+        $history = [['role' => 'assistant', 'content' => 'Учебный результат: 25.']];
+        $service = $this->makeService($registry, history: $history);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects($this->once())->method('getMessagesForContextWithBudget')->with(
+            $this->anything(), $this->anything(), $this->anything(), $this->anything(),
+            $this->anything(), $this->anything(), false, true,
+        );
+        $manager->expects($this->never())->method('getSummary');
+        (new \ReflectionProperty(AIAssistantService::class, 'activeActor'))->setValue($service, new User);
+        (new \ReflectionProperty(AIAssistantService::class, 'activeEstimateSelection'))->setValue($service, ['estimate_id' => 777]);
+        (new \ReflectionProperty(AIAssistantService::class, 'precomputedCapabilityHints'))->setValue($service, ['domains' => str_repeat('БИЗНЕС-КАТАЛОГ ', 1600)]);
+        $plan = ['request' => ['message' => $query, 'context' => ['source_module' => 'estimates', 'entity_refs' => [['type' => 'estimate', 'id' => 777]]]]];
+
+        self::assertSame([], $service->exposeResolveToolDefinitions($plan));
+        $messages = $service->exposeBuildMessages(new \App\BusinessModules\Features\AIAssistant\Models\Conversation, $plan, $query);
+        self::assertContains($history[0], $messages);
+        self::assertSame($query, $messages[array_key_last($messages)]['content']);
+        $serialized = json_encode($messages, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        self::assertStringNotContainsString('selected_estimate', $serialized);
+        self::assertStringNotContainsString('task_context', $serialized);
+        self::assertStringNotContainsString('БИЗНЕС-КАТАЛОГ', $serialized);
+        [$prepared, $options] = $service->exposePrepareProviderPayload($messages, ['budget_profile' => 'normal', 'tools' => []]);
+        self::assertSame($query, $prepared[array_key_last($prepared)]['content']);
+        self::assertLessThanOrEqual(16384, $options['estimated_input_tokens']);
+    }
+
     public function test_domain_capabilities_expose_snapshot_tools(): void
     {
         $toolRegistry = new AIToolRegistry;

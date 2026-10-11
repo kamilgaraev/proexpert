@@ -14,6 +14,48 @@ class AssistantTaskOrchestratorTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_classroom_calculation_ignores_business_context_and_action_controls(): void
+    {
+        $plan = $this->makeOrchestratorWithRealRegistry()->plan(
+            'Для учебного примера вычисли 12 + 8 + 5. Это условные числа, не данные сметы или проекта.',
+            ['goal' => 'generate_report', 'allow_actions' => true, 'context' => [
+                'source_module' => 'estimates', 'entity_refs' => [['type' => 'estimate', 'id' => 9]],
+            ]],
+            ['organization_id' => 15, 'permissions_flat' => ['estimates.view', 'reports.view']]
+        );
+
+        self::assertNull($plan['capability']);
+        self::assertSame([], $plan['request_understanding']['requested_entities']);
+        self::assertSame('question', $plan['request_understanding']['primary_intent']);
+        self::assertSame('read_only', $plan['request_understanding']['action_policy']);
+        self::assertSame([], $plan['request']['context']);
+        self::assertFalse($plan['request']['allow_actions']);
+        self::assertSame([], $plan['next_actions']);
+    }
+
+    public function test_classroom_wording_does_not_suppress_real_estimate_request(): void
+    {
+        $plan = $this->makeOrchestratorWithRealRegistry()->plan(
+            'Для учебного примера покажи реальную цену позиции сметы.', [],
+            ['organization_id' => 15, 'permissions_flat' => ['estimates.view']]
+        );
+
+        self::assertSame('estimates', $plan['capability']['id']);
+        self::assertContains('estimate', $plan['request_understanding']['requested_entities']);
+    }
+
+    public function test_classroom_wording_keeps_mixed_project_and_bim_requests_in_business_routing(): void
+    {
+        foreach ([
+            'Реши учебный пример: 12 + 8 и покажи объём бетона в BIM-модели.',
+            'Реши учебный пример: 12 + 8 и покажи наши проекты.',
+        ] as $query) {
+            self::assertFalse(\App\BusinessModules\Features\AIAssistant\Services\AssistantFactIntentClassifier::isConversationNumberRequest($query));
+            $plan = $this->makeOrchestratorWithRealRegistry()->plan($query, [], ['organization_id' => 15, 'permissions_flat' => []]);
+            self::assertNotNull($plan['capability']);
+        }
+    }
+
     #[DataProvider('russianIntentProvider')]
     public function test_plan_routes_russian_intent_keywords(string $query, string $expectedTaskType): void
     {

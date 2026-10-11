@@ -299,7 +299,7 @@ class ConversationManager
         return $this->getMessagesForContextWithBudget($conversation, $limit, actor: $actor);
     }
 
-    public function getMessagesForContextWithBudget(Conversation $conversation, int $limit = 6, int $maxTotalChars = 4000, int $maxUserMessageChars = 4000, int $maxAssistantMessageChars = 900, ?User $actor = null, bool $includeImageDiscussion = false): array
+    public function getMessagesForContextWithBudget(Conversation $conversation, int $limit = 6, int $maxTotalChars = 4000, int $maxUserMessageChars = 4000, int $maxAssistantMessageChars = 900, ?User $actor = null, bool $includeImageDiscussion = false, bool $conversationNumbersOnly = false): array
     {
         $prepared = [];
         $used = 0;
@@ -316,7 +316,7 @@ class ConversationManager
             }
         }
         foreach ($history->reverse() as $message) {
-            $content = $this->contextContent($message, $actor, (int) $conversation->organization_id, isset($imageDiscussionMessages[$message->id]));
+            $content = $this->contextContent($message, $actor, (int) $conversation->organization_id, isset($imageDiscussionMessages[$message->id]), $conversationNumbersOnly);
             $remaining = $maxTotalChars - $used;
             if ($remaining <= 0) {
                 break;
@@ -417,9 +417,12 @@ class ConversationManager
         return $refs;
     }
 
-    private function contextContent(Message $message, ?User $actor, int $organizationId, bool $imageDiscussion = false): string
+    private function contextContent(Message $message, ?User $actor, int $organizationId, bool $imageDiscussion = false, bool $conversationNumbersOnly = false): string
     {
         if ($message->role === 'user') {
+            if ($conversationNumbersOnly && ! AssistantFactIntentClassifier::isConversationNumberContext((string) $message->content)) {
+                return '';
+            }
             return $this->normalize((string) $message->content);
         }
         $meta = is_array($message->metadata) ? $message->metadata : [];
@@ -432,6 +435,9 @@ class ConversationManager
             && in_array($meta['validation_status'] ?? null, ['unverified', 'partial'], true)
             && (int) ($meta['actor_user_id'] ?? 0) === (int) $actor->id) {
             return trans_message('ai_assistant.conversation_number_history', ['text' => $this->normalize((string) $message->content)]);
+        }
+        if ($conversationNumbersOnly) {
+            return '';
         }
         if ($imageDiscussion && $message->role === 'assistant' && $actor && $refs === []) {
             return trans_message('ai_assistant.image_discussion_history', ['text' => $this->normalize((string) $message->content)]);
