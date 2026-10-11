@@ -29,13 +29,29 @@ final class DesignCompositionService
     {
         $this->authorize($actor, 'design-management.composition.edit', (int) $package->organization_id, (int) $package->project_id);
         $stage = $package->project_stage instanceof \BackedEnum ? $package->project_stage->value : (string) $package->project_stage;
-        $composition = $this->normalized($stage, $payload['composition']);
-
-        return DB::transaction(function () use ($package, $actor, $composition, $payload): DesignCompositionRevision {
+        return DB::transaction(function () use ($package, $actor, $stage, $payload): DesignCompositionRevision {
             $locked = DesignPackage::query()->whereKey($package->id)->where('organization_id', $package->organization_id)->lockForUpdate()->firstOrFail();
             if (in_array($locked->status->value, ['issued', 'archived'], true)) {
                 throw new DomainException(trans_message('design_composition.errors.issued_package_locked'));
             }
+            $preservedDocumentCodes = [];
+            $artifacts = DesignArtifact::query()->with('section:id,code')
+                ->where('organization_id', $locked->organization_id)
+                ->where('project_id', $locked->project_id)->where('package_id', $locked->id)
+                ->whereNotNull('document_code')->get(['id', 'section_id', 'document_code']);
+            foreach ($artifacts as $artifact) {
+                if ($artifact->section === null) {
+                    continue;
+                }
+                $sectionCode = mb_strtoupper(trim((string) $artifact->section->code), 'UTF-8');
+                $documentCode = mb_strtoupper(trim((string) $artifact->document_code), 'UTF-8');
+                if (isset($preservedDocumentCodes[$sectionCode][$documentCode])
+                    && $preservedDocumentCodes[$sectionCode][$documentCode] !== (string) $artifact->document_code) {
+                    throw new DomainException(trans_message('design_composition.errors.duplicate_item_code'));
+                }
+                $preservedDocumentCodes[$sectionCode][$documentCode] = (string) $artifact->document_code;
+            }
+            $composition = $this->normalized($stage, $payload['composition'], $preservedDocumentCodes);
             $current = DesignCompositionRevision::query()->where('package_id', $locked->id)->orderByDesc('revision_number')->lockForUpdate()->first();
             $latest = (int) ($current?->revision_number ?? 0);
             if ((int) ($payload['expected_revision'] ?? 0) !== $latest) {
@@ -137,7 +153,7 @@ final class DesignCompositionService
         }
     }
 
-    private function normalized(string $stage, mixed $composition): array
+    private function normalized(string $stage, mixed $composition, array $preservedDocumentCodes = []): array
     {
         if (! is_array($composition)) {
             throw new DomainException(trans_message('design_composition.errors.composition_required'));
@@ -149,7 +165,7 @@ final class DesignCompositionService
             if ($sections === []) {
                 throw new DomainException(trans_message('design_composition.errors.pd_sections_required'));
             }
-            $this->assertUniqueCodes($sections);
+            $this->assertUniqueCodes($sections, $preservedDocumentCodes);
             $result['sections'] = $sections;
         } elseif ($stage === 'rd') {
             $brand = trim((string) ($composition['brand'] ?? ''));
@@ -157,14 +173,14 @@ final class DesignCompositionService
             if ($brand === '' || $groups === []) {
                 throw new DomainException(trans_message('design_composition.errors.rd_brand_and_groups_required'));
             } $result['brand'] = $brand;
-            $this->assertUniqueCodes($groups);
+            $this->assertUniqueCodes($groups, $preservedDocumentCodes);
             $result['document_groups'] = $groups;
         } elseif (in_array($stage, ['survey', 'bim'], true)) {
             $items = array_values($composition['items'] ?? []);
             if ($items === []) {
                 throw new DomainException(trans_message('design_composition.errors.explicit_items_required'));
             }
-            $this->assertUniqueCodes($items);
+            $this->assertUniqueCodes($items, $preservedDocumentCodes);
             $result['items'] = $items;
         } else {
             throw new DomainException(trans_message('design_composition.errors.stage_not_supported'));
@@ -179,7 +195,7 @@ final class DesignCompositionService
         return array_values(array_filter(array_map(static fn (mixed $item): ?string => is_array($item) && isset($item['code']) ? (string) $item['code'] : null, $items)));
     }
 
-    private function assertUniqueCodes(array &$items): void
+    private function assertUniqueCodes(array &$items, array $preservedDocumentCodes = []): void
     {
         $codes = [];
         foreach ($items as &$item) {
@@ -202,7 +218,7 @@ final class DesignCompositionService
                     throw new DomainException(trans_message('design_composition.errors.duplicate_item_code'));
                 }
                 $documentCodes[$documentCode] = true;
-                $document['document_code'] = $documentCode;
+                $document['document_code'] = $preservedDocumentCodes[$code][$documentCode] ?? $documentCode;
             }
             unset($document);
             $item['documents'] = array_values($documents);

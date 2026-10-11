@@ -130,7 +130,7 @@ final class DesignDocumentationController extends Controller
             }
 
             return AdminResponse::success(
-                new DesignPackageSectionResource($this->sectionGenerationService->storeCustomSectionDocument($package, $validated)),
+                new DesignPackageSectionResource($this->sectionGenerationService->storeCustomSectionDocument($package, $request->user(), $validated)),
                 trans_message('design_management.messages.custom_section_document_created'),
                 201
             );

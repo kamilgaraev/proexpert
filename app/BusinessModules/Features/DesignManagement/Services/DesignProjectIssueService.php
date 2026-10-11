@@ -30,10 +30,19 @@ final class DesignProjectIssueService
         $this->project($organizationId, $projectId);
         $this->authorize($actor, 'design-management.view', $organizationId, $projectId);
 
+        if (isset($filters['package_id']) && ! DesignPackage::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->whereKey((int) $filters['package_id'])
+            ->exists()) {
+            throw new DomainException(trans_message('design_issues.errors.target_not_found'));
+        }
+
         $issues = QualityDefect::query()
             ->forOrganization($organizationId)
             ->projectIssues()
             ->where('project_id', $projectId)
+            ->when(isset($filters['package_id']), static fn ($query) => $query->where('metadata->design_issue_context->package_id', (int) $filters['package_id']))
             ->when(isset($filters['status']), static fn ($query) => $query->where('status', $filters['status']))
             ->when(isset($filters['version_id']), static fn ($query) => $query->whereJsonContains('metadata->design_issue_context->version_id', (int) $filters['version_id']))
             ->latest('id')

@@ -1348,8 +1348,8 @@ class WarehouseService implements WarehouseReportDataProvider
             });
         }
 
-        if (! empty($filters['search'])) {
-            $search = mb_strtolower(trim((string) $filters['search']));
+        $search = mb_strtolower(trim((string) ($filters['search'] ?? '')));
+        if ($search !== '') {
             $query->whereHas('material', static function (Builder $materialQuery) use ($search): void {
                 $materialQuery->where(function (Builder $searchQuery) use ($search): void {
                     $searchQuery->whereRaw('LOWER(name) LIKE ?', ['%'.$search.'%'])
