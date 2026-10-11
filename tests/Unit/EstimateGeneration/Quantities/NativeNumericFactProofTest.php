@@ -28,6 +28,17 @@ final class NativeNumericFactProofTest extends TestCase
         self::assertTrue((new NativeNumericFactProof)->matches($fact, $evidence));
     }
 
+    public function test_only_a_current_certified_literal_with_compatible_dimension_can_be_a_quantity_choice(): void
+    {
+        [$fact, $evidence] = $this->fixture(null);
+        $eligibility = new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\NativeQuantityFactEligibility;
+        self::assertSame($evidence, $eligibility->evidence($fact, [$evidence->id => $evidence], 'm2'));
+        self::assertNull($eligibility->evidence($fact, [$evidence->id => $evidence], 'm3'));
+        self::assertNull($eligibility->evidence($fact, [], 'm2'));
+        [$unproven, $evidence] = $this->fixture([]);
+        self::assertNull($eligibility->evidence($unproven, [$evidence->id => $evidence], 'm2'));
+    }
+
     private function fixture(?array $change): array
     {
         $version = 'sha256:'.str_repeat('a', 64);

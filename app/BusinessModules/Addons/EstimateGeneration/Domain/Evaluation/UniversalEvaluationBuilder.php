@@ -100,7 +100,8 @@ final readonly class UniversalEvaluationBuilder
             'construction_type' => $coverage['construction_type'], 'price_policy' => $policy['price_policy'] ?? 'normative',
             'profile_version' => $coverage['profile_version']];
         $scopeConfirmed = (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $policy['scope_selection'] ?? null, 'evaluation_scope', $expectedScope);
-        $result = $this->calculator->calculate([['id' => 'base', 'positions' => $positions, 'assumptions' => $assumptions]], $scope, $requirements, $scopeConfirmed);
+        $scenarios = (new EvaluationScenarioSet)->project($positions, $assumptions, $snapshot, $decisions, $policy['scenario_selections'] ?? null);
+        $result = $this->calculator->calculate($scenarios, $scope, $requirements, $scopeConfirmed);
 
         return [...$result, 'profile_id' => $coverage['profile_id'], 'profile_version' => $coverage['profile_version'],
             'coverage' => $coverage, 'priority_questions' => $this->questions->prioritize($questionCandidates),

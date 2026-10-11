@@ -24,7 +24,9 @@ final class EstimatorProcessingPlan
             $roles['estimate_dialogue_interpretation'] = $this->role(3, 80000, 2048, $tariff);
         } else {
             if ($rasterUnits > 0) {
-                $roles['vision'] = $this->role($rasterUnits * ($complex ? 15 : 3),
+                // Literal runs first; unknown input may legitimately route to observers and arbitration.
+                // Reserve the finite escalation ceiling without making those calls mandatory.
+                $roles['vision'] = $this->role($rasterUnits * 15,
                     (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);
                 $roles['ocr'] = $this->role($rasterUnits * 3,
                     (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);

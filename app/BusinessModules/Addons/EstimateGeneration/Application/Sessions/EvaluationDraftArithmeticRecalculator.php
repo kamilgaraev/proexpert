@@ -66,6 +66,9 @@ final readonly class EvaluationDraftArithmeticRecalculator
                             $item['quantity_status'] = $quantity->assumptions === [] ? 'supported' : 'assumed';
                             $item['quantity_evidence'] = $quantity->toArray();
                             $item['quantity_basis_details'] = $quantity->toArray();
+                            $item['validation_flags'] = array_values(array_diff($item['validation_flags'] ?? [], ['quantity_review_required']));
+                            $item['flags'] = array_values(array_diff($item['flags'] ?? [], ['quantity_review_required']));
+                            unset($item['metadata']['requires_quantity_confirmation']);
                             $node = $this->evidence->materialize($context, $quantity, $item);
                             $item['quantity_evidence_id'] = $node->id;
                             $item['quantity_evidence_fingerprint'] = $node->fingerprint;

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\NativeQuantityFactEligibility;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
@@ -74,15 +75,8 @@ final readonly class SaveEvaluationWorkQuantity
                 foreach ($snapshot->facts as $fact) {
                     if ($fact->id === $input['source_fact_id'] && $fact->version === $input['source_fact_version']
                         && hash_equals($input['source_value_hash'], DirectQuantityBinding::valueHash($fact->value))
-                        && $fact->origin === 'document' && $fact->status === 'confirmed'
-                        && (is_string($fact->value) || is_int($fact->value)) && OrdinaryEstimateDecimal::fitsQuantity($fact->value)
-                        && BigDecimal::of((string) $fact->value)->isGreaterThan(0) && $fact->evidenceIds !== []) {
-                        foreach ($fact->evidenceIds as $id) {
-                            $proof = $proofs[$id] ?? null;
-                            if ($proof !== null && (new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof)->matches($fact, $proof)) {
-                                $source = $fact;
-                            }
-                        }
+                        && (new NativeQuantityFactEligibility)->evidence($fact, $proofs, (string) ($item['unit'] ?? '')) !== null) {
+                        $source = $fact;
                     }
                 }
                 if (! $source instanceof Fact) {

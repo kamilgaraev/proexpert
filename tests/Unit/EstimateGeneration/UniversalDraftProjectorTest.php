@@ -9,6 +9,27 @@ use PHPUnit\Framework\TestCase;
 
 final class UniversalDraftProjectorTest extends TestCase
 {
+    public function test_a_planned_work_without_dimensions_remains_addressable_but_notes_cannot_become_work(): void
+    {
+        $items = [['key' => 'floor', 'name' => 'Пол', 'item_type' => 'quantity_review', 'unit' => 'm2', 'quantity' => '99',
+            'metadata' => ['quantity_key' => 'floor_area', 'display_role' => 'quantity_review']],
+            ['key' => 'note', 'name' => 'Уточните размеры', 'item_type' => 'review_note', 'unit' => 'm2'],
+            ['key' => 'nested', 'name' => 'Подготовка', 'item_type' => 'operation', 'unit' => 'm2']];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']],
+            'local_estimates' => [['key' => 'rough_finishing', 'sections' => [['work_items' => $items]]]]];
+        $result = (new UniversalDraftProjector)->project($draft, static fn (): bool => false);
+        $row = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator)->find($result, ['selected_sections' => ['finishing']], 'floor');
+        self::assertSame('priced_work', $row['item_type']);
+        self::assertNull($row['quantity']);
+        self::assertSame('unknown', $row['quantity_status']);
+        $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build($result,
+            new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
+        self::assertCount(1, $evaluation['scenarios'][0]['positions']);
+        self::assertSame('floor', $evaluation['scenarios'][0]['positions'][0]['key']);
+        self::assertSame('quantity:floor', $evaluation['priority_questions'][0]['key']);
+        self::assertSame('review_note', $result['local_estimates'][0]['sections'][0]['work_items'][1]['item_type']);
+    }
+
     public function test_unaccepted_model_volume_and_legacy_zero_price_stay_unknown_without_hiding_the_work(): void
     {
         $items = [['key' => 'unknown', 'quantity' => '123', 'unit' => 'm2', 'total_cost' => 0],

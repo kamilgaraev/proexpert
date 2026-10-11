@@ -306,6 +306,20 @@ final class EstimateAuditTest extends TestCase
         self::assertSame(['document_id' => 7, 'page' => 2], $input->evidence[0]['locator']);
     }
 
+    public function test_factory_rejects_evidence_overflow_instead_of_silently_hiding_source_references(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = 'sha256:'.str_repeat('c', 64);
+        $entity = new Entity('entity:foundation', 10, 20, 30, $source, 'quantity', 'foundation');
+        $fact = new Fact('fact:foundation', 10, 20, 30, $source, $entity->id, 'foundation_volume', '10.25', 'm3', 0.0, 'user_assumption', 'confirmed', []);
+        $models->saveSourceModel([$entity], [$fact], []);
+        $draft = $this->draft([$this->item('work:foundation')]);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['source_refs'] = array_map(
+            static fn (int $page): array => ['fact_id' => $fact->id, 'document_id' => 7, 'page' => $page], range(1, 20001));
+        $this->expectExceptionMessage('estimate_audit_evidence_requires_section_split');
+        (new EstimateAuditInputFactory($models, new InMemoryEvidenceRepository, 10000))->capture(10, 20, 30, $draft);
+    }
+
     public function test_factory_exposes_canonical_evidence_for_an_omitted_fact_without_a_draft_row(): void
     {
         $models = new InMemoryProjectModelRepository;

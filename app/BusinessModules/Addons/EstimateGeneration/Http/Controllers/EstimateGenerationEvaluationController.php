@@ -21,6 +21,39 @@ use Illuminate\Http\Request;
 
 final class EstimateGenerationEvaluationController extends Controller
 {
+    public function scenarios(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet $scenarios): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'definitions' => ['required', 'array', 'size:3'], 'definitions.*.id' => ['required', 'distinct', 'in:minimum,base,maximum'],
+            'definitions.*.basis' => ['required', 'string', 'max:1000'], 'definitions.*.quantities' => ['required', 'array', 'min:1', 'max:10000'],
+            'definitions.*.quantities.*.work_item_key' => ['required', 'string', 'max:160'],
+            'definitions.*.quantities.*.value' => ['required', 'string', 'max:17'],
+            'definitions.*.quantities.*.unit' => ['required', 'string', 'max:30']]);
+
+        return AdminResponse::success($scenarios->handle($request->user(), (int) $project->id, (int) $session->id, $input))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
+    public function pricingSource(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveSessionPricingSource $prices): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'estimate_regional_price_version_id' => ['required', 'integer', 'min:1']]);
+
+        return AdminResponse::success($prices->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
+    }
+
+    public function quantitySources(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationQuantitySources $sources): JsonResponse
+    {
+        $input = $request->validate(['work_item_key' => ['required', 'string', 'max:160'], 'search' => ['sometimes', 'string', 'max:100'],
+            'page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:50']]);
+
+        return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id, $input['work_item_key'],
+            $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25)))->header('Cache-Control', 'private, no-store');
+    }
+
     public function quantity(Request $request, Project $project, EstimateGenerationSession $session, SaveEvaluationWorkQuantity $quantities): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],

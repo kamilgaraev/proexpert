@@ -23,6 +23,17 @@ final class UniversalDraftProjector
                     if (! is_array($item) || ++$count > 10000) {
                         throw new InvalidArgumentException('evaluation_rows_require_section_split');
                     }
+                    if (($item['item_type'] ?? null) === 'quantity_review'
+                        && is_string($item['key'] ?? null) && $item['key'] !== ''
+                        && is_string($item['name'] ?? null) && trim($item['name']) !== ''
+                        && is_string($item['metadata']['quantity_key'] ?? null)
+                        && DirectQuantityBinding::canonicalUnit($item['unit'] ?? null) !== null) {
+                        // Retain a real planned work with unknown volume so a user can supply its basis.
+                        // Notes and nested operations remain non-payable rows.
+                        $item['item_type'] = 'priced_work';
+                        $item['metadata']['display_role'] = 'work';
+                        $item['metadata']['requires_quantity_confirmation'] = true;
+                    }
                     $quantity = is_array($item['quantity_evidence'] ?? null) ? $item['quantity_evidence'] : null;
                     $amount = null;
                     if ($quantity !== null && $quantityAccepted($item)) {

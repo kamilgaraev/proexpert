@@ -51,7 +51,10 @@ Route::middleware([
         Route::post('/{session}/evaluation/price', [EstimateGenerationEvaluationController::class, 'price'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.price');
         Route::post('/{session}/evaluation/quantity', [EstimateGenerationEvaluationController::class, 'quantity'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.quantity');
         Route::post('/{session}/evaluation/scope', [EstimateGenerationEvaluationController::class, 'scope'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.scope');
+        Route::post('/{session}/evaluation/scenarios', [EstimateGenerationEvaluationController::class, 'scenarios'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.scenarios');
         Route::get('/{session}/evaluation/price-sources', [EstimateGenerationEvaluationController::class, 'sources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.price-sources');
+        Route::get('/{session}/evaluation/quantity-sources', [EstimateGenerationEvaluationController::class, 'quantitySources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.quantity-sources');
+        Route::post('/{session}/evaluation/pricing-source', [EstimateGenerationEvaluationController::class, 'pricingSource'])->middleware('authorize:estimate_generation.generate,project,project')->name('evaluation.pricing-source');
         Route::get('/{session}/analysis-basis', [EstimateGenerationAnalysisBasisController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('analysis-basis.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');
         Route::post('/{session}/cancel', [EstimateGenerationActionController::class, 'cancel'])->middleware('authorize:estimate_generation.generate,project,project')->name('cancel');

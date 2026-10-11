@@ -42,6 +42,10 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         ], $input);
         $candidateLinks = $validatedCandidates['links'];
         $candidateQuestions = $validatedCandidates['questions'];
+        $candidateFingerprint = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
+            'contract' => 'project-synthesis-candidates:v1', 'input_fingerprint' => $input->fingerprint(),
+            'links' => $candidateLinks, 'questions' => $candidateQuestions,
+        ]));
         $runInput = new AiRoleRunInput(
             organizationId: $input->organizationId,
             projectId: $input->projectId,
@@ -54,7 +58,7 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
             role: AiAnalysisRole::ProjectEngineer,
             model: $this->modelName,
             promptContractVersion: self::PROMPT_CONTRACT,
-            inputFingerprint: $input->fingerprint(),
+            inputFingerprint: $candidateFingerprint,
         );
         $owner = AiOperationContext::deterministicId('project-synthesis-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);

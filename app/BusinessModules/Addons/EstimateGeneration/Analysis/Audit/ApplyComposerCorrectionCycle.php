@@ -63,7 +63,10 @@ final readonly class ApplyComposerCorrectionCycle
             ],
             array_filter($final['findings'], static fn (array $finding): bool => $finding['severity'] === 'material'),
         ));
-        $draft['audit_review_items'] = array_slice($reviewItems, 0, 1000);
+        if (count($reviewItems) > 1000) {
+            throw new \InvalidArgumentException('estimate_audit_review_items_require_section_split');
+        }
+        $draft['audit_review_items'] = $reviewItems;
         $audit = [
             'schema_version' => 1,
             'snapshot_token' => $root->snapshotToken,

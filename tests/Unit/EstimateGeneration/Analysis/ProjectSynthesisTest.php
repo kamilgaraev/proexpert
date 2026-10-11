@@ -97,7 +97,19 @@ final class ProjectSynthesisTest extends TestCase
         self::assertSame($first->toArray(), $second->toArray());
         self::assertSame(1, $model->calls);
         self::assertSame('project_engineer', $runs->inputs[0]->role->value);
-        self::assertSame($this->input()->fingerprint(), $runs->inputs[0]->inputFingerprint);
+        self::assertNotSame($this->input()->fingerprint(), $runs->inputs[0]->inputFingerprint);
+        self::assertSame($runs->inputs[0]->inputFingerprint, $runs->inputs[1]->inputFingerprint);
+    }
+
+    public function test_distinct_candidate_sets_cannot_replay_a_previous_engineer_selection(): void
+    {
+        $runs = new SynthesisRoleRunMemoryRepository;
+        $model = new RecordedProjectSynthesisModel(['accepted_link_ids' => ['link:roof'], 'question_conflict_ids' => []]);
+        $runner = new RunProjectSynthesis($runs, $model, 'openai/gpt-6-luna');
+        $runner->run($this->input(), [['id' => 'link:roof', 'status' => 'confirmed', 'fact_ids' => ['fact:roof-area', 'fact:roof-material']]], []);
+        $runner->run($this->input(), [['id' => 'link:visual', 'status' => 'confirmed', 'fact_ids' => ['fact:roof-area', 'fact:roof-visual']]], []);
+        self::assertNotSame($runs->inputs[0]->inputFingerprint, $runs->inputs[1]->inputFingerprint);
+        self::assertSame(2, $model->calls);
     }
 
     public function test_project_engineer_quarantines_unknown_refs_and_keeps_server_required_selection(): void
@@ -189,22 +201,26 @@ final class SynthesisRoleRunMemoryRepository implements AiRoleRunRepository
 
     public ?AiRoleRunResult $lastResult = null;
 
-    private ?AiRoleRunResult $result = null;
+    private array $results = [];
+
+    private string $currentIdentity = '';
 
     public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
     {
         $this->inputs[] = $input;
+        $this->currentIdentity = $input->identityFingerprint();
+        $result = $this->results[$this->currentIdentity] ?? null;
 
-        return $this->result === null
+        return $result === null
             ? new AiRoleRunClaim(1, 'owned', $ownerUuid)
-            : new AiRoleRunClaim(1, 'replay', result: $this->result);
+            : new AiRoleRunClaim(1, 'replay', result: $result);
     }
 
     public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
-        $this->result = $result;
+        $this->results[$this->currentIdentity] = $result;
         $this->lastResult = $result;
     }
 

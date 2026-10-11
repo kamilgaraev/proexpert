@@ -47,6 +47,52 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame('quantity', $snapshot->entities[0]->attributes['semantic_type']);
         self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof)->matches($snapshot->facts[0], $snapshot->evidence[0]));
         self::assertNotEmpty($snapshot->facts[0]->nativeNumericProofs);
+        $session = EstimateGenerationSession::query()->findOrFail($context->sessionId);
+        $actor = User::query()->findOrFail($session->user_id);
+        $actor->organizations()->attach($context->organizationId, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $draft = ['local_estimates' => [['key' => 'foundations', 'sections' => [['work_items' => [
+            ['key' => 'work:concrete', 'item_type' => 'priced_work', 'name' => 'Бетонирование', 'quantity' => null, 'unit' => 'm3'],
+        ]]]]]];
+        $draft['source_input_version'] = 'sha256:'.(new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint)->fromSession($session);
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft);
+        $session->update(['draft_payload' => $draft]);
+        $reader = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationQuantitySources::class);
+        $sources = $reader->handle($actor, $context->projectId, $context->sessionId, 'work:concrete');
+        self::assertSame('0', $sources['cost_units']);
+        self::assertSame(1, $sources['pagination']['total']);
+        self::assertSame($snapshot->facts[0]->id, $sources['sources'][0]['source_fact_id']);
+        self::assertSame('xlsx:sheet:Объемы!B2', $sources['sources'][0]['evidence']['native_reference']);
+        $foreignContext = $this->context();
+        $foreignSession = EstimateGenerationSession::query()->findOrFail($foreignContext->sessionId);
+        $foreignActor = User::query()->findOrFail($foreignSession->user_id);
+        try {
+            $reader->handle($foreignActor, $context->projectId, $context->sessionId, 'work:concrete');
+            self::fail('A native quantity source crossed organization scope.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            self::assertTrue(true);
+        }
+        $choice = $sources['sources'][0];
+        $receipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)
+            ->handle($actor, $context->projectId, $context->sessionId, ['request_id' => (string) \Illuminate\Support\Str::uuid(),
+                'state_version' => 0, 'work_item_key' => 'work:concrete', 'source_fact_id' => $choice['source_fact_id'],
+                'source_fact_version' => $choice['source_fact_version'], 'source_value_hash' => $choice['source_value_hash'], 'reason' => 'Подтверждённая ведомость объёмов']);
+        self::assertSame(1, $receipt['state_version']);
+        self::assertTrue($receipt['recalculation_required']);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = 'm2';
+        $draft['source_input_version'] = 'sha256:'.(new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint)->fromSession($session->fresh());
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft);
+        $session->fresh()->update(['draft_payload' => $draft]);
+        self::assertSame([], $reader->handle($actor, $context->projectId, $context->sessionId, 'work:concrete')['sources']);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = 'm3';
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft);
+        $session->fresh()->update(['draft_payload' => $draft]);
+        $evidenceId = (int) DB::table('estimate_generation_evidence')->where('session_id', $context->sessionId)->value('id');
+        app(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class)
+            ->invalidate($context->organizationId, $context->projectId, $context->sessionId, [$evidenceId], 'source_changed');
+        self::assertSame([], $reader->handle($actor, $context->projectId, $context->sessionId, 'work:concrete')['sources']);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
     }
 
@@ -110,7 +156,7 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
         $version = 'sha256:'.str_repeat('a', 64);
         $document = EstimateGenerationDocument::query()->create(['organization_id' => $organization->id,
             'project_id' => $project->id, 'session_id' => $session->id, 'user_id' => $user->id,
-            'filename' => 'source.xlsx', 'mime_type' => 'application/octet-stream', 'source_version' => $version]);
+            'filename' => 'source.xlsx', 'mime_type' => 'application/octet-stream', 'source_version' => $version, 'checksum_sha256' => substr($version, 7)]);
         $page = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage::query()->create([
             'organization_id' => $organization->id, 'project_id' => $project->id, 'session_id' => $session->id,
             'document_id' => $document->id, 'page_number' => 1, 'source_version' => $version,
