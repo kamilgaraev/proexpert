@@ -179,6 +179,12 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
         $this->publish($context, $publication);
         $repository = app(ProjectModelRepository::class);
         $id = (int) DB::table('estimate_generation_evidence')->where('session_id', $context->sessionId)->value('id');
+        try {
+            DB::transaction(fn () => DB::table('estimate_generation_evidence')->where('id', $id)->update(['invalidation_version' => 1]));
+            self::fail('An active epoch was changed without invalidation.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('evidence_epoch_not_monotonic', $exception->getMessage());
+        }
         app(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class)->invalidate($context->organizationId, $context->projectId, $context->sessionId, [$id], 'test_revalidation');
         self::assertSame([], $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
         $this->publish($context, $publication);

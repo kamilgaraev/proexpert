@@ -20,6 +20,7 @@ return new class extends Migration
 CREATE FUNCTION eg_evidence_epoch_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF NEW.invalidation_version < OLD.invalidation_version
+      OR ((OLD.invalidated_at IS NULL) = (NEW.invalidated_at IS NULL) AND NEW.invalidation_version <> OLD.invalidation_version)
       OR (OLD.invalidated_at IS NULL AND NEW.invalidated_at IS NOT NULL AND NEW.invalidation_version <> OLD.invalidation_version + 1)
       OR (OLD.invalidated_at IS NOT NULL AND NEW.invalidated_at IS NULL AND NEW.invalidation_version <> OLD.invalidation_version) THEN
         RAISE EXCEPTION 'estimate_generation.evidence_epoch_not_monotonic';

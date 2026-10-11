@@ -63,4 +63,19 @@ final class UniversalEvaluationBuilderTest extends TestCase
         self::assertSame(['q4', 'another-work'], $result[0]['affected_position_keys']);
         self::assertNotContains('q2', array_column($result, 'key'));
     }
+
+    public function test_blocked_or_zero_normative_snapshot_is_unknown_instead_of_a_zero_price(): void
+    {
+        $item = ['key' => 'floor', 'name' => 'Пол', 'unit' => 'm2', 'quantity' => '20', 'evaluation_price_basis_quantity' => '20',
+            'pricing_status' => 'not_calculated', 'pricing_blocker' => 'pricing_not_calculated',
+            'price_snapshot' => ['source_type' => 'regional_resource_aggregate', 'final_amount' => '0.00',
+                'source_reference' => 'price:1', 'currency' => 'RUB', 'region_id' => 1, 'period_id' => 1, 'version_id' => 1,
+                'coefficients' => ['resource_evidence' => [['final_amount' => '0.00', 'source_reference' => 'resource:1']]]]];
+        $draft = ['evaluation_policy' => ['selected_sections' => ['finishing']], 'local_estimates' => [['key' => 'rough_finishing', 'sections' => [['work_items' => [$item]]]]]];
+        $result = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+        self::assertNull($result['scenarios'][0]['positions'][0]['price_snapshot']);
+        self::assertNull($result['scenarios'][0]['positions'][0]['unit_price']);
+        self::assertNull($result['scenarios'][0]['positions'][0]['total_cost']);
+        self::assertSame([], $result['scenarios'][0]['known_subtotals']);
+    }
 }

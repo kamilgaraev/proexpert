@@ -111,10 +111,13 @@ final readonly class UniversalEvaluationBuilder
         $price = $item['price_snapshot'] ?? null;
         $quantity = $item['quantity'] ?? null;
         if (! is_array($price) || ($price['source_type'] ?? null) !== 'regional_resource_aggregate'
+            || ! in_array($item['pricing_status'] ?? null, ['calculated', 'calculated_review_required'], true)
+            || ! in_array($item['pricing_blocker'] ?? null, [null, '', 'none'], true)
             || ! is_string($quantity) || ! BigDecimal::of($quantity)->isGreaterThan(0)
             || ! is_string($item['evaluation_price_basis_quantity'] ?? null)
             || ! BigDecimal::of($item['evaluation_price_basis_quantity'])->isEqualTo(BigDecimal::of($quantity))
-            || ! is_string($price['final_amount'] ?? null) || ! is_array($price['coefficients']['resource_evidence'] ?? null)) {
+            || ! is_string($price['final_amount'] ?? null) || ! BigDecimal::of($price['final_amount'])->isGreaterThan(0)
+            || ! is_array($price['coefficients']['resource_evidence'] ?? null) || $price['coefficients']['resource_evidence'] === []) {
             return null;
         }
         $basis = ['kind' => 'normative_resource_sum', 'quantity' => $quantity,
