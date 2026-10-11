@@ -11,6 +11,8 @@ use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageProjectionLease;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageStateStore;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -526,6 +528,30 @@ final class RagActorCoverageTest extends TestCase
         $this->assertSame(1, $this->collector->collections);
         $job->handle($this->coverage);
         $this->assertSame(1, $this->collector->collections);
+    }
+
+    public function test_stale_revision_lease_does_not_block_a_current_projection_or_allow_stale_publication(): void
+    {
+        [$organization, $actor, $visible] = $this->scope();
+        $this->index($organization->id, $visible);
+        $states = app(RagCoverageStateStore::class);
+        $oldRevision = $states->revision($organization->id);
+        $name = 'ai-rag-coverage-projection:'.$organization->id;
+        $oldLease = Cache::lock($name, 7500, 'old-worker');
+        self::assertTrue(RagCoverageProjectionLease::acquire($oldLease, $name, $oldRevision, 7500));
+        RagCoverageService::invalidate($organization->id);
+        $snapshot = $this->coverage->refreshCoverage($organization->id);
+        self::assertTrue($snapshot['eligible_count_known']);
+        self::assertSame(1, $snapshot['expected_source_count']);
+        self::assertTrue($this->coverage->coverageForActor($organization->id, $actor)['coverage_complete']);
+        self::assertFalse($oldLease->release());
+        try {
+            $states->publish($organization->id, $oldRevision, $snapshot);
+            self::fail('Stale revision published');
+        } catch (\RuntimeException $failure) {
+            self::assertSame('rag_coverage_projection_expired', $failure->getMessage());
+        }
+        self::assertSame($snapshot['projection_generation'], $states->activeGeneration($organization->id));
     }
 
     public function test_refresh_job_reports_unknown_counts_without_claiming_publication(): void

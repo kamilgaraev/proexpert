@@ -292,8 +292,12 @@ final class RagCoverageService
             return $this->coverage($organizationId, $projectId, $sourceType);
         }
         $scope = $projectId === null && $sourceType === null ? '' : ':'.($projectId ?? 0).':'.($sourceType ?? '*');
-        $lease = Cache::lock('ai-rag-coverage-projection:'.$organizationId.$scope, 7500);
-        if (! $lease->get()) {
+        $leaseName = 'ai-rag-coverage-projection:'.$organizationId.$scope;
+        $lease = Cache::lock($leaseName, 7500);
+        $acquired = $projectId === null && $sourceType === null
+            ? RagCoverageProjectionLease::acquire($lease, $leaseName, (int) substr($cacheKey, strrpos($cacheKey, ':') + 1), 7500)
+            : $lease->get();
+        if (! $acquired) {
             return $this->coverage($organizationId, $projectId, $sourceType);
         }
         $deadline = microtime(true) + 7200;
