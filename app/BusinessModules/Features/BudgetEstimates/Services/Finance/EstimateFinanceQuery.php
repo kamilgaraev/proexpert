@@ -31,6 +31,8 @@ final class EstimateFinanceQuery
                 'position_number' => (string) $item->position_number,
                 'unit' => $item->measurementUnit?->short_name, 'unit_id' => $item->measurement_unit_id,
                 'quantity' => (string) ($item->quantity_total ?? $item->quantity ?? '0'),
+                'base_quantity' => (string) ($item->quantity ?? '0'),
+                'quantity_coefficient' => (string) ($item->quantity_coefficient ?? '1'),
                 'estimate_amount' => (string) ($item->total_amount ?? '0'),
                 'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($item->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
                 'excluded' => (bool) $item->is_not_accounted,
