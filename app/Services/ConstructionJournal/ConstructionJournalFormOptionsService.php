@@ -15,6 +15,7 @@ use App\Models\ConstructionJournal;
 use App\Models\Contract;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
 use App\Models\Project;
 use App\Models\User;
@@ -98,7 +99,7 @@ class ConstructionJournalFormOptionsService
             ->where('organization_id', $journal->organization_id)
             ->where('project_id', $journal->project_id)
             ->where('status', 'approved')
-            ->with(['items' => function ($query): void {
+            ->with(['sections:id,estimate_id,parent_section_id,name,sort_order', 'items' => function ($query): void {
                 $query->where('item_type', EstimatePositionItemType::WORK->value)
                     ->with(self::estimateItemRelations());
             }])
@@ -114,12 +115,22 @@ class ConstructionJournalFormOptionsService
             ->get();
 
         return [
-            'estimates' => $estimates->map(fn (Estimate $estimate): array => [
-                'id' => $estimate->id,
-                'name' => $estimate->name,
-                'number' => $estimate->number,
-                'items' => $estimate->items->map(fn (EstimateItem $item): array => $this->mapEstimateItem($item, $journal))->values()->all(),
-            ])->values()->all(),
+            'estimates' => $estimates->map(function (Estimate $estimate) use ($journal): array {
+                $sections = $estimate->sections->keyBy('id');
+
+                return [
+                    'id' => $estimate->id,
+                    'name' => $estimate->name,
+                    'number' => $estimate->number,
+                    'sections' => $sections->map(static fn (EstimateSection $section): array => [
+                        'id' => $section->id,
+                        'name' => $section->name,
+                        'parent_section_id' => $section->parent_section_id !== null && $sections->has($section->parent_section_id)
+                            ? (int) $section->parent_section_id : null,
+                    ])->values()->all(),
+                    'items' => $estimate->items->map(fn (EstimateItem $item): array => $this->mapEstimateItem($item, $journal))->values()->all(),
+                ];
+            })->values()->all(),
             'work_types' => $workTypes->map(fn (WorkType $workType): array => $this->mapWorkType($workType))->values()->all(),
             'measurement_units' => MeasurementUnit::query()
                 ->where(function ($query) use ($journal): void {
@@ -137,7 +148,7 @@ class ConstructionJournalFormOptionsService
 
     public static function estimateItemRelations(): array
     {
-        return ['workType.measurementUnit', 'measurementUnit', 'contractLinks.contract.contractor', 'resources.material.measurementUnit', 'resources.measurementUnit', 'childItems.measurementUnit', 'childItems.material'];
+        return ['section:id,estimate_id', 'workType.measurementUnit', 'measurementUnit', 'contractLinks.contract.contractor', 'resources.material.measurementUnit', 'resources.measurementUnit', 'childItems.measurementUnit', 'childItems.material'];
     }
 
     public function mapEstimateItem(EstimateItem $item, ConstructionJournal $journal): array
@@ -152,6 +163,8 @@ class ConstructionJournalFormOptionsService
         return [
             'id' => $item->id,
             'estimate_id' => $item->estimate_id,
+            'estimate_section_id' => $item->section !== null && (int) $item->section->estimate_id === (int) $item->estimate_id
+                ? (int) $item->section->id : null,
             'position_number' => $item->position_number,
             'name' => $item->name,
             'item_type' => $item->item_type?->value,
