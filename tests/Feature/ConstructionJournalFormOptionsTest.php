@@ -15,6 +15,7 @@ use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
+use App\Models\EstimateSection;
 use App\Models\JournalWorkVolume;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
@@ -196,6 +197,53 @@ final class ConstructionJournalFormOptionsTest extends TestCase
         $user->organizations()->updateExistingPivot($organization->id, ['project_access_mode' => 'assigned_projects']);
         $this->expectException(AuthorizationException::class);
         $service->build($user, $journal);
+    }
+
+    public function test_scoped_sections_and_work_assignments_are_available_to_the_journal_performer(): void
+    {
+        [$organization, $user, $project, $journal, $estimate, $item, $unit] = $this->fixture();
+        $actor = $this->sharedAssignedActor($project);
+        $journal->update(['performing_organization_id' => $actor->current_organization_id]);
+        $root = EstimateSection::query()->create(['estimate_id' => $estimate->id, 'name' => 'Фундамент', 'sort_order' => 2]);
+        $child = EstimateSection::query()->create(['estimate_id' => $estimate->id, 'parent_section_id' => $root->id, 'name' => 'Арматура', 'sort_order' => 3]);
+        $first = EstimateSection::query()->create(['estimate_id' => $estimate->id, 'name' => 'Подготовка', 'sort_order' => 1, 'section_total_amount' => 500]);
+        $item->update(['estimate_section_id' => $child->id]);
+        $unassigned = EstimateItem::query()->create([
+            'estimate_id' => $estimate->id, 'position_number' => '2', 'item_type' => 'work',
+            'name' => 'Без раздела', 'measurement_unit_id' => $unit->id, 'quantity' => 1,
+        ]);
+
+        $payload = app(ConstructionJournalFormOptionsService::class)->build($actor, $journal)['estimates'][0];
+
+        self::assertSame($estimate->id, $payload['id']);
+        self::assertSame([
+            ['id' => $first->id, 'name' => 'Подготовка', 'parent_section_id' => null],
+            ['id' => $root->id, 'name' => 'Фундамент', 'parent_section_id' => null],
+            ['id' => $child->id, 'name' => 'Арматура', 'parent_section_id' => $root->id],
+        ], $payload['sections']);
+        self::assertSame($child->id, collect($payload['items'])->firstWhere('id', $item->id)['estimate_section_id']);
+        self::assertNull(collect($payload['items'])->firstWhere('id', $unassigned->id)['estimate_section_id']);
+    }
+
+    public function test_section_metadata_does_not_expose_links_to_another_estimate(): void
+    {
+        [$organization, $user, $project, $journal, $estimate, $item] = $this->fixture();
+        $foreignEstimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => Project::factory()->create(['organization_id' => $organization->id])->id,
+            'name' => 'Другая смета', 'number' => 'FOREIGN-SECTION', 'estimate_date' => '2026-10-01', 'status' => 'approved',
+        ]);
+        $foreignSection = EstimateSection::query()->create(['estimate_id' => $foreignEstimate->id, 'name' => 'Чужой раздел']);
+        $section = EstimateSection::query()->create([
+            'estimate_id' => $estimate->id, 'parent_section_id' => $foreignSection->id, 'name' => 'Раздел журнала',
+        ]);
+        $item->update(['estimate_section_id' => $foreignSection->id]);
+
+        $estimates = app(ConstructionJournalFormOptionsService::class)->build($user, $journal)['estimates'];
+
+        self::assertSame([$estimate->id], array_column($estimates, 'id'));
+        self::assertSame([['id' => $section->id, 'name' => 'Раздел журнала', 'parent_section_id' => null]], $estimates[0]['sections']);
+        self::assertNull($estimates[0]['items'][0]['estimate_section_id']);
     }
 
     public function test_known_zero_plan_is_not_replaced_with_price_derived_quantity(): void
