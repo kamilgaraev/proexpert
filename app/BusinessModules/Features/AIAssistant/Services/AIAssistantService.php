@@ -28,6 +28,7 @@ use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\Assis
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\Project;
 use App\Services\Logging\LoggingService;
 use App\Support\AI\LunaModelPolicy;
 use App\Support\AI\TokenBudgetService;
@@ -1971,6 +1972,7 @@ class AIAssistantService
         }
         $arguments = json_decode((string) ($toolCall['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
         if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
@@ -1980,6 +1982,34 @@ class AIAssistantService
         }
         if ($toolName === 'get_bim_model_elements' && ! array_key_exists('project_id', $args)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+        }
+        if ($toolName === 'get_bim_model_elements') {
+            $namedProject = AssistantBimModelSelector::namedProject($requestQuery);
+            $projectScopeRequested = AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery);
+            if ($projectScopeRequested && $namedProject === null) {
+                $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            }
+            $providedProjectId = is_int($args['project_id'] ?? null) ? $args['project_id'] : null;
+            $projectId = $providedProjectId ?? $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            if ($projectId !== null && ($namedProject !== null || is_string($args['model_query'] ?? null))) {
+                $projectName = $this->readableBimProjectName($user, $organizationId, $projectId);
+                if (is_string($projectName)) {
+                    $projectSelector = $namedProject ?? (is_string($args['model_query'] ?? null) ? $args['model_query'] : null);
+                    if (AssistantBimModelSelector::matchesProjectQuestion($projectSelector, $projectName, $requestQuery)) {
+                        $args['project_id'] = $projectId;
+                        $args['model_query'] = AssistantBimModelSelector::withoutProjectAlias(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $projectName, $requestQuery);
+                    } elseif ($namedProject !== null) {
+                        $bimScopeMissing = true;
+                    }
+                }
+            }
+            if ($projectScopeRequested && ! is_int($args['project_id'] ?? null)) {
+                $bimScopeMissing = true;
+            }
+        }
+        if ($toolName === 'get_bim_model_elements' && ! is_int($args['project_id'] ?? null)) {
+            $bimScopeMissing = $bimScopeMissing || AssistantEstimateResolver::requiresCurrentProject($requestQuery)
+                || AssistantBimModelSelector::isProjectQuestion(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $requestQuery);
         }
         if ($toolName === 'assistant_domain_search' && ! array_key_exists('project_id', $args)) {
             $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
@@ -2089,6 +2119,12 @@ class AIAssistantService
             }
 
             $progressCode = AssistantRequestProgress::toolCode($toolName, $args);
+            if ($bimScopeMissing) {
+                $this->recordRequestOutcome('insufficient_data');
+
+                return ['status' => 'insufficient_data', 'needs_clarification' => true, 'source_refs' => [],
+                    'server_formatted_answer' => trans_message('ai_assistant_bim.project_required')];
+            }
             $this->progress($progressCode, 'started');
             $pureDatabaseRead = in_array($toolName, [
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
@@ -3619,6 +3655,21 @@ class AIAssistantService
         return is_array($taskPlan['request_understanding'] ?? null)
             ? AssistantRequestUnderstanding::fromArray($taskPlan['request_understanding'])
             : null;
+    }
+
+    protected function readableBimProjectName(User $actor, int $organizationId, int $projectId): ?string
+    {
+        if ($this->dataAccess === null) {
+            return null;
+        }
+
+        return $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $projectId): ?string {
+            if (! $this->dataAccess->canReadEntityContent($actor, $organizationId, 'project', $projectId)) {
+                return null;
+            }
+
+            return Project::query()->where('organization_id', $organizationId)->whereKey($projectId)->value('name');
+        }, true);
     }
 
     private function toolBlockedMessage(?string $reason): string

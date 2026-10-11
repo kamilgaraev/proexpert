@@ -1,0 +1,67 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\AIAssistant\Services;
+
+final class AssistantBimModelSelector
+{
+    public static function withoutProjectAlias(?string $modelQuery, string $projectName, string $question): ?string
+    {
+        if ($modelQuery === null || trim($modelQuery) === '') {
+            return $modelQuery;
+        }
+        $needle = str_replace('ё', 'е', mb_strtolower(trim($modelQuery)));
+        $query = str_replace('ё', 'е', mb_strtolower($question));
+        $literal = preg_quote($needle, '/');
+        if (! self::matchesProjectQuestion($modelQuery, $projectName, $question)
+            || preg_match('/\.ifc\b/iu', $question)
+            || preg_match('/(?:модел[а-я]*|файл[а-я]*)\s+(?:(?:ifc|bim|с\s+названием|под\s+названием)\s+)*[«"“\x27‘]/u', $query)
+            || preg_match('/(?:модел[а-я]*|файл[а-я]*)\s+(?:(?:ifc|bim|с\s+названием|под\s+названием)\s+)*[«"“\x27‘]?'.$literal.'/u', $query)) {
+            return $modelQuery;
+        }
+
+        return null;
+    }
+
+    public static function matchesProjectQuestion(?string $selector, string $projectName, string $question): bool
+    {
+        return self::isProjectQuestion($selector, $question)
+            && str_contains(str_replace('ё', 'е', mb_strtolower($projectName)), str_replace('ё', 'е', mb_strtolower(trim((string) $selector))));
+    }
+
+    public static function isProjectQuestion(?string $selector, string $question): bool
+    {
+        if ($selector === null || trim($selector) === '') {
+            return false;
+        }
+        $literal = preg_quote(str_replace('ё', 'е', mb_strtolower(trim($selector))), '/');
+        $query = str_replace('ё', 'е', mb_strtolower($question));
+
+        return preg_match('/проект[а-я]*\s+[«"“\x27‘]?'.$literal.'(?![\pL\pN])/u', $query) === 1;
+    }
+
+    public static function hasProjectScope(string $question): bool
+    {
+        return preg_match('/(?<![\pL\pN])проект(?:е|у|а)?(?![\pL\pN])/iu', $question) === 1;
+    }
+
+    public static function namedProject(string $question): ?string
+    {
+        if (! preg_match('/(?<![\pL\pN])проект(?:е|у|а)?\s+(?:[«"“\x27‘]([^»"”\x27’]+)[»"”\x27’]|([^.!?,]{1,120}))/iu', $question, $match)) {
+            return null;
+        }
+        if ($match[1] !== '') {
+            return trim($match[1]);
+        }
+        if (preg_match('/(?<![\pL\pN])(?:текущ|выбран|эт[ао]|данн)[а-яё]*\s+проект/iu', $question)) {
+            return null;
+        }
+        $name = trim((string) preg_split('/\s+(?:есть|сколько|покажи|посчитай|найди|проверь|какие|котор[а-яё]*|и)(?![\pL\pN])/iu', $match[2], 2)[0]);
+        if ($name === '' || preg_match('/^(?:(?:текущ|выбран|эт[ао]|данн)[а-яё]*|есть|сколько|покажи|посчитай|найди|проверь|какие)(?![\pL\pN])/iu', $name)) {
+            return null;
+        }
+
+        return $name;
+    }
+}
