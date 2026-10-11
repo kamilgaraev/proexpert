@@ -1096,6 +1096,12 @@ class AIAssistantService
                     $assistantPayload[$key] ?? []);
             }
             $assistantPayload['actor_user_id'] = (int) $user->id;
+            $assistantPayload['conversation_number_context'] = AssistantFactIntentClassifier::isConversationNumberRequest($query)
+                && $assistantPayload['source_refs'] === []
+                && $assistantPayload['validation_status'] === 'unverified'
+                && $proposedActions === []
+                && ! ($financialCheck['replaced'] ?? false)
+                && ! ($structuredCheck['replaced'] ?? false);
             $assistantPayload['fetched_at'] = now()->toISOString();
             $assistantPayload = $this->decorateMetadata($assistantPayload, $user);
             $verificationTimer->finish();
@@ -2540,12 +2546,12 @@ class AIAssistantService
         }
 
         $normalizedQuery = mb_strtolower(trim($query));
-        if ($this->looksLikeStandaloneRequest($normalizedQuery)) {
-            return false;
-        }
-
         if ($this->isDetailContinuation($query)) {
             return true;
+        }
+
+        if ($this->looksLikeStandaloneRequest($normalizedQuery)) {
+            return false;
         }
 
         if (! in_array($previousCapability, ['reports', 'schedules'], true)) {
@@ -2676,6 +2682,10 @@ class AIAssistantService
 
     private function looksLikeStandaloneRequest(string $normalizedQuery): bool
     {
+        if (preg_match('/^(?:а\s+)?(?:покажи|посмотри|расскажи|проверь)\s+(.+)$/u', $normalizedQuery, $readCommand)) {
+            return ! preg_match('/^(?:за|с|по)(?![\pL\pN])|^(?:это|его|её|ее|их)[.!?]*$/u', $readCommand[1]);
+        }
+
         if ($this->containsAnyText($normalizedQuery, [
             'открой',
             'перейди',

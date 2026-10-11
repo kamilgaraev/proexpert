@@ -427,6 +427,12 @@ class ConversationManager
             return '';
         }
         $refs = $this->messageReferences($meta);
+        if ($message->role === 'assistant' && $actor && $refs === [] && ($meta['source_refs'] ?? null) === []
+            && ($meta['conversation_number_context'] ?? false) === true
+            && ($meta['validation_status'] ?? null) === 'unverified'
+            && (int) ($meta['actor_user_id'] ?? 0) === (int) $actor->id) {
+            return trans_message('ai_assistant.conversation_number_history', ['text' => $this->normalize((string) $message->content)]);
+        }
         if ($imageDiscussion && $message->role === 'assistant' && $actor && $refs === []) {
             return trans_message('ai_assistant.image_discussion_history', ['text' => $this->normalize((string) $message->content)]);
         }
