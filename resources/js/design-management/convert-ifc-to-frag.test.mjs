@@ -21,6 +21,11 @@ test("real IFC preserves express IDs and canonical properties in the offline sid
     const result = stdout.split("\n").filter(Boolean).map(JSON.parse).find((message) => message.event === "result");
     assert.equal(result.metrics.ifc_metadata.indexed_element_count, 120);
     assert.match(result.metrics.runtime.fragments, /^\d+\.\d+\.\d+/);
+    assert.notEqual(result.metrics.memory.geometry.pid, result.metrics.memory.index.pid);
+    assert.equal(result.metrics.memory.parser_cache_limit_bytes, 512 * 1024 * 1024);
+    const progress = stdout.split("\n").filter(Boolean).map(JSON.parse).filter((message) => message.event === "progress");
+    assert.ok(progress.some((message) => message.stage === "indexing"));
+    assert.ok(progress.every((message, index) => index === 0 || message.progress >= progress[index - 1].progress));
 
     const inspect = `
       import fs from "node:fs";

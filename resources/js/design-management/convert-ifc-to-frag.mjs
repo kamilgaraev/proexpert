@@ -1,15 +1,18 @@
-import { readSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createDeflate } from "node:zlib";
 import { ByteBuffer } from "flatbuffers";
-import pako from "pako";
-import * as FRAGS from "@thatopen/fragments";
-import { IfcAPI } from "web-ifc";
-import { getElementPropertySets } from "./ifc-element-properties.mjs";
+import { getElementPropertySets, createPropertySetReader } from "./ifc-element-properties.mjs";
 import { writeConverterMessage } from "./converter-output.mjs";
+import { openIfcSource, IFC_LOADER_SETTINGS } from "./ifc-reader.mjs";
+import { runConverterPhase, watchConverterParent } from "./ifc-converter-process.mjs";
+import { createIfcPropertyLookup } from "./ifc-relationships.mjs";
 
-const [, , inputPath, outputPath, indexPath] = process.argv;
+const [, , inputPath, outputPath, indexPath, phase] = process.argv;
 const VIEWER_GEOMETRY_PROFILE = "ifc_properties_geometry_v2";
 const require = createRequire(import.meta.url);
 
@@ -97,17 +100,17 @@ const configureViewerImporter = (importer) => {
   importer.relations.clear();
 };
 
-const inspectFragments = (bytes, raw = false) => {
+const inspectFragments = async (bytes) => {
+  const { Model } = await import("@thatopen/fragments");
   const fragmentBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  const modelBytes = raw ? fragmentBytes : pako.inflate(fragmentBytes);
-  const model = FRAGS.Model.getRootAsModel(new ByteBuffer(modelBytes));
+  const model = Model.getRootAsModel(new ByteBuffer(fragmentBytes));
   const meshes = model.meshes();
   const bounds = emptyBounds();
   let boundedRepresentations = 0;
 
   const metrics = {
     format: "thatopen_frag",
-    raw,
+    raw: false,
     local_id_count: model.localIdsLength(),
     category_count: model.categoriesLength(),
     sample_count: meshes?.samplesLength() ?? 0,
@@ -161,8 +164,13 @@ const namedProperties = (sets) => {
   return result;
 };
 
-const materialNames = (materials) => (materials ?? [])
-  .map((material) => value(material.Name) ?? value(material.Material?.Name))
+const materialNames = (api, modelID, materials) => (materials ?? [])
+  .map((material) => {
+    const name = value(material.Name);
+    if (name !== null) return name;
+    const materialID = Number(value(material.Material));
+    return Number.isInteger(materialID) && materialID > 0 ? value(api.GetLine(modelID, materialID, false)?.Name) : null;
+  })
   .filter((name) => name !== null)
   .map(String);
 
@@ -185,107 +193,155 @@ const classificationMap = (api, modelID) => {
       map.set(relatedID, entries);
     }
   }
+  relations.delete?.();
   return map;
 };
 
 const extractIfcIndex = async (sourcePath, destination) => {
+  const { IfcAPI } = await import("web-ifc");
   const api = new IfcAPI();
-  await api.Init();
-  const source = await fs.open(sourcePath, "r");
-  const modelID = api.OpenModelFromCallback((offset, size) => {
-    const buffer = new Uint8Array(size);
-    const bytesRead = readSync(source.fd, buffer, 0, size, offset);
-    return buffer.slice(0, bytesRead);
-  });
-  const output = await fs.open(destination, "w");
+  let source;
+  let output;
+  let modelID;
+  const elementGroups = [];
   let elements = 0;
   try {
+    await api.Init();
+    source = await openIfcSource(sourcePath);
+    modelID = api.OpenModelFromCallback(source.read, IFC_LOADER_SETTINGS);
+    if (modelID < 0) throw new Error("Source IFC model could not be opened.");
+    output = await fs.open(destination, "w");
+    const readPropertySet = createPropertySetReader(api, modelID);
+    const propertyLookup = createIfcPropertyLookup(api, modelID);
     const classifications = classificationMap(api, modelID);
-    const ids = api.GetAllLines(modelID);
-    for (let index = 0; index < ids.size(); index += 1) {
-      const expressID = ids.get(index);
-      const item = api.GetLine(modelID, expressID, false);
-      if (!item || !api.IsIfcElement(item.type)) continue;
-      const [propertySets, materials] = await Promise.all([
-        getElementPropertySets(api, modelID, expressID),
-        api.properties.getMaterialsProperties(modelID, expressID, true, true),
-      ]);
-      await output.writeFile(`${JSON.stringify({
-        express_id: expressID,
-        global_id: value(item.GlobalId),
-        category: api.GetNameFromTypeCode(item.type).toUpperCase(),
-        name: value(item.Name),
-        properties: namedProperties(propertySets),
-        quantities: namedProperties(propertySets.filter((set) => api.GetNameFromTypeCode(set.type).toUpperCase() === "IFCELEMENTQUANTITY")),
-        materials: materialNames(materials),
-        classifications: classifications.get(expressID) ?? [],
-      })}\n`);
-      elements += 1;
+    for (const { typeID } of api.GetAllTypesOfModel(modelID)) {
+      if (api.IsIfcElement(typeID)) elementGroups.push(api.GetLineIDsWithType(modelID, typeID));
+    }
+    const totalElements = elementGroups.reduce((total, ids) => total + ids.size(), 0);
+    for (const ids of elementGroups) {
+      for (let index = 0; index < ids.size(); index += 1) {
+        const expressID = ids.get(index);
+        const item = api.GetLine(modelID, expressID, false);
+        if (!item || !api.IsIfcElement(item.type)) continue;
+        const [propertySets, materials] = await Promise.all([
+          getElementPropertySets(api, modelID, expressID, readPropertySet, propertyLookup),
+          propertyLookup.materialIds(expressID).map((id) => api.GetLine(modelID, id, false)),
+        ]);
+        await output.writeFile(`${JSON.stringify({
+          express_id: expressID,
+          global_id: value(item.GlobalId),
+          category: api.GetNameFromTypeCode(item.type).toUpperCase(),
+          name: value(item.Name),
+          properties: namedProperties(propertySets),
+          quantities: namedProperties(propertySets.filter((set) => api.GetNameFromTypeCode(set.type).toUpperCase() === "IFCELEMENTQUANTITY")),
+          materials: materialNames(api, modelID, materials),
+          classifications: classifications.get(expressID) ?? [],
+        })}\n`);
+        elements += 1;
+        if (elements % 250 === 0 || elements === totalElements) {
+          emit({ event: "progress", progress: 80 + 15 * elements / totalElements, stage: "indexing" });
+        }
+      }
     }
     const unitTypes = ["IFCSIUNIT", "IFCCONVERSIONBASEDUNIT", "IFCDERIVEDUNIT"];
     const units = unitTypes.flatMap((type) => {
       const ids = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName(type));
-      return Array.from({ length: ids.size() }, (_, index) => api.GetLine(modelID, ids.get(index), false)).map((unit) => ({
+      const units = Array.from({ length: ids.size() }, (_, index) => api.GetLine(modelID, ids.get(index), false)).map((unit) => ({
         type,
         unit_type: value(unit.UnitType),
         name: value(unit.Name),
         prefix: value(unit.Prefix),
       }));
+      ids.delete?.();
+      return units;
     });
     const transformationTypes = ["IFCMAPCONVERSION", "IFCLOCALPLACEMENT", "IFCGEOMETRICREPRESENTATIONCONTEXT"];
     const transformations = transformationTypes.flatMap((type) => {
       const ids = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName(type));
-      return Array.from({ length: ids.size() }, (_, index) => ({ type, express_id: ids.get(index) }));
+      const transformations = Array.from({ length: ids.size() }, (_, index) => ({ type, express_id: ids.get(index) }));
+      ids.delete?.();
+      return transformations;
     });
     return { indexed_element_count: elements, units, transformations, coordination_matrix: api.GetCoordinationMatrix(modelID) };
   } finally {
-    await output.close();
-    await source.close();
-    api.CloseModel(modelID);
+    for (const ids of elementGroups) ids.delete?.();
+    if (modelID >= 0) api.CloseModel(modelID);
+    api.Dispose();
+    await Promise.all([output?.close(), source?.close()]);
   }
 };
 
+const memoryUsage = () => ({ pid: process.pid, peak_rss_kib: process.resourceUsage().maxRSS });
+
+const completePhase = (metrics) => new Promise((resolve, reject) => {
+  if (!process.send) {
+    reject(new Error("IFC phase requires a supervising process."));
+    return;
+  }
+  process.send({ event: "phase_result", phase, metrics, memory: memoryUsage() }, (error) => error ? reject(error) : resolve());
+});
+
+if (process.send) process.once("disconnect", () => process.exit(1));
+
 try {
+  if (process.send) watchConverterParent();
   if (!inputPath || !outputPath || !indexPath) {
     throw new Error("Input and output paths are required.");
   }
 
-  const importer = new FRAGS.IfcImporter();
+  if (!phase) {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.mkdir(path.dirname(indexPath), { recursive: true });
+    emit({ event: "progress", progress: 0, stage: "reading" });
+    const script = new URL(import.meta.url);
+    const args = [inputPath, outputPath, indexPath];
+    const geometry = await runConverterPhase(script, args, "geometry");
+    emit({ event: "progress", progress: 80, stage: "indexing" });
+    const index = await runConverterPhase(script, args, "index");
+    await writeConverterMessage(process.stdout, {
+      event: "result",
+      metrics: {
+        ...geometry.metrics,
+        ifc_metadata: index.metrics,
+        memory: { geometry: geometry.memory, index: index.memory, parser_cache_limit_bytes: IFC_LOADER_SETTINGS.MEMORY_LIMIT },
+      },
+    });
+    await writeConverterMessage(process.stdout, { event: "progress", progress: 100, stage: "written" });
+    process.exit(0);
+  }
+
+  if (phase === "index") {
+    await completePhase(await extractIfcIndex(inputPath, indexPath));
+    process.exit(0);
+  }
+  if (phase !== "geometry") throw new Error("Unknown IFC processing phase.");
+
+  const { IfcImporter } = await import("@thatopen/fragments");
+  const importer = new IfcImporter();
   importer.wasm = {
     path: `${path.join(process.cwd(), "node_modules", "web-ifc")}${path.sep}`,
     absolute: true,
   };
-  importer.webIfcSettings = { COORDINATE_TO_ORIGIN: false };
+  importer.webIfcSettings = IFC_LOADER_SETTINGS;
   configureViewerImporter(importer);
 
-  emit({ event: "progress", progress: 0, stage: "reading" });
-  const handle = await fs.open(inputPath, "r");
-  const chunkSize = 1024 * 1024;
-  const readCallback = (offset) => {
-    const buffer = new Uint8Array(chunkSize);
-    const bytesRead = readSync(handle.fd, buffer, 0, chunkSize, offset);
-
-    return buffer.slice(0, bytesRead);
-  };
+  const source = await openIfcSource(inputPath);
 
   emit({ event: "progress", progress: 5, stage: "converting" });
   let fragmentsData;
   try {
     fragmentsData = await importer.process({
       readFromCallback: true,
-      readCallback,
-      raw: false,
+      readCallback: source.read,
+      raw: true,
       progressCallback: (progress) => {
-        emit({ event: "progress", progress: normalizeProgress(progress), stage: "converting" });
+        emit({ event: "progress", progress: 5 + 0.75 * normalizeProgress(progress), stage: "converting" });
       },
     });
   } finally {
-    await handle.close();
+    await source.close();
   }
 
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.mkdir(path.dirname(indexPath), { recursive: true });
-  const ifcMetadata = await extractIfcIndex(inputPath, indexPath);
   const metrics = {
     profile: VIEWER_GEOMETRY_PROFILE,
     runtime: {
@@ -294,12 +350,15 @@ try {
       three: await dependencyVersion("three"),
       node: process.versions.node,
     },
-    ifc_metadata: ifcMetadata,
-    ...inspectFragments(fragmentsData, false),
+    ...await inspectFragments(fragmentsData),
   };
-  await fs.writeFile(outputPath, Buffer.from(fragmentsData));
-  await writeConverterMessage(process.stdout, { event: "result", metrics });
-  await writeConverterMessage(process.stdout, { event: "progress", progress: 100, stage: "written" });
+  const chunks = function* () {
+    for (let offset = 0; offset < fragmentsData.length; offset += 64 * 1024) {
+      yield fragmentsData.subarray(offset, Math.min(offset + 64 * 1024, fragmentsData.length));
+    }
+  };
+  await pipeline(Readable.from(chunks()), createDeflate(), createWriteStream(outputPath));
+  await completePhase(metrics);
   process.exit(0);
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
