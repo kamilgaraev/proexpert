@@ -58,6 +58,70 @@ class ConstructionJournalContractCoverageTest extends TestCase
         self::assertSame(50.0, $options['estimates'][0]['items'][0]['quantity_total']);
     }
 
+    public function test_submit_explains_missing_agreement_instead_of_claiming_the_estimate_is_exhausted(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $task = $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 50);
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id, 'schedule_task_id' => $task->id, 'entry_date' => '2026-04-28', 'work_description' => 'Бетонирование',
+            'work_volumes' => [['estimate_item_id' => $estimateItem->id, 'quantity' => 1]],
+        ], $user);
+        $factsBefore = CompletedWork::query()->count();
+
+        try {
+            app(JournalApprovalService::class)->submitForApproval($entry, $user);
+            self::fail('Uncovered estimate work was submitted');
+        } catch (DomainException $exception) {
+            self::assertSame(trans_message('construction_journal.errors.volume_not_covered_by_contract'), $exception->getMessage());
+        }
+        self::assertSame('draft', $entry->fresh()->status->value);
+        self::assertSame($factsBefore, CompletedWork::query()->count());
+        $this->assertDatabaseCount('contract_estimate_items', 0);
+    }
+
+    public function test_a_saved_record_at_the_agreed_limit_does_not_reserve_its_own_quantity_twice(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $this->coverEstimateItem($contract, $estimate, $estimateItem, 1, 1000);
+        $task = $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 50);
+        Notification::fake();
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id, 'schedule_task_id' => $task->id, 'entry_date' => '2026-04-28', 'work_description' => 'Бетонирование',
+            'work_volumes' => [['estimate_item_id' => $estimateItem->id, 'quantity' => 1]],
+        ], $user);
+
+        app(JournalApprovalService::class)->submitForApproval($entry, $user);
+        self::assertSame('submitted', $entry->fresh()->status->value);
+        $guard = new \ReflectionMethod(JournalApprovalService::class, 'assertEntryQuantitiesAvailable');
+        self::assertNull(\Illuminate\Support\Facades\DB::transaction(
+            fn () => $guard->invoke(app(JournalApprovalService::class), $entry->fresh())
+        ));
+        $this->assertDatabaseCount('contract_estimate_items', 1);
+    }
+
+    public function test_existing_contract_coverage_still_rejects_volume_above_the_agreed_limit(): void
+    {
+        [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
+        $journal = $this->createJournal($organization, $project, $contract, $user);
+        $this->coverEstimateItem($contract, $estimate, $estimateItem, 1, 1000);
+        $task = $this->createScheduleTaskForEstimateItem($organization, $project, $estimateItem, 50);
+        $entry = app(ConstructionJournalService::class)->createEntry($journal, [
+            'estimate_id' => $estimate->id, 'schedule_task_id' => $task->id, 'entry_date' => '2026-04-28', 'work_description' => 'Бетонирование',
+            'work_volumes' => [['estimate_item_id' => $estimateItem->id, 'quantity' => 2]],
+        ], $user);
+
+        try {
+            app(JournalApprovalService::class)->submitForApproval($entry, $user);
+            self::fail('An excessive contract quantity was submitted');
+        } catch (DomainException $exception) {
+            self::assertSame(trans_message('construction_journal.errors.volume_exceeds_remaining'), $exception->getMessage());
+        }
+        self::assertSame('draft', $entry->fresh()->status->value);
+        $this->assertDatabaseCount('contract_estimate_items', 1);
+    }
+
     public function test_existing_contract_coverage_with_schedule_missing_blocks_acting(): void
     {
         [$organization, $user, $contract, $project, $estimate, $estimateItem] = $this->createJournalFixture();
