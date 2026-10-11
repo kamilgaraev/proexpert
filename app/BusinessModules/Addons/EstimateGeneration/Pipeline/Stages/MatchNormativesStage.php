@@ -54,6 +54,10 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
         $data = $context->priorOutputs->payload(ProcessingStage::PlanWorkItems);
         $regionalContext = $data['regional_context'] ?? [];
         $pin = is_array($data['normative_context_pin'] ?? null) ? $data['normative_context_pin'] : [];
+        if (($pin['status'] ?? null) === 'not_required') {
+            return $this->results->make($context, $this->stage(), ['regional_context' => $regionalContext, 'supplementary_materials' => [], 'local_estimates' => $data['local_estimates'],
+                ...(isset($data['evaluation_policy']) ? ['evaluation_policy' => $data['evaluation_policy']] : [])]);
+        }
         $datasetVersion = $pin['dataset_version'] ?? null;
         $applicabilityDate = $pin['applicability_date'] ?? null;
         if ($this->canLog()) {
@@ -242,6 +246,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
             'regional_context' => $regionalContext,
             'supplementary_materials' => is_array($pin['supplementary_materials'] ?? null) ? $pin['supplementary_materials'] : [],
             'local_estimates' => $data['local_estimates'],
+            ...(isset($data['evaluation_policy']) ? ['evaluation_policy' => $data['evaluation_policy']] : []),
         ]);
     }
 

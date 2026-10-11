@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+
 final class ReviewSummarySnapshot
 {
     public const VERSION = 2;
@@ -40,7 +42,19 @@ final class ReviewSummarySnapshot
     /** @param array<string, mixed> $draft */
     public static function contentVersion(array $draft): string
     {
-        return 'sha256:'.hash('sha256', json_encode($draft['local_estimates'] ?? [], JSON_THROW_ON_ERROR));
+        $estimates = $draft['local_estimates'] ?? [];
+        foreach ($estimates as $estimateIndex => $estimate) {
+            foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
+                foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                    unset($estimates[$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex]['metadata']['stage6_provenance']['artifact']['artifact_hash']);
+                }
+            }
+        }
+
+        // Match Eloquent's JSON round trip: 0 and 0.0 have the same stored meaning.
+        $canonical = json_decode(CanonicalPipelineJson::encode($estimates), true, 512, JSON_THROW_ON_ERROR);
+
+        return 'sha256:'.hash('sha256', json_encode($canonical, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     /** @param array<string, mixed> $draft */

@@ -62,7 +62,7 @@ final class NativeNumericFactFactory
                 continue;
             }
             $entity = isset($columns['entity']) ? (string) ($cellsByColumn[$columns['entity']]['value'] ?? '') : '';
-            $parameter = isset($columns['parameter']) ? (string) ($cellsByColumn[$columns['parameter']]['value'] ?? '') : 'quantity';
+            $parameter = FactVocabulary::parameter(isset($columns['parameter']) ? (string) ($cellsByColumn[$columns['parameter']]['value'] ?? '') : 'quantity');
             $kind = FactVocabulary::entityType($entity);
             $location = [];
             foreach (['floor_id', 'zone_id'] as $field) {
@@ -109,11 +109,12 @@ final class NativeNumericFactFactory
         $claims = [];
         $decisions = [];
         $quarantined = [];
+        $verifiedFingerprints = [];
         foreach ($records as $index => $record) {
             $value = $record['value'];
             $unit = $record['unit'];
             $reason = null;
-            if (! is_string($record['parameter']) || trim($record['parameter']) === '' || mb_strlen($record['parameter']) > 120) {
+            if (! is_string($record['parameter']) || preg_match('/\A[a-zA-Z0-9._:-]{1,120}\z/', $record['parameter']) !== 1) {
                 $reason = 'native_parameter_missing';
             } elseif ((! is_string($value) && ! is_int($value) && ! is_float($value)) || (is_float($value) && ! is_finite($value))) {
                 $reason = 'native_numeric_value_missing';
@@ -122,7 +123,7 @@ final class NativeNumericFactFactory
             } else {
                 try {
                     $value = (string) BigDecimal::of((string) $value);
-                    if (! CanonicalSourceDecimal::isPositive($value)) {
+                    if (! CanonicalSourceDecimal::isPositive($value) && ! ($record['parameter'] === 'slope_rise' && CanonicalSourceDecimal::isNonNegative($value))) {
                         $reason = 'native_numeric_precision_or_value_requires_confirmation';
                     }
                 } catch (Throwable) {
@@ -143,11 +144,15 @@ final class NativeNumericFactFactory
                     'unit_type' => $context->type->value, 'unit_index' => $context->index,
                     'native_reference' => $record['reference'], ...($record['location'] ?? [])], 0.0);
             $claims[] = $claim;
+            if ($record['confirmed']) {
+                $verifiedFingerprints[] = VerifiedNativeNumericSources::fingerprint($claim);
+            }
             $decisions[] = new ArbitrationDecision($id, $record['confirmed'] ? 'accepted' : 'candidate', [$id], [$reference],
                 $record['reason'] ?? 'native_literal_number',
                 ['entity_key' => $claim->entityKey, 'fact_type' => $claim->factType, 'value' => $claim->value, 'unit' => $claim->unit, 'source_claim_id' => $id]);
         }
 
-        return $claims === [] && $quarantined === [] ? null : new DocumentUnitPublication($claims, $decisions, $quarantined);
+        return $claims === [] && $quarantined === [] ? null : new DocumentUnitPublication($claims, $decisions, $quarantined,
+            new VerifiedNativeNumericSources($verifiedFingerprints));
     }
 }

@@ -27,6 +27,18 @@ final class PipelineStagePayloadTest extends TestCase
         self::assertSame($data, $payload->data);
     }
 
+    public function test_universal_policy_is_additive_and_preserved_through_all_price_stages(): void
+    {
+        $policy = ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'renovation',
+            'selected_sections' => ['finishing'], 'construction_type' => 'current_repair'];
+        foreach ([ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices] as $stage) {
+            $data = ['regional_context' => [], 'supplementary_materials' => [], 'local_estimates' => [], 'evaluation_policy' => $policy];
+            self::assertSame($data, PipelineStagePayload::from($stage, $data)->data);
+        }
+        $this->expectException(InvalidArgumentException::class);
+        PipelineStagePayload::from(ProcessingStage::ResolvePrices, [...$data, 'evaluation_policy' => [...$policy, 'model' => 'openai/gpt-6-sol']]);
+    }
+
     #[Test]
     public function persisted_jsonb_key_order_does_not_invalidate_composition_schema(): void
     {

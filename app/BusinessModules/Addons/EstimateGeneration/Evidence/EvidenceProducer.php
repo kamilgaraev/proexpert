@@ -9,6 +9,7 @@ enum EvidenceProducer: string
     case PdfGeometry = 'pdf_geometry';
     case OcrFactExtractor = 'ocr_fact_extractor';
     case DrawingAnalyzer = 'drawing_analyzer';
+    case NativeNumericParser = 'native_numeric_parser';
     case ScopeInference = 'scope_inference';
     case WorkPlanner = 'work_planner';
     case NormativeMatcher = 'normative_matcher';

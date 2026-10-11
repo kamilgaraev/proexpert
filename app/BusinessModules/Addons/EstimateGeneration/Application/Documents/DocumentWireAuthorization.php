@@ -51,6 +51,9 @@ final readonly class DocumentWireAuthorization
             return 'document_processing_stopped';
         }
         $input = is_string($session->input_payload) ? json_decode($session->input_payload, true) : $session->input_payload;
+        if (($input['evaluation_mode'] ?? null) === 'universal' && ! config('estimate-generation.universal_enabled', false)) {
+            return 'document_processing_stopped';
+        }
         $actor = EstimateGenerationExecutionActor::resolve(is_array($input) ? $input : [], (int) $document->user_id);
         if ($actor === null) {
             return 'document_processing_stopped';

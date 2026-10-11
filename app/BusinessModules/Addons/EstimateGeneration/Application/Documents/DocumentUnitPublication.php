@@ -25,11 +25,13 @@ final readonly class DocumentUnitPublication
         array $claims,
         array $decisions,
         array $quarantinedItems = [],
+        public ?VerifiedNativeNumericSources $numericSources = null,
     ) {
         if (($claims === []) !== ($decisions === []) || ($claims === [] && $quarantinedItems === [])) {
             throw new InvalidArgumentException('document_unit_publication_empty');
         }
         $this->claims = $claims;
+        $decisions = (new PhysicalMeasurementPublicationPolicy)->admit($claims, $decisions, $numericSources);
         $this->decisions = $claims === [] ? [] : (new CanonicalFactReducer)->reduce($claims, $decisions);
         $this->quarantinedItems = $quarantinedItems;
     }

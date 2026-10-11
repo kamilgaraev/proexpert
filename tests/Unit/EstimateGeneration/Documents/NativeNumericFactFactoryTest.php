@@ -64,6 +64,22 @@ final class NativeNumericFactFactoryTest extends TestCase
         ]];
     }
 
+    public function test_russian_parameters_and_zero_roof_rise_are_typed_but_unknown_parameter_is_quarantined(): void
+    {
+        $headers = [['address' => 'A1', 'value' => 'Объект'], ['address' => 'B1', 'value' => 'Параметр'], ['address' => 'C1', 'value' => 'Значение'], ['address' => 'D1', 'value' => 'Ед. изм.']];
+        $cells = [];
+        foreach ([['room:1', 'Площадь помещения', '25.97', 'м²'], ['roof:1', 'Подъём ската', '0', 'м'], ['room:1', 'Неизвестный параметр', '1', 'м']] as $index => $values) {
+            foreach ($values as $column => $value) {
+                $cells[] = ['address' => chr(65 + $column).($index + 2), 'value' => $value, 'raw_value' => $value, 'formula' => null];
+            }
+        }
+        $publication = (new NativeNumericFactFactory)->spreadsheet($this->context(), ['sheet' => 'Размеры', 'header_cells' => $headers, 'cells' => $cells]);
+        self::assertSame(['area', 'slope_rise'], array_column($publication?->claims ?? [], 'factType'));
+        self::assertSame(['accepted', 'accepted'], array_column($publication?->decisions ?? [], 'status'));
+        self::assertSame('0', $publication?->claims[1]->value['data']);
+        self::assertSame('native_parameter_missing', $publication?->quarantinedItems[0]['reason_code']);
+    }
+
     private function context(DocumentUnitType $type = DocumentUnitType::SpreadsheetSheet): DocumentUnitExecutionContext
     {
         return new DocumentUnitExecutionContext(1, 7, 9, 11, 13, $type, 1, 'sha256:'.str_repeat('a', 64),

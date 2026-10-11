@@ -27,6 +27,11 @@ final readonly class PipelineStagePayload
     {
         $actualKeys = array_keys($data);
         $expectedKeys = self::KEYS[$stage->value];
+        if (array_key_exists('evaluation_policy', $data)
+            && in_array($stage, [ProcessingStage::PlanWorkItems, ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices], true)) {
+            $expectedKeys[] = 'evaluation_policy';
+            self::assertEvaluationPolicy($data['evaluation_policy']);
+        }
         sort($actualKeys);
         sort($expectedKeys);
         if ($actualKeys !== $expectedKeys) {
@@ -46,6 +51,23 @@ final readonly class PipelineStagePayload
         CanonicalPipelineJson::encode($data);
 
         return new self($stage, $data);
+    }
+
+    private static function assertEvaluationPolicy(mixed $policy): void
+    {
+        if (! is_array($policy) || array_diff(array_keys($policy), ['mode', 'price_policy', 'profile_id', 'selected_sections', 'construction_type']) !== []
+            || ! in_array($policy['mode'] ?? null, ['legacy', 'universal'], true)
+            || ! in_array($policy['price_policy'] ?? null, ['normative', 'catalog', 'mixed'], true)
+            || ! in_array($policy['profile_id'] ?? null, ['construction', 'renovation', 'industrial'], true)
+            || ! is_array($policy['selected_sections'] ?? null) || ! array_is_list($policy['selected_sections']) || count($policy['selected_sections']) > 50
+            || (isset($policy['construction_type']) && ! in_array($policy['construction_type'], ['new_construction', 'current_repair', 'capital_repair', 'reconstruction'], true))) {
+            throw new InvalidArgumentException('evaluation_policy_contract_invalid');
+        }
+        foreach ($policy['selected_sections'] as $section) {
+            if (! is_string($section) || preg_match('/\A[a-z][a-z0-9_]{1,79}\z/', $section) !== 1) {
+                throw new InvalidArgumentException('evaluation_policy_section_invalid');
+            }
+        }
     }
 
     private static function assertPricedWorkItems(array $data): void

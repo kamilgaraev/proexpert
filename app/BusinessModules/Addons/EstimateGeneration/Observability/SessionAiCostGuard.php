@@ -42,6 +42,9 @@ final readonly class SessionAiCostGuard
                 ? $analysis['internal_cost_guard']
                 : [];
             $input = is_string($session->input_payload) ? json_decode($session->input_payload, true) : $session->input_payload;
+            if (($input['evaluation_mode'] ?? null) === 'universal' && ! config('estimate-generation.universal_enabled', false)) {
+                throw new SessionAiCostLimitReached('universal_evaluation_not_enabled');
+            }
             if (($attempt?->stateVersion !== null && (int) $session->state_version !== $attempt->stateVersion)
                 || ($attempt?->generationAttemptId !== null
                     && ! hash_equals((string) ($input['generation_attempt_id'] ?? ''), $attempt->generationAttemptId))) {

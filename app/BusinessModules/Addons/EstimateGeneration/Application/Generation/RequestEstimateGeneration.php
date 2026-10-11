@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEs
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
@@ -40,6 +41,9 @@ final class RequestEstimateGeneration
         ?int $selectedRegionalPriceVersionId = null,
     ): SessionActionResult {
         $this->authorizer->authorize($actor, $session, 'estimate_generation.generate');
+        if (($session->input_payload['evaluation_mode'] ?? null) === 'universal' && ! config('estimate-generation.universal_enabled', false)) {
+            throw new InvalidEstimateGenerationState($session->status, 'universal_evaluation_not_enabled');
+        }
 
         if ($session->status === EstimateGenerationStatus::Generating) {
             if ($selectedRegionalPriceVersionId !== null) {
@@ -109,6 +113,9 @@ final class RequestEstimateGeneration
         }
 
         $session = $this->advance->documentsReady($session);
+        if (($session->input_payload['evaluation_mode'] ?? null) === 'universal') {
+            $generationInput['generation_evaluation_input_hash'] = (new EvaluationInputFingerprint)->fromSession($session);
+        }
         $attemptId = (string) Str::uuid();
         $session = $this->advance->generationStarted($session, $attemptId, $generationInput);
         GenerateEstimateDraftJob::dispatch(

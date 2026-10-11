@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationConstructionType;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimatePricePolicy;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -38,6 +39,11 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:10000'],
             'building_type' => ['nullable', 'string', 'max:255'],
             'generation_mode' => ['nullable', 'string', Rule::in(EstimateGenerationMode::values())],
+            'price_policy' => ['nullable', Rule::enum(EstimatePricePolicy::class)],
+            'evaluation_mode' => ['nullable', 'in:legacy,universal'],
+            'profile_id' => ['nullable', 'in:construction,renovation,industrial'],
+            'selected_sections' => ['nullable', 'array', 'min:1', 'max:50'],
+            'selected_sections.*' => ['required', 'string', 'distinct', 'regex:/^[a-z][a-z0-9_]{1,79}$/'],
             'region' => ['nullable', 'string', 'max:255'],
             'estimate_regional_price_version_id' => ['nullable', 'integer', 'exists:estimate_regional_price_versions,id'],
             'region_id' => ['nullable', 'integer', 'exists:estimate_regions,id'],

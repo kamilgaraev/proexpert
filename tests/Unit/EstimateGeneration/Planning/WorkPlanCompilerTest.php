@@ -365,6 +365,42 @@ final class WorkPlanCompilerTest extends TestCase
         );
     }
 
+    public function test_selected_scope_filters_both_declared_packages_and_compiled_positions(): void
+    {
+        $analysis = $this->analysis();
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        $keys = array_column($payload['local_estimates'], 'key');
+
+        self::assertNotEmpty($keys);
+        self::assertSame($keys, array_column($payload['package_plan']['packages'], 'key'));
+        self::assertNotContains('electrical', $keys);
+        self::assertSame(array_sum(array_column($payload['package_plan']['packages'], 'target_items_min')), $payload['package_plan']['target_items_min_total']);
+        self::assertSame($analysis['evaluation_policy'], $payload['evaluation_policy']);
+    }
+
+    public function test_universal_description_without_dimensions_keeps_a_work_list_with_unknown_volumes(): void
+    {
+        $analysis = $this->analysis();
+        $analysis['object'] = ['description' => 'Устройство фундамента'];
+        $analysis['document_context'] = [];
+        $analysis['evaluation_policy'] = ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'construction', 'selected_sections' => ['structures']];
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        $items = [];
+        foreach ($payload['local_estimates'] as $estimate) {
+            foreach ($estimate['sections'] as $section) {
+                array_push($items, ...$section['work_items']);
+            }
+        }
+        self::assertNotEmpty($items);
+        foreach ($items as $item) {
+            self::assertNull($item['quantity']);
+            self::assertNull($item['total_cost']);
+            self::assertNotSame('компл', $item['unit']);
+        }
+        self::assertNotEmpty((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateCompositionProjector)->candidates($payload['local_estimates']));
+    }
+
     private function analysis(): array
     {
         return [

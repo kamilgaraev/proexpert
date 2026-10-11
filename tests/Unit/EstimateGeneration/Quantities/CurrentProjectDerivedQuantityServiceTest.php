@@ -46,6 +46,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             4,
             null,
             'building_area_total',
+            'native_numeric_parser',
         );
         $repository->saveSourceModel([$buildingFloor], [
             new Fact(

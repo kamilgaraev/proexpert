@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveCommercialWorkPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use Illuminate\Support\Facades\Log;
 
@@ -16,7 +21,9 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
 {
     use RenewsPipelineLease;
 
-    public function __construct(private EstimatePricingService $pricing, private StageResultFactory $results) {}
+    public function __construct(private EstimatePricingService $pricing, private StageResultFactory $results,
+        private ?ResolveCommercialWorkPrice $commercialPrices = null,
+        private ?EstimateGenerationActionAuthorization $authorization = null) {}
 
     public function stage(): ProcessingStage
     {
@@ -26,10 +33,49 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
     public function execute(PipelineContext $context): PipelineStageResult
     {
         $data = $context->priorOutputs->payload(ProcessingStage::AssembleResources);
+        $universal = ($data['evaluation_policy']['mode'] ?? null) === 'universal';
+        $policy = $data['evaluation_policy']['price_policy'] ?? 'normative';
+        $session = null;
+        $actor = null;
+        if ($universal) {
+            $session = EstimateGenerationSession::query()->where('organization_id', $context->organizationId)
+                ->where('project_id', $context->projectId)->whereKey($context->sessionId)->firstOrFail();
+            if ((int) $session->state_version !== $context->stateVersion || $session->status->value !== 'generating') {
+                throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
+            }
+            $actor = EstimateGenerationExecutionActor::resolve($session->input_payload ?? [], (int) $session->user_id);
+            if ($actor === null || $this->authorization === null || $this->commercialPrices === null) {
+                throw new \DomainException('universal_price_authorization_unavailable');
+            }
+            $this->authorization->authorize($actor, $session, 'estimate_generation.generate');
+        }
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
+                $items = $section['work_items'];
+                if ($universal && $session !== null && $actor !== null) {
+                    foreach ($items as $itemIndex => $item) {
+                        $selected = $policy === 'normative' ? null : $this->commercialPrices?->resolve($actor, $session, $item);
+                        if ($selected !== null) {
+                            $items[$itemIndex]['commercial_price_snapshot'] = $selected;
+                            $items[$itemIndex]['price_snapshot'] = null;
+                            $items[$itemIndex]['total_cost'] = null;
+                        } elseif ($policy === 'catalog' || isset($session->input_payload['price_selections'][$item['key'] ?? ''])) {
+                            $items[$itemIndex]['commercial_price_snapshot'] = null;
+                            $items[$itemIndex]['price_snapshot'] = null;
+                            $items[$itemIndex]['total_cost'] = null;
+                            $items[$itemIndex]['pricing_blocker'] = 'selected_price_source_unavailable';
+                        } else {
+                            $priced = $this->pricing->price([$item], is_array($data['regional_context'] ?? null) ? $data['regional_context'] : [], $context)[0];
+                            $priced['evaluation_price_basis_quantity'] = $priced['quantity'] ?? null;
+                            $items[$itemIndex] = $priced;
+                        }
+                    }
+                    $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = $items;
+
+                    continue;
+                }
                 $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = $this->pricing->price(
-                    $section['work_items'],
+                    $items,
                     is_array($data['regional_context'] ?? null) ? $data['regional_context'] : [],
                     $context,
                 );

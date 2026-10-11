@@ -39,6 +39,7 @@ $lunaPrice = [[
 ]];
 
 return [
+    'universal_enabled' => (bool) env('ESTIMATE_GENERATION_UNIVERSAL_ENABLED', false),
     'project_engineer' => [
         'model' => $lunaModel('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL'),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_INPUT_BYTES', 524_288),

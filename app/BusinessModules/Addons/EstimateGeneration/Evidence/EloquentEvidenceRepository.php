@@ -60,7 +60,6 @@ final readonly class EloquentEvidenceRepository implements EvidenceRepository
                 ->update([
                     'invalidated_at' => null,
                     'invalidation_reason' => null,
-                    'invalidation_version' => 0,
                     'updated_at' => now(),
                 ]);
             $model = $this->database->table('estimate_generation_evidence')

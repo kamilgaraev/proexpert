@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '9bb3830167bcf5bb8491b1c4a209fa83c7106b6fd2946cee34ed5468d49df67c',
-        'training' => '6a627dabce2b513e805c47c560fdf4299406e85ae6ee20021f0625d1f037daa3',
-        'pricing' => '6a627dabce2b513e805c47c560fdf4299406e85ae6ee20021f0625d1f037daa3',
+        'geometry' => 'bc18bd39054902917c0456078ce87b3d3e2c9536a790a7f35392e9346fbe8011',
+        'training' => 'bcd49e966efc1d10a2fc104c82aaa1967da33d087116e85f42076a5c954afa98',
+        'pricing' => 'bcd49e966efc1d10a2fc104c82aaa1967da33d087116e85f42076a5c954afa98',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'd9a0eb6222cdc83392dae956f5d40c64044cc9bc102e76f55162f4e49cad3b24';
+    private const FRESH_INVENTORY_DIGEST = '9b6eb2dd4e418d6edb48551be4abf6215ee7698cb277b0c5b3201bf00a1f13ac';
 
     private const SUBJECT = [
         'geometry' => [
@@ -214,6 +214,10 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2026_08_12_000003_add_interpretation_attempts_and_cost_state.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_12_000100_add_derived_quantity_current_projection.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000100_pin_effective_vision_model.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000400_allow_luna6_operation_pins.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000500_create_evaluation_revisions.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000600_preserve_evidence_invalidation_epochs.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000700_allow_native_numeric_evidence_producer.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000200_expand_sheet_analysis_source_version.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_allow_sheet_analysis_retry_lineages.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_finalize_terminal_explicit_document_retries.php',

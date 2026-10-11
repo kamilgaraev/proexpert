@@ -429,10 +429,10 @@ final class PipelineStageFunctionalTest extends TestCase
             'room:1', 1, 2, 3, $base, 'room', 'room:1',
         );
         $lengthEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
-            'evidence:room:length', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:length',
+            'evidence:room:length', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:length', 'native_numeric_parser',
         );
         $widthEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
-            'evidence:room:width', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:width',
+            'evidence:room:width', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:width', 'native_numeric_parser',
         );
         $projectModels->saveSourceModel([$room], [
             new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(

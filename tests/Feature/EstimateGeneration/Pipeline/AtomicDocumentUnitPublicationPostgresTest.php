@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPublicationWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\VerifiedNativeNumericSources;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
@@ -28,29 +29,18 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
+final class AtomicDocumentUnitPublicationPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function createApplication(): Application
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
-
-        return $app;
-    }
-
     #[Test]
-    public function accepted_consensus_is_atomically_persisted_as_evidence_project_model_and_document_facts(): void
+    public function verified_numbers_and_categorical_consensus_are_atomically_persisted_as_evidence_project_model_and_document_facts(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
 
         DB::beginTransaction();
         try {
@@ -254,6 +244,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                                     ],
                                 ),
                             ],
+                            numericSources: new VerifiedNativeNumericSources(array_map(VerifiedNativeNumericSources::fingerprint(...), [$area, $constructionArea, $riskArea])),
                         ),
                     );
                 }
@@ -511,7 +502,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                 unitType: $context->type,
                 unitIndex: $context->index,
                 sourceVersion: $context->sourceVersion,
-                publication: new DocumentUnitPublication($claims, $decisions),
+                publication: new DocumentUnitPublication($claims, $decisions, numericSources: $this->nativeProof($claims)),
             ), $now->modify('+1 second'));
 
             self::assertTrue($published);
@@ -603,7 +594,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                     unitType: $context->type,
                     unitIndex: $context->index,
                     sourceVersion: $context->sourceVersion,
-                    publication: new DocumentUnitPublication($claims, $decisions),
+                    publication: new DocumentUnitPublication($claims, $decisions, numericSources: $this->nativeProof($claims)),
                 ), $now->modify('+1 second'));
             } catch (\InvalidArgumentException) {
                 $published = false;
@@ -871,8 +862,8 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
             $area = $this->numericObservation($context, 'room.kitchen', '22.10');
             $length = $this->numericObservation($context, 'room.kitchen', '5.50', 'length', 'm');
 
-            $writer->writeArbitration([$area], [$this->acceptedDecision($area)], $context->documentId, 9);
-            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 9);
+            $writer->writeArbitration([$area], [$this->acceptedDecision($area)], $context->documentId, 9, $this->nativeProof([$area]));
+            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 9, $this->nativeProof([$length]));
 
             self::assertSame(1, DB::table('estimate_generation_project_model_entities')
                 ->where('session_id', $context->sessionId)
@@ -920,7 +911,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
             ], [], []);
 
             $length = $this->numericObservation($context, 'room.kitchen', '5.50', 'length', 'm');
-            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 9);
+            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 9, $this->nativeProof([$length]));
 
             $payload = DB::table('estimate_generation_project_model_entities')
                 ->where('session_id', $context->sessionId)
@@ -960,7 +951,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
 
             foreach (['room:kitchen', 'room.kitchen', 'room_kitchen', 'room-kitchen'] as $separatorVariant) {
                 $length = $this->numericObservation($context, $separatorVariant, '5.50', 'length', 'm');
-                $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 11);
+                $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 11, $this->nativeProof([$length]));
             }
 
             self::assertSame(1, DB::table('estimate_generation_project_model_entities')
@@ -998,7 +989,7 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
                     new Entity($entityId, $context->organizationId, $context->projectId, $context->sessionId, $sourceVersion, 'dimension', $entityId, $attributes),
                 ], [], []);
                 $observation = $this->numericObservation($context, $entityKey, $value, $factType, $unitName);
-                $writer->writeArbitration([$observation], [$this->acceptedDecision($observation)], $context->documentId, 11);
+                $writer->writeArbitration([$observation], [$this->acceptedDecision($observation)], $context->documentId, 11, $this->nativeProof([$observation]));
             }
 
             self::assertSame(3, DB::table('estimate_generation_project_model_entities')
@@ -1284,6 +1275,12 @@ final class AtomicDocumentUnitPublicationPostgresTest extends TestCase
             ],
             confidence: 0.9,
         );
+    }
+
+    /** Explicit parser trust for persistence fixtures; photo regressions intentionally omit this. */
+    private function nativeProof(array $claims): VerifiedNativeNumericSources
+    {
+        return new VerifiedNativeNumericSources(array_map(VerifiedNativeNumericSources::fingerprint(...), $claims));
     }
 
     private function acceptedDecision(ObservationClaim $claim): ArbitrationDecision

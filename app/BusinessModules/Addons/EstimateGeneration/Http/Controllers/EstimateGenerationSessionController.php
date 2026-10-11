@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\InitialPr
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimatePricePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
@@ -76,7 +77,17 @@ final class EstimateGenerationSessionController extends Controller
             $validated = $request->validated();
             $input = EstimateGenerationSessionInputData::fromValidated($validated);
             $generationMode = $input->generationMode->value;
-            $normativePin = $this->normativePins->resolve(is_string($validated['normative_dataset_version'] ?? null) ? $validated['normative_dataset_version'] : null);
+            $pricePolicy = EstimatePricePolicy::from($validated['price_policy'] ?? EstimatePricePolicy::Normative->value);
+            $evaluationMode = $validated['evaluation_mode'] ?? ($pricePolicy === EstimatePricePolicy::Normative ? 'legacy' : 'universal');
+            if ($evaluationMode === 'universal' && ! config('estimate-generation.universal_enabled', false)) {
+                return AdminResponse::error('Универсальная оценка ещё не включена для этой организации.', 409);
+            }
+            if ($evaluationMode === 'universal' && ($validated['selected_sections'] ?? []) === []) {
+                return AdminResponse::error('Выберите разделы, которые нужно включить в оценку.', 422, ['selected_sections' => ['Укажите состав оценки.']]);
+            }
+            $requestedDataset = is_string($validated['normative_dataset_version'] ?? null) ? $validated['normative_dataset_version'] : null;
+            $normativePin = $pricePolicy === EstimatePricePolicy::Catalog ? []
+                : ($pricePolicy === EstimatePricePolicy::Normative ? $this->normativePins->resolve($requestedDataset) : $this->normativePins->optional($requestedDataset));
             $session = $this->createSession->handle([
                 'organization_id' => $request->user()->current_organization_id,
                 'project_id' => $project->id,
@@ -86,6 +97,10 @@ final class EstimateGenerationSessionController extends Controller
                 'processing_progress' => 0,
                 'input_payload' => array_merge($input->toArray(), [
                     'generation_mode' => $generationMode,
+                    'price_policy' => $pricePolicy->value,
+                    'evaluation_mode' => $evaluationMode,
+                    'profile_id' => $validated['profile_id'] ?? (in_array($validated['construction_type'] ?? null, ['current_repair', 'capital_repair', 'reconstruction'], true) ? 'renovation' : 'construction'),
+                    'selected_sections' => $validated['selected_sections'] ?? [],
                     'parameters' => $validated['parameters'] ?? [],
                     'regional_context' => [
                         ...$this->regionalContextResolver->resolve($validated),
