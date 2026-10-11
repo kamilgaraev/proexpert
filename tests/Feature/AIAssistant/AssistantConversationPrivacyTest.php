@@ -337,22 +337,24 @@ final class AssistantConversationPrivacyTest extends TestCase
 
     public function test_conversation_number_answers_survive_topic_changes_only_in_owner_context(): void
     {
-        $conversation = $this->conversation();
-        $this->share($conversation);
-        $this->manager->addMessage($conversation, 'user', 'Реши учебный арифметический пример: 12 + 8 + 5.');
-        $this->manager->addMessage($conversation, 'assistant', 'Учебный результат: 25.', metadata: [
-            'conversation_number_context' => true,
-            'validation_status' => 'unverified',
-            'source_refs' => [],
-            'actor_user_id' => (int) $this->owner->id,
-        ]);
-        $this->manager->addMessage($conversation, 'user', 'Покажи договоры.');
-        $context = $this->manager->getMessagesForContext($conversation, actor: $this->owner);
-        $this->assertCount(3, $context);
-        $this->assertStringContainsString('25', $context[1]['content']);
-        $this->assertStringContainsString('не подтверждённые данные МОСТ', $context[1]['content']);
-        $this->assertCount(2, $this->manager->getMessagesForContext($conversation, actor: $this->viewer));
-        $this->assertSame([], $this->manager->getMessagesForContext($conversation));
+        foreach (['unverified', 'partial'] as $validationStatus) {
+            $conversation = $this->conversation();
+            $this->share($conversation);
+            $this->manager->addMessage($conversation, 'user', 'Реши учебный арифметический пример: 12 + 8 + 5.');
+            $this->manager->addMessage($conversation, 'assistant', 'Учебный результат: 25.', metadata: [
+                'conversation_number_context' => true,
+                'validation_status' => $validationStatus,
+                'source_refs' => [],
+                'actor_user_id' => (int) $this->owner->id,
+            ]);
+            $this->manager->addMessage($conversation, 'user', 'Покажи договоры.');
+            $context = $this->manager->getMessagesForContext($conversation, actor: $this->owner);
+            $this->assertCount(3, $context);
+            $this->assertStringContainsString('25', $context[1]['content']);
+            $this->assertStringContainsString('не подтверждённые данные МОСТ', $context[1]['content']);
+            $this->assertCount(2, $this->manager->getMessagesForContext($conversation, actor: $this->viewer));
+            $this->assertSame([], $this->manager->getMessagesForContext($conversation));
+        }
     }
 
     public function test_image_discussion_context_is_opt_in_owner_only_and_stops_at_system_requests(): void

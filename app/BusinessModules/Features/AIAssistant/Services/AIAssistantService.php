@@ -1098,7 +1098,7 @@ class AIAssistantService
             $assistantPayload['actor_user_id'] = (int) $user->id;
             $assistantPayload['conversation_number_context'] = AssistantFactIntentClassifier::isConversationNumberRequest($query)
                 && $assistantPayload['source_refs'] === []
-                && $assistantPayload['validation_status'] === 'unverified'
+                && in_array($assistantPayload['validation_status'], ['unverified', 'partial'], true)
                 && $proposedActions === []
                 && ! ($financialCheck['replaced'] ?? false)
                 && ! ($structuredCheck['replaced'] ?? false);
