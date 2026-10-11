@@ -102,7 +102,7 @@ final class ApiQueryMetrics
             'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',
             'rag_expected_counts', 'rag_documents', 'rag_finalize',
             'sql_tracing',
-            'current_access_check', 'role_catalog', 'rag_acl_discovery', 'rag_acl_batch_compile',
+            'current_access_check', 'role_catalog', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
         ], true)) {
             return;
         }

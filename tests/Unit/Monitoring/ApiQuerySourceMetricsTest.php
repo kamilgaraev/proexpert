@@ -25,7 +25,7 @@ final class ApiQuerySourceMetricsTest extends TestCase
     public function test_numeric_access_and_acl_phases_survive_production_redaction(): void
     {
         [$request, $metrics] = $this->metrics();
-        foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile'] as $phase) {
+        foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish'] as $phase) {
             $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
             self::assertNotNull($checkpoint);
             ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
