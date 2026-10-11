@@ -428,7 +428,7 @@ final class DesignManagementApiTest extends TestCase
         $this->mock(AuthorizationService::class, static function (MockInterface $mock): void {
             $mock->shouldReceive('can')->andReturnUsing(static fn (User $actor, string $permission): bool => $permission !== 'design-management.documents.view');
         });
-        $restrictedService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class));
+        $restrictedService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class), app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
         try {
             $restrictedService->sourceContext($context->user, $context->organization->id, $documentLink['id']);
             $this->fail('The document viewing permission must be checked separately');
@@ -439,7 +439,7 @@ final class DesignManagementApiTest extends TestCase
         $this->mock(AccessController::class, static function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')->andReturnUsing(static fn (int $organizationId, string $module): bool => $module !== 'design-management');
         });
-        $inactiveService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class));
+        $inactiveService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class), app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
         try {
             $inactiveService->sourceContext($context->user, $context->organization->id, $documentLink['id']);
             $this->fail('PIR access must be checked when opening a linked source');

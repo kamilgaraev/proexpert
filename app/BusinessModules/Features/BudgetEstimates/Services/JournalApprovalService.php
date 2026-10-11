@@ -205,9 +205,14 @@ class JournalApprovalService
             $contractId = $entry->journal?->contract_id;
             $contractPlanned = $planned;
             if ($contractId) {
-                $contractPlanned = (float) $item->contractLinks
-                    ->where('contract_id', (int) $contractId)
-                    ->sum('quantity');
+                $contractLinks = $item->contractLinks->where('contract_id', (int) $contractId);
+                if ($contractLinks->isEmpty()) {
+                    throw new DomainException(trans_message('construction_journal.errors.volume_not_covered_by_contract'));
+                }
+                $contractPlanned = (float) $contractLinks->sum('quantity');
+                if ($contractPlanned <= 0) {
+                    throw new DomainException(trans_message('construction_journal.errors.contract_quantity_not_agreed'));
+                }
             }
 
             $reservedQuery = JournalWorkVolume::query()

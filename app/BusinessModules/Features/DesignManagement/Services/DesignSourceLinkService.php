@@ -13,11 +13,13 @@ use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
+use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\EstimateItem;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\ConstructionJournal\ConstructionJournalAccessService;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
@@ -25,7 +27,11 @@ use Illuminate\Support\Facades\DB;
 
 final class DesignSourceLinkService
 {
-    public function __construct(private readonly AuthorizationService $authorization, private readonly AccessController $access) {}
+    public function __construct(
+        private readonly AuthorizationService $authorization,
+        private readonly AccessController $access,
+        private readonly ConstructionJournalAccessService $journals,
+    ) {}
 
     /** @return array<int, array<string, mixed>> */
     public function linksForSource(User $actor, int $organizationId, int $versionId, ?array $elementIds = null, ?string $targetType = null, ?int $limit = null): array
@@ -58,12 +64,25 @@ final class DesignSourceLinkService
     public function linksForTarget(User $actor, int $organizationId, string $targetType, int $targetId): array
     {
         $target = $this->target($targetType, $targetId);
-        $this->assertTargetScope($targetType, $target, $organizationId, null);
         $scope = $this->targetScope($targetType, $target);
+        if ($target instanceof ConstructionJournalEntry) {
+            if ((int) $actor->current_organization_id !== $organizationId
+                || ! $target->journal instanceof ConstructionJournal
+                || $scope['organization_id'] <= 0
+                || $scope['project_id'] <= 0
+                || ! $this->journals->canRead($actor, $target->journal)) {
+                throw new DomainException(trans_message('design_links.errors.target_out_of_scope'));
+            }
+            if (! $this->targetModulesActive($scope['organization_id'], $targetType)) {
+                throw new DomainException(trans_message('design_links.target_module_inactive'));
+            }
+        } else {
+            $this->assertTargetScope($targetType, $target, $organizationId, null);
+        }
         $this->authorizeTargetRead($actor, $targetType, $organizationId, $scope['project_id']);
 
-        return DesignSourceLink::query()->where('organization_id', $organizationId)->where('project_id', $scope['project_id'])->where('target_type', $targetType)->where('target_id', $targetId)
-            ->with('sourceVersion.artifact.package')->orderByDesc('id')->get()->map(fn (DesignSourceLink $link): array => $this->presentLink($actor, $link))->all();
+        return DesignSourceLink::query()->where('organization_id', $scope['organization_id'])->where('project_id', $scope['project_id'])->where('target_type', $targetType)->where('target_id', $targetId)
+            ->with('sourceVersion.artifact.package')->orderByDesc('id')->get()->map(fn (DesignSourceLink $link): array => $this->presentLink($actor, $link, $organizationId === $scope['organization_id']))->all();
     }
 
     public function sourceContext(User $actor, int $organizationId, int $linkId): array
@@ -492,15 +511,22 @@ final class DesignSourceLinkService
     }
 
     /** @return array<string, mixed> */
-    private function presentLink(User $actor, DesignSourceLink $link): array
+    private function presentLink(User $actor, DesignSourceLink $link, bool $allowSourceRead = true): array
     {
         $source = $link->sourceVersion;
-        $sourceReadable = $this->access->hasModuleAccess((int) $link->organization_id, 'design-management')
+        $sourceSnapshot = $link->source_snapshot;
+        if (! $allowSourceRead) {
+            $sourceSnapshot = is_array($sourceSnapshot)
+                ? array_intersect_key($sourceSnapshot, array_flip(['title', 'revision']))
+                : null;
+        }
+        $sourceReadable = $allowSourceRead
+            && $this->access->hasModuleAccess((int) $link->organization_id, 'design-management')
             && $source instanceof DesignArtifactVersion
             && $this->sourceInScope($source, (int) $link->organization_id, (int) $link->project_id)
             && $this->authorization->can($actor, 'design-management.view', ['organization_id' => $link->organization_id, 'project_id' => $link->project_id]);
 
-        return ['id' => $link->id, 'revision' => (int) $link->row_version, 'status' => $link->status, 'ended_reason' => $link->ended_reason, 'ended_at' => $link->ended_at?->toIso8601String(), 'replacement_link_id' => $link->replacement_link_id, 'source_version_id' => $sourceReadable ? $link->source_version_id : null, 'source_sheet_id' => $sourceReadable ? $link->source_sheet_id : null, 'source_element_id' => $sourceReadable ? $link->source_element_id : null, 'target' => ['id' => (int) $link->target_id, 'type' => $link->target_type] + ($link->target_snapshot ?? []), 'created_at' => $link->created_at?->toIso8601String(), 'source' => $sourceReadable ? $this->sourceSnapshot($source) + ['id' => $source->id, 'available' => true, 'element' => $link->source_snapshot['element'] ?? null] : ($link->source_snapshot ? $link->source_snapshot + ['available' => false] : null)];
+        return ['id' => $link->id, 'revision' => (int) $link->row_version, 'status' => $link->status, 'ended_reason' => $link->ended_reason, 'ended_at' => $link->ended_at?->toIso8601String(), 'replacement_link_id' => $link->replacement_link_id, 'source_version_id' => $sourceReadable ? $link->source_version_id : null, 'source_sheet_id' => $sourceReadable ? $link->source_sheet_id : null, 'source_element_id' => $sourceReadable ? $link->source_element_id : null, 'target' => ['id' => (int) $link->target_id, 'type' => $link->target_type] + ($link->target_snapshot ?? []), 'created_at' => $link->created_at?->toIso8601String(), 'source' => $sourceReadable ? $this->sourceSnapshot($source) + ['id' => $source->id, 'available' => true, 'element' => $link->source_snapshot['element'] ?? null] : ($sourceSnapshot ? $sourceSnapshot + ['available' => false] : null)];
     }
 
     private function sourceInScope(DesignArtifactVersion $source, int $organizationId, int $projectId): bool
