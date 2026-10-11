@@ -913,6 +913,14 @@ class AIAssistantService
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
+            if (! $imageDiscussion && $rawPresentationPlan === null && ! $rejectedFinancialPlan && $proposedActions === []
+                && ($structuredCheck['source_refs'] ?? []) === []) {
+                $emptyProjectSearch = $this->verifyEmptyNamedProjectSearch($query, $verificationToolResults, $user, $organizationId);
+                if ($emptyProjectSearch !== null) {
+                    $assistantContent = $emptyProjectSearch['text'];
+                    $structuredCheck = $emptyProjectSearch;
+                }
+            }
             if ($terminalToolResponse && ($structuredCheck['source_refs'] ?? []) === [] && $proposedActions === []
                 && ! $rejectedFinancialPlan && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
                 $terminalProof = $this->structuredFacts->confirmedResults($verificationToolResults, $query);
@@ -3655,6 +3663,49 @@ class AIAssistantService
         return is_array($taskPlan['request_understanding'] ?? null)
             ? AssistantRequestUnderstanding::fromArray($taskPlan['request_understanding'])
             : null;
+    }
+
+    protected function verifyEmptyNamedProjectSearch(string $question, array $toolResults, User $actor, int $organizationId): ?array
+    {
+        $name = AssistantBimModelSelector::namedProject($question);
+        $result = count($toolResults) === 1 ? reset($toolResults) : null;
+        $empty = static fn (mixed $value): bool => is_array($value) && ($value['status'] ?? null) === 'success'
+            && ($value['results'] ?? null) === [] && ($value['result_window']['returned'] ?? null) === 0
+            && ($value['result_window']['has_more'] ?? null) === false && ($value['source_refs'] ?? []) === []
+            && ! isset($value['error']);
+        if ($name === null || ($result['_tool_name'] ?? null) !== 'search_projects' || ! $empty($result)
+            || (int) $actor->current_organization_id !== $organizationId) {
+            return null;
+        }
+        $fresh = $this->readFreshProjectSearch($name, $actor, $organizationId);
+        if (! $empty($fresh)) {
+            return null;
+        }
+
+        return ['text' => trans_message('ai_assistant.project_search_no_matches'), 'replaced' => true,
+            'validation_status' => 'partial', 'needs_clarification' => true, 'source_refs' => []];
+    }
+
+    protected function readFreshProjectSearch(string $name, User $actor, int $organizationId): array|string|null
+    {
+        if ($this->dataAccess === null) {
+            return null;
+        }
+        try {
+            return $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($name, $actor, $organizationId): array|string|null {
+                $arguments = ['query' => $name, 'limit' => 1];
+                $tool = $this->toolRegistry->getTool('search_projects');
+                if (! $tool instanceof \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool
+                    || ! $this->permissionChecker->canExecuteTool($actor, 'search_projects', $arguments)) {
+                    return null;
+                }
+                $organization = Organization::query()->find($organizationId);
+
+                return $organization instanceof Organization ? $tool->execute($arguments, $actor, $organization) : null;
+            }, true);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     protected function readableBimProjectName(User $actor, int $organizationId, int $projectId): ?string

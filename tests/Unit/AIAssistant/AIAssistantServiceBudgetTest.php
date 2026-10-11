@@ -46,6 +46,44 @@ class AIAssistantServiceBudgetTest extends TestCase
         \Illuminate\Support\Facades\Facade::setFacadeApplication($application);
     }
 
+    public function test_empty_named_project_search_uses_fresh_scoped_result_without_equipment_claims(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $actor = new User(['current_organization_id' => 15]);
+        $result = ['_tool_name' => 'search_projects', 'status' => 'success', 'results' => [],
+            'result_window' => ['returned' => 0, 'has_more' => false]];
+        $service->freshProjectSearch = $result;
+        $answer = $service->exposeVerifyEmptyNamedProjectSearch('У нас в проекте СевГУ есть кондиционеры, сколько их?', [$result], $actor, 15);
+        self::assertSame(['СевГУ', 15], $service->freshProjectSearchCalls[0]);
+        self::assertSame(trans_message('ai_assistant.project_search_no_matches'), $answer['text']);
+        self::assertSame([], $answer['source_refs']);
+        self::assertSame('partial', $answer['validation_status']);
+        self::assertTrue($answer['needs_clarification']);
+        self::assertStringNotContainsString('кондиционер', $answer['text']);
+        $service->freshProjectSearch['results'] = [['id' => 52]];
+        self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте СевГУ сколько кондиционеров?', [$result], $actor, 15));
+        $service->freshProjectSearch = null;
+        self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте СевГУ сколько кондиционеров?', [$result], $actor, 15));
+    }
+
+    public function test_no_match_message_rejects_incomplete_failed_and_unscoped_project_searches(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $actor = new User(['current_organization_id' => 15]);
+        $empty = ['_tool_name' => 'search_projects', 'status' => 'success', 'results' => [],
+            'result_window' => ['returned' => 0, 'has_more' => false]];
+        foreach ([array_replace($empty, ['status' => 'error']), array_replace($empty, ['error' => 'denied']),
+            array_replace($empty, ['results' => [['id' => 52]]]), array_replace($empty, ['_tool_name' => 'search_estimates']),
+            array_replace($empty, ['source_refs' => [['entity_id' => 52]]]),
+            array_replace($empty, ['result_window' => ['returned' => 0, 'has_more' => true]])] as $result) {
+            self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте СевГУ сколько кондиционеров?', [$result], $actor, 15));
+        }
+        self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В текущем проекте сколько кондиционеров?', [$empty], $actor, 15));
+        self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте СевГУ сколько кондиционеров?', [$empty, $empty], $actor, 15));
+        self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте СевГУ сколько кондиционеров?', [$empty], $actor, 99));
+        self::assertSame([], $service->freshProjectSearchCalls);
+    }
+
     public function test_generic_request_exposes_reads_without_exposing_unconfirmed_actions(): void
     {
         $toolRegistry = new AIToolRegistry;
@@ -1198,6 +1236,20 @@ class AIAssistantServiceBudgetTest extends TestCase
 
 class TestableAIAssistantService extends AIAssistantService
 {
+    public array|string|null $freshProjectSearch = null;
+    public array $freshProjectSearchCalls = [];
+
+    protected function readFreshProjectSearch(string $name, User $actor, int $organizationId): array|string|null
+    {
+        $this->freshProjectSearchCalls[] = [$name, $organizationId];
+
+        return $this->freshProjectSearch;
+    }
+
+    public function exposeVerifyEmptyNamedProjectSearch(string $question, array $results, User $actor, int $organizationId): ?array
+    {
+        return $this->verifyEmptyNamedProjectSearch($question, $results, $actor, $organizationId);
+    }
     public bool $ragQueryResolved = false;
     public array $canonicalBimProjects = [];
 
