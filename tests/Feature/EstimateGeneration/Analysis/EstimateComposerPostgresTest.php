@@ -12,28 +12,28 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\DTO\AiRoleRunInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
-use Illuminate\Contracts\Console\Kernel;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\PostgresConnection;
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class EstimateComposerPostgresTest extends TestCase
+final class EstimateComposerPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function createApplication(): Application
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
+    private int $organizationId;
 
-        return $app;
-    }
+    private int $projectId;
+
+    private int $sessionId;
 
     #[Test]
     public function composer_role_run_is_persisted_replayed_once_and_recomputed_after_snapshot_change(): void
@@ -58,9 +58,9 @@ final class EstimateComposerPostgresTest extends TestCase
             self::assertSame(1, $model->calls);
             self::assertSame('10.2500', $firstInput->derivedQuantities[0]['value']);
             $runs = $connection->table('estimate_generation_ai_role_runs')
-                ->where('organization_id', 10)
-                ->where('project_id', 20)
-                ->where('session_id', 30)
+                ->where('organization_id', $this->organizationId)
+                ->where('project_id', $this->projectId)
+                ->where('session_id', $this->sessionId)
                 ->where('role', 'estimate_composer')
                 ->get();
             self::assertCount(1, $runs);
@@ -75,7 +75,7 @@ final class EstimateComposerPostgresTest extends TestCase
 
             self::assertSame(2, $model->calls);
             self::assertSame(2, $connection->table('estimate_generation_ai_role_runs')
-                ->where('role', 'estimate_composer')->where('session_id', 30)->count());
+                ->where('role', 'estimate_composer')->where('session_id', $this->sessionId)->count());
         } finally {
             $this->cleanup($connection, $schema);
         }
@@ -151,42 +151,30 @@ final class EstimateComposerPostgresTest extends TestCase
         self::assertStringEndsWith('_testing', $connection->getDatabaseName());
         $connection->statement("SET statement_timeout TO '5000ms'");
         $connection->statement("SET lock_timeout TO '5000ms'");
-        $schema = 'most_ci_estimate_composer_'.bin2hex(random_bytes(8));
-        $connection->unprepared('CREATE SCHEMA "'.$schema.'"');
-        $connection->unprepared('SET search_path TO "'.$schema.'"');
-        $connection->unprepared(<<<'SQL'
-            CREATE TABLE organizations (id bigint PRIMARY KEY);
-            CREATE TABLE projects (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_sessions (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_documents (id bigint PRIMARY KEY);
-            CREATE TABLE estimate_generation_document_pages (id bigint PRIMARY KEY);
-            SQL);
-        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000300_create_vision_physical_attempts.php'))->up();
-        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000400_add_recovery_lease_to_vision_physical_attempts.php'))->up();
-        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php'))->up();
-        (require app_path('BusinessModules/Addons/EstimateGeneration/migrations/2026_08_14_000100_create_estimate_generation_ai_role_runs.php'))->up();
-        $connection->table('organizations')->insert(['id' => 10]);
-        $connection->table('projects')->insert(['id' => 20]);
-        $connection->table('estimate_generation_sessions')->insert(['id' => 30]);
+        $schema = 'public';
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id,
+            'project_id' => $project->id, 'user_id' => $user->id, 'status' => 'draft', 'state_version' => 0, 'input_payload' => []]);
+        $this->organizationId = (int) $organization->id;
+        $this->projectId = (int) $project->id;
+        $this->sessionId = (int) $session->id;
 
         return [$connection, $schema];
     }
 
     private function cleanup(PostgresConnection $connection, string $schema): void
     {
-        if (preg_match('/^most_ci_estimate_composer_[a-f0-9]{16}$/D', $schema) !== 1) {
-            return;
-        }
-        $connection->unprepared('SET search_path TO public');
-        $connection->unprepared('DROP SCHEMA "'.$schema.'" CASCADE');
+        // The runtime resets the canonical database. Keep immutable receipts intact.
     }
 
     private function input(string $snapshotToken): EstimateComposerInput
     {
         return new EstimateComposerInput(
-            organizationId: 10,
-            projectId: 20,
-            sessionId: 30,
+            organizationId: $this->organizationId,
+            projectId: $this->projectId,
+            sessionId: $this->sessionId,
             snapshotToken: $snapshotToken,
             facts: [['id' => 'fact:foundation', 'status' => 'confirmed']],
             derivedQuantities: [['id' => 'quantity:foundation', 'value' => '10.2500', 'unit' => 'm3']],

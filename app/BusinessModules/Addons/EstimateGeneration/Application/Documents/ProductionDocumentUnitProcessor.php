@@ -433,14 +433,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 ...$this->independentObservers->run($input, $remainingProfiles),
             ];
         }
-        if ($plan->route->value === 'structured_textual') {
-            $plan = PageAnalysisPlan::fromDecision(
-                $routing,
-                $this->observerDisagreement->hasMaterialDisagreement($observerResults),
-                $serverSignals,
-            );
-            $this->assertAnalysisPlanBudget($plan);
-        }
+        $plan = $plan->withObservedDisagreement($this->observerDisagreement->hasMaterialDisagreement($observerResults));
+        $this->assertAnalysisPlanBudget($plan);
         $arbitrationResult = null;
         if ($plan->requiresArbitration) {
             $context->renewLeaseOrFail();
@@ -785,7 +779,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
     private function assertAnalysisPlanBudget(PageAnalysisPlan $plan): void
     {
         $maximum = max(1, (int) config('estimate-generation.vision.adaptive_analysis.max_provider_calls_per_page', 4));
-        if ($plan->providerCallCount() > $maximum) {
+        if ($plan->maximumProviderCallCount() > $maximum) {
             throw new DocumentUnitProcessingException('page_analysis_provider_call_budget_exceeded');
         }
     }

@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Role\AiAnalysisRole;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\UsageInvariantViolation;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
@@ -24,10 +25,39 @@ final readonly class RunEstimateComposer
         private AiRoleRunRepository $runs,
         private EstimateComposerModel $model,
         private string $modelName,
+        private EstimateComposerBatchPlanner $batches = new EstimateComposerBatchPlanner,
     ) {}
 
     /** @return list<array<string, mixed>> */
     public function run(EstimateComposerInput $input): array
+    {
+        $plan = $this->batches->plan($input);
+        if (count($plan) === 1) {
+            return $this->runBatch($plan[0]);
+        }
+        $existing = [];
+        $supplementary = [];
+        $workKeys = array_fill_keys(array_column($input->candidates, 'work_key'), true);
+        foreach ($plan as $batch) {
+            foreach ($this->runBatch($batch) as $intent) {
+                if ($intent['kind'] === 'existing') {
+                    $existing[$intent['candidate_id']] = $intent;
+                } elseif (! isset($workKeys[$intent['work_key']])) {
+                    $identity = CanonicalPipelineJson::encode([$intent['work_key'], $intent['derived_quantity_id'], $intent['source_fact_ids']]);
+                    if (isset($supplementary[$intent['work_key']]) && $supplementary[$intent['work_key']]['identity'] !== $identity) {
+                        throw new InvalidArgumentException('estimate_composer_cross_batch_work_conflict');
+                    }
+                    $supplementary[$intent['work_key']] ??= ['identity' => $identity, 'intent' => $intent];
+                }
+            }
+        }
+
+        return [...array_map(static fn (array $candidate): array => $existing[$candidate['candidate_id']], $input->candidates),
+            ...array_column(array_values($supplementary), 'intent')];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function runBatch(EstimateComposerInput $input): array
     {
         $runInput = new AiRoleRunInput(
             organizationId: $input->organizationId,
@@ -37,7 +67,7 @@ final readonly class RunEstimateComposer
             pageId: null,
             subjectType: 'estimate_session',
             subjectId: (string) $input->sessionId,
-            subjectVersion: $input->snapshotToken,
+            subjectVersion: $input->batchKey === null ? $input->snapshotToken : hash('sha256', $input->snapshotToken.'|'.$input->batchKey),
             role: AiAnalysisRole::EstimateComposer,
             model: $this->modelName,
             promptContractVersion: self::PROMPT_CONTRACT,

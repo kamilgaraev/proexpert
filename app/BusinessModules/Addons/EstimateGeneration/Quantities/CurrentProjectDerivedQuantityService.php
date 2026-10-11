@@ -48,7 +48,7 @@ final readonly class CurrentProjectDerivedQuantityService
             static fn (Fact $fact): string => $fact->id,
             array_filter($snapshot->facts, static fn (Fact $fact): bool => in_array($fact->origin, ['user_assumption', 'user_input'], true)),
         ));
-        if (count($assumptionFactIds) > 100) {
+        if (count($assumptionFactIds) > self::MAX_FACTS) {
             return $this->blockedAndDeactivate($organizationId, $projectId, $sessionId, 'quantity_decision_budget_exceeded', $capture['token'], $technology, $completeness);
         }
         $decisions = [
@@ -242,7 +242,7 @@ final readonly class CurrentProjectDerivedQuantityService
                     $technology,
                     $completeness,
                 );
-                $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []));
+                $this->applyCoverage($request, $facts, $entity, 'wall_openings', count($openingsByWall[$entity->id] ?? []), $snapshot, $decisions);
             } elseif ($semanticType === 'roof') {
                 $roofChildren = $roofChildrenByRoof[$entity->id] ?? [];
                 $request = $this->roofRequest(
@@ -257,8 +257,8 @@ final readonly class CurrentProjectDerivedQuantityService
                 ));
                 $openingCount = count(array_filter($roofChildren, static fn (Entity $child): bool => ($child->attributes['semantic_type'] ?? $child->type) === 'roof_opening'
                 ));
-                $this->applyCoverage($request, $facts, $entity, 'roof_facets', $facetCount);
-                $this->applyCoverage($request, $facts, $entity, 'roof_openings', $openingCount);
+                $this->applyCoverage($request, $facts, $entity, 'roof_facets', $facetCount, $snapshot, $decisions);
+                $this->applyCoverage($request, $facts, $entity, 'roof_openings', $openingCount, $snapshot, $decisions);
             } elseif ($semanticType === 'site' && $this->requiresSitePreparation($completeness)) {
                 $request = $this->binaryRequest($entity, $facts, 'earthwork_volume', 'area', 'depth', $token, $technology, $completeness, 'm3', 3);
             } else {
@@ -402,7 +402,7 @@ final readonly class CurrentProjectDerivedQuantityService
     }
 
     /** @param array<string, array<string, list<Fact>>> $facts */
-    private function applyCoverage(array &$request, array $facts, Entity $entity, string $relation, int $entityCount): void
+    private function applyCoverage(array &$request, array $facts, Entity $entity, string $relation, int $entityCount, ProjectModelSnapshot $snapshot, array $decisions): void
     {
         $coverageFacts = array_values(array_filter(
             [
@@ -423,7 +423,7 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $fact = $coverageFacts[0];
         $coverage = GeometryCoverage::fromFact($fact, $relation);
-        if (! $coverage instanceof GeometryCoverage) {
+        if (! $coverage instanceof GeometryCoverage || ! $this->coverageConfirmed($fact, $snapshot, $decisions)) {
             $request['preflight_issues'][] = [
                 'code' => 'geometry_coverage_blocked',
                 'operand' => 'geometry_coverage',
@@ -441,6 +441,34 @@ final readonly class CurrentProjectDerivedQuantityService
         }
         $request['geometry_coverages'][] = $coverage->identity();
         $request['snapshot']['geometry_coverages'][] = $coverage->identity();
+    }
+
+    private function coverageConfirmed(Fact $fact, ProjectModelSnapshot $snapshot, array $decisions): bool
+    {
+        if ($fact->origin !== 'user_input' || $fact->status !== 'confirmed' || $fact->evidenceIds === []) {
+            return false;
+        }
+        $evidence = array_column($snapshot->evidence, null, 'id');
+        foreach ($fact->evidenceIds as $id) {
+            $proof = $evidence[$id] ?? null;
+            if ($proof === null || $proof->sourceType !== 'user_input'
+                || [$proof->organizationId, $proof->projectId, $proof->sessionId, $proof->sourceVersion]
+                    !== [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]) {
+                return false;
+            }
+        }
+        foreach ($decisions as $decision) {
+            if ($decision instanceof Decision && $decision->actorType === 'user' && ctype_digit($decision->actorId)
+                && (int) $decision->actorId > 0 && $decision->selectedFactId === $fact->id
+                && $decision->targetType === 'fact' && $decision->targetId === ($fact->supersedesFactId ?? $fact->id)
+                && [$decision->organizationId, $decision->projectId, $decision->sessionId, $decision->sourceVersion]
+                    === [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]
+                && array_diff($fact->evidenceIds, $decision->evidenceIds) === []) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return list<Decision> */

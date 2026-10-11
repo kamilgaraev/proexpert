@@ -161,6 +161,11 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         ], [$coverageEvidence]);
         $this->makeStageFiveCurrent($repository);
 
+        $unconfirmed = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
+        self::assertArrayNotHasKey('net_wall_area', $unconfirmed['quantities']);
+        self::assertSame('geometry_coverage_blocked', $unconfirmed['warnings'][0]['inputs'][0]['code'] ?? null);
+        $this->confirmCoverage($repository, 'fact:wall-openings-coverage');
+        $this->makeStageFiveCurrent($repository);
         $coveredEmpty = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))
             ->derive(10, 20, 30);
 
@@ -190,6 +195,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
                 'fact:wall-openings-coverage',
             ),
         ], [$widthEvidence]);
+        $this->confirmCoverage($repository, 'fact:wall-openings-coverage:v2');
         $this->makeStageFiveCurrent($repository);
 
         $withPartialOpening = (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))
@@ -405,6 +411,8 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             [$evidence, $lengthEvidence, $widthEvidence, $facetAreaEvidence, $facetRiseEvidence, $facetRunEvidence, $openingAreaEvidence, $roofCoverageEvidence],
         );
 
+        $this->confirmCoverage($repository, 'fact:roof-facet-coverage');
+        $this->confirmCoverage($repository, 'fact:roof-opening-coverage');
         $catalogHash = str_repeat('c', 64);
         $selectedSystem = new Fact(
             'fact:selected-roof-system', 10, 20, 30, self::SOURCE, 'roof:1', 'selected_roof_system',
@@ -466,6 +474,20 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertCount(3, $repository->quantities);
         self::assertSame(array_keys($result['quantities']), array_keys($replayed['quantities']));
         self::assertSame($result['context'], $replayed['context']);
+    }
+
+    private function confirmCoverage(InMemoryProjectModelRepository $repository, string $factId): void
+    {
+        $original = $repository->fact(10, 20, 30, $factId);
+        self::assertInstanceOf(Fact::class, $original);
+        $current = array_values(array_filter($repository->currentFacts(10, 20, 30, $original->entityId),
+            static fn (Fact $fact): bool => $fact->type === $original->type))[0] ?? $original;
+        $proof = new Evidence($factId.':user-proof', 10, 20, 30, self::SOURCE, 'input:coverage', 'user_input', nativeReference: 'input:coverage');
+        $selected = new Fact($factId.':reviewed', 10, 20, 30, self::SOURCE, $original->entityId, $original->type,
+            $original->value, null, 0, 'user_input', 'confirmed', [$proof->id], max($current->version, $original->version) + 1, $current->id);
+        $repository->saveSourceModel([], [$selected], [$proof]);
+        $repository->applyDecision(new Decision($factId.':user-decision', 10, 20, 30, self::SOURCE, 'fact', $current->id,
+            $selected->id, 'user', '7', 'Проверен полный состав геометрии', $selected->version, [$proof->id]), $selected);
     }
 
     private function makeStageFiveCurrent(

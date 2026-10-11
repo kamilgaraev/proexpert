@@ -47,6 +47,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProvid
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\DatabaseLessTestCase;
 
@@ -131,7 +132,8 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function png_runs_detector_representation_and_production_processor_as_one_path(): void
+    #[DataProvider('observerAgreementCases')]
+    public function png_runs_detector_representation_and_production_processor_as_one_path(bool $conflict): void
     {
         $source = $this->png(12, 8);
         $sourceVersion = 'sha256:'.hash('sha256', $source);
@@ -195,7 +197,7 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $this->createMock(CadGeometryProvider::class),
             new RasterPreprocessor($files, $reader),
             $reader,
-            $this->observerRunner($vision),
+            $this->observerRunner($vision, conflict: $conflict),
             $this->arbitrator(),
         );
         $locator = $unit->locator;
@@ -233,14 +235,17 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         $semanticSummary = (new DocumentSemanticUnderstandingSummarizer)->summarize([$output->normalizedPayload]);
         self::assertSame(1, $semanticSummary['pages_checked']);
         self::assertTrue($semanticSummary['analysis_roles_complete']);
-        self::assertSame([
+        $expectedRoles = [
             'observer_literal' => true,
             'observer_construction' => true,
             'observer_risk' => true,
-            'arbiter' => true,
-        ], $output->normalizedPayload['role_completion']);
-        self::assertSame(4, $output->normalizedPayload['analysis_routing']['physical_provider_call_count']);
-        self::assertCount(4, $output->normalizedPayload['analysis_routing']['physical_provider_attempt_ids']);
+        ];
+        if ($conflict) {
+            $expectedRoles['arbiter'] = true;
+        }
+        self::assertSame($expectedRoles, $output->normalizedPayload['role_completion']);
+        self::assertSame($conflict ? 4 : 3, $output->normalizedPayload['analysis_routing']['physical_provider_call_count']);
+        self::assertCount($conflict ? 4 : 3, $output->normalizedPayload['analysis_routing']['physical_provider_attempt_ids']);
         self::assertSame($sourceVersion, $output->normalizedPayload['document_representation']['source_version']);
         self::assertGreaterThan(0, $output->normalizedPayload['document_representation']['resource_usage']['duration_ms']);
         self::assertSame(
@@ -248,6 +253,12 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
             $output->normalizedPayload['document_representation']['native_structure']['resource_measurement']['phases'],
         );
         self::assertSame('image_pixels', $output->normalizedPayload['document_representation']['coordinate_space']);
+    }
+
+    public static function observerAgreementCases(): iterable
+    {
+        yield 'agreement does not require an arbiter' => [false];
+        yield 'conflicting quantities require an arbiter' => [true];
     }
 
     #[Test]
@@ -820,13 +831,14 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
         self::assertStringStartsWith('org-2/', $representation['visual_artifact_path']);
     }
 
-    private function observerRunner(?VisionProvider $provider = null, ?\Throwable $error = null): DocumentObserverRunner
+    private function observerRunner(?VisionProvider $provider = null, ?\Throwable $error = null, bool $conflict = false): DocumentObserverRunner
     {
-        return new class($provider, $error) implements DocumentObserverRunner
+        return new class($provider, $error, $conflict) implements DocumentObserverRunner
         {
             public function __construct(
                 private readonly ?VisionProvider $provider,
                 private readonly ?\Throwable $error,
+                private readonly bool $conflict,
             ) {}
 
             public function run(VisionDocumentInput $source, array $profiles): array
@@ -863,9 +875,11 @@ final class ProductionDocumentUnitProcessorTest extends DatabaseLessTestCase
                     $results[$role] = new AiRoleRunResult([
                         'schema_version' => 1,
                         'role' => $role,
-                        'source' => ['page_number' => $source->pageNumber],
+                        'source' => ['page_number' => $source->pageNumber, 'document_id' => $source->documentId,
+                            'page_id' => $source->pageId, 'source_version' => $source->sourceVersion],
                         'observation' => $observation,
-                        'claims' => [],
+                        'claims' => $this->conflict ? [['entityKey' => 'room:1', 'factType' => 'area',
+                            'value' => $role === 'observer_literal' ? '20' : '25']] : [],
                         'evidence' => [],
                     ], match ($role) {
                         'observer_literal' => '10000000-0000-4000-8000-000000000001',

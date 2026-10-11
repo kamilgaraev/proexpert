@@ -28,6 +28,7 @@ final readonly class EstimateComposerInput
         public array $missingDocuments,
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
+        public ?string $batchKey = null,
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -35,7 +36,8 @@ final readonly class EstimateComposerInput
             || ! array_is_list($facts) || count($facts) > 10000
             || ! array_is_list($derivedQuantities) || count($derivedQuantities) > 2000
             || ! array_is_list($decisions) || count($decisions) > 2000
-            || ! array_is_list($candidates) || count($candidates) > 500
+            || ! array_is_list($candidates) || count($candidates) > 10000
+            || ($batchKey !== null && preg_match('/^[a-f0-9]{64}$/D', $batchKey) !== 1)
             || ($facts === [] && $derivedQuantities === [] && $candidates === [])
             || ! array_is_list($missingDocuments) || count($missingDocuments) > 200) {
             throw new InvalidArgumentException('estimate_composer_input_invalid');
@@ -74,7 +76,7 @@ final readonly class EstimateComposerInput
     /** @return array<string, mixed> */
     public function canonicalPayload(): array
     {
-        return [
+        $payload = [
             'scope' => [
                 'organization_id' => $this->organizationId,
                 'project_id' => $this->projectId,
@@ -88,6 +90,11 @@ final readonly class EstimateComposerInput
             'missing_documents' => $this->sorted($this->missingDocuments),
             'contract_version' => $this->contractVersion,
         ];
+        if ($this->batchKey !== null) {
+            $payload['batch_key'] = $this->batchKey;
+        }
+
+        return $payload;
     }
 
     /** @param list<array<string, mixed>> $records @return list<array<string, mixed>> */

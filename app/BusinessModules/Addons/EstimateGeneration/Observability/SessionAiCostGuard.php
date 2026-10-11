@@ -51,7 +51,7 @@ final readonly class SessionAiCostGuard
                 throw new SessionAiCostLimitReached('session_processing_stopped');
             }
             if ($attempt !== null) {
-                $actor = EstimateGenerationExecutionActor::resolve(is_array($input) ? $input : [], (int) $session->user_id);
+                $actor = $attempt->trustedActor ?? EstimateGenerationExecutionActor::resolve(is_array($input) ? $input : [], (int) $session->user_id);
                 if ($actor === null) {
                     throw new SessionAiCostLimitReached('session_actor_not_authorized');
                 }
@@ -60,7 +60,7 @@ final readonly class SessionAiCostGuard
                 $subject->exists = true;
                 try {
                     ($this->authorization ?? app(EstimateGenerationActionAuthorization::class))
-                        ->authorize($actor, $subject, 'estimate_generation.generate');
+                        ->authorize($actor, $subject, $attempt->permission);
                 } catch (\Illuminate\Auth\Access\AuthorizationException) {
                     throw new SessionAiCostLimitReached('session_actor_not_authorized');
                 }
@@ -185,6 +185,9 @@ SQL, [
             if ($sentCount >= 3) {
                 throw new SessionAiCostLimitReached('physical_attempt_limit_reached');
             }
+            // The logical dialogue receipt joins this same pre-wire transaction.
+            // A refusal rolls back both reservations and cannot become an ambiguous paid call.
+            ($attempt->beforeSend ?? static fn () => null)();
             $updated = $query->where('state', 'pre_wire')->update([
                 'state' => 'wire_started',
                 'cost_reservation_amount' => $attempt->reservation->amount,
