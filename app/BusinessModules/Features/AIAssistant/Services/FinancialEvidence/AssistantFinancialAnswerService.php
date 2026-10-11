@@ -36,9 +36,9 @@ final class AssistantFinancialAnswerService
         return $this->supports($query, $pinnedId);
     }
 
-    public function answer(string $query, int $organizationId, User $actor, ?int $pinnedId = null, ?array $selectionContext = null): array
+    public function answer(string $query, int $organizationId, User $actor, ?int $pinnedId = null, ?array $selectionContext = null, ?int $projectId = null): array
     {
-        $resolution = $this->resolver->resolve($query, $organizationId, $actor, $pinnedId);
+        $resolution = $this->resolver->resolve($query, $organizationId, $actor, $pinnedId, $projectId);
         if ($resolution['status'] !== 'resolved') {
             $text = trans_message('ai_assistant_financial.'.$resolution['status']);
             foreach ($resolution['options'] as $option) {
@@ -209,7 +209,7 @@ final class AssistantFinancialAnswerService
             $numbers = [$match[1]];
         }
 
-        return array_values(array_filter($evidence['positions'], static function (array $position) use ($filter, $numbers): bool {
+        $positions = array_values(array_filter($evidence['positions'], static function (array $position) use ($filter, $numbers): bool {
             if ($numbers !== [] && ! in_array($position['position_number'], $numbers, true)) {
                 return false;
             }
@@ -221,6 +221,9 @@ final class AssistantFinancialAnswerService
 
             return true;
         }));
+
+        return preg_match('/(?<![\pL\pN])одн[а-яё]*\s+(?:[а-яё]+\s+){0,2}позиц/iu', $query)
+            ? array_slice($positions, 0, 1) : $positions;
     }
 
     private function requestsHighestCostPosition(string $query): bool

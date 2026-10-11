@@ -10,6 +10,12 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantCapabilityRegistryTest extends TestCase
 {
+    public function test_estimate_position_fields_do_not_switch_to_the_unit_dictionary(): void
+    {
+        $query = 'Теперь выбери одну доступную смету текущего проекта и одну её позицию. Покажи название, количество, единицу измерения, цену за единицу и сохранённый итог. Укажи валюту и применённые коэффициенты, если они известны. Ничего не изменяй.';
+        self::assertSame('estimates', (new AssistantCapabilityRegistry)->match($query)['id']);
+    }
+
     use UsesAssistantUnitTranslations;
 
     public function test_every_catalog_domain_has_read_permissions_and_navigation(): void

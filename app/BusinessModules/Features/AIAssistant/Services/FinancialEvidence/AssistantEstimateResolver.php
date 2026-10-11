@@ -15,7 +15,7 @@ final class AssistantEstimateResolver
 {
     public function __construct(private readonly AssistantDataAccessPolicy $access) {}
 
-    public function resolve(string $query, int $organizationId, User $actor, ?int $pinnedId = null): array
+    public function resolve(string $query, int $organizationId, User $actor, ?int $pinnedId = null, ?int $projectId = null): array
     {
         if (mb_strlen($query) > 4000) {
             throw ValidationException::withMessages(['query' => trans_message('ai_assistant_financial.query_too_long')]);
@@ -23,13 +23,17 @@ final class AssistantEstimateResolver
         if (! $this->access->canReadDomain($actor, $organizationId, 'estimates')) {
             return $this->result('forbidden');
         }
+        if (self::requiresCurrentProject($query) && $projectId === null) {
+            return $this->result('not_found');
+        }
         $selector = $this->selector($query);
         if ($selector === null && $this->isLatestEstimateRequest($query)) {
-            return $this->latestEstimate($organizationId, $actor);
+            return $this->latestEstimate($organizationId, $actor, $projectId);
         }
         $candidates = [];
         $exact = [];
-        foreach (Estimate::query()->where('organization_id', $organizationId)->orderBy('id')->lazyById(100) as $estimate) {
+        foreach (Estimate::query()->where('organization_id', $organizationId)->when($projectId !== null,
+            static fn (Builder $query): Builder => $query->where('project_id', $projectId))->orderBy('id')->lazyById(100) as $estimate) {
             if (! $this->access->canReadEntity($actor, $organizationId, 'estimate', (int) $estimate->id)) {
                 continue;
             }
@@ -48,8 +52,14 @@ final class AssistantEstimateResolver
             }
         }
         $options = $exact !== [] ? $exact : $candidates;
+        if ($options === [] && $selector === null && $this->isAutomaticEstimateChoice($query)) {
+            return $this->latestEstimate($organizationId, $actor, $projectId, (bool) preg_match('/позиц/iu', $query));
+        }
         if ($options === [] && $selector === null && $pinnedId !== null && ! preg_match('/(?:друг[а-яё]*\s+смет|переключ|вместо\s+смет|смен[а-яё]*\s+смет)/iu', $query)) {
             $estimate = Estimate::query()->where('organization_id', $organizationId)->find($pinnedId);
+            if ($estimate && $projectId !== null && (int) $estimate->project_id !== $projectId) {
+                return $this->result('not_found');
+            }
             if (! $estimate || ! $this->access->canReadEntity($actor, $organizationId, 'estimate', $pinnedId)) {
                 return $this->result('forbidden');
             }
@@ -60,9 +70,9 @@ final class AssistantEstimateResolver
         return $this->result(count($options) === 1 ? 'resolved' : ($options === [] ? 'not_found' : 'ambiguous'), array_slice($options, 0, 20), $selector !== null || $exact !== []);
     }
 
-    private function latestEstimate(int $organizationId, User $actor): array
+    private function latestEstimate(int $organizationId, User $actor, ?int $projectId = null, bool $requirePositions = false): array
     {
-        return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $actor): array {
+        return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($organizationId, $actor, $projectId, $requirePositions): array {
             $scope = $this->access->entityQuery($actor, $organizationId, 'estimate');
             if ($scope === null) {
                 return $this->result('not_found');
@@ -71,6 +81,8 @@ final class AssistantEstimateResolver
             $organizationFinance = $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view');
             $projectFinance = [];
             $estimates = Estimate::query()->where('estimates.organization_id', $organizationId)
+                ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('estimates.project_id', $projectId))
+                ->when($requirePositions, static fn (Builder $query): Builder => $query->whereHas('items'))
                 ->where(static function (Builder $projectScope) use ($organizationId): void {
                     $projectScope->whereNull('estimates.project_id')->orWhereExists(static function ($projects) use ($organizationId): void {
                         $projects->selectRaw('1')->from('projects')->whereColumn('projects.id', 'estimates.project_id')
@@ -104,6 +116,17 @@ final class AssistantEstimateResolver
     private function isLatestEstimateRequest(string $query): bool
     {
         return preg_match('/(?<![\\pL\\pN])последн[а-яё]*\\s+смет[а-яё]*(?![\\pL\\pN])/iu', $query) === 1;
+    }
+
+    public static function requiresCurrentProject(string $query): bool
+    {
+        return preg_match('/(?<![\pL\pN])(?:текущ|выбран|эт[ао]|данн)[а-яё]*\s+проект/iu', $query) === 1;
+    }
+
+    private function isAutomaticEstimateChoice(string $query): bool
+    {
+        return preg_match('/(?<![\pL\pN])(?:выбер[а-яё]*|найд[а-яё]*)\s+(?:[а-яё]+\s+){0,4}смет[а-яё]*(?![\pL\pN])/iu', $query) === 1
+            && preg_match('/(?:одн[а-яё]*\s+(?:доступн[а-яё]*\s+)?смет|люб[а-яё]*\s+(?:доступн[а-яё]*\s+)?смет|сам[а-яё]*\s+выбер)/iu', $query) === 1;
     }
 
     private function selector(string $query): ?string

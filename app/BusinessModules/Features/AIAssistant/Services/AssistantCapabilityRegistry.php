@@ -279,7 +279,8 @@ class AssistantCapabilityRegistry
 
         $capabilities = $this->all();
         $selectedEstimate = $this->hasEstimateContext($context);
-        if (AssistantEstimateCompositionIntent::matches($query, $selectedEstimate)) {
+        if (AssistantEstimateCompositionIntent::matches($query, $selectedEstimate)
+            || (! AssistantFactIntentClassifier::isNarrative($query) && preg_match('/смет/iu', $query) && preg_match('/позиц/iu', $query))) {
             foreach ($capabilities as $capability) {
                 if ($capability['domain'] === 'estimates') {
                     return $capability;
