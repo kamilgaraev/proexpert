@@ -31,7 +31,7 @@
 
 Регрессии проверяют выбор М-15/М-4, сохранение цены, доступность старых записей, повтор запросов, исключение приходов из отчёта, привязку запроса к организации, безопасную передачу поисковой строки в SQL, разграничение экспорта и группировку накладных по подрядчику. Интерфейс проверяется для поиска, фильтров, пагинации, документов, экспорта, ошибок и пустого результата.
 
-Проверки PostgreSQL и HTTP-сценария на реальной БД требуют разрешения с указанием тестового окружения согласно `AGENTS.md`. Сборка и выпуск этой правкой не выполняются.
+Проверки PostgreSQL и HTTP-сценария на реальной БД требуют разрешения с указанием тестового окружения согласно `AGENTS.md`. Выпуск выполняется из main штатными GitHub Actions после слияния Pull Request; миграции этой задачи не требуются.
 
 ## Изменённые файлы и результаты проверок
 
@@ -67,14 +67,11 @@ prohelper_admin:
 - `src/pages/Reports/components/reportsCatalog.utils.ts`
 - `src/pages/Reports/publishedReportDefinitions.ts`
 - `src/pages/Warehouse/components/MovementHistoryDialog.test.tsx`
-- `src/pages/Warehouse/components/MovementHistoryDialog.tsx`
-- `src/pages/Warehouse/components/TransferToContractorDialog.test.tsx`
-- `src/pages/Warehouse/components/TransferToContractorDialog.tsx`
+- `src/pages/Warehouse/utils/warehouseDocumentPolicy.test.ts`
+- `src/pages/Warehouse/utils/warehouseDocumentPolicy.ts`
 - `src/services/reportService.test.ts`
 - `src/services/reportService.ts`
-- `src/services/warehouseService.test.ts`
-- `src/services/warehouseService.ts`
 - `src/types/contractorMaterialTransferReport.ts`
 - `src/types/warehouse.ts`
 
-Выполнено: 21 PHP-тест (92 проверки), 37 целевых Vitest-тестов, PHPStan/Larastan и ESLint для изменённых файлов, проверка diff. Общий TypeScript-check сохраняет 1736 существующих диагностик проекта; сравнение с исходными версиями изменённых файлов не выявило новых ошибок. Интеграционные тесты PostgreSQL и сборка не запускались по ограничениям AGENTS.md.
+Проверки актуального main: 21 PHP-тест (101 проверка), 55 целевых Vitest-тестов, PHPStan/Larastan и ESLint для изменённых файлов, полная проверка TypeScript, production-сборка админки, проверка ссылок на ассеты и diff. Интеграционные тесты PostgreSQL не запускались: AGENTS.md требует отдельного разрешения с указанием локального тестового окружения.

@@ -91,7 +91,7 @@ final class ContractorTollingMaterialTest extends TestCase
             'ordinary receipt retains forms' => ['receipt', [], null, ['m4', 'm7']],
             'responsible issue' => ['transfer_out', [], 'responsible_issue', ['m11']],
             'production usage' => ['write_off', [], 'production_usage', ['m11']],
-            'loss is not an external issue' => ['write_off', [], 'loss', []],
+            'loss is not an external issue' => ['write_off', [], 'loss', ['write_off_act']],
             'placement has no external document' => ['transfer_out', [], 'placement', []],
         ];
     }
@@ -103,7 +103,7 @@ final class ContractorTollingMaterialTest extends TestCase
         self::assertSame($expected, $movement->availableDocumentTypes());
         $service = (new \ReflectionClass(WarehouseMovementFormExportService::class))->newInstanceWithoutConstructor();
         $supports = new ReflectionMethod($service, 'supports');
-        foreach (['m4', 'm7', 'm11', 'm15'] as $form) {
+        foreach (['m4', 'm7', 'm11', 'm15', 'write_off_act'] as $form) {
             self::assertSame(in_array($form, $expected, true), $supports->invoke($service, $form, $movement));
         }
     }

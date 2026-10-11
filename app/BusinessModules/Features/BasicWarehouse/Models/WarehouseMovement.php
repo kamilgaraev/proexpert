@@ -131,7 +131,9 @@ class WarehouseMovement extends Model
             self::TYPE_TRANSFER_OUT => $this->operation_category === self::CATEGORY_PLACEMENT ? [] : ['m11'],
             self::TYPE_WRITE_OFF => in_array($this->operation_category, [
                 self::CATEGORY_PROJECT_DELIVERY, self::CATEGORY_RESPONSIBLE_ISSUE, self::CATEGORY_PRODUCTION_USAGE,
-            ], true) ? ['m11'] : [],
+            ], true) ? ['m11'] : (in_array($this->operation_category, [
+                self::CATEGORY_LOSS, self::CATEGORY_DAMAGE, self::CATEGORY_DISPOSAL, self::CATEGORY_INVENTORY_ADJUSTMENT,
+            ], true) ? ['write_off_act'] : []),
             default => [],
         };
     }
