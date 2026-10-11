@@ -206,7 +206,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->assertSame([], $read());
     }
 
-    public function test_large_expected_source_types_keep_parts_and_each_current_native_entity_scope(): void
+    public function test_large_live_only_catalog_projection_stays_excluded_and_aggregate_scope_remains_current(): void
     {
         $this->actor->assignedProjects()->attach($this->hidden->id, ['is_active' => true, 'role' => 'member']);
         $resource = DB::table('normative_resources')->insertGetId(['code' => 'batch-resource', 'name' => 'Resource', 'type' => 'material']);
@@ -217,13 +217,13 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
             [$this->organization->id, $this->visible->id, $this->visible->id, $resource]);
         $row = $this->expected($this->organization->id, $this->visible->id, 'core_business_money', 'core_organization_balance', $balance);
         $row->replicate()->forceFill(['entity_id' => '0'.$balance])->save();
-        $read = function (bool $checkNativePlan = false): array {
+        $read = function (bool $checkExclusionPlan = false): array {
             $batches = $this->policy->aggregateExpectedSourceIdentityBatches(
                 RagExpectedSource::query()->where('generation', '00000000-0000-4000-8000-000000000001'),
                 $this->actor, $this->organization->id, ['ai_rag_expected_sources.id'],
                 static fn ($visible) => DB::query()->fromSub($visible, 'visible')->selectRaw('COUNT(*) AS total'),
             );
-            if ($checkNativePlan) {
+            if ($checkExclusionPlan) {
                 $nativeScans = [];
                 $collectScans = static function (array $node) use (&$collectScans, &$nativeScans): void {
                     if (($node['Relation Name'] ?? null) === 'normative_resources') {
@@ -237,22 +237,19 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
                     $result = DB::selectOne('EXPLAIN (ANALYZE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
                     $collectScans(json_decode(((array) $result)['QUERY PLAN'], true, 512, JSON_THROW_ON_ERROR));
                 }
-                $this->assertNotEmpty($nativeScans);
-                foreach ($nativeScans as $scan) {
-                    $this->assertLessThanOrEqual(1, $scan['Actual Rows'], 'A sparse native identity batch must not read the entire normative catalog.');
-                }
+                $this->assertSame([], $nativeScans);
             }
             $counts = array_map(static fn ($batch): int => (int) $batch->first()->total, $batches);
             sort($counts);
 
             return $counts;
         };
-        $this->assertSame([1, 10001], $read(true));
+        $this->assertSame([0, 1], $read(true));
         $this->deniedModules = ['budget-estimates'];
         $this->assertSame([0, 1], $read());
         $this->deniedModules = [];
         $this->actor->assignedProjects()->updateExistingPivot($this->hidden->id, ['is_active' => false]);
-        $this->assertSame([0, 10001], $read());
+        $this->assertSame([0, 0], $read());
         $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
         $this->assertSame(0, array_sum($read()));
     }

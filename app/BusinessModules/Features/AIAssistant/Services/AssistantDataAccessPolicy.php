@@ -936,14 +936,7 @@ final class AssistantDataAccessPolicy
             $table = $query->getModel()->getTable();
             $columns = $this->schemaColumns($table);
             $internal = [$query->getModel()->getKeyName()];
-            foreach (AssistantEntityAccessCatalog::parentColumns() as $parents) {
-                foreach ($parents as $parent) {
-                    if ($parent['type'] !== $type) { continue; }
-                    $internal[] = $parent['key'] ?? 'id';
-                    array_push($internal, ...array_keys($parent['matches'] ?? []));
-                    if ($parent['match_project'] ?? false) { $internal[] = 'project_id'; }
-                }
-            }
+            array_push($internal, ...AssistantEntityAccessCatalog::referencedParentColumns($type));
             foreach (AssistantExtendedDomainRegistry::values('parentProjectionDefinitions')[$type] ?? [] as $projection) {
                 $internal[] = $projection['parent_key'] ?? $query->getModel()->getKeyName();
                 array_push($internal, ...array_values($projection['matches'] ?? []));

@@ -13,6 +13,30 @@ use ReflectionMethod;
 
 final class AssistantMergedDomainGraphTest extends TestCase
 {
+    public function test_parent_projection_columns_preserve_the_effective_graph_order_and_security_edges(): void
+    {
+        $parents = AssistantEntityAccessCatalog::parentColumns();
+        self::assertSame('warehouse', $parents['inventory_act']['warehouse_id']['type']);
+        self::assertSame('warehouse_zone', $parents['warehouse_storage_cell']['zone_id']['type']);
+        foreach (array_keys(AssistantEntityAccessCatalog::entityDefinitions()) as $type) {
+            $expected = [];
+            foreach ($parents as $edges) {
+                foreach ($edges as $parent) {
+                    if ($parent['type'] !== $type) { continue; }
+                    $expected[] = $parent['key'] ?? 'id';
+                    array_push($expected, ...array_keys($parent['matches'] ?? []));
+                    if ($parent['match_project'] ?? false) { $expected[] = 'project_id'; }
+                }
+            }
+            self::assertSame($expected, AssistantEntityAccessCatalog::referencedParentColumns($type), $type);
+        }
+        self::assertSame([], AssistantEntityAccessCatalog::referencedParentColumns('unknown_entity_type'));
+        $copy = AssistantEntityAccessCatalog::referencedParentColumns('warehouse');
+        self::assertContains('id', $copy);
+        $copy[] = 'not_a_declared_parent_column';
+        self::assertNotContains('not_a_declared_parent_column', AssistantEntityAccessCatalog::referencedParentColumns('warehouse'));
+    }
+
     public function test_complete_declared_parent_graph_has_no_unprotected_cycles_or_unknown_parents(): void
     {
         $helpers = [DomainMetadata\AssistantFinanceTenderMetadata::class, DomainMetadata\AssistantWorkforceCatalogMetadata::class,
