@@ -28,14 +28,27 @@ final class DesignSourceLinkService
     public function __construct(private readonly AuthorizationService $authorization, private readonly AccessController $access) {}
 
     /** @return array<int, array<string, mixed>> */
-    public function linksForSource(User $actor, int $organizationId, int $versionId): array
+    public function linksForSource(User $actor, int $organizationId, int $versionId, ?array $elementIds = null, ?string $targetType = null, ?int $limit = null): array
     {
         $this->requirePirAccess($organizationId);
         $source = $this->source($organizationId, $versionId);
         $this->authorize($actor, 'design-management.view', $organizationId, $source->project_id);
 
-        $links = DesignSourceLink::query()->where('organization_id', $organizationId)->where('project_id', $source->project_id)->where('source_version_id', $versionId)
-            ->with('sourceVersion.artifact.package')->orderByDesc('id')->get();
+        $query = DesignSourceLink::query()->where('organization_id', $organizationId)->where('project_id', $source->project_id)->where('source_version_id', $versionId)
+            ->with('sourceVersion.artifact.package')->orderByDesc('id');
+        if ($elementIds !== null) {
+            $query->whereIn('source_element_id', $elementIds);
+        }
+        if ($targetType !== null) {
+            $query->where('target_type', $targetType)->where('status', 'active');
+        }
+        if ($limit !== null) {
+            if ($limit < 1 || $limit > 100) {
+                throw new \InvalidArgumentException('invalid_source_link_limit');
+            }
+            $query->limit($limit);
+        }
+        $links = $query->get();
 
         return $this->readableLinks($actor, $links)
             ->map(fn (DesignSourceLink $link): array => $this->presentLink($actor, $link))->values()->all();

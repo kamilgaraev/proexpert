@@ -35,6 +35,8 @@ final readonly class GetBimModelElementsTool implements AIToolInterface
             'version_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
             'offset' => ['type' => 'integer', 'minimum' => 0, 'maximum' => 1000000],
             'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20],
+            'include_estimate_links' => ['type' => 'boolean',
+                'description' => trans_message('ai_assistant_bim.estimate_links_description')],
         ];
 
         return ['type' => 'object', 'properties' => $properties, 'required' => array_keys($properties), 'additionalProperties' => false];
