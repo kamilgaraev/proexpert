@@ -42,7 +42,7 @@ final class AssistantStatusSnapshotDiagnostics
 
     public static function coverageRefresh(string $phase, bool $global, ?float $durationMs = null, ?bool $countsKnown = null, ?bool $generationPresent = null, ?Throwable $exception = null): void
     {
-        if (! in_array($phase, ['queued', 'queue_failed', 'started', 'finished', 'failed', 'terminal_failed'], true)) {
+        if (! in_array($phase, ['queued', 'queue_failed', 'started', 'finished', 'failed', 'terminal_failed', 'lease_metadata_failed'], true)) {
             return;
         }
         try {
