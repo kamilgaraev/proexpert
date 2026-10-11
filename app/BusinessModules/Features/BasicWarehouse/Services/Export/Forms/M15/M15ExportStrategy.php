@@ -155,7 +155,11 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         ] as $cell => $value) {
             $this->text($sheet, $cell, $value);
         }
-        foreach (['F9' => 110, 'E15' => 130, 'C16' => 72, 'AE16' => 66, 'O13' => 16, 'Y13' => 16] as $cell => $characters) {
+        foreach ([
+            'F9' => 110, 'E15' => 130, 'C16' => 72, 'AE16' => 66,
+            'O13' => 16, 'T13' => 16, 'Y13' => 16, 'AD13' => 16,
+            'AI13' => 16, 'AN13' => 16, 'AS13' => 16,
+        ] as $cell => $characters) {
             $this->fitTextRow($sheet, $cell, $characters);
         }
     }
@@ -191,7 +195,9 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         }
         // Давальческая передача сохраняет учётную оценку, без расчёта НДС по условной ставке.
         $this->text($sheet, 'AH'.$row, '—');
-        $this->fitTextRow($sheet, 'G'.$row, 22);
+        foreach (['A' => 9, 'D' => 9, 'G' => 22, 'M' => 11, 'P' => 6, 'R' => 13, 'AN' => 11, 'AQ' => 11, 'AT' => 13] as $column => $characters) {
+            $this->fitTextRow($sheet, $column.$row, $characters);
+        }
 
         return $amount;
     }
@@ -207,6 +213,7 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         $this->text($sheet, 'AO'.(66 + $offset), '—');
         $this->text($sheet, 'AU'.(66 + $offset), '—');
         $this->text($sheet, 'AH'.(72 + $offset), $person);
+        $this->fitTextRow($sheet, 'AH'.(72 + $offset), 60);
         $this->fitTextRow($sheet, 'E'.(66 + $offset), 62);
     }
 

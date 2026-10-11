@@ -124,6 +124,16 @@ final class M15ReferenceTemplateTest extends TestCase
         self::assertSame('@', $sheet->getStyle('M21')->getNumberFormat()->getFormatCode());
     }
 
+    public function test_long_nomenclature_codes_are_wrapped_without_clipping(): void
+    {
+        $movement = $this->movement();
+        $movement->material->code = 'CEMENT-M500-CUSTOMER-MATERIAL-CODE-20261011-001';
+        $sheet = $this->strategy()->createWorkbook($movement)->getActiveSheet();
+        self::assertSame($movement->material->code, $sheet->getCell('M21')->getValue());
+        self::assertGreaterThanOrEqual(60, $sheet->getRowDimension(21)->getRowHeight());
+        self::assertTrue($sheet->getStyle('M21')->getAlignment()->getWrapText());
+    }
+
     public function test_zero_is_preserved_and_missing_price_is_not_filled_with_zero(): void
     {
         $zero = $this->movement();
