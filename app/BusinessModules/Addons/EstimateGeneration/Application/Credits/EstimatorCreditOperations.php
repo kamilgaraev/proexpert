@@ -36,6 +36,9 @@ final readonly class EstimatorCreditOperations
         return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $stateVersion, $requestId, $kind): array {
             $session = $this->session($actor, $projectId, $sessionId);
             $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
+            if (! EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
+                throw new DomainException('estimator_credit_legacy_balance_requires_reconciliation');
+            }
             if ((int) $session->state_version !== $stateVersion || $session->status->value === 'archived'
                 || in_array($session->status->value, ['generating', 'applying'], true)
                 || ($session->status->value === 'failed' && $session->resume_status?->value !== 'generating')) {
@@ -71,7 +74,8 @@ final readonly class EstimatorCreditOperations
             }
 
             return [...$payload, 'operation_id' => $request->operationId, 'state_version' => $stateVersion,
-                'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna'];
+                'operation_kind' => $kind, 'maximum_calls' => $request->maximumCalls, 'provider' => 'timeweb', 'model' => 'openai/gpt-6-luna',
+                'available_units_minor' => $this->credits->balance($organization)['available_minor']];
         }, 3);
     }
 
@@ -82,6 +86,9 @@ final readonly class EstimatorCreditOperations
             throw new DomainException('estimator_credit_begin_requires_transaction');
         }
         $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
+        if (! EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
+            throw new DomainException('estimator_credit_legacy_balance_requires_reconciliation');
+        }
         $operation = $this->database->table('estimate_generation_credit_operations')->where('operation_id', strtolower($requestId))
             ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)->where('session_id', $session->id)
             ->where('actor_user_id', $actor->id)->where('kind', $kind)->lockForUpdate()->first();

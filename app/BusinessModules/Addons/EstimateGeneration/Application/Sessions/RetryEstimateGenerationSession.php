@@ -46,8 +46,11 @@ final class RetryEstimateGenerationSession
             function (EstimateGenerationSession $session) use ($command, &$reconcileImmediately): EstimateGenerationSession {
                 ($this->authorizer ?? app(EstimateGenerationActionAuthorization::class))
                     ->authorize($command->actor, $session, 'estimate_generation.generate');
-                $creditEnabled = config('estimate-generation.credits.enabled', false);
+                $creditEnabled = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id);
                 $freeApplyRecovery = $session->status === EstimateGenerationStatus::Failed && $session->resume_status === EstimateGenerationStatus::Applying;
+                if (! $creditEnabled && ! $freeApplyRecovery) {
+                    $session->input_payload = [...($session->input_payload ?? []), 'generation_credit_operation_id' => null];
+                }
                 if ($creditEnabled && ! $freeApplyRecovery) {
                     if (! $command->actor instanceof \App\Models\User || ! is_array($command->creditApproval)
                         || ! Str::isUuid($command->creditApproval['quote_id'] ?? '') || ! Str::isUuid($command->creditApproval['request_id'] ?? '')) {
@@ -264,7 +267,7 @@ final class RetryEstimateGenerationSession
 
     private function attemptId(EstimateGenerationSession $session): string
     {
-        if (! config('estimate-generation.credits.enabled', false)) {
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
             return ($this->attemptIdFactory)();
         }
         $operationId = $session->input_payload['generation_credit_operation_id'] ?? null;

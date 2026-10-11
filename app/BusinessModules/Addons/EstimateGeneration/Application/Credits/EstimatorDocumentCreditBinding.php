@@ -74,9 +74,9 @@ final readonly class EstimatorDocumentCreditBinding
         $metadata = $unit->metadata ?? [];
         $operationId = $metadata['credit_operation_id'] ?? null;
         if ($operationId === null) {
-            return ! config('estimate-generation.credits.enabled', false);
+            return ! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $unit->organization_id);
         }
-        if (! config('estimate-generation.credits.enabled', false)) {
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $unit->organization_id)) {
             return false;
         }
         $operation = $this->database->table('estimate_generation_credit_operations')->where('operation_id', $operationId)

@@ -132,8 +132,9 @@ final class BuildSessionSnapshot
 
     private function creditPolicy(EstimateGenerationSession $session): array
     {
-        if (! config('estimate-generation.credits.enabled', false)) {
-            return ['enabled' => false];
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
+            return config('estimate-generation.credits.enabled', false)
+                ? ['enabled' => false, 'reason' => 'legacy_balance_requires_reconciliation'] : ['enabled' => false];
         }
         $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
         $balance = app(\App\Services\Credits\AICreditService::class)->balance($organization);

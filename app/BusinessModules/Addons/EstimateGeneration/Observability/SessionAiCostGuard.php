@@ -141,7 +141,7 @@ SQL, [
             if ($attempt === null) {
                 return;
             }
-            if (config('estimate-generation.credits.enabled', false) && $attempt->creditOperationId === null) {
+            if (\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization($organizationId) && $attempt->creditOperationId === null) {
                 throw new SessionAiCostLimitReached('estimator_credit_quote_required');
             }
 

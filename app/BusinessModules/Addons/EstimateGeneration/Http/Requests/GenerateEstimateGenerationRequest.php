@@ -23,8 +23,8 @@ final class GenerateEstimateGenerationRequest extends FormRequest
     {
         return [
             'state_version' => ['required', 'integer', 'min:0'],
-            'quote_id' => [config('estimate-generation.credits.enabled', false) ? 'required' : 'nullable', 'uuid'],
-            'request_id' => [config('estimate-generation.credits.enabled', false) ? 'required' : 'nullable', 'uuid'],
+            'quote_id' => [\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $this->user()->current_organization_id) ? 'required' : 'nullable', 'uuid'],
+            'request_id' => [\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $this->user()->current_organization_id) ? 'required' : 'nullable', 'uuid'],
             'generation_mode' => ['nullable', 'string', Rule::in(EstimateGenerationMode::values())],
             'estimate_regional_price_version_id' => [
                 'nullable',

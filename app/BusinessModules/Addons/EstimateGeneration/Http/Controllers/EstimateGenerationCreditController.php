@@ -34,7 +34,7 @@ final class EstimateGenerationCreditController extends Controller
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
             'operation_kind' => ['required', 'in:generation,analysis']]);
-        if (! config('estimate-generation.credits.enabled', false)) {
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $request->user()->current_organization_id)) {
             return AdminResponse::error('Общий кошелёк сметчика ещё не включён.', 409);
         }
         try {

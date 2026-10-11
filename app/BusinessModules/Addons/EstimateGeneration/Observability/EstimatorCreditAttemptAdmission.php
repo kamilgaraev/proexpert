@@ -24,7 +24,7 @@ final readonly class EstimatorCreditAttemptAdmission
             || $maximumCost->pricingStatus !== 'available' || $maximumCost->currency !== 'RUB' || $maximumCost->amount === null) {
             throw new UsageInvariantViolation('estimator_credit_admission_invalid');
         }
-        if (! config('estimate-generation.credits.enabled', false)) {
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization($organizationId)) {
             throw new SessionAiCostLimitReached('estimator_credit_operations_disabled');
         }
         $maximum = BigDecimal::of($maximumCost->amount)->multipliedBy('1000000')->toScale(0, RoundingMode::Ceiling)->toInt();

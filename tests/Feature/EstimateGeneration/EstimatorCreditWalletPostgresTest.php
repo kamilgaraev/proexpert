@@ -23,6 +23,33 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_an_unknown_legacy_paid_balance_keeps_legacy_billing_without_a_new_shared_reserve(): void
+    {
+        [$organization, $actor, $request] = $this->fixture();
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::class;
+        self::assertTrue($policy::enabledForOrganization((int) $organization->id));
+        $allocation = \App\Models\OrganizationResourceAllocation::query()->create(['organization_id' => $organization->id,
+            'resource_slug' => 'extra_ai_estimates', 'limit_key' => 'ai_estimates_month', 'quantity' => 10,
+            'source' => 'paid_addon', 'status' => 'active', 'period_start_at' => now()->subDay(), 'period_end_at' => now()->addDay(),
+            'metadata' => ['commercial_order_id' => 'unknown-payment-origin']]);
+        self::assertFalse($policy::enabledForOrganization((int) $organization->id));
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+                ->quote($actor, $request->projectId, $request->sessionId, 0, (string) Str::uuid(), 'generation');
+            self::fail('An unresolved legacy balance was silently converted to shared billing.');
+        } catch (\DomainException $exception) {
+            self::assertSame('estimator_credit_legacy_balance_requires_reconciliation', $exception->getMessage());
+        }
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame('active', $allocation->fresh()->status);
+        self::assertSame('10.00', $allocation->fresh()->quantity);
+        $allocation->update(['period_end_at' => now()->subSecond()]);
+        self::assertTrue($policy::enabledForOrganization((int) $organization->id));
+    }
+
     public function test_manual_generation_retry_requires_a_new_quote_and_replays_one_approved_operation(): void
     {
         $this->seedGlobalSettings();

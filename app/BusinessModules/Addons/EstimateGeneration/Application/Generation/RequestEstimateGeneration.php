@@ -42,7 +42,7 @@ final class RequestEstimateGeneration
         ?array $creditApproval = null,
         string $creditKind = 'generation',
     ): SessionActionResult {
-        if (config('estimate-generation.credits.enabled', false)) {
+        if (\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
             if (! is_array($creditApproval) || ! Str::isUuid($creditApproval['request_id'] ?? '') || ! Str::isUuid($creditApproval['quote_id'] ?? '')) {
                 throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Перед запуском подтвердите предложение стоимости этой операции.']);
             }
@@ -125,6 +125,7 @@ final class RequestEstimateGeneration
             $requestedMode ?? ($session->input_payload['generation_mode'] ?? null),
         )->value;
         $generationInput = EstimateGenerationExecutionActor::identity($actor);
+        $generationInput['generation_credit_operation_id'] = $creditOperationId;
         if ($creditOperationId !== null) {
             $generationInput['generation_credit_operation_id'] = $creditOperationId;
         }

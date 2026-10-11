@@ -135,7 +135,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             }
             $creditAttempt = $this->database->table(self::TABLE)->where('attempt_id', $attemptId)->lockForUpdate()->first();
             $creditOperationId = $creditAttempt->credit_operation_id ?? null;
-            if ($creditOperationId === null && config('estimate-generation.credits.enabled', false)) {
+            if ($creditOperationId === null && \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) ($creditAttempt->organization_id ?? 0))) {
                 return 'estimator_credit_quote_required';
             }
             if ($creditOperationId !== null) {
