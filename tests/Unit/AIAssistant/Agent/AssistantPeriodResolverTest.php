@@ -37,6 +37,11 @@ class AssistantPeriodResolverTest extends TestCase
             'two weeks as words' => ['за две недели', '2026-04-20', '2026-05-04', 'За 2 недели'],
             'three weeks' => ['за 3 недели', '2026-04-13', '2026-05-04', 'За 3 недели'],
             'three weeks ago' => ['3 недели назад', '2026-04-07', '2026-04-14', '3 недели назад'],
+            'november short follow up' => ['ноябрь 2026', '2026-11-01', '2026-11-30', 'Ноябрь 2026'],
+            'november explicit year' => ['за ноябрь 2026', '2026-11-01', '2026-11-30', 'Ноябрь 2026'],
+            'november historical year' => ['за ноябрь 2024 года', '2024-11-01', '2024-11-30', 'Ноябрь 2024'],
+            'november current year' => ['за ноябрь текущего года', '2026-11-01', '2026-11-30', 'Ноябрь 2026'],
+            'november previous year' => ['за ноябрь прошлого года', '2025-11-01', '2025-11-30', 'Ноябрь 2025'],
             'november nearest past year' => ['за ноябрь', '2025-11-01', '2025-11-30', 'Ноябрь 2025'],
             'may nearest past year' => ['за май', '2025-05-01', '2025-05-31', 'Май 2025'],
             'explicit range' => ['с 1.04.2026 по 01.05.2026', '2026-04-01', '2026-05-01', 'Указанный период'],
@@ -81,6 +86,12 @@ class AssistantPeriodResolverTest extends TestCase
 
         $this->assertNull($resolver->resolve('с 32.04.2026 по 01.05.2026'));
         $this->assertNull($resolver->resolve('с 02.05.2026 по 01.05.2026'));
+        $this->assertNull($resolver->resolve('с 32.04.2026 по 01.05.2026 за ноябрь'));
+        $this->assertNull($resolver->resolve('за ноябрь 0000'));
+        $this->assertNull($resolver->resolve('за ноябрь 20261'));
+        $this->assertNull($resolver->resolve('за ноябрь 26'));
+        $this->assertNull($resolver->resolve('за ноябрь -2026'));
+        $this->assertNull($resolver->resolve('за ноябрь 20xx'));
     }
 
     public function test_invalid_array_boundaries_return_null(): void

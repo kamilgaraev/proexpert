@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 return [
     'returned_scope' => 'Показаны поля найденных записей. Полнота списка и общие итоги не подтверждены.',
+    'search_record_count' => 'В проверенном поиске найдено записей: :count.',
+    'search_record_count_organization' => 'В доступных данных организации найдено записей: :count.',
+    'search_record_count_project' => 'В выбранном проекте найдено доступных записей: :count.',
     'entity' => ':type №:id:',
     'record' => 'Запись',
     'unknown' => 'не указано',

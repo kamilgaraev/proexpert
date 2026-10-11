@@ -37,15 +37,23 @@ final class DesignViewerConverterProfileTest extends TestCase
     public function test_node_converter_preserves_properties_and_project_coordinates(): void
     {
         $script = file_get_contents(base_path('resources/js/design-management/convert-ifc-to-frag.mjs'));
+        $reader = file_get_contents(base_path('resources/js/design-management/ifc-reader.mjs'));
+        $index = file_get_contents(base_path('resources/js/design-management/ifc-index-data.mjs'));
 
         $this->assertIsString($script);
+        $this->assertIsString($reader);
+        $this->assertIsString($index);
         $this->assertStringContainsString('VIEWER_GEOMETRY_PROFILE', $script);
         $this->assertStringContainsString('importer.includeUniqueAttributes = true', $script);
         $this->assertStringContainsString('importer.includeRelationNames = true', $script);
-        $this->assertStringContainsString('COORDINATE_TO_ORIGIN: false', $script);
+        $this->assertStringContainsString('openIfcSource, IFC_LOADER_SETTINGS', $script);
+        $this->assertStringContainsString('importer.webIfcSettings = IFC_LOADER_SETTINGS', $script);
+        $this->assertStringContainsString('COORDINATE_TO_ORIGIN: false', $reader);
         $this->assertStringContainsString('OpenModelFromCallback', $script);
         $this->assertStringContainsString('getElementPropertySets', $script);
-        $this->assertStringContainsString('getMaterialsProperties', $script);
+        $this->assertStringContainsString('createIfcIndexReader', $script);
+        $this->assertStringContainsString('materialNames', $index);
+        $this->assertStringContainsString('indexReader.materialNames', $script);
         $this->assertStringContainsString('classificationMap', $script);
         $this->assertStringContainsString('coordination_matrix', $script);
     }

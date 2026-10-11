@@ -176,6 +176,40 @@ final class AssistantAgentExecutorTest extends TestCase
         $this->assertSame('Недостаточно прав для выполнения инструмента.', $result['raw']['message']);
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('scopeSearchProvider')]
+    public function test_report_scope_search_only_resolves_unique_available_results(array $raw, bool $allowed, ?int $expectedId): void
+    {
+        $executor = $this->makeExecutor($this->makeTool('search_projects', $raw), $allowed);
+        $user = new User;
+        $user->current_organization_id = 15;
+        $organization = new Organization;
+        $organization->id = 15;
+        $scope = $executor->resolveReportEntityScope('project', 'СевГУ', null, $user, $organization);
+        $this->assertSame($expectedId, $scope['id'] ?? null);
+    }
+
+    public static function scopeSearchProvider(): array
+    {
+        return [
+            'unique' => [['status' => 'success', 'results' => [['id' => 72, 'name' => 'СевГУ']]], true, 72],
+            'none' => [['status' => 'success', 'results' => []], true, null],
+            'ambiguous' => [['status' => 'success', 'results' => [['id' => 72], ['id' => 73]]], true, null],
+            'truncated' => [['status' => 'success', 'results' => [['id' => 72]], 'result_window' => ['has_more' => true]], true, null],
+            'denied' => [['status' => 'success', 'results' => [['id' => 72]]], false, null],
+            'failed' => [['status' => 'error', 'results' => [['id' => 72]]], true, null],
+        ];
+    }
+
+    public function test_scope_search_cannot_use_another_organization(): void
+    {
+        $executor = $this->makeExecutor($this->makeTool('search_projects', ['status' => 'success', 'results' => [['id' => 72]]]), true);
+        $user = new User;
+        $user->current_organization_id = 16;
+        $organization = new Organization;
+        $organization->id = 15;
+        $this->assertNull($executor->resolveReportEntityScope('project', 'СевГУ', null, $user, $organization));
+    }
+
     private function makeExecutor(?AIToolInterface $tool, bool $canExecute): AssistantAgentExecutor
     {
         $registry = new AIToolRegistry;
@@ -216,7 +250,7 @@ final class AssistantAgentExecutorTest extends TestCase
 
             public function getParametersSchema(): array
             {
-                return ['type' => 'object', 'properties' => ['period' => ['type' => 'string']], 'additionalProperties' => false];
+                return ['type' => 'object', 'properties' => ['period' => ['type' => 'string'], 'query' => ['type' => 'string']], 'additionalProperties' => false];
             }
 
             public function execute(array $arguments, ?User $user, Organization $organization): array|string

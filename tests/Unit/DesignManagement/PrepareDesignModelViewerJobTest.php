@@ -26,6 +26,215 @@ use Tests\TestCase;
 
 final class PrepareDesignModelViewerJobTest extends TestCase
 {
+    public function test_system_upgrade_is_idempotent_and_preserves_published_model_and_nullable_authors(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $derivative->forceFill(['created_by' => null, 'updated_by' => null, 'prepared_by' => null])->save();
+        $published = $derivative->derivative_file_path;
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $this->assertFalse($service->queueIndexUpgrade($derivative));
+        $derivative->refresh();
+        $this->assertSame('ready', $derivative->status->value);
+        $this->assertSame($published, $derivative->derivative_file_path);
+        $this->assertSame('published', $derivative->metadata['generation']);
+        $this->assertNull($derivative->created_by);
+        $this->assertNull($derivative->updated_by);
+        $this->assertNull($derivative->prepared_by);
+        Bus::assertDispatchedTimes(PrepareDesignModelViewerJob::class, 1);
+    }
+
+    public function test_system_upgrade_rejects_foreign_scope_and_active_converter_lock(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $other = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $derivative->forceFill(['project_id' => $other->id])->save();
+        $this->assertFalse($service->queueIndexUpgrade($derivative));
+        $derivative->forceFill(['project_id' => $project->id])->save();
+        $lock = Cache::lock('design-management:viewer-preparation:'.$derivative->id, 8000);
+        $this->assertTrue($lock->get());
+        try {
+            $this->assertFalse($service->queueIndexUpgrade($derivative));
+            Bus::assertNotDispatched(PrepareDesignModelViewerJob::class);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function test_recovered_upgrade_fences_old_generation_without_losing_published_model(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $this->mock(DesignIfcToFragmentsConverterContract::class, fn (MockInterface $mock) => $mock->shouldNotReceive('convert'));
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $oldGeneration = $derivative->refresh()->metadata['index_upgrade']['generation'];
+        $derivative->forceFill(['updated_at' => now()->subSeconds(8000)])->save();
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $service->processQueuedDerivative((int) $derivative->id, $oldGeneration);
+        $service->markJobFailed((int) $derivative->id, new RuntimeException('Old job'), $oldGeneration);
+        $this->assertSame('queued', $derivative->refresh()->metadata['index_upgrade']['status']);
+        $this->assertNotSame($oldGeneration, $derivative->metadata['index_upgrade']['generation']);
+        $this->assertSame('ready', $derivative->status->value);
+    }
+
+    public function test_changed_upgrade_source_is_rejected_before_conversion_and_keeps_published_model(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $this->mock(DesignIfcToFragmentsConverterContract::class, fn (MockInterface $mock) => $mock->shouldNotReceive('convert'));
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $generation = $derivative->refresh()->metadata['index_upgrade']['generation'];
+        $published = $derivative->derivative_file_path;
+        $version->forceFill(['source_file_path' => 'org-'.$version->organization_id.'/changed.ifc'])->save();
+        $service->processQueuedDerivative((int) $derivative->id, $generation);
+        $this->assertSame('failed', $derivative->refresh()->metadata['index_upgrade']['status']);
+        $this->assertSame('ready', $derivative->status->value);
+        $this->assertSame($published, $derivative->derivative_file_path);
+        $this->assertSame('published', $derivative->metadata['generation']);
+    }
+
+    public function test_scheduled_upgrade_scan_is_bounded_and_continues_after_unqueueable_candidates(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $first = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $first->forceFill(['source_file_path' => 'org-foreign/unavailable.ifc'])->save();
+        $this->legacyReadyDerivative($first, (int) $context->user->id);
+        $second = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($second, (int) $context->user->id);
+        Cache::forget('design-management:ifc-index-upgrade:cursor:2');
+        $this->artisan('design-management:upgrade-ifc-index', ['--limit' => 1, '--scan-limit' => 1])
+            ->expectsOutput('scanned=1; queued=0; scan_limit=1')->assertSuccessful();
+        $this->artisan('design-management:upgrade-ifc-index', ['--limit' => 1, '--scan-limit' => 1])
+            ->expectsOutput('scanned=1; queued=1; scan_limit=1')->assertSuccessful();
+        $this->assertSame('queued', $derivative->refresh()->metadata['index_upgrade']['status']);
+        Bus::assertDispatchedTimes(PrepareDesignModelViewerJob::class, 1);
+    }
+
+    public function test_truncated_sidecar_rolls_back_replacement_rows_and_schema_marker(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $old = DesignIfcModelElement::query()->create(['organization_id' => $version->organization_id, 'project_id' => $version->project_id, 'version_id' => $version->id, 'derivative_id' => $derivative->id, 'express_id' => 9, 'name' => 'Published', 'properties' => []]);
+        $path = tempnam(sys_get_temp_dir(), 'ifc-index-test-');
+        $rows = [];
+        for ($id = 1; $id <= 500; $id++) {
+            $rows[] = json_encode(['express_id' => $id, 'name' => 'Replacement']);
+        }
+        file_put_contents($path, implode("\n", $rows)."\n".'{"express_id":501');
+        try {
+            try {
+                $this->app->make(\App\BusinessModules\Features\DesignManagement\Services\DesignIfcElementIndexer::class)->index($version, $derivative, $path, ['index_schema_version' => 2, 'indexed_element_count' => 501]);
+                $this->fail('Truncated IFC index was published.');
+            } catch (\JsonException) {
+                $this->assertSame(1, DesignIfcModelElement::query()->where('version_id', $version->id)->count());
+                $this->assertSame('Published', $old->fresh()->name);
+                $this->assertArrayNotHasKey('ifc_index_schema_version', $derivative->refresh()->metadata);
+            }
+        } finally {
+            unlink($path);
+        }
+    }
+
+    private function legacyReadyDerivative(DesignArtifactVersion $version, int $userId): DesignModelDerivative
+    {
+        $derivative = $this->queuedDerivative($version, $userId);
+        $derivative->forceFill(['status' => 'ready', 'derivative_file_path' => 'org-'.$version->organization_id.'/published/model.frag', 'metadata' => ['converter_version' => DesignViewerConverter::version(), 'generation' => 'published']])->save();
+
+        return $derivative;
+    }
+
+    public function test_successful_index_replacement_removes_obsolete_rows_and_preserves_existing_ids(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $retained = DesignIfcModelElement::query()->create(['organization_id' => $version->organization_id, 'project_id' => $version->project_id, 'version_id' => $version->id, 'derivative_id' => $derivative->id, 'express_id' => 1, 'name' => 'Old', 'properties' => []]);
+        $obsolete = DesignIfcModelElement::query()->create(['organization_id' => $version->organization_id, 'project_id' => $version->project_id, 'version_id' => $version->id, 'derivative_id' => $derivative->id, 'express_id' => 2, 'name' => 'Obsolete', 'properties' => []]);
+        $path = tempnam(sys_get_temp_dir(), 'ifc-index-test-');
+        file_put_contents($path, json_encode(['express_id' => 1, 'name' => 'Replacement', 'properties' => ['_ifc' => ['schema_version' => 2]], 'quantity_units' => ['Q.Volume' => ['name' => 'CUBIC_METRE', 'source' => 'quantity_unit']]])."\n");
+        try {
+            $this->app->make(\App\BusinessModules\Features\DesignManagement\Services\DesignIfcElementIndexer::class)->index($version, $derivative, $path, ['index_schema_version' => 2, 'indexed_element_count' => 1]);
+            $this->assertSame(1, DesignIfcModelElement::query()->where('version_id', $version->id)->count());
+            $this->assertSame('Replacement', $retained->fresh()->name);
+            $this->assertNull($obsolete->fresh());
+            $this->assertSame(2, $derivative->refresh()->metadata['ifc_index_schema_version']);
+            $this->assertSame('CUBIC_METRE', $retained->fresh()->properties['quantity_units']['Q.Volume']['name']);
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function test_current_index_is_not_scheduled_again(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $derivative->forceFill(['metadata' => ['converter_version' => DesignViewerConverter::version(), 'ifc_index_schema_version' => 2]])->save();
+        $this->assertFalse($this->app->make(DesignModelViewerPreparationService::class)->queueIndexUpgrade($derivative));
+        Bus::assertNotDispatched(PrepareDesignModelViewerJob::class);
+    }
+
+    public function test_upgrade_upload_failure_keeps_published_index_and_offline_generation(): void
+    {
+        Bus::fake();
+        $this->fakeFileStorage(corruptSidecar: true);
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        Storage::disk('s3')->put($version->source_file_path, 'IFC source');
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $old = DesignIfcModelElement::query()->create(['organization_id' => $version->organization_id, 'project_id' => $version->project_id, 'version_id' => $version->id, 'derivative_id' => $derivative->id, 'express_id' => 9, 'name' => 'Published', 'properties' => []]);
+        $published = $derivative->derivative_file_path;
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('convert')->once()->andReturnUsing(static function (string $source, string $target): DesignViewerConversionResult {
+                file_put_contents($target, 'fragment binary');
+                file_put_contents($target.'.ifc-index.ndjson', '{"express_id":42,"properties":{"_ifc":{"schema_version":2}}}' ."\n");
+
+                return DesignViewerConversionResult::fromPayload(['metrics' => [
+                    'local_id_count' => 1, 'sample_count' => 1, 'representation_count' => 1,
+                    'bounding_box' => ['min' => ['x' => 0, 'y' => 0, 'z' => 0], 'max' => ['x' => 1, 'y' => 1, 'z' => 1]],
+                    'runtime' => ['fragments' => '3.4.5', 'web_ifc' => '0.0.77', 'three' => '0.184.0', 'node' => '22.0.0'],
+                    'ifc_metadata' => ['index_schema_version' => 2, 'indexed_element_count' => 1],
+                ]]);
+            });
+        });
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $service->processQueuedDerivative((int) $derivative->id, $derivative->refresh()->metadata['index_upgrade']['generation']);
+        $this->assertSame('ready', $derivative->refresh()->status->value);
+        $this->assertSame('failed', $derivative->metadata['index_upgrade']['status']);
+        $this->assertSame($published, $derivative->derivative_file_path);
+        $this->assertSame('published', $derivative->metadata['generation']);
+        $this->assertArrayNotHasKey('ifc_index_schema_version', $derivative->metadata);
+        $this->assertSame(1, DesignIfcModelElement::query()->where('version_id', $version->id)->count());
+        $this->assertSame('Published', $old->fresh()->name);
+    }
+
     public function test_job_converts_ifc_to_frag_and_marks_derivative_ready(): void
     {
         $this->fakeFileStorage();

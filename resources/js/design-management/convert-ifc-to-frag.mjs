@@ -11,6 +11,7 @@ import { writeConverterMessage } from "./converter-output.mjs";
 import { openIfcSource, IFC_LOADER_SETTINGS } from "./ifc-reader.mjs";
 import { runConverterPhase, watchConverterParent } from "./ifc-converter-process.mjs";
 import { createIfcPropertyLookup } from "./ifc-relationships.mjs";
+import { ifcValue as value, namedProperties, createIfcIndexReader } from "./ifc-index-data.mjs";
 
 const [, , inputPath, outputPath, indexPath, phase] = process.argv;
 const VIEWER_GEOMETRY_PROFILE = "ifc_properties_geometry_v2";
@@ -143,37 +144,6 @@ const inspectFragments = async (bytes) => {
   return metrics;
 };
 
-const value = (input) => {
-  if (input === null || input === undefined) return null;
-  if (typeof input !== "object") return input;
-  if (Object.prototype.hasOwnProperty.call(input, "value")) return value(input.value);
-  return null;
-};
-
-const namedProperties = (sets) => {
-  const result = {};
-  for (const set of sets ?? []) {
-    const setName = String(value(set.Name) ?? "Unnamed");
-    const properties = {};
-    for (const property of [...(set.HasProperties ?? []), ...(set.Quantities ?? [])]) {
-      const name = value(property.Name);
-      if (name !== null) properties[String(name)] = value(property.NominalValue ?? property.LengthValue ?? property.AreaValue ?? property.VolumeValue ?? property.CountValue ?? property.WeightValue);
-    }
-    result[setName] = { ...result[setName], ...properties };
-  }
-  return result;
-};
-
-const materialNames = (api, modelID, materials) => (materials ?? [])
-  .map((material) => {
-    const name = value(material.Name);
-    if (name !== null) return name;
-    const materialID = Number(value(material.Material));
-    return Number.isInteger(materialID) && materialID > 0 ? value(api.GetLine(modelID, materialID, false)?.Name) : null;
-  })
-  .filter((name) => name !== null)
-  .map(String);
-
 const relationIds = (references) => (references ?? [])
   .map((reference) => Number(value(reference)))
   .filter((id) => Number.isInteger(id) && id > 0);
@@ -213,6 +183,7 @@ const extractIfcIndex = async (sourcePath, destination) => {
     output = await fs.open(destination, "w");
     const readPropertySet = createPropertySetReader(api, modelID);
     const propertyLookup = createIfcPropertyLookup(api, modelID);
+    const indexReader = createIfcIndexReader(api, modelID, propertyLookup);
     const classifications = classificationMap(api, modelID);
     for (const { typeID } of api.GetAllTypesOfModel(modelID)) {
       if (api.IsIfcElement(typeID)) elementGroups.push(api.GetLineIDsWithType(modelID, typeID));
@@ -223,18 +194,19 @@ const extractIfcIndex = async (sourcePath, destination) => {
         const expressID = ids.get(index);
         const item = api.GetLine(modelID, expressID, false);
         if (!item || !api.IsIfcElement(item.type)) continue;
-        const [propertySets, materials] = await Promise.all([
-          getElementPropertySets(api, modelID, expressID, readPropertySet, propertyLookup),
-          propertyLookup.materialIds(expressID).map((id) => api.GetLine(modelID, id, false)),
-        ]);
+        const types = indexReader.assignedTypes(expressID);
+        const propertySets = await getElementPropertySets(api, modelID, expressID, readPropertySet, propertyLookup, types);
+        const quantitySets = propertySets.filter((set) => api.GetNameFromTypeCode(set.type).toUpperCase() === "IFCELEMENTQUANTITY");
         await output.writeFile(`${JSON.stringify({
+          index_schema_version: 2,
           express_id: expressID,
           global_id: value(item.GlobalId),
           category: api.GetNameFromTypeCode(item.type).toUpperCase(),
           name: value(item.Name),
-          properties: namedProperties(propertySets),
-          quantities: namedProperties(propertySets.filter((set) => api.GetNameFromTypeCode(set.type).toUpperCase() === "IFCELEMENTQUANTITY")),
-          materials: materialNames(api, modelID, materials),
+          properties: { ...namedProperties(propertySets), _ifc: indexReader.attributes(item, types) },
+          quantities: namedProperties(quantitySets),
+          quantity_units: indexReader.quantityUnits(quantitySets),
+          materials: indexReader.materialNames(propertyLookup.materialIds(expressID)),
           classifications: classifications.get(expressID) ?? [],
         })}\n`);
         elements += 1;
@@ -243,18 +215,7 @@ const extractIfcIndex = async (sourcePath, destination) => {
         }
       }
     }
-    const unitTypes = ["IFCSIUNIT", "IFCCONVERSIONBASEDUNIT", "IFCDERIVEDUNIT"];
-    const units = unitTypes.flatMap((type) => {
-      const ids = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName(type));
-      const units = Array.from({ length: ids.size() }, (_, index) => api.GetLine(modelID, ids.get(index), false)).map((unit) => ({
-        type,
-        unit_type: value(unit.UnitType),
-        name: value(unit.Name),
-        prefix: value(unit.Prefix),
-      }));
-      ids.delete?.();
-      return units;
-    });
+    const units = indexReader.projectUnits();
     const transformationTypes = ["IFCMAPCONVERSION", "IFCLOCALPLACEMENT", "IFCGEOMETRICREPRESENTATIONCONTEXT"];
     const transformations = transformationTypes.flatMap((type) => {
       const ids = api.GetLineIDsWithType(modelID, api.GetTypeCodeFromName(type));
@@ -262,7 +223,7 @@ const extractIfcIndex = async (sourcePath, destination) => {
       ids.delete?.();
       return transformations;
     });
-    return { indexed_element_count: elements, units, transformations, coordination_matrix: api.GetCoordinationMatrix(modelID) };
+    return { index_schema_version: 2, indexed_element_count: elements, units, transformations, coordination_matrix: api.GetCoordinationMatrix(modelID) };
   } finally {
     for (const ids of elementGroups) ids.delete?.();
     if (modelID >= 0) api.CloseModel(modelID);

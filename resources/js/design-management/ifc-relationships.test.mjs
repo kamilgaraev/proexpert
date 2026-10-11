@@ -28,19 +28,19 @@ test("indexes IFC relations once and preserves type properties, own overrides an
     GetLineIDsWithType: (modelID, type, inherited) => {
       scans += 1;
       assert.equal(inherited, true);
-      return { size: () => groups[type].length, get: (index) => groups[type][index], delete: () => { released += 1; } };
+      return { size: () => (groups[type] ?? []).length, get: (index) => groups[type][index], delete: () => { released += 1; } };
     },
     GetLine: (modelID, id, recursive) => { assert.equal(recursive, false); return records[id]; },
   };
   const lookup = createIfcPropertyLookup(api, 0);
-  assert.equal(scans, 3);
-  assert.equal(released, 3);
-  assert.deepEqual(lookup.materialIds(7), [20]);
+  assert.equal(scans, 6);
+  assert.equal(released, 6);
+  assert.deepEqual(lookup.materialIds(7), [20, 21]);
   assert.deepEqual(lookup.materialIds(8), [20]);
   const read = createPropertySetReader(api, 0);
   assert.deepEqual((await getElementPropertySets(api, 0, 7, read, lookup)).map((set) => set.Name.value), ["Inherited", "Own"]);
   assert.deepEqual((await getElementPropertySets(api, 0, 8, read, lookup)).map((set) => set.Name.value), ["Inherited", "Other"]);
-  assert.equal(scans, 3);
+  assert.equal(scans, 6);
   assert.deepEqual(lookup.typeIds(99), []);
   assert.deepEqual(lookup.propertySetIds(99), []);
 });
@@ -60,7 +60,7 @@ test("preserves IFC2X3 IsDefinedBy order when property sets share names", async 
   const api = {
     GetModelSchema: () => "IFC2X3",
     GetTypeCodeFromName: (name) => name,
-    GetLineIDsWithType: (modelID, type) => ({ size: () => groups[type].length, get: (index) => groups[type][index] }),
+    GetLineIDsWithType: (modelID, type) => ({ size: () => (groups[type] ?? []).length, get: (index) => groups[type][index] }),
     GetLine: (modelID, id) => records[id],
   };
   const lookup = createIfcPropertyLookup(api, 0);

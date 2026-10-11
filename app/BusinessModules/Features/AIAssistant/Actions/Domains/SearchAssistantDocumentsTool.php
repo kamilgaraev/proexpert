@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentUnitReader;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
 use App\Models\Organization;
@@ -29,6 +30,7 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         private AIPermissionChecker $permissions,
         private AssistantToolArgumentValidator $arguments,
         private AssistantDocumentCoverageService $coverage,
+        private ?AssistantDocumentUnitReader $unitReader = null,
     ) {}
 
     public function getName(): string
@@ -50,7 +52,15 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
                 'items' => ['type' => 'string', 'maxLength' => 128, 'pattern' => '^[a-zA-Z][a-zA-Z0-9_]*$']],
             'limit' => ['type' => ['integer', 'null'], 'minimum' => 1, 'maximum' => 20],
         ];
-        return ['type' => 'object', 'properties' => $properties, 'required' => array_keys($properties), 'additionalProperties' => false];
+        $required = array_keys($properties);
+        $properties += [
+            'document_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
+            'unit_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
+            'text_offset' => ['type' => ['integer', 'null'], 'minimum' => 0, 'maximum' => 2_000_000],
+            'cursor' => ['type' => ['string', 'null'], 'minLength' => 1, 'maxLength' => 4096],
+            'retrieval_mode' => ['type' => ['string', 'null'], 'enum' => ['hybrid', 'lexical', null]],
+        ];
+        return ['type' => 'object', 'properties' => $properties, 'required' => $required, 'additionalProperties' => false];
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
@@ -65,11 +75,20 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
             fn (): bool => $this->access->canReadEntity($user, (int) $organization->id, 'project', $arguments['project_id']), true)) {
             throw new AuthorizationException;
         }
-        $context = array_filter(array_intersect_key($arguments, array_flip(['project_id', 'source_types', 'limit'])),
+        $context = array_filter(array_intersect_key($arguments, array_flip(['project_id', 'source_types', 'limit', 'retrieval_mode'])),
             static fn (mixed $value): bool => $value !== null);
-        $coverage = fn (): array => $this->coverage->coverage((int) $organization->id, $user,
+        if (($arguments['document_id'] ?? null) !== null || ($arguments['cursor'] ?? null) !== null) {
+            $read = fn (): array => ($this->unitReader ?? app(AssistantDocumentUnitReader::class))->read($user, (int) $organization->id, $arguments,
+                $execution === null ? null : $execution->assertCanContinue(...));
+            return $execution === null ? $read() : $execution->withDatabaseStatementTimeout(
+                fn (): array => $execution->withOperationBudget($read, 30_000, 'pgsql'));
+        }
+        if (($arguments['unit_id'] ?? null) !== null || ($arguments['text_offset'] ?? null) !== null) {
+            throw new \RuntimeException(trans_message('ai_assistant.action_arguments_invalid'));
+        }
+        $coverage = fn (): array => $this->access->withCurrentChecks($user, (int) $organization->id, fn (): array => $this->coverage->coverage((int) $organization->id, $user,
             $execution === null ? null : $execution->assertCanContinue(...),
-            $execution === null ? null : fn (): int => $execution->remainingMilliseconds());
+            $execution === null ? null : fn (): int => $execution->remainingMilliseconds(), $context), true);
         try {
             $coverageResult = $execution === null ? $coverage() : $execution->withDatabaseStatementTimeout(
                 fn (): array => $execution->withOperationBudget($coverage, 30_000, 'pgsql'));
@@ -126,6 +145,7 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         }
 
         return ['status' => $status, 'document_context' => $documentContext['prompt'],
+            'search_scope' => 'ranked_candidates', 'search_complete' => false,
             'search_diagnostics' => $safeDiagnostics, 'search_notice' => null,
             'rag_context' => $documentContext['metadata'], 'source_refs' => array_map(
                 static fn (array $source): array => array_diff_key($source, array_flip(['excerpt', 'score', 'content', 'metadata'])),

@@ -8,6 +8,40 @@
          stopOnFailure="true"
 >
     <testsuites>
+        <testsuite name="AIAssistantIndexIntegration">
+            <file>tests/Feature/AIAssistant/AssistantBimModelReaderTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantDomainToolsTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantAgentReportScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantFinancialEvidenceTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantRagSourceIdentityScopeTest.php</file>
+            <file>tests/Feature/AIAssistant/AssistantSourceReferencePrivacyTest.php</file>
+            <file>tests/Unit/DesignManagement/PrepareDesignModelViewerJobTest.php</file>
+            <file>tests/Unit/DesignManagement/DesignIfcElementIndexerPropertiesTest.php</file>
+            <file>tests/Unit/DesignManagement/DesignIfcIndexUpgradeStateTest.php</file>
+            <file>tests/Unit/DesignManagement/DesignViewerConverterProfileTest.php</file>
+            <file>tests/Unit/AIAssistant/Agent/AssistantAgentExecutorTest.php</file>
+            <file>tests/Unit/AIAssistant/Agent/AssistantAgentFlowServiceTest.php</file>
+            <file>tests/Unit/AIAssistant/Agent/AssistantAgentPlannerTest.php</file>
+            <file>tests/Unit/AIAssistant/Agent/AssistantPeriodResolverTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantBimIndexPredicateTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantBimIndexProjectionTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantBimEngineeringAccessTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantBimIndexQueryAggregateTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantBimModelLookupTest.php</file>
+            <file>tests/Unit/AIAssistant/AIAssistantServiceBudgetTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantDiscoveryContextBudgetTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantDomainSearchCountEvidenceTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantDomainSearchCursorTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantFinancialAnswerSafetyTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantIndexSourceAliasesTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantPresentationPlannerTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantStructuredFactSafetyTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantToolSchemaBudgetTest.php</file>
+            <file>tests/Unit/AIAssistant/AssistantToolSurfaceTest.php</file>
+            <file>tests/Unit/AIAssistant/Documents/AssistantDocumentRetrievalEvidenceTest.php</file>
+            <file>tests/Unit/AIAssistant/Documents/AssistantDocumentLegacyIndexTest.php</file>
+        </testsuite>
         <testsuite name="CollaborationAuditRemainder">
             <file>tests/Feature/ConstructionJournalEstimateResourcesTest.php</file>
             <file>tests/Feature/ConstructionJournalFormOptionsTest.php</file>

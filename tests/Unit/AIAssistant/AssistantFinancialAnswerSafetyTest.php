@@ -82,6 +82,65 @@ final class AssistantFinancialAnswerSafetyTest extends TestCase
         self::assertStringNotContainsString('budget_estimates.mobile.statuses.', $answer);
     }
 
+    public function test_missing_currency_never_invents_rubles_for_totals_positions_selection_or_vat(): void
+    {
+        $evidence = $this->evidence(1);
+        $evidence['selection'] = ['position_filter' => ['работа'], 'position_numbers' => []];
+        $evidence['stored_totals'] = ['total_amount_with_vat' => '1.20'];
+
+        $answer = $this->answers()->format('Покажи позиции и НДС', $evidence);
+
+        self::assertStringContainsString('Сумма учитываемых позиций: 1.00 (валюта не указана).', $answer);
+        self::assertStringContainsString('Сумма выбранных позиций (работа): 1.00 (валюта не указана).', $answer);
+        self::assertStringContainsString('Сохранённый итог с НДС: 1.20 (валюта не указана).', $answer);
+        self::assertStringContainsString('сумма 1.00 (валюта не указана); прямые затраты 0.5000 (валюта не указана).', $answer);
+        self::assertStringNotContainsString('руб.', $answer);
+        self::assertStringNotContainsString('RUB', $answer);
+    }
+
+    public function test_known_currency_is_taken_from_each_amount_source_without_inheriting_it_for_positions(): void
+    {
+        $evidence = $this->evidence(2);
+        $evidence['totals']['currency'] = 'EUR';
+        $evidence['stored_totals'] = ['total_amount_with_vat' => '2.40', 'currency' => 'GBP'];
+        $evidence['positions'][0]['currency'] = 'USD';
+
+        $answer = $this->answers()->format('Покажи позиции и НДС', $evidence);
+
+        self::assertStringContainsString('Сумма учитываемых позиций: 2.00 EUR.', $answer);
+        self::assertStringContainsString('Сохранённый итог с НДС: 2.40 GBP.', $answer);
+        self::assertStringContainsString('Позиция 1 — Работа 1: 0.12345678 м; сумма 1.00 USD;', $answer);
+        self::assertStringContainsString('Позиция 2 — Работа 2: 0.12345678 м; сумма 1.00 (валюта не указана);', $answer);
+        self::assertStringNotContainsString('руб.', $answer);
+    }
+
+    public function test_selection_uses_one_proven_currency_and_never_sums_different_known_currencies_in_the_answer(): void
+    {
+        $evidence = $this->evidence(2);
+        $evidence['selection'] = ['position_filter' => ['работа'], 'position_numbers' => []];
+        $evidence['positions'][0]['currency'] = 'RUB';
+        $evidence['positions'][1]['currency'] = 'RUB';
+        self::assertStringContainsString('Сумма выбранных позиций (работа): 2.00 RUB.', $this->answers()->format('Покажи позиции', $evidence));
+        $evidence['positions'][1]['currency'] = 'USD';
+        $answer = $this->answers()->format('Покажи позиции', $evidence);
+        self::assertStringContainsString('Сумма выбранных позиций (работа): не указано.', $answer);
+        self::assertStringContainsString('Сумма выбранных позиций не подтверждена: в источниках указаны разные валюты.', $answer);
+        self::assertStringNotContainsString('Сумма выбранных позиций (работа): 2.00', $answer);
+    }
+
+    public function test_empty_or_invalid_currency_is_unknown_and_cannot_inject_markup(): void
+    {
+        foreach ([null, '', ' ', 'UNKNOWN', '<img src=x>', ['RUB']] as $currency) {
+            $evidence = $this->evidence(1);
+            $evidence['totals']['currency'] = $currency;
+            $evidence['positions'][0]['currency'] = $currency;
+            $answer = $this->answers()->format('Покажи позиции', $evidence);
+            self::assertStringContainsString('1.00 (валюта не указана)', $answer);
+            self::assertStringNotContainsString('RUB', $answer);
+            self::assertStringNotContainsString('<img', $answer);
+        }
+    }
+
     public function test_status_dates_navigation_and_concepts_do_not_use_the_financial_fast_path(): void
     {
         foreach (['Какой статус сметы?', 'Когда создана смета?', 'Дата сметы', 'Открой смету', 'Дай ссылку на смету',
@@ -121,7 +180,7 @@ final class AssistantFinancialAnswerSafetyTest extends TestCase
         $answer = $this->answers()->format('Покажи позиции', $evidence);
         $sources = AssistantEstimateEvidenceService::publicSourceReferences($evidence, $evidence['positions']);
 
-        self::assertStringContainsString('Сумма выбранных позиций (работа): 60.00 руб.', $answer);
+        self::assertStringContainsString('Сумма выбранных позиций (работа): 60.00 (валюта не указана).', $answer);
         self::assertSame(50, substr_count($answer, 'Позиция '));
         self::assertStringContainsString('Показаны первые 50 из 60 позиций.', $answer);
         self::assertCount(51, $sources);

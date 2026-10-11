@@ -55,12 +55,12 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $service = $this->service(true);
         $plan = $this->plan();
         $tools = $service->definitions($plan);
-        $this->assertSame(['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities'], array_column(array_column($tools, 'function'), 'name'));
+        $this->assertSame(['assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation', 'assistant_domain_discover_capabilities'], array_column($tools, 'name'));
         $messages = $service->messages($plan);
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
         $this->assertArrayHasKey('registered_domain_capabilities', $references);
         $hints = $references['registered_domain_capabilities'];
-        $this->assertSame('untrusted_reference_data', $references['kind']);
+        $this->assertSame('backend_capability_schema', $references['kind']);
         $this->assertSame('checked_on_read', $hints['record_access']);
         $this->assertCount(1, $hints['domains']);
         $this->assertSame('project', $hints['domains'][0]['primary_entity_type']);
@@ -69,7 +69,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $this->assertStringNotContainsString('FORGED_CAPABILITY', $messages[0]['content']);
         $this->assertStringNotContainsString('FORGED_CAPABILITY', json_encode($hints, JSON_THROW_ON_ERROR));
         $this->assertStringNotContainsString('secret_amount', json_encode($hints, JSON_THROW_ON_ERROR));
-        $this->assertSame('Покажи проект', $messages[2]['content']);
+        $this->assertSame('Покажи проект', $messages[array_key_last($messages)]['content']);
         $counter = new TokenCounter;
         $this->assertLessThan(700, $counter->value($hints));
         $prepared = (new TokenBudgetService($counter))->prepare($messages, $tools, 'short');
@@ -83,7 +83,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $messages = $this->service(false)->messages($this->plan());
         $references = json_decode($messages[1]['content'], true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame([], $references['registered_domain_capabilities']['domains']);
-        $this->assertSame('Покажи проект', $messages[2]['content']);
+        $this->assertSame('Покажи проект', $messages[array_key_last($messages)]['content']);
     }
 
     public function test_full_registered_catalog_preserves_short_context_and_four_wire_schemas(): void
@@ -167,6 +167,60 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $this->assertContains('projects', array_column($hints['domains'] ?? [], 'domain'));
     }
 
+    public function test_eighty_three_domain_catalog_keeps_separate_system_hints_and_full_long_query_under_history_pressure(): void
+    {
+        $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
+        $hints = ['details_tool' => 'assistant_domain_discover_capabilities', 'record_access' => 'checked_on_read',
+            'domains' => array_values(array_map(static fn (AssistantDomainDefinition $definition): array => [
+                'domain' => $definition->domain, 'primary_entity_type' => $definition->entityType,
+                'entity_type_count' => count($definition->entityTypes), 'entity_types' => $definition->entityTypes,
+                'fields' => $definition->fields, 'operations' => $definition->operations,
+            ], $catalog->all()))];
+        self::assertCount(83, $hints['domains']);
+        $history = [];
+        for ($index = 0; $index < 12; $index++) {
+            $history[] = ['role' => $index % 2 === 0 ? 'user' : 'assistant',
+                'content' => str_repeat('История обсуждения, которую можно сократить при недостатке контекста. ', 90)];
+        }
+        $service = $this->service(true, $catalog, false, true, $history);
+        $plan = $this->plan();
+        $plan['request']['message'] = mb_substr(str_repeat('Покажи актуальные проекты организации, их статусы и доступные записи, сохрани полный запрос при подборе инструментов. ', 50), 0, 4000);
+        $messages = $service->messagesWithHints($plan, $hints);
+        $tools = $service->definitions($plan);
+        $prepared = (new TokenBudgetService(new TokenCounter))->prepare($messages, $tools, 'short');
+
+        self::assertSame(8192, $prepared['input_limit']);
+        self::assertSame(2, $prepared['max_calls']);
+        self::assertLessThanOrEqual(8192, $prepared['input_tokens']);
+        self::assertLessThan(count($messages), count($prepared['messages']));
+        self::assertSame($plan['request']['message'], $prepared['messages'][array_key_last($prepared['messages'])]['content']);
+        self::assertSame('system', $prepared['messages'][1]['role']);
+        $capabilityMessage = json_decode($prepared['messages'][1]['content'], true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame('backend_capability_schema', $capabilityMessage['kind']);
+        self::assertCount(83, $capabilityMessage['registered_domain_capabilities']['domains']);
+        foreach ($capabilityMessage['registered_domain_capabilities']['domains'] as $domain) {
+            self::assertArrayNotHasKey('fields', $domain);
+            self::assertArrayNotHasKey('entity_types', $domain);
+        }
+        self::assertSame($messages[0], $prepared['messages'][0]);
+        self::assertSame($tools, $prepared['tools']);
+    }
+
+    public function test_classroom_number_request_has_no_business_catalog_or_tools(): void
+    {
+        $service = $this->service(true, new AssistantDomainCatalog(AssistantDomainCatalog::defaults()));
+        $query = 'Учебный арифметический пример: сложи условные числа, которые я назвал в предыдущем сообщении.';
+        $plan = ['task_type' => 'summary', 'capability' => ['id' => 'projects'],
+            'request' => ['message' => $query, 'allow_actions' => false, 'context' => []],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query, [])->toArray()];
+        $messages = $service->messages($plan);
+
+        self::assertSame([], $service->definitions($plan));
+        self::assertStringNotContainsString('registered_domain_capabilities', json_encode($messages, JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('backend_capability_schema', json_encode($messages, JSON_THROW_ON_ERROR));
+        self::assertSame($query, $messages[array_key_last($messages)]['content']);
+    }
+
     private function plan(): array
     {
         return ['task_type' => 'summary', 'capability' => ['id' => 'projects', 'domain' => 'projects'],
@@ -178,7 +232,8 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         bool $allowed,
         ?AssistantDomainCatalog $catalog = null,
         bool $financeAllowed = false,
-        bool $paymentDocumentAllowed = true
+        bool $paymentDocumentAllowed = true,
+        array $history = []
     ): DiscoveryContextAssistantService
     {
         $fields = ['id', 'name', 'secret_amount', ...array_map(static fn (int $number): string => 'field_'.$number, range(1, 24))];
@@ -221,7 +276,7 @@ final class AssistantDiscoveryContextBudgetTest extends TestCase
         $context = $this->createMock(ContextBuilder::class);
         $context->method('buildSystemPrompt')->willReturn('Соблюдай текущие права и явный запрос пользователя.');
         $conversations = $this->createMock(ConversationManager::class);
-        $conversations->method('getMessagesForContextWithBudget')->willReturn([]);
+        $conversations->method('getMessagesForContextWithBudget')->willReturn($history);
         $conversations->method('getSummary')->willReturn(null);
         $actor = $this->createPartialMock(User::class, ['belongsToOrganization']);
         $actor->method('belongsToOrganization')->willReturn(true);
@@ -258,5 +313,14 @@ final class DiscoveryContextAssistantService extends AIAssistantService
         $conversation = new Conversation;
         $conversation->organization_id = 15;
         return $this->buildMessages($conversation, [], $plan);
+    }
+
+    public function messagesWithHints(array $plan, array $hints): array
+    {
+        $conversation = new Conversation;
+        $conversation->organization_id = 15;
+
+        return (new \ReflectionMethod(AIAssistantService::class, 'buildMessagesWithCapabilityHints'))
+            ->invoke($this, $conversation, [], $plan, $plan['request']['message'], $hints);
     }
 }

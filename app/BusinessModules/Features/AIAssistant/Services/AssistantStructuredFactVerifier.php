@@ -8,9 +8,12 @@ use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\Assistan
 
 final class AssistantStructuredFactVerifier
 {
-    public function guard(string $query, string $text, array $toolResults = []): array
+    public function guard(string $query, string $text, array $toolResults = [], array $requestScope = []): array
     {
         $planCandidate = AssistantPresentationPlanner::isPlanCandidate($text);
+        if (AssistantDomainSearchCountEvidence::isCountRequest($query)) {
+            return $this->verifiedCount($query, $text, $toolResults, $requestScope);
+        }
         $compositionIntent = AssistantEstimateCompositionIntent::matches($query, $this->hasEstimateContext($toolResults));
         if (! $planCandidate && AssistantFactIntentClassifier::isNarrative($query)) {
             return ['text' => $text, 'validation_status' => 'partial', 'source_refs' => [], 'replaced' => false, 'needs_clarification' => false];
@@ -29,9 +32,36 @@ final class AssistantStructuredFactVerifier
         return $this->verifiedResults($query, $text, $toolResults);
     }
 
-    public function confirmedResults(array $toolResults, ?string $query = null): array
+    public function confirmedResults(array $toolResults, ?string $query = null, array $requestScope = []): array
     {
+        if ($query !== null && AssistantDomainSearchCountEvidence::isCountRequest($query)) {
+            return $this->verifiedCount($query, '', $toolResults, $requestScope);
+        }
         return $this->verifiedResults(null, '', $toolResults, $query);
+    }
+
+    private function verifiedCount(string $query, string $text, array $toolResults, array $requestScope = []): array
+    {
+        $counts = [];
+        foreach ($toolResults as $result) {
+            $evidence = is_array($result) ? ($result['domain_search_count_evidence'] ?? null) : null;
+            if (is_array($evidence) && AssistantDomainSearchCountEvidence::trusted($evidence)
+                && AssistantDomainSearchCountEvidence::matchesRequestedEntity($query, $evidence)
+                && AssistantDomainSearchCountEvidence::matchesRequestedScope($query, $evidence, $requestScope)) {
+                $counts[$evidence['source_ref']['entity_id']] = $evidence;
+            }
+        }
+        if (count($counts) !== 1) {
+            return ['text' => trans_message('ai_assistant_facts.live_proof_required'), 'validation_status' => 'partial',
+                'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
+        }
+        $evidence = reset($counts);
+        $key = AssistantDomainSearchCountEvidence::isOrganizationWideRequest($query) ? 'search_record_count_organization'
+            : (($evidence['source_ref']['project_id'] ?? null) !== null ? 'search_record_count_project' : 'search_record_count');
+        $formatted = trans_message('ai_assistant_facts.'.$key, ['count' => $evidence['value']]);
+
+        return ['text' => $formatted, 'validation_status' => 'verified', 'source_refs' => [$evidence['source_ref']],
+            'replaced' => $text !== $formatted, 'needs_clarification' => false, 'structured_evidence_truncated' => false];
     }
 
     private function verifiedResults(?string $query, string $text, array $toolResults, ?string $presentationQuery = null): array
@@ -49,7 +79,7 @@ final class AssistantStructuredFactVerifier
             $selectionTruncated = false;
             foreach ($toolResults as $result) {
                 $evidence = is_array($result) ? ($result['structured_fact_evidence'] ?? []) : [];
-                if (($evidence['truncated'] ?? false) === true && $this->trusted($evidence)) {
+                if (is_array($result) && AssistantPresentationPlanner::hasIncompleteScope($result) && $this->trusted($evidence)) {
                     foreach ($evidence['source_refs'] as $source) {
                         $selectionTruncated = $selectionTruncated || in_array($source, $selectedSources, true);
                     }
@@ -73,6 +103,7 @@ final class AssistantStructuredFactVerifier
             if (! $this->trusted($evidence)) {
                 continue;
             }
+            $truncated = $truncated || AssistantPresentationPlanner::hasIncompleteScope($result);
             if (is_array($evidence['position_page'] ?? null)) {
                 $page = $evidence['position_page'];
                 $estimateId = $page['estimate_id'];
@@ -206,6 +237,9 @@ final class AssistantStructuredFactVerifier
                 ]),
             };
             $payload['server_formatted_facts'] .= "\n".$message;
+        }
+        if ($truncated && ! str_contains($payload['server_formatted_facts'], trans_message('ai_assistant_facts.returned_scope'))) {
+            $payload['server_formatted_facts'] .= "\n\n".trans_message('ai_assistant_facts.returned_scope');
         }
 
         return ['text' => $payload['server_formatted_facts'], 'validation_status' => 'partial',

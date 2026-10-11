@@ -20,6 +20,12 @@ test("real IFC preserves express IDs and canonical properties in the offline sid
     ], { cwd: process.cwd(), timeout: 50000, maxBuffer: 8 * 1024 * 1024 });
     const result = stdout.split("\n").filter(Boolean).map(JSON.parse).find((message) => message.event === "result");
     assert.equal(result.metrics.ifc_metadata.indexed_element_count, 120);
+    assert.equal(result.metrics.ifc_metadata.index_schema_version, 2);
+    const units = result.metrics.ifc_metadata.units;
+    assert.equal(units.filter((unit) => unit.unit_type === "LENGTHUNIT").length, 1);
+    assert.equal(units.find((unit) => unit.unit_type === "LENGTHUNIT").prefix, "MILLI");
+    assert.ok(units.every((unit) => unit.source === "project_units_in_context"));
+    assert.equal(units.find((unit) => unit.name === "DEGREE").conversion_factor.value, 0.0174532925199433);
     assert.match(result.metrics.runtime.fragments, /^\d+\.\d+\.\d+/);
     assert.notEqual(result.metrics.memory.geometry.pid, result.metrics.memory.index.pid);
     assert.equal(result.metrics.memory.parser_cache_limit_bytes, 512 * 1024 * 1024);
@@ -58,6 +64,14 @@ test("real IFC preserves express IDs and canonical properties in the offline sid
     assert.equal(report.wall.properties.Pset_WallCommon.IsExternal, true);
     assert.equal(report.wall.properties.Pset_WallCommon.LoadBearing, true);
     assert.equal(report.wall.properties.Pset_WallCommon.Reference, "150 Concrete");
+    assert.equal(report.wall.properties._ifc.object_type, "Basic Wall:150 Concrete");
+    assert.equal(report.wall.index_schema_version, 2);
+    assert.equal(report.wall.properties._ifc.schema_version, 2);
+    assert.equal(report.wall.properties._ifc.type_name, "Basic Wall:150 Concrete");
+    assert.equal(report.wall.properties._ifc.storey.name, "Level 2");
+    assert.equal(report.wall.properties._ifc.storey.elevation, 3139.99999999982);
+    assert.equal(report.wall.properties._ifc.types.length, 1);
+    assert.ok(report.wall.quantity_units && typeof report.wall.quantity_units === "object");
     assert.deepEqual(report.wall.classifications, ["Exterior Walls"]);
     assert.deepEqual(report.beam.materials, [" <Unnamed>"]);
   } finally {

@@ -125,6 +125,57 @@ final class AssistantSourceReferencePrivacyTest extends TestCase
         self::assertCount(0, app(AssistantMemoryService::class)->list($actor, $fixture['organization_id']));
     }
 
+    public function test_structured_proof_rejects_changed_field_with_unchanged_timestamp(): void
+    {
+        $fixture = $this->canonicalFixture();
+        $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']]]);
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id, 'name' => 'Исходное название']));
+        $fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $reader = app(AssistantDomainReadService::class);
+        $receipt = $reader->execute('read', ['domain' => 'projects', 'id' => $project->id, 'fields' => ['name']], $fixture->member, $fixture->organization->id);
+        $guard = app(AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($fixture->member, $fixture->organization->id, $receipt['source_refs']));
+        DB::table('projects')->where('id', $project->id)->update(['name' => 'Новое название']);
+        self::assertSame($project->getRawOriginal('updated_at'), $project->refresh()->getRawOriginal('updated_at'));
+        self::assertFalse($guard->fresh($fixture->member, $fixture->organization->id, $receipt['source_refs']));
+        $current = $reader->execute('read', ['domain' => 'projects', 'id' => $project->id, 'fields' => ['name']], $fixture->member, $fixture->organization->id);
+        self::assertTrue($guard->fresh($fixture->member, $fixture->organization->id, $current['source_refs']));
+    }
+
+    public function test_indexed_proof_rejects_current_content_change_without_timestamp_or_reindex(): void
+    {
+        $fixture = $this->canonicalFixture();
+        $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']], 'system_permissions' => ['finance.view_project_budget']]);
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id, 'name' => 'Название в индексе']));
+        $fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $collector = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry::class)->collector('project');
+        $chunks = iterator_to_array((function () use ($collector, $fixture, $project): \Generator {
+            yield from $collector->collectEntity($fixture->organization->id, 'project', $project->id);
+        })());
+        self::assertCount(1, $chunks);
+        $indexer = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class);
+        $checksum = (new ReflectionMethod($indexer, 'sourceFingerprint'))->invoke($indexer, $chunks[0]);
+        $source = \App\BusinessModules\Features\AIAssistant\Models\RagSource::query()->create([
+            'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+            'title' => $chunks[0]->title, 'checksum' => $checksum, 'metadata' => $chunks[0]->metadata,
+            'source_version' => $chunks[0]->updatedAt?->format(\DateTimeInterface::ATOM), 'indexed_at' => now(),
+        ]);
+        \App\BusinessModules\Features\AIAssistant\Models\RagChunk::query()->forceCreate([
+            'source_id' => $source->id, 'organization_id' => $fixture->organization->id, 'project_id' => $project->id,
+            'chunk_index' => 0, 'content' => $chunks[0]->content, 'content_hash' => hash('sha256', $chunks[0]->content),
+            'metadata' => array_merge($chunks[0]->metadata, ['chunk_index' => 0, 'chunk_count' => 1]),
+        ]);
+        $references = [['source_id' => $source->id, 'source_type' => 'project', 'entity_type' => 'project',
+            'entity_id' => $project->id, 'project_id' => $project->id, 'checksum' => $checksum,
+            'fetched_at' => now()->toISOString(), 'content_scope' => 'unstructured']];
+        $guard = app(AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($fixture->member, $fixture->organization->id, $references));
+        DB::table('projects')->where('id', $project->id)->update(['name' => 'Новое название вне индекса']);
+        self::assertFalse($guard->fresh($fixture->member, $fixture->organization->id, $references));
+        self::assertSame($checksum, $source->refresh()->checksum);
+    }
+
     private function canonicalFixture(): AssistantRealAuthorizationFixture
     {
         return AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));

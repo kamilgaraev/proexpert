@@ -74,6 +74,23 @@ final class AssistantFinancialEvidenceTest extends TestCase
         self::assertTrue($answers->isApplicable('SM-2026'));
     }
 
+    public function test_source_without_currency_keeps_exact_totals_positions_and_vat_with_unknown_currency_marker(): void
+    {
+        $estimate = $this->estimate('CURRENCY-UNKNOWN', 'Смета без валюты');
+        $this->item($estimate, '1', 'Работа', '2.00000000', '12.34');
+        $estimate->update(['total_amount' => '12.34', 'total_amount_with_vat' => '14.80']);
+        $evidence = app(AssistantEstimateEvidenceService::class)->snapshot($estimate->id, $this->organization->id, $this->actor);
+        $answer = app(AssistantFinancialAnswerService::class)->format('Покажи позиции, суммы и НДС', $evidence);
+
+        self::assertNull($evidence['totals']['currency'] ?? null);
+        self::assertNull($evidence['positions'][0]['currency'] ?? null);
+        self::assertStringContainsString('Сумма учитываемых позиций: 12.34 (валюта не указана).', $answer);
+        self::assertStringContainsString('Сохранённый итог с НДС: 14.80 (валюта не указана).', $answer);
+        self::assertStringContainsString('сумма 12.34 (валюта не указана);', $answer);
+        self::assertStringNotContainsString('руб.', $answer);
+        self::assertStringNotContainsString('RUB', $answer);
+    }
+
     public function test_natural_estimate_choice_uses_current_project_and_shows_one_position(): void
     {
         $selected = $this->estimate('AUTO-1', 'Доступная смета');

@@ -74,23 +74,27 @@ final class RagRetriever
                         elseif ($allowedProjectIds !== []) { $projects->orWhereIn('candidate_chunks.project_id', $allowedProjectIds); }
                     });
             });
-        if ($preferredSourceTypes !== []) { $typeCandidates->whereIn('ai_rag_sources.source_type', $preferredSourceTypes); }
         if (isset($requestContext['source_types']) && is_array($requestContext['source_types'])) {
             $typeCandidates->whereIn('ai_rag_sources.source_type', array_filter($requestContext['source_types'], 'is_string'));
         }
         $checkpoint?->__invoke();
-        $candidateTypes = $typeCandidates->distinct()->pluck('source_type')->all();
+        $candidateTypes = $typeCandidates->select('ai_rag_sources.source_type')->distinct()->pluck('source_type')->all();
         $allowedSourceTypes = $this->accessPolicy()->allowedSourceTypes($user, $organizationId, $candidateTypes);
         if (isset($requestContext['source_types']) && is_array($requestContext['source_types'])) {
             $allowedSourceTypes = array_values(array_intersect($allowedSourceTypes, array_filter($requestContext['source_types'], 'is_string')));
         }
-        $sourceTypes = $preferredSourceTypes === []
-            ? $allowedSourceTypes
-            : array_values(array_intersect($preferredSourceTypes, $allowedSourceTypes));
-        $includeOrganizationWideSources = $preferredSourceTypes === [] || $this->includeOrganizationWideSources($sourceTypes);
+        $sourceTypes = $allowedSourceTypes;
+        $includeOrganizationWideSources = $this->includeOrganizationWideSources($sourceTypes);
 
         if ($sourceTypes === []) {
             return [];
+        }
+
+        if (($requestContext['retrieval_mode'] ?? null) === 'lexical') {
+            $diagnostics['semantic_available'] = false;
+            $diagnostics['lexical_used'] = true;
+            return $this->lexicalFallback($query, $organizationId, $allowedProjectIds, $requestProjectId, $limit,
+                $sourceTypes, $includeOrganizationWideSources, [], $user, $checkpoint, $readWrapper, $readGuard);
         }
 
         if ($requestProjectId !== null && ! in_array($requestProjectId, $allowedProjectIds, true)) {
@@ -287,7 +291,7 @@ final class RagRetriever
                     title: (string) $row->title,
                     excerpt: $this->excerpt((string) $row->content),
                     similarity: $similarity,
-                    metadata: $this->metadata($row->chunk_metadata),
+                    metadata: $this->referenceMetadata($row),
                     updatedAt: $this->date($row->source_indexed_at)
                 );
 
@@ -298,7 +302,8 @@ final class RagRetriever
                     $rankedResults[$identity]['best_rank'] = $rank;
                     $rankedResults[$identity]['result'] = $result;
                 }
-                $rankedResults[$identity]['fusion_score'] += 1 / (self::RECIPROCAL_RANK_OFFSET + $rank);
+                $preference = in_array($result->sourceType, $preferredSourceTypes, true) ? 1.05 : 1.0;
+                $rankedResults[$identity]['fusion_score'] += $preference / (self::RECIPROCAL_RANK_OFFSET + $rank);
             }
         }
 
@@ -534,7 +539,33 @@ final class RagRetriever
                         'project_id' => $row->project_id, 'metadata' => $this->metadata($row->chunk_metadata),
                     ])) { $visible[] = $row; }
                 }
-                return $visible;
+                $legacyIds = [];
+                $legacyChunkIds = [];
+                foreach ($visible as $row) {
+                    $metadata = $this->metadata($row->chunk_metadata);
+                    if ($row->source_type === 'file_document' && ! array_key_exists('unit_checksum', $metadata)) {
+                        $legacyIds[] = (int) ($row->rag_source_id ?? 0);
+                        $legacyChunkIds[] = (int) $row->id;
+                    }
+                }
+                if ($legacyIds === []) { return $visible; }
+                $sources = RagSource::query()->where('organization_id', $organizationId)->whereKey($legacyIds)->get()->keyBy('id');
+                $verified = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentIndexCompatibility::class)
+                    ->verifiedMetadata($sources->values()->all(), $readCheckpoint, candidateChunkIds: $legacyChunkIds);
+                $currentRows = [];
+                foreach ($visible as $row) {
+                    $metadata = $this->metadata($row->chunk_metadata);
+                    if ($row->source_type !== 'file_document' || array_key_exists('unit_checksum', $metadata)) { $currentRows[] = $row; continue; }
+                    $sourceId = (int) ($row->rag_source_id ?? 0);
+                    if (! isset($verified[$sourceId])) { continue; }
+                    $proof = $verified[$sourceId];
+                    $currentHash = $proof['_verified_chunk_hashes'][(int) $row->id] ?? null;
+                    if (! is_string($currentHash) || ! hash_equals($currentHash, hash('sha256', (string) $row->content))) { continue; }
+                    unset($proof['_verified_chunk_hashes']);
+                    $row->chunk_metadata = array_replace($metadata, $proof);
+                    $currentRows[] = $row;
+                }
+                return $currentRows;
             }, fresh: true, checkpoint: $readCheckpoint);
         }, $checkpoint, $organizationId, $readWrapper, $readGuard));
     }
@@ -679,6 +710,7 @@ final class RagRetriever
         ?callable $readGuard = null
     ): array {
         $terms = $this->lexicalTerms($query);
+        $preferredTypes = $this->preferredSourceTypes($query);
         if ($terms === []) {
             return [];
         }
@@ -737,6 +769,9 @@ final class RagRetriever
                 's.entity_id',
                 's.title',
                 's.indexed_at as source_indexed_at',
+                's.id as rag_source_id',
+                's.checksum as rag_source_checksum',
+                's.source_version as rag_source_version',
             ])
             ->orderByRaw('('.$order.') DESC', $orderBindings)
             ->limit(max($limit * 12, 48))
@@ -750,7 +785,7 @@ final class RagRetriever
                 return $row;
             })
             ->filter(static fn (object $row): bool => (int) $row->lexical_score > 0)
-            ->sortByDesc(static fn (object $row): int => (int) $row->lexical_score)
+            ->sortByDesc(static fn (object $row): float => (float) $row->lexical_score + (in_array($row->source_type, $preferredTypes, true) ? 0.05 : 0.0))
             ->take($limit)
             ->values()
             ->map(fn (object $row): RagSearchResult => new RagSearchResult(
@@ -761,7 +796,7 @@ final class RagRetriever
                 title: (string) $row->title,
                 excerpt: $this->excerpt((string) $row->content),
                 similarity: min(0.69, 0.5 + ((int) $row->lexical_score * 0.03)),
-                metadata: $this->metadata($row->chunk_metadata),
+                metadata: $this->referenceMetadata($row),
                 updatedAt: $this->date($row->source_indexed_at)
             ))
             ->all();
@@ -826,6 +861,9 @@ SELECT c.id,
        s.entity_id,
        s.title,
        s.indexed_at AS source_indexed_at,
+       s.id AS rag_source_id,
+       s.checksum AS rag_source_checksum,
+       s.source_version AS rag_source_version,
        c.embedding
 FROM ai_rag_chunks c
 JOIN ai_rag_sources s ON s.id = c.source_id
@@ -835,7 +873,7 @@ WHERE c.organization_id = ?
   AND c.embedding_model = ?
   AND vector_dims(c.embedding) = ?
 {$sourceFilter}{$projectFilter})
-SELECT id, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at,
+SELECT id, project_id, content, chunk_metadata, source_type, entity_type, entity_id, title, source_indexed_at, rag_source_id, rag_source_checksum, rag_source_version,
        1 - (embedding <=> ?::vector) AS similarity
 FROM compatible_chunks
 ORDER BY embedding <=> ?::vector
@@ -893,6 +931,9 @@ SQL;
                 's.entity_id',
                 's.title',
                 's.indexed_at as source_indexed_at',
+                's.id as rag_source_id',
+                's.checksum as rag_source_checksum',
+                's.source_version as rag_source_version',
             ])
             ->get()
             ->filter(fn (object $row): bool => count($this->parseVector((string) $row->embedding)) === $provider->dimensions()
@@ -1168,6 +1209,19 @@ SQL;
     /**
      * @return array<string, mixed>
      */
+    private function referenceMetadata(object $row): array
+    {
+        $metadata = $this->metadata($row->chunk_metadata);
+        if ($row->source_type === 'file_document') {
+            $metadata['document_checksum'] = $metadata['checksum'] ?? null;
+            $metadata['rag_source_checksum'] = $row->rag_source_checksum ?? null;
+        }
+        $metadata['source_id'] = isset($row->rag_source_id) ? (int) $row->rag_source_id : null;
+        $metadata['source_version'] = $row->rag_source_version ?? null;
+        $metadata['checksum'] = $row->rag_source_checksum ?? null;
+        return $metadata;
+    }
+
     private function metadata(mixed $metadata): array
     {
         if (is_array($metadata)) {

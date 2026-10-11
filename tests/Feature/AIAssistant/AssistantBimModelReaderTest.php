@@ -12,6 +12,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGu
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
+use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
 use App\Models\Estimate;
@@ -279,6 +280,280 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertStringNotContainsString('Другая страница', $result['server_formatted_answer']);
     }
 
+    public function test_equipment_properties_materials_and_full_count_use_the_index_beyond_the_page(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 25);
+        for ($index = 0; $index < 24; $index++) {
+            $element = $this->element($version, 'IFCUNITARYEQUIPMENT', 'Блок '.$index);
+            $element->updateQuietly(['derivative_id' => $derivative->id, 'global_id' => 'equipment-'.$index,
+                'properties' => ['_ifc' => ['schema_version' => 2], 'private' => 'private-secret', 'Pset_UnitaryEquipmentTypeCommon' => ['PredefinedType' => 'AIRCONDITIONINGUNIT', 'CoolingCapacity' => 3500],
+                    'materials' => ['Сталь']], 'classifications' => ['HVAC']]);
+        }
+        $unknown = $this->element($version, 'IFCUNITARYEQUIPMENT', 'Блок без типа');
+        $unknown->updateQuietly(['derivative_id' => $derivative->id, 'global_id' => 'unknown']);
+        $result = $this->read(['element_query' => 'кондиционеры', 'limit' => 1]);
+        self::assertSame(24, $result['models'][0]['total']);
+        self::assertCount(1, $result['models'][0]['elements']);
+        self::assertSame('complete', $result['models'][0]['index_coverage']['status']);
+        self::assertSame(24, $this->read(['property_name' => 'CoolingCapacity', 'property_value' => '3500'])['models'][0]['total']);
+        self::assertSame(24, $this->read(['material_query' => 'сталь', 'classification_query' => 'HVAC'])['models'][0]['total']);
+        self::assertStringNotContainsString('private-secret', json_encode($result, JSON_THROW_ON_ERROR));
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+    }
+
+    public function test_quantity_totals_use_all_matches_and_keep_unknown_units_unconfirmed(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 3, [['type' => 'IFCSIUNIT', 'unit_type' => 'VOLUMEUNIT', 'name' => 'CUBIC_METRE', 'prefix' => null]]);
+        foreach ([2.5, 3.0, 4.5] as $value) {
+            $this->element($version, 'IFCSLAB', 'Плита')->updateQuietly(['derivative_id' => $derivative->id,
+                'properties' => ['_ifc' => ['schema_version' => 2], 'quantities' => ['Qto_SlabBaseQuantities' => ['GrossVolume' => $value]]]]);
+        }
+        $result = $this->read(['include_quantities' => true, 'limit' => 1]);
+        self::assertSame(10.0, $result['models'][0]['quantity_totals'][0]['sum']);
+        self::assertSame(3, $result['models'][0]['quantity_totals'][0]['elements']);
+        self::assertSame('CUBIC_METRE', $result['models'][0]['quantity_totals'][0]['unit']);
+        $derivative->updateQuietly(['metadata' => ['indexed_element_count' => 3, 'ifc_units' => []]]);
+        self::assertNull($this->read(['include_quantities' => true])['models'][0]['quantity_totals'][0]['sum']);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+    }
+
+    public function test_comparison_requires_complete_same_artifact_indices_and_uses_global_ids(): void
+    {
+        $before = $this->model('Гаражная', 'гаражная.ifc');
+        $before->updateQuietly(['is_current' => false]);
+        $after = $before->replicate();
+        $after->forceFill(['version_number' => '2', 'is_current' => true])->saveQuietly();
+        $oldIndex = $this->readyIndex($before, 2);
+        $newIndex = $this->readyIndex($after, 2);
+        $this->element($before, 'IFCSLAB', 'Прежняя')->updateQuietly(['derivative_id' => $oldIndex->id, 'global_id' => 'stable']);
+        $this->element($before, 'IFCSLAB', 'Удалённая')->updateQuietly(['derivative_id' => $oldIndex->id, 'global_id' => 'removed']);
+        $this->element($after, 'IFCSLAB', 'Новая')->updateQuietly(['derivative_id' => $newIndex->id, 'global_id' => 'stable']);
+        $this->element($after, 'IFCSLAB', 'Добавленная')->updateQuietly(['derivative_id' => $newIndex->id, 'global_id' => 'added']);
+        $result = $this->read(['version_id' => $after->id, 'compare_version_id' => $before->id]);
+        self::assertSame('complete', $result['comparison']['status']);
+        self::assertSame(['added' => 1, 'removed' => 1, 'changed' => 1, 'unchanged' => 0], $result['comparison']['counts']);
+        $newIndex->updateQuietly(['metadata' => ['indexed_element_count' => 99]]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        $result = $this->read(['version_id' => $after->id, 'compare_version_id' => $before->id]);
+        self::assertSame('unavailable', $result['comparison']['status']);
+        self::assertArrayNotHasKey('counts', $result['comparison']);
+    }
+
+    public function test_comparison_never_combines_unrelated_model_artifacts(): void
+    {
+        $first = $this->model('Гаражная', 'гаражная.ifc');
+        $second = $this->model('Гаражная другая', 'другая.ifc');
+        $this->expectException(AccessDeniedHttpException::class);
+        $this->read(['version_id' => $first->id, 'compare_version_id' => $second->id]);
+    }
+
+    public function test_ready_index_excludes_unassigned_legacy_elements_and_off_page_mutations_invalidate_receipt(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $legacy = $this->element($version, 'IFCSLAB', 'Устаревшее');
+        $legacy->updateQuietly(['derivative_id' => null, 'properties' => []]);
+        $ready = $this->readyIndex($version, 2);
+        $this->element($version, 'IFCSLAB', 'Первое')->updateQuietly(['derivative_id' => $ready->id]);
+        $second = $this->element($version, 'IFCSLAB', 'Второе');
+        $second->updateQuietly(['derivative_id' => $ready->id]);
+        $result = $this->read(['limit' => 1]);
+        self::assertSame(2, $result['models'][0]['total']);
+        self::assertSame('complete', $result['models'][0]['index_coverage']['status']);
+        self::assertStringNotContainsString('Устаревшее', $result['server_formatted_answer']);
+        $second->updateQuietly(['properties' => ['Pset_SlabCommon' => ['Width' => 42]]]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+    }
+
+    public function test_semantic_count_requires_schema2_metadata_and_every_index_row_marker(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 2, [['type' => 'IFCSIUNIT', 'unit_type' => 'VOLUMEUNIT', 'name' => 'CUBIC_METRE']]);
+        $properties = ['Pset_Equipment' => ['PredefinedType' => 'AIRCONDITIONINGUNIT'],
+            'quantities' => ['Qto_Equipment' => ['GrossVolume' => 2]]];
+        $first = $this->element($version, 'IFCUNITARYEQUIPMENT', 'Кондиционер');
+        $first->updateQuietly(['derivative_id' => $derivative->id, 'properties' => $properties]);
+        $second = $this->element($version, 'IFCUNITARYEQUIPMENT', 'Блок');
+        $second->updateQuietly(['derivative_id' => $derivative->id, 'properties' => []]);
+        $filters = ['element_query' => 'кондиционеры', 'include_quantities' => true];
+        $result = $this->read($filters);
+        self::assertSame('complete', $result['models'][0]['index_coverage']['status']);
+        self::assertSame(1, $result['models'][0]['total']);
+        self::assertSame('unproven', $result['models'][0]['semantic_coverage']['status']);
+        self::assertNull($result['models'][0]['semantic_matching_count']);
+        self::assertNull($result['models'][0]['quantity_totals'][0]['sum']);
+        $first->updateQuietly(['properties' => $properties + ['_ifc' => ['schema_version' => 2]]]);
+        self::assertSame('unproven', $this->read($filters)['models'][0]['semantic_coverage']['status']);
+        $second->updateQuietly(['properties' => ['_ifc' => ['schema_version' => 2]]]);
+        $result = $this->read($filters);
+        self::assertSame('complete', $result['models'][0]['semantic_coverage']['status']);
+        self::assertSame(1, $result['models'][0]['semantic_matching_count']);
+        self::assertSame(2.0, $result['models'][0]['quantity_totals'][0]['sum']);
+        $derivative->updateQuietly(['metadata' => ['indexed_element_count' => 2, 'ifc_units' => $derivative->metadata['ifc_units']]]);
+        $result = $this->read($filters);
+        self::assertSame(1, $result['models'][0]['total']);
+        self::assertNull($result['models'][0]['semantic_matching_count']);
+        self::assertSame([], $result['models'][0]['units']);
+    }
+
+    public function test_bim_history_references_reject_quiet_property_and_metadata_changes_at_same_timestamp(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 1);
+        $element = $this->element($version, 'IFCSLAB', 'Перекрытие');
+        $element->updateQuietly(['derivative_id' => $derivative->id]);
+        $result = $this->read([]);
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+        DB::table('design_ifc_model_elements')->where('id', $element->id)->update(['properties' => json_encode(['Pset_SlabCommon' => ['Width' => 42]], JSON_THROW_ON_ERROR)]);
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+        $result = $this->read([]);
+        DB::table('design_model_derivatives')->where('id', $derivative->id)->update(['metadata' => json_encode(['indexed_element_count' => 1], JSON_THROW_ON_ERROR)]);
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+    }
+
+    public function test_named_package_resolves_current_ifc_disciplines_with_parent_provenance_and_keeps_history_explicit(): void
+    {
+        $this->project->updateQuietly(['name' => 'Тестовый']);
+        $versions = [];
+        $packageId = null;
+        foreach (['АС', 'В', 'КР', 'ТС', 'АС2'] as $index => $name) {
+            $version = $this->model($name, $name.'.ifc');
+            $artifact = DesignArtifact::query()->findOrFail($version->artifact_id);
+            $packageId ??= (int) $artifact->package_id;
+            $artifact->updateQuietly(['package_id' => $packageId, 'title' => $index === 0 ? 'Архитектура корпуса' : $name]);
+            $derivative = $this->readyIndex($version, $index + 1);
+            for ($elementIndex = 0; $elementIndex <= $index; $elementIndex++) {
+                $this->element($version, 'IFCUNITARYEQUIPMENT', 'Кондиционер '.$elementIndex)
+                    ->updateQuietly(['derivative_id' => $derivative->id, 'global_id' => 'unit-'.$index.'-'.$elementIndex]);
+            }
+            $versions[] = $version;
+        }
+        DesignPackage::query()->findOrFail($packageId)->updateQuietly(['title' => 'Севгу']);
+        $versions[0]->updateQuietly(['version_number' => '2']);
+        $old = $versions[0]->replicate();
+        $old->forceFill(['version_number' => '1', 'is_current' => false, 'title' => 'АС прежняя'])->saveQuietly();
+        $oldIndex = $this->readyIndex($old, 1);
+        $this->element($old, 'IFCUNITARYEQUIPMENT', 'Кондиционер прежний')
+            ->updateQuietly(['derivative_id' => $oldIndex->id, 'global_id' => 'unit-0-0']);
+        $result = $this->read(['model_query' => 'Севгу', 'element_query' => 'кондиционеры', 'limit' => 1]);
+        self::assertCount(5, $result['models']);
+        self::assertFalse($result['needs_clarification']);
+        self::assertSame([1, 2, 3, 4, 5], array_column($result['models'], 'total'));
+        self::assertNotContains($old->id, array_column(array_column($result['models'], 'version'), 'id'));
+        foreach ($result['models'] as $model) {
+            self::assertSame('Севгу', $model['source_scope']['package']['title']);
+            self::assertSame('Тестовый', $model['source_scope']['project']['name']);
+            self::assertSame('current', $model['source_scope']['version_selection']);
+        }
+        self::assertCount(5, $this->read(['model_query' => 'sevgu'])['models']);
+        self::assertCount(1, $this->read(['model_query' => 'архитектура'])['models']);
+        self::assertCount(5, $this->read(['model_query' => 'Тестовый'])['models']);
+        self::assertSame($old->id, $this->read(['model_query' => 'Севгу', 'version_id' => $old->id])['models'][0]['version']['id']);
+        $comparison = $this->read(['version_id' => $versions[0]->id, 'compare_version_id' => $old->id]);
+        self::assertSame('complete', $comparison['comparison']['status']);
+        self::assertSame(1, $comparison['comparison']['counts']['changed']);
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+        self::assertStringContainsString('Комплект: Севгу', $result['server_formatted_answer']);
+    }
+
+    public function test_package_alias_never_admits_hidden_or_foreign_projects_and_unknown_alias_is_not_physical_absence(): void
+    {
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id]));
+        foreach ([[$this->project, 'АС', 'Доступный кондиционер'], [$hidden, 'В', 'Скрытый кондиционер'], [$foreign, 'КР', 'Чужой кондиционер']] as [$project, $title, $name]) {
+            $version = $this->model($title, $title.'.ifc', $project);
+            $artifact = DesignArtifact::query()->findOrFail($version->artifact_id);
+            DesignPackage::query()->findOrFail($artifact->package_id)->updateQuietly(['title' => 'Севгу']);
+            $derivative = $this->readyIndex($version, 1);
+            $this->element($version, 'IFCUNITARYEQUIPMENT', $name)->updateQuietly(['derivative_id' => $derivative->id]);
+        }
+        $result = $this->read(['model_query' => 'Севгу', 'project_id' => null, 'element_query' => 'кондиционеры']);
+        self::assertCount(1, $result['models']);
+        self::assertSame(1, $result['models'][0]['total']);
+        self::assertStringNotContainsString('Скрытый', json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('Чужой', json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $unknown = $this->read(['model_query' => 'Неизвестный комплект', 'project_id' => null]);
+        self::assertSame('empty', $unknown['status']);
+        self::assertTrue($unknown['needs_clarification']);
+        self::assertStringContainsString('не подтверждает отсутствие оборудования', $unknown['server_formatted_answer']);
+    }
+
+    public function test_parent_title_changes_invalidate_package_lookup_receipt_and_history_references(): void
+    {
+        $version = $this->model('АС', 'АС.ifc');
+        $artifact = DesignArtifact::query()->findOrFail($version->artifact_id);
+        $package = DesignPackage::query()->findOrFail($artifact->package_id);
+        $package->updateQuietly(['title' => 'Севгу']);
+        $this->element($version, 'IFCUNITARYEQUIPMENT', 'Кондиционер');
+        $result = $this->read(['model_query' => 'Севгу']);
+        self::assertCount(1, $result['models']);
+        DB::table('design_packages')->where('id', $package->id)->update(['title' => 'Другой комплект']);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+    }
+
+    public function test_equipment_classifiers_exclude_structural_duct_and_referenced_proxy_elements(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 10);
+        foreach ([['IFCWALL', 'Стена для кондиционера'], ['IFCDUCTSEGMENT', 'Воздуховод к вентилятору'],
+            ['IFCFLOWFITTING', 'Отвод к кондиционеру'], ['IFCBUILDINGELEMENTPROXY', 'Подставка под кондиционер'],
+            ['IFCFLOWTERMINAL', 'Кондиционер'], ['IFCFLOWMOVINGDEVICE', 'Вентилятор для кондиционера'],
+            ['IFCUNITARYEQUIPMENT', 'Блок'], ['IFCBUILDINGELEMENTPROXY', 'Кронштейн кондиционера'],
+            ['IFCBUILDINGELEMENTPROXY', 'Трубопровод кондиционера'], ['IFCBUILDINGELEMENTPROXY', 'Кондиционер KX02']] as [$category, $name]) {
+            $element = $this->element($version, $category, $name);
+            $values = ['derivative_id' => $derivative->id];
+            if ($name === 'Блок') {
+                $values['properties'] = ['_ifc' => ['schema_version' => 2, 'type_predefined_type' => 'AIRCONDITIONINGUNIT']];
+            }
+            $element->updateQuietly($values);
+        }
+        self::assertSame(3, $this->read(['element_query' => 'кондиционеры'])['models'][0]['total']);
+        self::assertSame(1, $this->read(['equipment_kind' => 'fan'])['models'][0]['total']);
+        $kinds = array_column($this->read([])['models'][0]['elements'], 'equipment_kind', 'name');
+        foreach (['Стена для кондиционера', 'Воздуховод к вентилятору', 'Отвод к кондиционеру', 'Подставка под кондиционер',
+            'Кронштейн кондиционера', 'Трубопровод кондиционера'] as $name) {
+            self::assertSame('unknown', $kinds[$name]);
+        }
+        self::assertSame('fan', $kinds['Вентилятор для кондиционера']);
+        self::assertSame('air_conditioner', $kinds['Блок']);
+        self::assertSame('air_conditioner', $kinds['Кондиционер KX02']);
+    }
+
+    public function test_current_scoped_alias_probe_is_project_bound_and_never_reads_ifc_elements(): void
+    {
+        $version = $this->model('АС', 'АС.ifc');
+        $artifact = DesignArtifact::query()->findOrFail($version->artifact_id);
+        DesignPackage::query()->findOrFail($artifact->package_id)->updateQuietly(['title' => 'Севгу']);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            self::assertTrue($this->reader->hasCurrentScopedAlias($this->fixture->member, $this->fixture->organization->id, $this->project->id, 'Севгу'));
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        foreach ($queries as $query) {
+            self::assertStringNotContainsString('from "design_ifc_model_elements"', $query['query']);
+        }
+        self::assertFalse($this->reader->hasCurrentScopedAlias($this->fixture->member, $this->fixture->organization->id, $this->project->id, 'Другой комплект'));
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        self::assertFalse($this->reader->hasCurrentScopedAlias($this->fixture->member, $this->fixture->organization->id, $hidden->id, 'Севгу'));
+        $version->updateQuietly(['is_current' => false]);
+        self::assertFalse($this->reader->hasCurrentScopedAlias($this->fixture->member, $this->fixture->organization->id, $this->project->id, 'Севгу'));
+    }
+
+    private function readyIndex(DesignArtifactVersion $version, int $count, array $units = []): DesignModelDerivative
+    {
+        $units = array_map(static fn (array $unit): array => $unit + ['source' => 'project_units_in_context'], $units);
+        return DesignModelDerivative::withoutEvents(fn () => DesignModelDerivative::query()->create([
+            'organization_id' => $version->organization_id, 'project_id' => $version->project_id, 'version_id' => $version->id,
+            'status' => 'ready', 'viewer_provider' => 'thatopen', 'derivative_format' => 'thatopen_frag',
+            'metadata' => ['ifc_index_schema_version' => 2, 'indexed_element_count' => $count, 'ifc_units' => $units]]));
+    }
+
     private function allowEstimateLinks(): void
     {
         $this->fixture->activatePackages(['finance-contracts']);
@@ -332,6 +607,6 @@ final class AssistantBimModelReaderTest extends TestCase
     {
         return DesignIfcModelElement::withoutEvents(fn () => DesignIfcModelElement::query()->create(['organization_id' => $version->organization_id,
             'project_id' => $version->project_id, 'version_id' => $version->id, 'express_id' => random_int(1, 1000000000),
-            'category' => $category, 'name' => $name, 'properties' => ['private' => 'private-secret']]));
+            'category' => $category, 'name' => $name, 'properties' => ['_ifc' => ['schema_version' => 2], 'private' => 'private-secret']]));
     }
 }

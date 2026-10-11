@@ -46,6 +46,8 @@ abstract class AssistantDomainTool implements AIToolInterface
         ];
         if ($this->operation() === 'search') {
             $properties += ['query' => ['type' => 'string', 'maxLength' => 200, 'description' => trans_message('ai_assistant_search.query_description')], 'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20]];
+            $properties['cursor'] = ['type' => ['string', 'null'], 'maxLength' => 2048,
+                'description' => 'Opaque next_cursor from the previous page. Keep domain, entity_type, query, project_id, limit and fields unchanged.'];
         } else {
             $properties['id'] = ['type' => ['integer', 'string'], 'minimum' => 1, 'minLength' => 1, 'maxLength' => 36,
                 'pattern' => '^(?:[1-9][0-9]*|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-7][0-9A-HJKMNP-TV-Z]{25})$'];

@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\Assistant
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService;
 use App\Models\Organization;
@@ -105,6 +106,58 @@ final class AssistantAgentExecutor
             'tool_name' => $toolName,
             'arguments' => $arguments,
         ];
+    }
+
+    public function resolveReportEntityScope(
+        string $type,
+        ?string $query,
+        ?int $id,
+        ?User $user,
+        Organization $organization,
+        AssistantRequestUnderstanding|array|null $requestUnderstanding = null
+    ): ?array {
+        $toolName = match ($type) {
+            'project' => 'search_projects',
+            'warehouse' => 'search_warehouse',
+            'contractor' => 'search_contractors',
+            'user' => 'search_users',
+            default => null,
+        };
+        if ($toolName === null || $user === null || (int) $user->current_organization_id !== (int) $organization->id) {
+            return null;
+        }
+        if ($query !== null && trim($query) !== '') {
+            $result = $this->execute($toolName, ['query' => trim($query)], $user, $organization, $requestUnderstanding);
+            $raw = $result['raw'] ?? null;
+            $rows = is_array($raw) ? ($raw['results'] ?? null) : null;
+            if (($result['status'] ?? null) !== 'success' || ! is_array($rows) || count($rows) !== 1
+                || ($raw['result_window']['has_more'] ?? false) === true) {
+                return null;
+            }
+            $row = reset($rows);
+            if (! is_array($row) || ! is_numeric($row['id'] ?? null) || (int) $row['id'] < 1) {
+                return null;
+            }
+            return ['id' => (int) $row['id'], 'label' => is_string($row['name'] ?? null) ? $row['name'] : null];
+        }
+        if ($id === null || $id < 1 || $this->toolRegistry->getTool($toolName) === null
+            || ! $this->permissionChecker->canExecuteTool($user, $toolName, ['query' => ''])) {
+            return null;
+        }
+        $understanding = $this->normalizeRequestUnderstanding($requestUnderstanding);
+        if ($understanding !== null && ! ($this->toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy)
+            ->canExecuteTool($toolName, $understanding, false, ['query' => ''])->allowed) {
+            return null;
+        }
+        try {
+            $entity = app(AssistantDataAccessPolicy::class)->entityQuery($user, (int) $organization->id, $type)?->find($id);
+            if ($entity === null) {
+                return null;
+            }
+            return ['id' => (int) $entity->getKey(), 'label' => is_string($entity->getAttribute('name')) ? $entity->getAttribute('name') : null];
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     private function errorResult(string $toolName, array $arguments, array $raw): array

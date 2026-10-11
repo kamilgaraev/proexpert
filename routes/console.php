@@ -261,6 +261,12 @@ Schedule::command('ai-assistant:rag-recover')
     ->withoutOverlapping(5)
     ->runInBackground();
 
+Schedule::command('design-management:upgrade-ifc-index --limit=2 --scan-limit=100')
+    ->everyFiveMinutes()
+    ->onOneServer()
+    ->withoutOverlapping(10)
+    ->runInBackground();
+
 Schedule::command('ai-assistant:requests-expire')
     ->everyMinute()
     ->onOneServer()

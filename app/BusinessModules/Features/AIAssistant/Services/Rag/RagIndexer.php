@@ -856,6 +856,59 @@ class RagIndexer
         return $this->matchesLoadedSource($source, $chunk, $this->loadSourceChunks($source));
     }
 
+    public function matchesLexicalSource(RagSource $source, RagChunkData $chunk): bool
+    {
+        if ((int) $source->organization_id !== $chunk->organizationId || $source->project_id !== $chunk->projectId
+            || (int) $source->identity_project_id !== ($chunk->projectId ?? 0) || (string) $source->identity_part_key !== $this->partKey($chunk)
+            || $source->source_type !== $chunk->sourceType || $source->entity_type !== $chunk->entityType
+            || (string) $source->entity_id !== (string) $chunk->entityId || $source->title !== $this->sourceTitle($chunk->title)
+            || $source->source_version !== $this->sourceVersion($chunk) || ! $source->indexed_at instanceof DateTimeInterface
+            || ($chunk->updatedAt !== null && $source->indexed_at < $chunk->updatedAt)) { return false; }
+
+        $metadata = $chunk->metadata;
+        $sourceMetadata = $source->metadata;
+        if (! is_array($sourceMetadata)) { return false; }
+        if ($chunk->sourceType === 'file_document') {
+            if (! is_string($metadata['unit_checksum'] ?? null) || ! hash_equals(hash('sha256', $chunk->content), $metadata['unit_checksum'])) { return false; }
+            $legacyFields = ['unit_checksum', 'unit_index', 'unit_type'];
+            $present = array_intersect($legacyFields, array_keys($sourceMetadata));
+            if ($present === []) { $metadata = array_diff_key($metadata, array_flip($legacyFields)); }
+            elseif (count($present) !== count($legacyFields)) { return false; }
+        }
+        if ($this->normalizeValue($sourceMetadata) !== $this->normalizeValue($metadata)) { return false; }
+        $candidate = new RagChunkData($chunk->organizationId, $chunk->projectId, $chunk->sourceType, $chunk->entityType,
+            $chunk->entityId, $chunk->title, $chunk->content, $metadata, $chunk->updatedAt);
+        $storedChunks = $source->relationLoaded('chunks') ? $source->getRelation('chunks')
+            : $this->sourceChunksQuery($source->chunks()->getQuery())->addSelect('metadata', 'organization_id', 'project_id')->get();
+        if (! $storedChunks instanceof \Illuminate\Database\Eloquent\Collection) { return false; }
+        $checksums = [$this->sourceFingerprint($candidate), $this->checksum($candidate, true, $this->embeddingProvider)];
+        $profile = $this->embeddingProfileForChunks($storedChunks);
+        if ($profile !== null) {
+            $checksums[] = hash('sha256', $this->json($this->sourceFingerprintPayload($candidate) + ['embedding' => $profile]));
+        }
+        $storedProfiles = [];
+        foreach ($storedChunks as $storedChunk) {
+            $dimensions = $this->chunkDimensions($storedChunk);
+            if (is_string($storedChunk->embedding_provider) && is_string($storedChunk->embedding_model) && $dimensions > 0) {
+                $storedProfile = ['provider' => $storedChunk->embedding_provider, 'model' => $storedChunk->embedding_model, 'dimensions' => $dimensions];
+                $storedProfiles[$this->json($storedProfile)] = $storedProfile;
+            }
+        }
+        if (count($storedProfiles) === 1) {
+            $checksums[] = hash('sha256', $this->json($this->sourceFingerprintPayload($candidate) + ['embedding' => reset($storedProfiles)]));
+        }
+        if (! in_array($source->checksum, $checksums, true)) { return false; }
+        $contentChunks = $this->splitContent($candidate->content);
+        $matching = $this->matchingContentChunks($source, $contentChunks, $storedChunks);
+        if ($matching === null) { return false; }
+        foreach ($matching as $index => $storedChunk) {
+            $expectedMetadata = array_merge($metadata, ['chunk_index' => $index, 'chunk_count' => count($contentChunks)]);
+            if ((int) $storedChunk->organization_id !== $chunk->organizationId || $storedChunk->project_id !== $chunk->projectId
+                || $this->normalizeValue($storedChunk->metadata) !== $this->normalizeValue($expectedMetadata)) { return false; }
+        }
+        return true;
+    }
+
     private function matchesLoadedSource(RagSource $source, RagChunkData $chunk, \Illuminate\Database\Eloquent\Collection $storedChunks): bool
     {
         $embeddingProvider = $this->providerForExistingSource($source, false, $storedChunks);

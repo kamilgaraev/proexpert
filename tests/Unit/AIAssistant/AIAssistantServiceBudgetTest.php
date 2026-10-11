@@ -84,6 +84,27 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame([], $service->freshProjectSearchCalls);
     }
 
+    public function test_empty_project_search_uses_verified_bim_package_in_current_project(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $actor = new User(['current_organization_id' => 15]);
+        $empty = ['_tool_name' => 'search_projects', 'status' => 'success', 'results' => [],
+            'result_window' => ['returned' => 0, 'has_more' => false]];
+        $service->freshProjectSearch = $empty;
+        $service->bimAliasAnswer = ['text' => 'Комплект Севгу в проекте Тестовый: 5 моделей.', 'validation_status' => 'verified',
+            'needs_clarification' => false, 'source_refs' => [['entity_type' => 'design_artifact_version', 'entity_id' => 19, 'project_id' => 52]]];
+        $answer = $service->exposeVerifyEmptyNamedProjectSearch('В проекте Севгу сколько кондиционеров?', [$empty], $actor, 15, 52);
+        self::assertSame($service->bimAliasAnswer, $answer);
+        self::assertSame([['Севгу', 52]], $service->bimFallbackCalls);
+        foreach (['на втором этаже', 'с мощностью больше 5 кВт', 'из металла', 'в версии 3', 'вместе с насосами', ', насосов'] as $condition) {
+            self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте Севгу сколько кондиционеров '.$condition.'?', [$empty], $actor, 15, 52));
+        }
+        self::assertCount(1, $service->bimFallbackCalls);
+        $service->freshProjectSearch = ['status' => 'success', 'results' => [['id' => 95]], 'result_window' => ['returned' => 1, 'has_more' => false]];
+        self::assertNull($service->exposeVerifyEmptyNamedProjectSearch('В проекте Севгу сколько кондиционеров?', [$empty], $actor, 15, 52));
+        self::assertCount(1, $service->bimFallbackCalls);
+    }
+
     public function test_generic_request_exposes_reads_without_exposing_unconfirmed_actions(): void
     {
         $toolRegistry = new AIToolRegistry;
@@ -340,6 +361,35 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+
+    public function test_bim_package_alias_uses_only_current_verified_project_after_complete_negative_project_lookup(): void
+    {
+        foreach ([['empty', true], ['found', false], ['truncated', false], ['denied', false], ['other_context', false]] as [$mode, $expectedRead]) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($expectedRead ? $this->once() : $this->never())->method('execute')
+                ->with(['model_query' => 'Севгу', 'project_id' => 52], $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $service->canonicalBimProjects = [52 => 'Тестовый'];
+            $service->bimAliases = [52 => ['Севгу']];
+            $service->freshProjectSearch = ['status' => 'success', 'results' => [], 'result_window' => ['returned' => 0, 'has_more' => false]];
+            if ($mode === 'found') { $service->freshProjectSearch['results'] = [['id' => 95]]; }
+            if ($mode === 'truncated') { $service->freshProjectSearch['result_window']['has_more'] = true; }
+            if ($mode === 'denied') { $service->freshProjectSearch = null; }
+            $query = 'В проекте Севгу есть кондиционеры, сколько их?';
+            $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+                'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => $mode === 'other_context' ? 95 : 52]]]]];
+            $failures = [];
+            $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'bim_alias', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode(['model_query' => null, 'project_id' => 52], JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame($expectedRead ? 'success' : 'insufficient_data', $result['status']);
+        }
+    }
 
     public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void
     {
@@ -1238,6 +1288,20 @@ class TestableAIAssistantService extends AIAssistantService
 {
     public array|string|null $freshProjectSearch = null;
     public array $freshProjectSearchCalls = [];
+    public array $bimAliases = [];
+    public ?array $bimAliasAnswer = null;
+    public array $bimFallbackCalls = [];
+
+    protected function scopedBimAliasMatches(User $actor, int $organizationId, int $projectId, string $alias): bool
+    {
+        return in_array($alias, $this->bimAliases[$projectId] ?? [], true);
+    }
+
+    protected function readBimAliasFallback(string $question, string $alias, User $actor, int $organizationId, int $projectId): ?array
+    {
+        $this->bimFallbackCalls[] = [$alias, $projectId];
+        return $this->bimAliasAnswer;
+    }
 
     protected function readFreshProjectSearch(string $name, User $actor, int $organizationId): array|string|null
     {
@@ -1246,9 +1310,9 @@ class TestableAIAssistantService extends AIAssistantService
         return $this->freshProjectSearch;
     }
 
-    public function exposeVerifyEmptyNamedProjectSearch(string $question, array $results, User $actor, int $organizationId): ?array
+    public function exposeVerifyEmptyNamedProjectSearch(string $question, array $results, User $actor, int $organizationId, ?int $projectId = null): ?array
     {
-        return $this->verifyEmptyNamedProjectSearch($question, $results, $actor, $organizationId);
+        return $this->verifyEmptyNamedProjectSearch($question, $results, $actor, $organizationId, $projectId);
     }
     public bool $ragQueryResolved = false;
     public array $canonicalBimProjects = [];

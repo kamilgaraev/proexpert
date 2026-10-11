@@ -111,6 +111,87 @@ final class AssistantPresentationPlannerTest extends TestCase
         $this->assertGreaterThan(strpos($result['text'], 'Северный корпус'), $noticeOffset);
     }
 
+    public function test_paged_search_cannot_present_one_checked_contract_as_a_complete_list(): void
+    {
+        $receipt = $this->payload(901, 'contract', ['number' => 'Д-901', 'status' => 'active']);
+        $receipt['result_window'] = ['limit' => 1, 'returned' => 1, 'has_more' => true, 'next_cursor' => 'opaque', 'total' => 2];
+        $plan = $this->plan([$receipt], [['number', 'status']], 'table');
+
+        $result = (new AssistantStructuredFactVerifier)->guard('Покажи все договоры', $plan, [$receipt]);
+
+        self::assertStringContainsString('901', $result['text']);
+        self::assertStringContainsString(trans_message('ai_assistant_facts.returned_scope'), $result['text']);
+        self::assertTrue($result['structured_evidence_truncated']);
+        self::assertFalse($result['needs_clarification']);
+    }
+
+    public function test_incomplete_retrieval_and_last_continuation_page_keep_partial_scope_in_fallback(): void
+    {
+        foreach ([['result_window' => ['has_more' => false, 'continued' => true]],
+            ['retrieval_coverage' => ['search_complete' => false]]] as $scope) {
+            $receipt = $this->payload(902, 'contract', ['number' => 'Д-902', 'status' => 'active']) + $scope;
+            $result = (new AssistantStructuredFactVerifier)->confirmedResults([$receipt]);
+
+            self::assertStringContainsString('902', $result['text']);
+            self::assertStringContainsString(trans_message('ai_assistant_facts.returned_scope'), $result['text']);
+            self::assertTrue($result['structured_evidence_truncated']);
+
+            $plan = $this->plan([$receipt], [['number', 'status']], 'table');
+            $planned = (new AssistantStructuredFactVerifier)->guard('Покажи все договоры', $plan, [$receipt]);
+            self::assertStringContainsString(trans_message('ai_assistant_facts.returned_scope'), $planned['text']);
+            self::assertTrue($planned['structured_evidence_truncated']);
+        }
+    }
+
+    public function test_checked_pages_append_only_trusted_rows_and_preserve_partial_scope(): void
+    {
+        $first = $this->payload(911, 'contract', ['number' => 'FIRST', 'status' => 'active']);
+        $first['result_window'] = ['has_more' => true, 'continued' => false];
+        $last = $this->payload(912, 'contract', ['number' => 'LAST', 'status' => 'active']);
+        $last['result_window'] = ['has_more' => false, 'continued' => true];
+        $forged = $this->payload(913, 'contract', ['number' => 'FORGED', 'status' => 'active']);
+        $forged['structured_fact_evidence']['rows'][0]['source_ref']['checked_fields'] = [];
+
+        $result = (new AssistantStructuredFactVerifier)->confirmedResults([$first, $last, $forged]);
+
+        self::assertStringContainsString('FIRST', $result['text']);
+        self::assertStringContainsString('LAST', $result['text']);
+        self::assertStringNotContainsString('FORGED', $result['text']);
+        self::assertCount(2, $result['source_refs']);
+        self::assertTrue($result['structured_evidence_truncated']);
+        self::assertSame(1, substr_count($result['text'], trans_message('ai_assistant_facts.returned_scope')));
+    }
+
+    public function test_complete_first_search_page_does_not_report_truncation(): void
+    {
+        $receipt = $this->payload(914, 'contract', ['number' => 'COMPLETE', 'status' => 'active']);
+        $receipt['result_window'] = ['has_more' => false, 'continued' => false];
+        $receipt['retrieval_coverage'] = ['indexed' => false, 'mode' => 'live_only', 'search_complete' => true];
+        $plan = $this->plan([$receipt], [['number', 'status']], 'table');
+        $result = (new AssistantStructuredFactVerifier)->guard('Покажи договоры', $plan, [$receipt]);
+
+        self::assertFalse($result['structured_evidence_truncated']);
+        self::assertStringNotContainsString(trans_message('ai_assistant_facts.returned_scope'), $result['text']);
+    }
+
+    public function test_known_full_count_does_not_turn_nineteen_checked_rows_into_a_complete_table(): void
+    {
+        $rows = [];
+        for ($index = 0; $index < 19; $index++) {
+            $receipt = $this->payload(1000 + $index, 'contract', ['number' => 'CONTRACT'.(1000 + $index), 'status' => 'active']);
+            $rows[] = $receipt['structured_fact_evidence']['rows'][0];
+        }
+        $receipt = AssistantStructuredFactFormatter::payload($rows, '2026-10-01T10:00:00Z');
+        $receipt['result_window'] = ['limit' => 19, 'returned' => 19, 'has_more' => true, 'total' => 24];
+        $plan = $this->plan([$receipt], [['number', 'status']], 'table');
+        $result = (new AssistantStructuredFactVerifier)->guard('Покажи все договоры', $plan, [$receipt]);
+
+        self::assertSame(19, substr_count($result['text'], '| Договор |'));
+        self::assertCount(19, $result['source_refs']);
+        self::assertStringContainsString(trans_message('ai_assistant_facts.returned_scope'), $result['text']);
+        self::assertTrue($result['structured_evidence_truncated']);
+    }
+
     public function test_money_selection_requires_current_financial_receipt_for_every_selected_row_and_org(): void
     {
         $money = $this->payload(31, 'payment_document', ['amount' => '10.25', 'currency' => 'RUB']);

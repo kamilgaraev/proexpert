@@ -12,6 +12,8 @@ use Illuminate\Database\Query\JoinClause;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Eloquent\Builder;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
@@ -21,6 +23,12 @@ final class AssistantDocumentCoverageService
 
     public static function isCompleteForAnswer(array $coverage): bool
     {
+        $retrieval = $coverage['retrieval_coverage'] ?? null;
+        if (! is_array($retrieval) || ($retrieval['complete'] ?? null) !== true || ($retrieval['fresh'] ?? null) !== true
+            || ! in_array($retrieval['mode'] ?? null, ['lexical', 'semantic'], true)
+            || ! is_int($retrieval['expected_units'] ?? null) || $retrieval['expected_units'] < 0
+            || ! is_int($retrieval['current_units'] ?? null) || $retrieval['current_units'] !== $retrieval['expected_units']
+            || ($retrieval['partial_documents'] ?? null) !== 0) { return false; }
         $documents = $coverage['document_coverage'] ?? null;
         $scan = $coverage['archive_scan'] ?? null;
         if (! is_array($documents) || ! is_array($scan) || ($scan['processing'] ?? null) !== false) {
@@ -53,10 +61,16 @@ final class AssistantDocumentCoverageService
             && $scan['expected_file_count'] === $scan['scanned_file_count'];
     }
 
-    public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null): array
+    public function coverage(int $organizationId, User $actor, ?callable $checkpoint = null, ?callable $checkDeadline = null, array $scope = []): array
     {
         $guard = $checkDeadline ?? $checkpoint;
         if (! $this->policy->belongsToOrganization($actor, $organizationId)) throw new AccessDeniedHttpException;
+        if (isset($scope['source_types']) && ! in_array('file_document', $scope['source_types'], true)) {
+            return ['document_coverage' => array_fill_keys(['total', 'ready', 'pending', 'ocr_required', 'ocr_processing', 'failed', 'unsupported', 'empty'], 0),
+                'archive_scan' => ['expected_file_count' => 0, 'scanned_file_count' => 0, 'processing' => false],
+                'retrieval_coverage' => ['complete' => true, 'fresh' => true, 'mode' => 'lexical', 'expected_units' => 0, 'current_units' => 0, 'partial_documents' => 0]];
+        }
+        $projectId = isset($scope['project_id']) && is_int($scope['project_id']) ? $scope['project_id'] : null;
         if ($checkpoint !== null) { $checkpoint(); }
         $canManage = $this->canManageSettings($organizationId, $actor);
         if ($checkpoint !== null) { $checkpoint(); }
@@ -66,8 +80,10 @@ final class AssistantDocumentCoverageService
             $files->whereNotIn('files.id', $operations->sourceQueryForActor($actor, $organizationId, $nativeFileType)
                 ->select($nativeFileType === 'safety_medical_exam' ? 'native_file.id' : 'native_source.id'));
         }
+        if ($projectId !== null) { $this->scopeFilesToProject($files, $actor, $organizationId, $projectId); }
         if ($checkpoint !== null) { $checkpoint(); }
         $documents = $this->policy->accessibleDocuments($actor, $organizationId);
+        if ($projectId !== null) { $documents->where(static fn (Builder $query) => $query->where('ai_assistant_documents.project_id', $projectId)->orWhereNull('ai_assistant_documents.project_id')); }
         $visibleDocuments = $documents->toBase();
         $documents = $documents->getModel()->newQueryWithoutScopes()->from('assistant_coverage_documents as ai_assistant_documents');
         $types = [];
@@ -124,6 +140,7 @@ final class AssistantDocumentCoverageService
             if ($type === 'tender_file' && ! isset($nativeCandidates[$type])) { continue; }
             $native = $this->policy->entityQuery($actor, $organizationId, $type);
             if ($native === null) { continue; }
+            $this->scopeEntityToProject($native, $projectId);
             if ($checkpoint !== null) { $checkpoint(); }
             $count = $native->count();
             if ($count === 0) { continue; }
@@ -147,6 +164,12 @@ final class AssistantDocumentCoverageService
                 $expected = AssistantSalesNativeFileMetadata::sourceQuery($type, $organizationId)
                     ->whereIn('native_source.id', $readable->select($readable->getModel()->getQualifiedKeyName()))
                     ->whereNotNull(DB::raw(AssistantSalesNativeFileMetadata::versionExpressions($type)[$definition['path']]));
+            }
+            if ($projectId !== null) {
+                $readable = $this->policy->entityContentQuery($actor, $organizationId, $type);
+                if ($readable === null) { continue; }
+                $this->scopeEntityToProject($readable, $projectId);
+                $expected->whereIn('native_source.id', $readable->select($readable->getModel()->getQualifiedKeyName()));
             }
             if ($checkpoint !== null) { $checkpoint(); }
             $expectedCount = $expected->count('native_source.id');
@@ -209,6 +232,7 @@ final class AssistantDocumentCoverageService
             if (! isset($nativeCandidates[$type])) { continue; }
             $native = $this->policy->entityContentQuery($actor, $organizationId, $type);
             if ($native === null) { continue; }
+            $this->scopeEntityToProject($native, $projectId);
             $model = $native->getModel();
             $table = $model->getTable();
             $native = $model->newQuery()->whereIn($model->getQualifiedKeyName(), $native->select($model->getQualifiedKeyName()));
@@ -247,11 +271,105 @@ final class AssistantDocumentCoverageService
         $completedAt = $completed ? $scan->completed_at : null;
         if (is_string($completedAt) && $completedAt !== '') $completedAt = \Carbon\CarbonImmutable::parse($completedAt)->toAtomString();
 
+        $retrievalCoverage = $this->retrievalCoverage($visibleDocuments, $checkpoint, ($scope['retrieval_mode'] ?? 'lexical') === 'semantic');
         return ['document_coverage' => $coverage, 'native_attachment_coverage' => $nativeCoverage, 'can_manage_document_settings' => $canManage,
+            'retrieval_coverage' => $retrievalCoverage,
             'archive_scan' => ['expected_file_count' => $expected + $nativeMetadataCount + $unmappedNativeCount + $nativeMappedCount, 'scanned_file_count' => $scanned + $nativeMetadataCount + $nativeMappedCount,
                 'storage_unverified_file_count' => $nativeMetadataCount,
                 'last_file_id' => $lastVisible, 'completed_at' => $completedAt,
                 'processing' => ! $completed || $unmappedNativeCount > 0]];
+    }
+
+    private function scopeEntityToProject(Builder $query, ?int $projectId): void
+    {
+        if ($projectId === null) { return; }
+        $model = $query->getModel();
+        if ($model instanceof \App\Models\Project) { $query->whereKey($projectId); return; }
+        if (Schema::hasColumn($model->getTable(), 'project_id')) {
+            $column = $model->qualifyColumn('project_id');
+            $query->where(static fn (Builder $scope) => $scope->where($column, $projectId)->orWhereNull($column));
+        }
+    }
+
+    private function scopeFilesToProject(Builder $files, User $actor, int $organizationId, int $projectId): void
+    {
+        $types = (clone $files)->select('files.fileable_type')->distinct()->pluck('files.fileable_type');
+        $files->where(function (Builder $scope) use ($types, $actor, $organizationId, $projectId): void {
+            $scope->whereRaw('1 = 0');
+            foreach ($types as $fileType) {
+                $entityType = $this->policy->entityTypeForModel((string) $fileType);
+                $parents = $entityType === null ? null : $this->policy->entityContentQuery($actor, $organizationId, $entityType);
+                if ($parents === null) { continue; }
+                $this->scopeEntityToProject($parents, $projectId);
+                $scope->orWhere(static fn (Builder $branch) => $branch->where('files.fileable_type', $fileType)
+                    ->whereIn(DB::raw('CAST(files.fileable_id AS TEXT)'), $parents->select([])->selectRaw('CAST('.$parents->getModel()->getQualifiedKeyName().' AS TEXT)')));
+            }
+        });
+    }
+
+    private function retrievalCoverage(QueryBuilder $documents, ?callable $checkpoint, bool $semantic): array
+    {
+        $checkpoint?->__invoke();
+        $currentDocuments = (clone $documents)->select('ai_assistant_documents.id', 'ai_assistant_documents.organization_id',
+            'ai_assistant_documents.project_id', 'ai_assistant_documents.checksum', 'ai_assistant_documents.coverage_status',
+            'ai_assistant_documents.status', 'ai_assistant_documents.processed_at', 'ai_assistant_documents.updated_at', 'ai_assistant_documents.metadata');
+        $units = DB::table('ai_assistant_document_units as evidence_unit')
+            ->joinSub($currentDocuments, 'evidence_document', 'evidence_document.id', '=', 'evidence_unit.document_id')
+            ->whereRaw("BTRIM(evidence_unit.text) <> ''");
+        $current = (clone $units)->whereRaw("encode(sha256(convert_to(evidence_unit.text, 'UTF8')), 'hex') = evidence_unit.checksum")
+            ->whereExists(static function (QueryBuilder $sources) use ($semantic): void {
+            $sources->selectRaw('1')->from('ai_rag_sources as evidence_source')
+                ->whereColumn('evidence_source.organization_id', 'evidence_document.organization_id')
+                ->whereRaw('evidence_source.identity_project_id = COALESCE(evidence_document.project_id, 0)')
+                ->where('evidence_source.source_type', 'file_document')->where('evidence_source.entity_type', 'assistant_document')
+                ->whereRaw('evidence_source.entity_id = CAST(evidence_document.id AS TEXT)')
+                ->whereRaw('evidence_source.identity_part_key = CAST(evidence_unit.id AS TEXT)')
+                ->whereColumn('evidence_source.indexed_at', '>=', 'evidence_document.processed_at')
+                ->whereColumn('evidence_source.indexed_at', '>=', 'evidence_document.updated_at')
+                ->whereRaw("evidence_source.metadata->>'checksum' = evidence_document.checksum")
+                ->whereRaw("evidence_source.metadata->>'unit_checksum' = evidence_unit.checksum")
+                ->whereRaw("evidence_source.metadata->'provenance' = evidence_unit.provenance")
+                ->whereExists(static function (QueryBuilder $chunks) use ($semantic): void {
+                    $chunks->selectRaw('1')->from('ai_rag_chunks as evidence_chunk')->whereColumn('evidence_chunk.source_id', 'evidence_source.id')
+                        ->whereColumn('evidence_chunk.organization_id', 'evidence_document.organization_id')
+                        ->whereRaw('evidence_chunk.project_id IS NOT DISTINCT FROM evidence_document.project_id')
+                        ->whereRaw("evidence_chunk.metadata->>'unit_checksum' = evidence_unit.checksum")
+                        ->whereRaw("evidence_chunk.metadata->>'checksum' = evidence_document.checksum")
+                        ->whereRaw("evidence_chunk.metadata->'provenance' = evidence_unit.provenance")
+                        ->whereRaw("BTRIM(evidence_chunk.content) <> ''");
+                    if ($semantic) { $chunks->whereNotNull('evidence_chunk.embedding'); }
+                    $chunks->groupBy('evidence_chunk.source_id')
+                        ->havingRaw("COUNT(*) = MAX(CASE WHEN (evidence_chunk.metadata->>'chunk_count') ~ '^[0-9]{1,8}$' THEN (evidence_chunk.metadata->>'chunk_count')::int ELSE 0 END)")
+                        ->havingRaw('MIN(evidence_chunk.chunk_index) = 0 AND MAX(evidence_chunk.chunk_index) = COUNT(*) - 1');
+                });
+        });
+        $expectedCount = (clone $units)->count();
+        $checkpoint?->__invoke();
+        $currentCount = $current->count();
+        $checkpoint?->__invoke();
+        $legacySources = \App\BusinessModules\Features\AIAssistant\Models\RagSource::query()->from('ai_rag_sources as legacy_source')
+            ->joinSub($currentDocuments, 'legacy_document', static function (JoinClause $join): void {
+                $join->on('legacy_source.organization_id', '=', 'legacy_document.organization_id')
+                    ->whereRaw('legacy_source.entity_id = CAST(legacy_document.id AS TEXT)')
+                    ->whereRaw('legacy_source.identity_project_id = COALESCE(legacy_document.project_id, 0)');
+            })->where('legacy_source.source_type', 'file_document')->where('legacy_source.entity_type', 'assistant_document')
+            ->whereRaw("NOT jsonb_exists(legacy_source.metadata, 'unit_checksum') AND NOT jsonb_exists(legacy_source.metadata, 'unit_index') AND NOT jsonb_exists(legacy_source.metadata, 'unit_type')")
+            ->select('legacy_source.*');
+        foreach ($legacySources->lazyById(50, 'legacy_source.id', 'id')->chunk(50) as $packet) {
+            $checkpoint?->__invoke();
+            $currentCount += count(app(AssistantDocumentIndexCompatibility::class)->verifiedMetadata($packet->all(), $checkpoint, $semantic));
+        }
+        $checkpoint?->__invoke();
+        $partial = DB::query()->fromSub($currentDocuments, 'document')->where(static function (QueryBuilder $query): void {
+            $query->whereNotIn('document.coverage_status', ['full', 'ocr'])->orWhereNull('document.coverage_status')
+                ->orWhere('document.status', '!=', 'ready')->orWhereNull('document.processed_at')
+                ->orWhereRaw("COALESCE(document.metadata->>'partial', 'false') <> 'false'")
+                ->orWhereRaw("COALESCE(document.metadata->>'truncated', 'false') <> 'false'")
+                ->orWhereNotExists(static fn (QueryBuilder $unit) => $unit->selectRaw('1')->from('ai_assistant_document_units')
+                    ->whereColumn('ai_assistant_document_units.document_id', 'document.id')->whereRaw("BTRIM(ai_assistant_document_units.text) <> ''"));
+        })->count();
+        return ['complete' => $partial === 0 && $expectedCount === $currentCount, 'fresh' => true,
+            'mode' => $semantic ? 'semantic' : 'lexical', 'expected_units' => $expectedCount, 'current_units' => $currentCount, 'partial_documents' => $partial];
     }
 
     public function canManageSettings(int $organizationId, User $actor): bool
