@@ -91,11 +91,60 @@ class WarehouseMovement extends Model
 
     public function operationCategoryLabel(): ?string
     {
+        if ($this->isContractorTransferOut()) {
+            return trans_message('warehouse_basic.tolling_transfer_label');
+        }
+        if ($this->isCustomerMaterialReceipt()) {
+            return trans_message('warehouse_basic.tolling_receipt_label');
+        }
         if (! $this->operation_category) {
             return null;
         }
 
         return trans_message('basic_warehouse.operation_categories.'.$this->operation_category);
+    }
+
+    public function isContractorTransferOut(): bool
+    {
+        return ($this->metadata['is_contractor_transfer'] ?? false) === true
+            && in_array($this->movement_type, [self::TYPE_WRITE_OFF, self::TYPE_TRANSFER_OUT], true);
+    }
+
+    public function isCustomerMaterialReceipt(): bool
+    {
+        return ($this->metadata['is_customer_transfer'] ?? false) === true
+            && $this->movement_type === self::TYPE_RECEIPT;
+    }
+
+    /** @return list<string> */
+    public function availableDocumentTypes(): array
+    {
+        if ($this->isContractorTransferOut()) {
+            return ['m15'];
+        }
+        if ($this->isCustomerMaterialReceipt()) {
+            return ['m4'];
+        }
+
+        return match ($this->movement_type) {
+            self::TYPE_RECEIPT => ['m4', 'm7'],
+            self::TYPE_TRANSFER_OUT => $this->operation_category === self::CATEGORY_PLACEMENT ? [] : ['m11'],
+            self::TYPE_WRITE_OFF => in_array($this->operation_category, [
+                self::CATEGORY_PROJECT_DELIVERY, self::CATEGORY_RESPONSIBLE_ISSUE, self::CATEGORY_PRODUCTION_USAGE,
+            ], true) ? ['m11'] : (in_array($this->operation_category, [
+                self::CATEGORY_LOSS, self::CATEGORY_DAMAGE, self::CATEGORY_DISPOSAL, self::CATEGORY_INVENTORY_ADJUSTMENT,
+            ], true) ? ['write_off_act'] : []),
+            default => [],
+        };
+    }
+
+    public function movementDocumentNumber(): ?string
+    {
+        if (is_string($this->document_number) && trim($this->document_number) !== '') {
+            return $this->document_number;
+        }
+        // Старые передачи без номера остаются доступными в истории и отчёте.
+        return $this->isContractorTransferOut() ? 'М-15-'.$this->id : null;
     }
 
     public function organization(): BelongsTo

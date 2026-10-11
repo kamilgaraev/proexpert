@@ -40,7 +40,7 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         $this->applyStyles($sheet);
 
         $filename = 'M15_'.$this->documentFileSuffix(
-            $firstMovement->document_number,
+            $firstMovement->movementDocumentNumber(),
             $firstMovement->movement_date
         ).'.xlsx';
         $path = "exports/warehouse/m15/{$filename}";
@@ -78,7 +78,7 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
         $this->setCenter($sheet, 'H5:I7');
 
         $sheet->mergeCells('A9:I9');
-        $sheet->setCellValue('A9', 'НАКЛАДНАЯ № '.$this->documentNumber($movement->document_number));
+        $sheet->setCellValue('A9', 'НАКЛАДНАЯ № '.$this->documentNumber($movement->movementDocumentNumber()));
         $this->setBold($sheet, 'A9');
         $this->setCenter($sheet, 'A9');
         $sheet->getStyle('A9')->getFont()->setSize(12);
@@ -89,16 +89,16 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
 
         $sheet->setCellValue('H11', 'Номер документа');
         $sheet->setCellValue('I11', 'Дата составления');
-        $sheet->setCellValue('H12', $this->documentNumber($movement->document_number));
+        $sheet->setCellValue('H12', $this->documentNumber($movement->movementDocumentNumber()));
         $sheet->setCellValue('I12', $movement->movement_date->format('d.m.Y'));
         $this->applyTableStyle($sheet, 'H11:I12');
         $this->setCenter($sheet, 'H11:I12');
 
-        $sheet->setCellValue('A14', 'Основание: '.($movement->metadata['reason'] ?? 'Бухгалтерская справка'));
+        $sheet->setCellValue('A14', 'Основание: '.($movement->reason ?? $movement->metadata['reason'] ?? 'Бухгалтерская справка'));
         $sheet->setCellValue(
             'A15',
-            'Кому: '.($movement->toWarehouse->name
-                ?? $movement->metadata['contractor_name']
+            'Кому: '.($movement->metadata['contractor_name']
+                ?? $movement->toWarehouse->name
                 ?? $movement->metadata['recipient']
                 ?? 'Сторонняя организация')
         );
@@ -108,6 +108,12 @@ class M15ExportStrategy extends BaseWarehouseExportStrategy
             $movement->movement_date,
         );
         $sheet->setCellValue('A16', 'Через кого: '.$person);
+        if ($movement->isContractorTransferOut()) {
+            $sheet->mergeCells('A17:I17');
+            $sheet->setCellValue('A17', trans_message('warehouse_basic.tolling_document_note'));
+            $sheet->getStyle('A17')->getAlignment()->setWrapText(true);
+            $sheet->getRowDimension(17)->setRowHeight(30);
+        }
     }
 
     protected function setTable($sheet, $movements): void

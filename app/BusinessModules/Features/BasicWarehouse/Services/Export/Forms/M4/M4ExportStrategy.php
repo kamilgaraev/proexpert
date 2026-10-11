@@ -93,7 +93,13 @@ class M4ExportStrategy extends BaseWarehouseExportStrategy
         $sheet->getStyle('H10:I10')->getFont()->setSize(8);
 
         $sheet->setCellValue('A13', 'Склад: '.($warehouse->name ?? ''));
-        $sheet->setCellValue('A14', 'Поставщик: '.($movement->metadata['supplier_name'] ?? ''));
+        $sheet->setCellValue('A14', 'Поставщик: '.($movement->metadata['supplier_name'] ?? $movement->metadata['source_organization_name'] ?? ''));
+        if ($movement->isCustomerMaterialReceipt()) {
+            $sheet->mergeCells('A15:I15');
+            $sheet->setCellValue('A15', trans_message('warehouse_basic.tolling_receipt_note'));
+            $sheet->getStyle('A15')->getAlignment()->setWrapText(true);
+            $sheet->getRowDimension(15)->setRowHeight(30);
+        }
     }
 
     protected function setTable($sheet, $movements): void

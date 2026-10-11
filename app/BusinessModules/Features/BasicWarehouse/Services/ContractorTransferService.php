@@ -72,6 +72,9 @@ class ContractorTransferService
                 );
             }
 
+            $documentNumber = $existingMovement?->document_number
+                ?? ContractorTransferDocument::number($sourceOrganizationId, $idempotencyKey, $documentNumber);
+
             $contractor = Contractor::query()
                 ->where('organization_id', $sourceOrganizationId)
                 ->findOrFail($contractorId);
@@ -181,6 +184,7 @@ class ContractorTransferService
                     'organization' => $sourceOrganization->legal_name ?? $sourceOrganization->name,
                 ]),
                 'is_customer_transfer' => true,
+                'supplier_name' => $sourceOrganization->legal_name ?? $sourceOrganization->name,
                 'source_organization_id' => $sourceOrganizationId,
                 'source_organization_name' => $sourceOrganization->legal_name ?? $sourceOrganization->name,
                 'source_project_id' => $projectId,
