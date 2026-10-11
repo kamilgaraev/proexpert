@@ -408,6 +408,9 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
 
     private function fixture(): array
     {
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->allows('hasModuleAccess')->andReturn(true);
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
         config(['ai-assistant-credits.enforce' => false, 'estimate-generation.credits.enabled' => true]);
         $organization = Organization::factory()->create();
         $project = Project::factory()->for($organization)->create();

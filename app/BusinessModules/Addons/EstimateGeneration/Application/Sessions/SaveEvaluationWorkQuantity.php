@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationWorkItemLocator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\NativeQuantityFactEligibility;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
@@ -37,7 +38,7 @@ final readonly class SaveEvaluationWorkQuantity
                 || isset($input['value']) || isset($input['unit'])))
             || (! $native && (! is_string($input['value'] ?? null) || preg_match('/\A[0-9]{1,12}(?:\.[0-9]{1,4})?\z/', $input['value']) !== 1
                 || ! OrdinaryEstimateDecimal::fitsQuantity($input['value']) || ! BigDecimal::of($input['value'])->isGreaterThan(0)
-                || ! is_string($input['unit'] ?? null) || DirectQuantityBinding::canonicalUnit($input['unit']) === null))) {
+                || ! is_string($input['unit'] ?? null) || WorkQuantityInputUnit::parse($input['unit']) === null))) {
             throw ValidationException::withMessages(['quantity' => 'Укажите работу, положительный объём до четырёх знаков после запятой с единицей либо текущий проверенный факт и основание выбора.']);
         }
 
@@ -83,7 +84,11 @@ final readonly class SaveEvaluationWorkQuantity
                     throw ValidationException::withMessages(['source_fact_id' => 'Числовой факт изменился, не проверен парсером или больше не относится к текущему проекту.']);
                 }
             } else {
-                $source = $this->numbers->write($actor, $session, $item['key'], $input['value'], $input['unit'], $input['reason'], $input['request_id']);
+                $normalized = WorkQuantityInputUnit::normalize($input['value'], $input['unit']);
+                if ($normalized === null || ! OrdinaryEstimateDecimal::fitsQuantity($normalized['value'])) {
+                    throw ValidationException::withMessages(['quantity' => 'Объём после перевода единицы превышает допустимый предел.']);
+                }
+                $source = $this->numbers->write($actor, $session, $item['key'], $normalized['value'], $normalized['unit'], $input['reason'], $input['request_id']);
             }
             $canonicalUnit = DirectQuantityBinding::canonicalUnit($source->unit);
             if ($canonicalUnit === null || NormativeUnitNormalizer::safeQuantityFactorDecimal($canonicalUnit, (string) ($item['unit'] ?? '')) === null) {
@@ -92,6 +97,10 @@ final readonly class SaveEvaluationWorkQuantity
             $selection = ['answer_kind' => 'direct_quantity', 'work_item_key' => $item['key'], 'quantity_key' => DirectQuantityBinding::key($item['key']),
                 'source_fact_id' => $source->id, 'source_fact_version' => $source->version, 'source_version' => $source->sourceVersion,
                 'source_entity_id' => $source->entityId, 'source_unit' => $source->unit, 'source_value_hash' => DirectQuantityBinding::valueHash($source->value)];
+            if (! $native) {
+                $selection['entered_value'] = $input['value'];
+                $selection['entered_unit'] = $input['unit'];
+            }
             $proof = $this->choices->write($actor, $session, 'work:'.$item['key'], 'evaluation_answer', $selection, $input['reason'], $input['request_id']);
             $payload['quantity_selections'][$item['key']] = [...$selection, ...$proof];
             $payload['quantity_selection_revision'] = ($payload['quantity_selection_revision'] ?? 0) + 1;

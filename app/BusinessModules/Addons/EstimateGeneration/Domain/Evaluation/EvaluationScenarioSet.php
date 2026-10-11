@@ -45,7 +45,7 @@ final class EvaluationScenarioSet
                 $value = $quantity['value'] ?? null;
                 if (! is_string($key) || ! isset($works[$key]) || isset($values[$key])
                     || ($quantity['unit'] ?? null) !== ($works[$key]['unit'] ?? null)
-                    || ! is_string($quantity['unit'] ?? null) || DirectQuantityBinding::canonicalUnit($quantity['unit']) === null
+                    || ! is_string($quantity['unit'] ?? null) || WorkQuantityInputUnit::parse($quantity['unit']) === null
                     || ! is_string($value) || preg_match('/\A[0-9]{1,12}(?:\.[0-9]{1,4})?\z/', $value) !== 1
                     || ! OrdinaryEstimateDecimal::fitsQuantity($value) || ! BigDecimal::of($value)->isGreaterThan(0)) {
                     throw new InvalidArgumentException('evaluation_scenario_quantity_invalid');

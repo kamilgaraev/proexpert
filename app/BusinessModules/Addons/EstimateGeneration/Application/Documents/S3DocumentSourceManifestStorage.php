@@ -115,6 +115,10 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
     private function maxReadableBytes(EstimateGenerationDocument $document): int
     {
         $mimeType = strtolower((string) $document->mime_type);
+        $extension = strtolower(pathinfo((string) $document->filename, PATHINFO_EXTENSION));
+        if (in_array($extension, ['dwg', 'dxf', 'xlsx', 'xls'], true)) {
+            return (new DocumentFileAdmission)->maximumBytes($extension);
+        }
 
         return match (true) {
             $mimeType === 'application/pdf' => max(1, (int) config('estimate-generation.ocr.max_pdf_file_bytes', 200 * 1024 * 1024)),

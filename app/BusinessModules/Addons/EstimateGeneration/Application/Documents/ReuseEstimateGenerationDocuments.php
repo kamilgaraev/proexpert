@@ -82,11 +82,7 @@ final class ReuseEstimateGenerationDocuments
                     throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_file_limit_exceeded']);
                 }
                 foreach ($missingDocuments as $document) {
-                    $meta = is_array($document->meta) ? $document->meta : [];
-                    $extension = strtolower((string) ($meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
-                    if (! $settings->allowsFormat($extension)) {
-                        throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_format_disabled']);
-                    }
+                    (new DocumentFileAdmission)->stored($document, $settings);
                 }
 
                 $documents = $this->parsing->reuseDocuments($session, $missingDocuments, $user);

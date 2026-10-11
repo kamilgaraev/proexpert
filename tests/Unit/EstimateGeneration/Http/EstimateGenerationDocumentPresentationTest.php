@@ -485,7 +485,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         );
         $this->app->instance(
             EstimateGenerationDocumentPreviewService::class,
-            new EstimateGenerationDocumentPreviewService($authorization, $files),
+            new EstimateGenerationDocumentPreviewService($authorization, $files, $this->previewAuthorization($authorization)),
         );
         $request = Request::create('/documents');
         $user = $this->user(7);
@@ -535,7 +535,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
             'storage_path' => 'org-7/estimate-generation/sessions/41/documents/plan.pdf',
         ]);
 
-        $url = (new EstimateGenerationDocumentPreviewService($authorization, $files))->forDocument(
+        $url = (new EstimateGenerationDocumentPreviewService($authorization, $files, $this->previewAuthorization($authorization)))->forDocument(
             $document,
             $this->user(7),
         );
@@ -550,7 +550,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         $authorization->allows('can')->andReturnTrue();
         $files = Mockery::mock(FileService::class);
         $files->shouldNotReceive('temporaryUrl');
-        $service = new EstimateGenerationDocumentPreviewService($authorization, $files);
+        $service = new EstimateGenerationDocumentPreviewService($authorization, $files, $this->previewAuthorization($authorization));
 
         $unsafe = $this->document('ready');
         $unsafe->forceFill(['mime_type' => 'application/pdf', 'storage_path' => 'org-8/private.pdf']);
@@ -566,7 +566,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
 
         $deniedAuthorization = Mockery::mock(AuthorizationService::class);
         $deniedAuthorization->expects('can')->once()->andReturnFalse();
-        self::assertNull((new EstimateGenerationDocumentPreviewService($deniedAuthorization, $files))
+        self::assertNull((new EstimateGenerationDocumentPreviewService($deniedAuthorization, $files, $this->previewAuthorization($deniedAuthorization)))
             ->forDocument($this->document('ready'), $this->user(7)));
     }
 
@@ -583,7 +583,7 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         );
         $this->app->instance(
             EstimateGenerationDocumentPreviewService::class,
-            new EstimateGenerationDocumentPreviewService($authorization, $files),
+            new EstimateGenerationDocumentPreviewService($authorization, $files, $this->previewAuthorization($authorization)),
         );
         $document = $this->document('ready');
         $page = new EstimateGenerationDocumentPage;
@@ -670,6 +670,18 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         $user->forceFill(['id' => 5, 'current_organization_id' => $organizationId]);
 
         return $user;
+    }
+
+    private function previewAuthorization(AuthorizationService $permissions): \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization
+    {
+        $fresh = Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
+        $fresh->allows('authorize')->andReturnUsing(static function (User $user, EstimateGenerationSession $session, string $permission) use ($permissions): void {
+            if (! $permissions->can($user, $permission, ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id])) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+        });
+
+        return $fresh;
     }
 
     private function document(

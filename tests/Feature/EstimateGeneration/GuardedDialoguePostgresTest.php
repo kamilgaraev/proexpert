@@ -218,6 +218,9 @@ SQL);
 
     private function fixture(?\GuzzleHttp\ClientInterface $httpClient = null): array
     {
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->allows('hasModuleAccess')->andReturn(true);
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
         $organization = Organization::factory()->create();
         $project = Project::factory()->for($organization)->create();
         $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);

@@ -38,6 +38,16 @@ final class FailureNormalizerTest extends TestCase
     /** @return iterable<string, array{\Throwable, FailureCategory, string}> */
     public static function knownFailures(): iterable
     {
+        yield 'estimator product revoked' => [
+            new DocumentUnitProcessingException('estimator_product_not_available'),
+            FailureCategory::UserActionRequired,
+            'estimator_product_not_available',
+        ];
+        yield 'text estimator product revoked' => [
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached('estimator_product_not_available'),
+            FailureCategory::UserActionRequired,
+            'estimator_product_not_available',
+        ];
         yield 'approved estimator budget exhausted' => [
             new \App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached('estimator_credit_supplier_limit_reached'),
             FailureCategory::UserActionRequired,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 
 final class EvaluationSelectionVerifier
 {
@@ -19,7 +20,9 @@ final class EvaluationSelectionVerifier
             return false;
         }
         foreach ($expected as $key => $value) {
-            if (($fact->value[$key] ?? null) !== $value || ($selection[$key] ?? null) !== $value) {
+            if (! array_key_exists($key, $fact->value) || ! array_key_exists($key, $selection)
+                || CanonicalPipelineJson::encode([$fact->value[$key]]) !== CanonicalPipelineJson::encode([$value])
+                || CanonicalPipelineJson::encode([$selection[$key]]) !== CanonicalPipelineJson::encode([$value])) {
                 return false;
             }
         }

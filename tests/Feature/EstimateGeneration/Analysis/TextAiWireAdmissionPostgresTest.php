@@ -46,6 +46,9 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
     protected function setUp(): void
     {
         parent::setUp();
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->allows('hasModuleAccess')->andReturn(true);
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
         self::assertSame('pgsql', DB::connection()->getDriverName());
         self::assertStringEndsWith('_testing', DB::connection()->getDatabaseName());
         $this->schema = 'most_text_wire_'.bin2hex(random_bytes(8));

@@ -36,11 +36,12 @@ final readonly class EstimatorCreditOperations
         return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $stateVersion, $requestId, $kind): array {
             $session = $this->session($actor, $projectId, $sessionId);
             $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
+            app(EstimatorProductAccess::class)->requireAvailable((int) $session->organization_id);
             if (! EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
                 throw new DomainException('estimator_credit_legacy_balance_requires_reconciliation');
             }
             if ((int) $session->state_version !== $stateVersion || $session->status->value === 'archived'
-                || in_array($session->status->value, ['generating', 'applying'], true)
+                || in_array($session->status->value, ['generating', 'applying', 'applied'], true)
                 || ($session->status->value === 'failed' && $session->resume_status?->value !== 'generating')) {
                 throw new StaleEstimateGenerationState($sessionId, $stateVersion);
             }
@@ -86,6 +87,10 @@ final readonly class EstimatorCreditOperations
             throw new DomainException('estimator_credit_begin_requires_transaction');
         }
         $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
+        app(EstimatorProductAccess::class)->requireAvailable((int) $session->organization_id);
+        if (in_array($session->status->value, ['applied', 'archived'], true)) {
+            throw new StaleEstimateGenerationState((int) $session->id, $stateVersion);
+        }
         if (! EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
             throw new DomainException('estimator_credit_legacy_balance_requires_reconciliation');
         }

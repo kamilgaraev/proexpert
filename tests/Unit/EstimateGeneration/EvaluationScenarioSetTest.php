@@ -96,6 +96,37 @@ final class EvaluationScenarioSetTest extends TestCase
         self::assertContains('scenario_supplier_quantity_requires_offer', $scenarios[2]['positions'][0]['warnings']);
     }
 
+    public function test_jsonb_object_key_order_does_not_invalidate_the_same_proven_scenario_choice(): void
+    {
+        [$snapshot, $decisions, $selection] = $this->proof();
+        $fact = $snapshot->facts[0];
+        $value = $fact->value;
+        $value['definitions'] = array_map(static function (array $definition): array {
+            $definition['quantities'] = array_map(static fn (array $quantity): array => array_reverse($quantity, true), $definition['quantities']);
+
+            return array_reverse($definition, true);
+        }, $value['definitions']);
+        $reordered = new Fact($fact->id, $fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion, $fact->entityId,
+            $fact->type, $value, $fact->unit, $fact->confidence, $fact->origin, $fact->status, $fact->evidenceIds);
+        $snapshot = new ProjectModelSnapshot([], [$reordered], $snapshot->evidence, []);
+        self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationChoiceProof)->accepted($snapshot, $reordered, $decisions[0]));
+        self::assertCount(3, (new EvaluationScenarioSet)->project($this->positions(), [], $snapshot, $decisions, $selection));
+    }
+
+    public function test_scenario_volumes_keep_the_selected_scaled_work_unit(): void
+    {
+        $positions = $this->positions();
+        $positions[0]['unit'] = '100 м2';
+        $definitions = $this->definitions();
+        foreach ($definitions as &$definition) {
+            $definition['quantities'][0]['unit'] = '100 м2';
+        }
+        unset($definition);
+        $validated = (new EvaluationScenarioSet)->validate($definitions, $positions);
+        self::assertSame('100 м2', $validated[0]['quantities'][0]['unit']);
+        self::assertSame('12', $validated[0]['quantities'][0]['value']);
+    }
+
     private function definitions(): array
     {
         return array_map(static fn (string $id, string $quantity): array => ['id' => $id,

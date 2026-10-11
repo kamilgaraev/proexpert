@@ -27,6 +27,7 @@ Route::middleware([
     ->name('api.v1.admin.projects.estimate-generation.sessions.')
     ->group(function (): void {
         Route::get('/', [EstimateGenerationSessionController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('index');
+        Route::get('/capabilities', [EstimateGenerationSessionController::class, 'capabilities'])->middleware('authorize:estimate_generation.create,project,project')->name('capabilities');
         Route::post('/', [EstimateGenerationSessionController::class, 'store'])->middleware('authorize:estimate_generation.create,project,project')->name('store');
         Route::get('/{session}/documents', [EstimateGenerationDocumentController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.index');
         Route::post('/{session}/documents', [EstimateGenerationDocumentController::class, 'upload'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.store');

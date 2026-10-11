@@ -52,6 +52,9 @@ final readonly class SessionAiCostGuard
                 throw new SessionAiCostLimitReached('session_processing_stopped');
             }
             if ($attempt !== null) {
+                if (! app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorProductAccess::class)->available($organizationId)) {
+                    throw new SessionAiCostLimitReached('estimator_product_not_available');
+                }
                 $actor = $attempt->trustedActor ?? EstimateGenerationExecutionActor::resolve(is_array($input) ? $input : [], (int) $session->user_id);
                 if ($actor === null) {
                     throw new SessionAiCostLimitReached('session_actor_not_authorized');

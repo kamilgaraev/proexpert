@@ -55,6 +55,9 @@ final readonly class DocumentWireAuthorization
         if (($input['evaluation_mode'] ?? null) === 'universal' && ! config('estimate-generation.universal_enabled', false)) {
             return 'document_processing_stopped';
         }
+        if (! app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorProductAccess::class)->available((int) $scope->organization_id)) {
+            return 'estimator_product_not_available';
+        }
         $actor = EstimateGenerationExecutionActor::resolve(is_array($input) ? $input : [], (int) $document->user_id);
         if ($actor === null) {
             return 'document_processing_stopped';

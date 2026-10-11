@@ -49,10 +49,7 @@ final class UploadEstimateGenerationDocuments
                     throw new DomainException('estimate_generation_document_file_limit_exceeded');
                 }
                 foreach ($files as $file) {
-                    $extension = strtolower($file->getClientOriginalExtension());
-                    if (! $settings->allowsFormat($extension)) {
-                        throw new DomainException('estimate_generation_document_format_disabled');
-                    }
+                    (new DocumentFileAdmission)->uploaded($file, $settings);
                 }
                 $documents = $this->parsing->storeParsedDocuments($session, $files, $user);
                 $created = $documents;

@@ -42,6 +42,7 @@ final class EstimateGenerationCreditController extends Controller
                 $input['state_version'], $input['request_id'], $input['operation_kind']))->header('Cache-Control', 'private, no-store');
         } catch (\DomainException $exception) {
             throw ValidationException::withMessages(['quote' => match ($exception->getMessage()) {
+                'estimator_product_not_available' => trans_message('estimate_evaluation.product_not_available'),
                 'estimator_credit_document_preparation_required' => 'Сначала дождитесь подготовки страниц документа. Она не расходует единицы ИИ.',
                 'estimator_credit_quote_expired' => 'Предложение стоимости истекло. Получите новое перед запуском.',
                 'estimator_credit_request_id_conflict' => 'Этот запрос относится к другой версии исходных данных. Получите новое предложение.',

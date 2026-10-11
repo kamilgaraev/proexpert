@@ -1035,6 +1035,7 @@ class FileService
 
         $startTime = microtime(true);
         $fileSizeMb = round($file->getSize() / 1024 / 1024, 2);
+        $fileContent = null;
 
         // TECHNICAL: Начало загрузки файла в S3
         $this->logging->technical('s3.upload.started', [
@@ -1106,17 +1107,18 @@ class FileService
                 return false;
             }
 
-            // Используем полный путь для загрузки
-            $fileContent = file_get_contents($realPath);
+            $streamUpload = preg_match('#^org-[1-9][0-9]*/estimate-generation/#D', $fullPath) === 1;
+            $fileContent = $streamUpload ? fopen($realPath, 'rb') : file_get_contents($realPath);
+            $contentLength = is_resource($fileContent) ? (int) $file->getSize() : (is_string($fileContent) ? strlen($fileContent) : 0);
 
             // Проверяем, что контент успешно получен
-            if ($fileContent === false || strlen($fileContent) === 0) {
+            if ($fileContent === false || $contentLength === 0) {
                 Log::error('[FileService] upload(): failed to read file content', [
                     'real_path' => $logRealPath,
                     'file_size' => filesize($realPath),
                     'file_exists' => file_exists($realPath),
                     'is_readable' => is_readable($realPath),
-                    'content_length' => $fileContent === false ? 'false' : strlen($fileContent),
+                    'content_length' => $fileContent === false ? 'false' : $contentLength,
                 ]);
 
                 $this->logging->technical('s3.upload.failed', [
@@ -1132,9 +1134,9 @@ class FileService
             }
 
             Log::info('[FileService] File content prepared', [
-                'file_size' => strlen($fileContent),
+                'file_size' => $contentLength,
                 'file_path' => $logRealPath,
-                'content_length' => strlen($fileContent),
+                'content_length' => $contentLength,
                 'expected_size' => $file->getSize(),
             ]);
 
@@ -1155,13 +1157,13 @@ class FileService
 
                 Log::info('[FileService] Calling disk->put()', [
                     'path' => $logStoragePath,
-                    'content_length' => strlen($fileContent),
+                    'content_length' => $contentLength,
                     'visibility' => $visibilityParam,
                 ]);
 
                 $result = $disk->put($fullPath, $fileContent, $visibilityParam);
                 if ($result === true) {
-                    $this->tagEstimateGenerationObject($fullPath);
+                    $this->tagEstimateGenerationObject($fullPath, true);
                 }
 
                 Log::info('[FileService] disk->put() result', [
@@ -1242,7 +1244,7 @@ class FileService
                 'organization_id' => $org?->id,
                 'duration_ms' => $durationMs,
                 'result' => false,
-                'content_length' => strlen($fileContent),
+                'content_length' => $contentLength,
                 'visibility_used' => $visibilityParam,
                 'disk_driver' => $diskConfig['driver'] ?? 'unknown',
                 'bucket' => $diskConfig['bucket'] ?? 'unknown',
@@ -1250,7 +1252,7 @@ class FileService
 
             Log::error('[FileService] upload(): put returned false', [
                 'path' => $logStoragePath,
-                'content_length' => strlen($fileContent),
+                'content_length' => $contentLength,
                 'visibility_used' => $visibilityParam,
                 'disk_driver' => $diskConfig['driver'] ?? 'unknown',
                 'bucket' => $diskConfig['bucket'] ?? 'unknown',
@@ -1283,6 +1285,10 @@ class FileService
             ]);
 
             return false;
+        } finally {
+            if (is_resource($fileContent)) {
+                fclose($fileContent);
+            }
         }
     }
 
