@@ -6,12 +6,11 @@ use App\Enums\EstimatePositionItemType;
 use App\Support\EstimatePositionOrder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\Log;
-
 
 class EstimateItem extends Model
 {
@@ -45,6 +44,7 @@ class EstimateItem extends Model
         'machinery_cost',
         'labor_cost',
         'equipment_cost',
+        'other_cost',
         'labor_hours',
         'machinery_hours',
         'base_materials_cost',
@@ -85,6 +85,7 @@ class EstimateItem extends Model
         'materials_cost' => 'decimal:4',
         'machinery_cost' => 'decimal:4',
         'labor_cost' => 'decimal:4',
+        'other_cost' => 'decimal:2',
         'equipment_cost' => 'decimal:4',
         'labor_hours' => 'decimal:8',
         'machinery_hours' => 'decimal:8',
@@ -250,6 +251,7 @@ class EstimateItem extends Model
         }
 
         $actualVolume = $this->getActualVolume();
+
         return min(100, ($actualVolume / $plannedQuantity) * 100);
     }
 
@@ -399,12 +401,12 @@ class EstimateItem extends Model
 
     public function isFromNormative(): bool
     {
-        return !is_null($this->normative_rate_id);
+        return ! is_null($this->normative_rate_id);
     }
 
     public function hasAppliedCoefficients(): bool
     {
-        return !empty($this->applied_coefficients);
+        return ! empty($this->applied_coefficients);
     }
 
     public function getTotalCostBreakdown(): array
@@ -430,20 +432,20 @@ class EstimateItem extends Model
             'url' => request()->fullUrl(),
             'method' => request()->method(),
         ]);
-        
+
         // Приводим значение к int для корректного поиска
         $id = (int) $value;
-        
+
         Log::info('[EstimateItem::resolveRouteBinding] Поиск элемента', [
             'original_value' => $value,
             'converted_id' => $id,
         ]);
-        
+
         // Сначала находим элемент (включая удаленные)
         $item = static::withTrashed()
             ->where('id', $id)
             ->first();
-        
+
         Log::info('[EstimateItem::resolveRouteBinding] Результат поиска', [
             'id' => $id,
             'item_found' => $item !== null,
@@ -452,19 +454,19 @@ class EstimateItem extends Model
             'item_deleted_at' => $item?->deleted_at,
             'sql_query' => static::withTrashed()->where('id', $id)->toSql(),
         ]);
-        
-        if (!$item) {
+
+        if (! $item) {
             Log::warning('[EstimateItem::resolveRouteBinding] Элемент не найден', [
                 'id' => $id,
             ]);
             abort(404, 'Позиция сметы не найдена');
         }
-        
+
         // Загружаем связь estimate (включая удаленные)
         $item->load(['estimate' => function ($query) {
             $query->withTrashed();
         }]);
-        
+
         Log::info('[EstimateItem::resolveRouteBinding] После загрузки estimate', [
             'item_id' => $item->id,
             'estimate_loaded' => $item->relationLoaded('estimate'),
@@ -473,28 +475,28 @@ class EstimateItem extends Model
             'estimate_organization_id' => $item->estimate?->organization_id,
             'estimate_deleted_at' => $item->estimate?->deleted_at,
         ]);
-        
+
         $user = request()->user();
         Log::info('[EstimateItem::resolveRouteBinding] Информация о пользователе', [
             'user_exists' => $user !== null,
             'user_id' => $user?->id,
             'current_organization_id' => $user?->current_organization_id,
         ]);
-        
+
         if ($user && $user->current_organization_id) {
             // Если estimate не найден, возвращаем 404
-            if (!$item->estimate) {
+            if (! $item->estimate) {
                 Log::warning('[EstimateItem::resolveRouteBinding] Estimate не найден для элемента', [
                     'item_id' => $item->id,
                     'item_estimate_id' => $item->estimate_id,
                 ]);
                 abort(404, 'Смета для этой позиции не найдена');
             }
-            
+
             // Проверяем организацию
-            $itemOrgId = (int)$item->estimate->organization_id;
-            $userOrgId = (int)$user->current_organization_id;
-            
+            $itemOrgId = (int) $item->estimate->organization_id;
+            $userOrgId = (int) $user->current_organization_id;
+
             Log::info('[EstimateItem::resolveRouteBinding] Проверка организации', [
                 'item_id' => $item->id,
                 'estimate_id' => $item->estimate->id,
@@ -502,7 +504,7 @@ class EstimateItem extends Model
                 'user_organization_id' => $userOrgId,
                 'match' => $itemOrgId === $userOrgId,
             ]);
-            
+
             if ($itemOrgId !== $userOrgId) {
                 Log::warning('[EstimateItem::resolveRouteBinding] Организация не совпадает', [
                     'item_id' => $item->id,
@@ -512,12 +514,12 @@ class EstimateItem extends Model
                 abort(403, 'У вас нет доступа к этой позиции сметы');
             }
         }
-        
+
         Log::info('[EstimateItem::resolveRouteBinding] Успешное резолвинг', [
             'item_id' => $item->id,
             'estimate_id' => $item->estimate?->id,
         ]);
-        
+
         return $item;
     }
 
@@ -533,6 +535,7 @@ class EstimateItem extends Model
         }
 
         $qty = (float) ($this->actual_quantity ?? $this->quantity_total ?? $this->quantity ?? 0);
+
         return round(((float) $this->actual_unit_price - (float) $this->unit_price) * $qty, 2);
     }
 

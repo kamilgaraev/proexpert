@@ -17,6 +17,22 @@ use PHPUnit\Framework\TestCase;
 final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
 {
     #[Test]
+    public function scaled_and_count_units_publish_canonical_evidence_and_verify_the_converted_volume(): void
+    {
+        foreach ([['100 м2', '2', 'm2', '200'], ['count', '3', 'pcs', '3']] as [$unit, $amount, $canonicalUnit, $canonicalAmount]) {
+            $repository = new InMemoryEvidenceRepository;
+            $context = new PipelineContext(30, 10, 20, 1, 'sha256:'.str_repeat('a', 64), 'generating', baseInputVersion: 'sha256:'.str_repeat('b', 64));
+            $quantity = new QuantityData('bound_quantity', $unit, $amount, 'direct_quantity', '1', [], QuantitySource::Evidenced, ['evidence:1'], 'input:v1');
+            $item = ['key' => 'work:quantity', 'quantity' => $amount, 'unit' => $unit];
+            $node = (new AcceptedQuantityEvidenceMaterializer($repository))->materialize($context, $quantity, $item);
+            self::assertSame($canonicalUnit, $node->value['unit']);
+            self::assertSame($canonicalAmount, $node->value['quantity']);
+            self::assertTrue((new AcceptedQuantityEvidenceVerifier($repository))->verify($context,
+                [...$item, 'quantity_evidence_id' => $node->id, 'quantity_evidence_fingerprint' => $node->fingerprint]));
+        }
+    }
+
+    #[Test]
     public function canonical_derived_quantity_lineage_is_hashed_without_becoming_evidence_payload(): void
     {
         $repository = new InMemoryEvidenceRepository;

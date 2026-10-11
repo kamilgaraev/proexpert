@@ -286,6 +286,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     (string) $row->producer_name,
                     (string) $row->source_ref,
                     $choiceHash,
+                    (string) $row->fingerprint,
                 );
             }
         }
@@ -538,6 +539,9 @@ SQL, [
                     $projectionScopeId = $this->projectionScopeId($fact);
                     $entity = $this->entityRow($fact);
                     $payload = ['source' => $this->legacySource($fact->origin), 'value' => $fact->value];
+                    if ($fact->nativeNumericProofs !== []) {
+                        $payload['native_numeric_proofs'] = $fact->nativeNumericProofs;
+                    }
                     if ($fact->unit !== null) {
                         $payload['unit'] = $fact->unit;
                     }
@@ -1253,6 +1257,7 @@ SQL, [
                 continue;
             }
             $decoded = $this->decode($row->fact_value);
+            $payload = $this->decode($row->payload);
             $facts[] = new Fact(
                 (string) $row->stable_key,
                 (int) $row->organization_id,
@@ -1271,6 +1276,7 @@ SQL, [
                 $row->supersedes_assertion_id === null
                     ? null
                     : ($supersededKeys[(int) $row->supersedes_assertion_id] ?? null),
+                is_array($payload['native_numeric_proofs'] ?? null) ? $payload['native_numeric_proofs'] : [],
             );
         }
 

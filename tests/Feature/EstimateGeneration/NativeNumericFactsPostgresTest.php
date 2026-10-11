@@ -45,6 +45,8 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
         self::assertSame('xlsx:sheet:Объемы!B2', $snapshot->evidence[0]->nativeReference);
         self::assertSame('quantity', $snapshot->entities[0]->type);
         self::assertSame('quantity', $snapshot->entities[0]->attributes['semantic_type']);
+        self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof)->matches($snapshot->facts[0], $snapshot->evidence[0]));
+        self::assertNotEmpty($snapshot->facts[0]->nativeNumericProofs);
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
     }
 

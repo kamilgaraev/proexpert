@@ -22,6 +22,7 @@ final readonly class TargetedPackageDraftSummaryProjector
     public function project(array $draft): array
     {
         $draft = $this->refreshTotals($draft);
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\CanonicalDraftMoneyTotals)->project($draft);
         $draft['quality_summary'] = [
             ...(is_array($draft['quality_summary'] ?? null) ? $draft['quality_summary'] : []),
             'review_queue_items' => $this->reviewItems->projectionForDraft($draft),
@@ -79,7 +80,9 @@ final readonly class TargetedPackageDraftSummaryProjector
         $contingencyPercent = is_numeric($draft['contingency_percent'] ?? null)
             ? max((float) $draft['contingency_percent'], 0.0)
             : 0.0;
-        $contingencyAmount = round($baseTotal * $contingencyPercent / 100, 2);
+        $exactContingency = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\EstimateContingencyCalculator)->amount($draft, (string) $baseTotal);
+        $contingencyAmount = (float) $exactContingency;
+        $draft['contingency_amount'] = $exactContingency;
         $draft['totals'] = [
             'total_cost' => round($baseTotal + $contingencyAmount, 2),
             'base_total_cost' => round($baseTotal, 2),

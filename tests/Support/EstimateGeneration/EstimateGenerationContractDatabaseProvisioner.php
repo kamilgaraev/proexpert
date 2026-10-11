@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '89b79efb7e79f8af787b35041461f7ac54b427ebc866cff3e1cf00b750dc54b6',
-        'training' => '76c414af6e8099402bd116bbdc441bb4ca3110b3e096a5ec2bc64c14a7f01d84',
-        'pricing' => '76c414af6e8099402bd116bbdc441bb4ca3110b3e096a5ec2bc64c14a7f01d84',
+        'geometry' => '0c292eb9de3779c5e8a70405739d277730ce7238296ece2284183f04605cb000',
+        'training' => '7cb0cdd588eb61aef2273f1013050b0d46892859d1aeffc730bff08df5312066',
+        'pricing' => '7cb0cdd588eb61aef2273f1013050b0d46892859d1aeffc730bff08df5312066',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'b47cdb91ee8a4b531685ff22fd5183f4e0a7652658c4639c144a6f86d5172b54';
+    private const FRESH_INVENTORY_DIGEST = '810093afc3ade50e3af6c190c6afe81cb8b68efaef2287a101f79d01232e4b46';
 
     private const SUBJECT = [
         'geometry' => [
@@ -94,11 +94,14 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2025_11_01_000003_extend_estimate_items_table.php',
         'database/migrations/2025_11_05_150000_add_full_section_number_to_estimate_sections.php',
         'database/migrations/2025_11_06_000003_add_hierarchy_fields_to_estimate_items.php',
+        'database/migrations/2025_11_07_000001_add_estimate_integration_to_schedules.php',
         'database/migrations/2025_11_13_092257_add_is_onboarding_demo_to_multiple_tables.php',
         'database/migrations/2025_11_15_120000_create_estimate_position_catalog_tables.php',
         'database/migrations/2026_02_16_193000_increase_estimate_sections_column_lengths.php',
         'database/migrations/2026_02_19_203122_update_estimate_items_item_type_check_constraint.php',
+        'database/migrations/2026_02_20_012227_add_total_equipment_costs_to_estimates_table.php',
         'database/migrations/2026_03_04_000001_create_organization_package_subscriptions_table.php',
+        'database/migrations/2026_03_06_000001_create_contract_estimate_items_table.php',
         'database/migrations/2026_04_25_000002_add_subscription_bundling_to_package_subscriptions.php',
         'database/migrations/2026_04_29_000001_allow_standalone_package_upgrade_over_bundled_packages.php',
         'database/migrations/2026_05_12_000001_create_user_auth_sessions_table.php',
@@ -108,6 +111,9 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Core/Mdm/migrations/2026_05_16_010000_extend_mdm_product_tables.php',
         'database/migrations/2026_07_14_000001_create_commercial_package_model.php',
         'database/migrations/2026_07_24_000001_create_organization_resource_allocations_table.php',
+        'database/migrations/2026_09_04_150000_add_tax_basis_to_contract_estimate_items.php',
+        'database/migrations/2026_09_09_180000_create_estimate_finance_allocations.php',
+        'database/migrations/2026_10_11_001100_add_estimate_other_costs_and_resource_precision.php',
     ];
 
     private const MODULE = [
@@ -245,6 +251,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000700_allow_native_numeric_evidence_producer.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000800_allow_guarded_estimate_dialogue_usage.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000900_allow_proven_evaluation_choices.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_001000_add_ordinary_estimate_money_components.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

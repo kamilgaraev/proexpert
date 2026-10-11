@@ -833,7 +833,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(ProjectDocumentNormativeReferenceExtractor::class);
         $this->app->singleton(EstimatorReadinessService::class);
         $this->app->singleton(NormativeWorkItemPlannerService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionHardGate::class);
         $this->app->singleton(ResourceAssemblyService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class);
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);

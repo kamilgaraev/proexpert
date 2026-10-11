@@ -29,21 +29,24 @@ final class DraftReadinessInspector
     {
         $codes = [];
         $model = is_array($draft['building_model'] ?? null) ? $draft['building_model'] : [];
-        $scale = $model['scale_status'] ?? null;
-        $codes[] = match ($scale) {
-            'confirmed' => null,
-            'conflict' => 'geometry_scale_conflict',
-            'estimated' => 'geometry_scale_unconfirmed',
-            default => 'geometry_scale_missing',
-        };
-        $evidence = $model['evidence_ids'] ?? null;
-        if (! is_array($evidence) || $evidence === []) {
-            $codes[] = 'evidence_missing';
-        } elseif (array_filter($evidence, static fn (mixed $id): bool => ! is_int($id) || $id <= 0) !== []) {
-            $codes[] = 'evidence_invalid';
-        }
-        if (($model['metrics']['complete'] ?? false) !== true) {
-            $codes[] = 'building_model_incomplete';
+        // Canonical drafts prove volumes per selected work. They do not assert a complete global building model.
+        if (($draft['generation_contract'] ?? null) !== 'most_ordinary_estimate:v1') {
+            $scale = $model['scale_status'] ?? null;
+            $codes[] = match ($scale) {
+                'confirmed' => null,
+                'conflict' => 'geometry_scale_conflict',
+                'estimated' => 'geometry_scale_unconfirmed',
+                default => 'geometry_scale_missing',
+            };
+            $evidence = $model['evidence_ids'] ?? null;
+            if (! is_array($evidence) || $evidence === []) {
+                $codes[] = 'evidence_missing';
+            } elseif (array_filter($evidence, static fn (mixed $id): bool => ! is_int($id) || $id <= 0) !== []) {
+                $codes[] = 'evidence_invalid';
+            }
+            if (($model['metrics']['complete'] ?? false) !== true) {
+                $codes[] = 'building_model_incomplete';
+            }
         }
         if (($model['cad_status'] ?? null) === 'failed') {
             $codes[] = 'cad_processing_failed';

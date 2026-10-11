@@ -38,6 +38,12 @@ final readonly class AcceptedQuantityEvidenceMaterializer
             'formula_hash' => $formulaHash,
             'source_evidence_hash' => $sourceEvidenceHash,
         ]));
+        $parsed = \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer::parseDetailed($quantity->unit);
+        $unit = ['м' => 'm', 'м2' => 'm2', 'м3' => 'm3', 'шт' => 'pcs', 'кг' => 'kg', 'ч' => 'h'][$parsed->baseUnit] ?? null;
+        $factor = $unit === null ? null : \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer::safeQuantityFactorDecimal($quantity->unit, $unit);
+        if ($unit === null || $factor === null) {
+            throw new \InvalidArgumentException('accepted_quantity_unit_unknown');
+        }
 
         return $this->evidence->transaction($context->organizationId, $context->sessionId, fn (): EvidenceNode => $this->evidence->insertOrGet(new EvidenceData(
             organizationId: $context->organizationId,
@@ -50,8 +56,8 @@ final readonly class AcceptedQuantityEvidenceMaterializer
             locator: ['item_key' => 'item:'.$itemIdentity],
             value: [
                 'work_code' => 'work_type:'.$workCodeIdentity,
-                'quantity' => $quantity->amount,
-                'unit' => $quantity->unit,
+                'quantity' => (string) \Brick\Math\BigDecimal::of($quantity->amount)->multipliedBy($factor),
+                'unit' => $unit,
             ],
             confidence: $quantity->reviewBlockers !== []
                 ? 0.0

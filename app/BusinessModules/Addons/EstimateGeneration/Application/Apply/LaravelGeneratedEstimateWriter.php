@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\EstimateContingencyCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\OrdinaryEstimateDecimal;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -47,12 +48,16 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         private EstimateScopeMetadataProjector $scopeMetadata = new EstimateScopeMetadataProjector,
         private BuildMostEstimateDraft $stage6DraftBuilder = new BuildMostEstimateDraft,
         private ?ProjectModelRepository $projectModels = null,
+        private ?CurrentDraftQuantityProofGuard $quantityProof = null,
     ) {}
 
     public function createFromSession(
         EstimateGenerationSession $session,
         ApplyGeneratedEstimateCommand $command,
     ): int {
+        if (DB::connection()->transactionLevel() === 0) {
+            return DB::transaction(fn (): int => $this->createFromSession($session, $command));
+        }
         $sourceDraft = $this->draftService->validatedDraft($session);
         if (($sourceDraft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
             && ! $this->stage6DraftBuilder->verifyArtifact($sourceDraft)) {
@@ -109,10 +114,17 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             ]);
         }
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
+        if ($this->quantityProof === null) {
+            throw ValidationException::withMessages(['draft' => [trans_message('estimate_generation.stage6_snapshot_stale')]]);
+        }
+        $this->quantityProof->assertCurrent((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $draft);
         $total = $this->draftService->persistableDraftTotal($draft);
+        $draft['contingency_amount'] = (new EstimateContingencyCalculator)->amount($draft, (string) $total);
+        $total = (string) BigDecimal::of((string) $total)->plus($draft['contingency_amount']);
         $estimate = $this->createEstimate($session, $command, $draft, $regionalContext, $total);
 
         $this->persistSections($session, $estimate, $draft);
+        $this->finalizeGeneratedTotals($estimate, (string) $total);
 
         return (int) $estimate->id;
     }
@@ -166,9 +178,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         array $regionalContext,
         string|int|float $total,
     ): Estimate {
-        $total = ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
-            ? (string) BigDecimal::of((string) $total)->toScale(2, RoundingMode::HalfUp)
-            : round((float) $total, 2);
+        $total = OrdinaryEstimateDecimal::money($total);
+        $vatRate = BigDecimal::of((string) ($draft['vat_rate'] ?? '0'));
+        if ($vatRate->isLessThan(0) || $vatRate->isGreaterThan(100)) {
+            throw new \DomainException('generated_estimate_vat_rate_invalid');
+        }
         $budgetScope = $this->budgetScope->project($draft, $total);
 
         for ($attempt = 0; $attempt < self::NUMBER_CREATE_ATTEMPTS; $attempt++) {
@@ -182,11 +196,15 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'type' => $command->type ?? 'local',
                     'status' => 'draft',
                     'estimate_date' => $command->estimateDate ?? now()->toDateString(),
-                    'calculation_method' => 'resource',
+                    'calculation_method' => in_array($draft['evaluation_policy']['price_policy'] ?? 'normative', ['catalog', 'mixed'], true) ? 'analog' : 'resource',
+                    'vat_rate' => (string) $vatRate,
+                    'overhead_rate' => $draft['overhead_rate'] ?? 0,
+                    'profit_rate' => $draft['profit_rate'] ?? 0,
                     'estimate_regional_price_version_id' => $regionalContext['estimate_regional_price_version_id'] ?? null,
                     'regional_price_snapshot' => $regionalContext !== [] ? $regionalContext : null,
                     'metadata' => [
                         'is_ai_generated' => true,
+                        'calculation_version' => 'generated-decimal:v1',
                         'generation_session_id' => $session->getKey(),
                         'draft_traceability' => $draft['traceability'] ?? [],
                         'quality_summary' => $draft['quality_summary'] ?? null,
@@ -201,9 +219,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                             ?? 'estimate-generation:'.$session->getKey().':'.($draft['artifact_hash'] ?? ''),
                         'ai_scope' => $this->scopeMetadata->project($draft, $budgetScope),
                     ],
-                    'total_direct_costs' => $total,
+                    'total_direct_costs' => (string) BigDecimal::of((string) $total)->minus($draft['contingency_amount'] ?? '0'),
+                    'contingency_amount' => $draft['contingency_amount'] ?? '0.00',
                     'total_amount' => $total,
-                    'total_amount_with_vat' => $total,
+                    'total_amount_with_vat' => OrdinaryEstimateDecimal::money(BigDecimal::of($total)
+                        ->multipliedBy(BigDecimal::one()->plus($vatRate->withPointMovedLeft(2)))),
                 ];
 
                 return $this->transactionAttempt(fn (): Estimate => $this->createEstimateAttempt($attributes));
@@ -221,6 +241,27 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
     protected function createEstimateAttempt(array $attributes): Estimate
     {
         return Estimate::create($attributes);
+    }
+
+    private function finalizeGeneratedTotals(Estimate $estimate, string $acceptedTotal): void
+    {
+        $calculator = new \App\BusinessModules\Features\BudgetEstimates\Services\GeneratedEstimateDecimalCalculation;
+        foreach (EstimateItem::query()->where('estimate_id', $estimate->id)->whereNull('parent_work_id')->get() as $item) {
+            $calculator->calculate($item, $estimate);
+        }
+        $totals = EstimateItem::query()->where('estimate_id', $estimate->id)->whereNull('parent_work_id')->where('is_not_accounted', false)
+            ->selectRaw('COALESCE(SUM(total_amount),0) AS amount, COALESCE(SUM(equipment_cost),0) AS equipment,
+                COALESCE(SUM(overhead_amount),0) AS overhead, COALESCE(SUM(profit_amount),0) AS profit, COALESCE(SUM(other_cost),0) AS other')->first();
+        $base = BigDecimal::of((string) $totals->amount);
+        if (! $base->plus((string) $estimate->contingency_amount)->isEqualTo($acceptedTotal)) {
+            throw new \DomainException('generated_estimate_publication_total_mismatch');
+        }
+        $equipment = BigDecimal::of((string) $totals->equipment);
+        $overhead = BigDecimal::of((string) $totals->overhead);
+        $profit = BigDecimal::of((string) $totals->profit);
+        $estimate->update(['total_direct_costs' => OrdinaryEstimateDecimal::money($base->minus($equipment)->minus($overhead)->minus($profit)),
+            'total_equipment_costs' => OrdinaryEstimateDecimal::money($equipment), 'total_overhead_costs' => OrdinaryEstimateDecimal::money($overhead),
+            'total_estimated_profit' => OrdinaryEstimateDecimal::money($profit), 'total_other_costs' => OrdinaryEstimateDecimal::money((string) $totals->other)]);
     }
 
     protected function transactionAttempt(callable $callback): mixed
@@ -333,6 +374,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     $this->persistResources($session, $work, $workItem['materials'] ?? [], EstimatePositionItemType::MATERIAL->value);
                     $this->persistResources($session, $work, $workItem['labor'] ?? [], EstimatePositionItemType::LABOR->value);
                     $this->persistResources($session, $work, $workItem['machinery'] ?? [], EstimatePositionItemType::MACHINERY->value);
+                    $this->persistResources($session, $work, $workItem['other_resources'] ?? [], EstimatePositionItemType::OTHER->value);
+                    $this->persistResources($session, $work, $workItem['equipment'] ?? [], EstimatePositionItemType::EQUIPMENT->value);
                 }
             }
         }
@@ -350,7 +393,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         return EstimateItem::create([
             'estimate_id' => $estimateId,
             'estimate_section_id' => $sectionId,
-            'item_type' => EstimatePositionItemType::WORK->value,
+            'item_type' => in_array($workItem['metadata']['ordinary_item_type'] ?? 'work', ['work', 'material', 'equipment', 'other'], true)
+                ? ($workItem['metadata']['ordinary_item_type'] ?? 'work') : 'work',
             'position_number' => $position,
             'name' => $workItem['name'],
             'description' => $workItem['description'],
@@ -368,6 +412,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             'materials_cost' => $workItem['materials_cost'],
             'machinery_cost' => $workItem['machinery_cost'],
             'labor_cost' => $workItem['labor_cost'],
+            'other_cost' => OrdinaryEstimateDecimal::money($workItem['other_cost'] ?? '0'),
             'labor_hours' => $workItem['labor_hours'],
             'machinery_hours' => $workItem['machinery_hours'],
             'direct_costs' => OrdinaryEstimateDecimal::money($workItem['total_cost']),
@@ -388,7 +433,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
     ): void {
         foreach ($resources as $resourceIndex => $resource) {
             $measurementUnitId = $this->resolveMeasurementUnitId((int) $session->organization_id, $resource['unit']);
-            EstimateItem::create([
+            $child = EstimateItem::create([
                 'estimate_id' => $parent->estimate_id,
                 'estimate_section_id' => $parent->estimate_section_id,
                 'parent_work_id' => $parent->id,
@@ -401,6 +446,12 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'quantity' => OrdinaryEstimateDecimal::quantity($resource['quantity']),
                 'quantity_total' => OrdinaryEstimateDecimal::quantity($resource['quantity']),
                 'unit_price' => OrdinaryEstimateDecimal::unitPrice($resource['unit_price']),
+                'direct_costs' => OrdinaryEstimateDecimal::money($resource['total_price']),
+                'materials_cost' => $itemType === EstimatePositionItemType::MATERIAL->value ? OrdinaryEstimateDecimal::money($resource['total_price']) : '0.00',
+                'machinery_cost' => $itemType === EstimatePositionItemType::MACHINERY->value ? OrdinaryEstimateDecimal::money($resource['total_price']) : '0.00',
+                'labor_cost' => $itemType === EstimatePositionItemType::LABOR->value ? OrdinaryEstimateDecimal::money($resource['total_price']) : '0.00',
+                'other_cost' => $itemType === EstimatePositionItemType::OTHER->value ? OrdinaryEstimateDecimal::money($resource['total_price']) : '0.00',
+                'equipment_cost' => $itemType === EstimatePositionItemType::EQUIPMENT->value ? OrdinaryEstimateDecimal::money($resource['total_price']) : '0.00',
                 'total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
                 'current_total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
                 'labor_hours' => $itemType === EstimatePositionItemType::LABOR->value
@@ -413,7 +464,9 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'metadata' => [
                     'confidence' => $resource['confidence'] ?? null,
                     'quantity_basis' => $resource['quantity_basis'] ?? null,
-                    'quantity_per_unit' => $resource['quantity_per_unit'] ?? null,
+                    'quantity_per_unit' => $resource['quantity_per_work_unit'] ?? $resource['quantity_per_unit'] ?? null,
+                    'precise_unit_price' => (string) ($resource['precise_unit_price'] ?? $resource['unit_price']),
+                    'precise_stored_unit_price' => OrdinaryEstimateDecimal::unitPrice($resource['unit_price']),
                     'normative_ref' => $resource['normative_ref'] ?? null,
                     'source' => $resource['source'] ?? null,
                     'price_source' => $resource['price_source'] ?? null,
@@ -427,13 +480,15 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
 
             EstimateItemResource::create([
                 'estimate_item_id' => $parent->id,
-                'resource_type' => $itemType === EstimatePositionItemType::MACHINERY->value ? 'equipment' : $itemType,
+                'resource_type' => $itemType,
+                'finance_representation' => 'child',
+                'represented_by_item_id' => $child->id,
                 'name' => $this->estimateItemResourceName((string) $resource['name']),
                 'description' => $resource['normative_ref']['resource_code'] ?? ($resource['source'] ?? null),
                 'measurement_unit_id' => $measurementUnitId,
-                'quantity_per_unit' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity_per_unit'] ?? 1),
-                'total_quantity' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity']),
-                'unit_price' => OrdinaryEstimateDecimal::resourceUnitPrice($resource['unit_price']),
+                'quantity_per_unit' => OrdinaryEstimateDecimal::resourceQuantity($resource['quantity_per_work_unit'] ?? $resource['quantity_per_unit'] ?? 1),
+                'total_quantity' => OrdinaryEstimateDecimal::resourceQuantity($resource['precise_quantity'] ?? $resource['quantity']),
+                'unit_price' => OrdinaryEstimateDecimal::resourceUnitPrice($resource['precise_unit_price'] ?? $resource['unit_price']),
                 'total_amount' => OrdinaryEstimateDecimal::money($resource['total_price']),
             ]);
         }

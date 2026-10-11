@@ -5,8 +5,10 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
-use App\Repositories\EstimateSectionRepository;
 use App\Repositories\EstimateItemRepository;
+use App\Repositories\EstimateSectionRepository;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\Log;
 
 class EstimateCalculationService
@@ -19,14 +21,17 @@ class EstimateCalculationService
 
     public function calculateItemTotal(EstimateItem $item, Estimate $estimate): float
     {
+        if (($estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1') {
+            return (new GeneratedEstimateDecimalCalculation)->calculate($item, $estimate);
+        }
         // 0. Для дочерних ресурсов (винтики, труд и т.д.) просто считаем Q * P
         if ($item->parent_work_id !== null) {
             $totalAmount = round($item->quantity * $item->unit_price, 2);
-            
+
             // ⭐ Если это импортированный ресурс и расчет Q*P дал 0 (например, для заголовков ЭМ, М),
             // но в файле был указан Итог — доверяем Итогу из файла.
             if ($item->current_total_amount > 0 && ($totalAmount <= 0 || $item->is_manual)) {
-                $totalAmount = (float)$item->current_total_amount;
+                $totalAmount = (float) $item->current_total_amount;
             }
 
             $item->update([
@@ -35,112 +40,123 @@ class EstimateCalculationService
                 'profit_amount' => 0,
                 'total_amount' => $totalAmount,
             ]);
+
             return $totalAmount;
         }
 
         // 1. Считаем фактические затраты из дочерних ресурсов (Прямые Затраты и Оборудование)
         $equipmentSum = 0;
         $resourcesSum = 0;
-        
+
         $hasChildren = EstimateItem::where('parent_work_id', $item->id)->exists();
 
         if ($item->isWork() || $item->isMaterial()) {
-             // ⭐ Находим сумму ПЗ из дочерних ресурсов. 
-             // Чтобы избежать двойного счета (сумма заголовков + сумма деталей),
-             // суммируем только "листовые" записи (у которых нет своих детей).
-             $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                 ->where('is_not_accounted', false)
-                 ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-                 ->whereDoesntHave('childItems')
-                 ->sum('total_amount');
-             
-             // Если ресурсов много, а сумма 0 — пробуем все-таки суммировать всё (кроме оборудования), 
-             // на случай если иерархия не проставилась.
-             if ($resourcesSum <= 0 && $hasChildren) {
-                 $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
+            // ⭐ Находим сумму ПЗ из дочерних ресурсов.
+            // Чтобы избежать двойного счета (сумма заголовков + сумма деталей),
+            // суммируем только "листовые" записи (у которых нет своих детей).
+            $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
+                ->where('is_not_accounted', false)
+                ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                ->whereDoesntHave('childItems')
+                ->sum('total_amount');
+
+            // Если ресурсов много, а сумма 0 — пробуем все-таки суммировать всё (кроме оборудования),
+            // на случай если иерархия не проставилась.
+            if ($resourcesSum <= 0 && $hasChildren) {
+                $resourcesSum = (float) EstimateItem::where('parent_work_id', $item->id)
                     ->where('is_not_accounted', false)
                     ->where('item_type', '!=', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
                     ->sum('total_amount');
-             }
+            }
 
-             // Оборудование всегда считаем отдельно (оно не база для НР/СП)
-             $equipmentSum = (float) EstimateItem::where('parent_work_id', $item->id)
-                 ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
-                 ->where('is_not_accounted', false)
-                 ->sum('total_amount');
-             
-             // ⭐ УМНЫЙ СБОР ФОТ И ТРУДОЗАТРАТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
-             $fotOtAgg = 0; $fotOtDet = 0;
-             $fotOtmAgg = 0; $fotOtmDet = 0;
-             $machineryHours = 0;
+            // Оборудование всегда считаем отдельно (оно не база для НР/СП)
+            $equipmentSum = (float) EstimateItem::where('parent_work_id', $item->id)
+                ->where('item_type', \App\Enums\EstimatePositionItemType::EQUIPMENT->value)
+                ->where('is_not_accounted', false)
+                ->sum('total_amount');
 
-             $allChildren = EstimateItem::where('parent_work_id', $item->id)
-                 ->where('is_not_accounted', false)
-                 ->get();
+            // ⭐ УМНЫЙ СБОР ФОТ И ТРУДОЗАТРАТ ИЗ ДЕТЕЙ (MAX-BASED DEDUPLICATION)
+            $fotOtAgg = 0;
+            $fotOtDet = 0;
+            $fotOtmAgg = 0;
+            $fotOtmDet = 0;
+            $machineryHours = 0;
 
-             foreach ($allChildren as $child) {
-                 $code = trim($child->normative_rate_code ?? '');
-                 $name = mb_strtolower(trim($child->name));
-                 $type = $child->item_type;
+            $allChildren = EstimateItem::where('parent_work_id', $item->id)
+                ->where('is_not_accounted', false)
+                ->get();
 
-                 if ($type === \App\Enums\EstimatePositionItemType::LABOR) {
-                     // Детальные разряды (1-100-XXX)
-                     if (str_starts_with($code, '1-100-')) {
-                         $fotOtDet += (float)$child->labor_cost;
-                     } 
-                     // ЗП машинистов детали (4-100-XXX)
-                     elseif (str_starts_with($code, '4-100-')) {
-                         $fotOtmDet += (float)$child->labor_cost;
-                     } 
-                     // Агрегаторы ЗП Машинистов (ОТм, ЗТм...)
-                     elseif (str_contains($name, 'отм') || str_contains($name, 'зтм')) {
-                         $fotOtmAgg += (float)$child->labor_cost;
-                     } 
-                     // Основные агрегаторы (ОТ, ЗТ, ОТ(ЗТ)...)
-                     else {
-                         $fotOtAgg += (float)$child->labor_cost;
-                     }
-                 } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY) {
-                     $machineryHours += (float)$child->machinery_hours;
-                 }
-             }
+            foreach ($allChildren as $child) {
+                $code = trim($child->normative_rate_code ?? '');
+                $name = mb_strtolower(trim($child->name));
+                $type = $child->item_type;
 
-             // Расчет итогов с дедупликацией (защита от двойного счета ОТ и деталей разрядов)
-             $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
-             $finalHours = (new EstimateLaborHoursService)->calculate($item);
+                if ($type === \App\Enums\EstimatePositionItemType::LABOR) {
+                    // Детальные разряды (1-100-XXX)
+                    if (str_starts_with($code, '1-100-')) {
+                        $fotOtDet += (float) $child->labor_cost;
+                    }
+                    // ЗП машинистов детали (4-100-XXX)
+                    elseif (str_starts_with($code, '4-100-')) {
+                        $fotOtmDet += (float) $child->labor_cost;
+                    }
+                    // Агрегаторы ЗП Машинистов (ОТм, ЗТм...)
+                    elseif (str_contains($name, 'отм') || str_contains($name, 'зтм')) {
+                        $fotOtmAgg += (float) $child->labor_cost;
+                    }
+                    // Основные агрегаторы (ОТ, ЗТ, ОТ(ЗТ)...)
+                    else {
+                        $fotOtAgg += (float) $child->labor_cost;
+                    }
+                } elseif ($type === \App\Enums\EstimatePositionItemType::MACHINERY) {
+                    $machineryHours += (float) $child->machinery_hours;
+                }
+            }
 
-             if ($hasChildren || $finalFot > 0) $item->labor_cost = $finalFot;
-             if ($hasChildren || $finalHours > 0) $item->labor_hours = $finalHours;
-             if ($hasChildren || $machineryHours > 0) $item->machinery_hours = $machineryHours;
+            // Расчет итогов с дедупликацией (защита от двойного счета ОТ и деталей разрядов)
+            $finalFot = max($fotOtAgg, $fotOtDet) + max($fotOtmAgg, $fotOtmDet);
+            $finalHours = (new EstimateLaborHoursService)->calculate($item);
 
-             if ($item->isEquipment()) {
-                 $equipmentSum = $resourcesSum != 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
-                 $resourcesSum = 0;
-             }
+            if ($hasChildren || $finalFot > 0) {
+                $item->labor_cost = $finalFot;
+            }
+            if ($hasChildren || $finalHours > 0) {
+                $item->labor_hours = $finalHours;
+            }
+            if ($hasChildren || $machineryHours > 0) {
+                $item->machinery_hours = $machineryHours;
+            }
+
+            if ($item->isEquipment()) {
+                $equipmentSum = $resourcesSum != 0 ? $resourcesSum + $equipmentSum : ($item->quantity * $item->unit_price);
+                $resourcesSum = 0;
+            }
         }
 
         // 2. Логика распределения маржи (Reverse Engineering)
         if ($item->is_manual) {
             // ⭐ Приоритет: current_total_amount или total_amount из БД
-            $totalAmount = (float)($item->current_total_amount ?: $item->total_amount);
-            if ($totalAmount <= 0) $totalAmount = round($item->quantity * $item->unit_price, 2);
+            $totalAmount = (float) ($item->current_total_amount ?: $item->total_amount);
+            if ($totalAmount <= 0) {
+                $totalAmount = round($item->quantity * $item->unit_price, 2);
+            }
 
-            $directCosts = (float)$item->direct_costs;
+            $directCosts = (float) $item->direct_costs;
             $equipmentSum = 0;
 
             $isEquipment = $item->isEquipment();
 
-            $overheadAmount = (float)($item->overhead_amount ?? 0);
-            $profitAmount = (float)($item->profit_amount ?? 0);
+            $overheadAmount = (float) ($item->overhead_amount ?? 0);
+            $profitAmount = (float) ($item->profit_amount ?? 0);
 
             if ($isEquipment) {
-                // Прямые Затраты для оборудования — это только РЕСУРСЫ (труд/маш). 
+                // Прямые Затраты для оборудования — это только РЕСУРСЫ (труд/маш).
                 // Сумма самой "железки" - это оборудование.
-                if (!$hasChildren && ($overheadAmount <= 0 && $profitAmount <= 0)) {
+                if (! $hasChildren && ($overheadAmount <= 0 && $profitAmount <= 0)) {
                     $directCosts = 0;
                 }
 
-                $laborBase = (float)($item->labor_cost ?? 0);
+                $laborBase = (float) ($item->labor_cost ?? 0);
                 if ($laborBase <= 0 && $hasChildren) {
                     $laborBase = (float) EstimateItem::where('parent_work_id', $item->id)
                         ->where('item_type', \App\Enums\EstimatePositionItemType::LABOR->value)
@@ -153,32 +169,32 @@ class EstimateCalculationService
                     $overheadAmount = 0;
                     $profitAmount = 0;
                 }
-                
+
                 $equipmentSum = max(0, $totalAmount - $directCosts - $overheadAmount - $profitAmount);
             } else {
                 // Стандартная позиция (Работа/Материал)
                 if ($directCosts <= 0) {
                     $directCosts = $totalAmount;
                 }
-                
+
                 // ⭐ Если НР и СП уже есть (пришли из парсера), НЕ пересчитываем их по процентам
                 if ($overheadAmount > 0 || $profitAmount > 0) {
-                     // Доверяем данным в БД (они уже в рублях)
+                    // Доверяем данным в БД (они уже в рублях)
                 } else {
                     // Только если рублёвых сумм НЕТ, пробуем считать от ФОТ (базовая логика)
                     if (($estimate->overhead_rate + $estimate->profit_rate) > 0) {
-                         $fotBase = (float)($item->labor_cost ?? 0);
-                         if ($fotBase > 0) {
-                             $overheadAmount = round($fotBase * ($estimate->overhead_rate / 100), 2);
-                             $profitAmount = round($fotBase * ($estimate->profit_rate / 100), 2);
-                             
-                             // Если сумма налогов вылезла за Итого, подрезаем их
-                             if (($overheadAmount + $profitAmount) > $totalAmount && $totalAmount > 0) {
-                                 $totalRate = ($estimate->overhead_rate + $estimate->profit_rate);
-                                 $overheadAmount = round($totalAmount * ($estimate->overhead_rate / $totalRate), 2);
-                                 $profitAmount = round($totalAmount - $overheadAmount, 2);
-                             }
-                         }
+                        $fotBase = (float) ($item->labor_cost ?? 0);
+                        if ($fotBase > 0) {
+                            $overheadAmount = round($fotBase * ($estimate->overhead_rate / 100), 2);
+                            $profitAmount = round($fotBase * ($estimate->profit_rate / 100), 2);
+
+                            // Если сумма налогов вылезла за Итого, подрезаем их
+                            if (($overheadAmount + $profitAmount) > $totalAmount && $totalAmount > 0) {
+                                $totalRate = ($estimate->overhead_rate + $estimate->profit_rate);
+                                $overheadAmount = round($totalAmount * ($estimate->overhead_rate / $totalRate), 2);
+                                $profitAmount = round($totalAmount - $overheadAmount, 2);
+                            }
+                        }
                     }
                 }
 
@@ -189,13 +205,15 @@ class EstimateCalculationService
         } else {
             // АВТОМАТИЧЕСКАЯ КАЛЬКУЛЯЦИЯ (Снизу вверх, если позиция не пришла из Excel или изменена вручную)
             $isEquipment = $item->isEquipment();
-            
+
             if ($isEquipment) {
                 $directCosts = $resourcesSum;
                 $overheadAmount = round($directCosts * ($estimate->overhead_rate / 100), 2);
                 $profitAmount = round($directCosts * ($estimate->profit_rate / 100), 2);
                 $equipmentSum = ($item->quantity * $item->unit_price) - $directCosts - $overheadAmount - $profitAmount;
-                if ($equipmentSum < 0) $equipmentSum = $item->quantity * $item->unit_price; // Fallback
+                if ($equipmentSum < 0) {
+                    $equipmentSum = $item->quantity * $item->unit_price;
+                } // Fallback
                 $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
             } else {
                 $directCosts = $hasChildren ? $resourcesSum : $item->quantity * $item->unit_price;
@@ -204,7 +222,7 @@ class EstimateCalculationService
                 $totalAmount = $directCosts + $overheadAmount + $profitAmount + $equipmentSum;
             }
         }
-        
+
         $item->update([
             'direct_costs' => round($directCosts, 2),
             'equipment_cost' => round($equipmentSum, 2),
@@ -212,45 +230,49 @@ class EstimateCalculationService
             'profit_amount' => round($profitAmount, 2),
             'total_amount' => round($totalAmount, 2),
         ]);
-        
+
         return $totalAmount;
     }
 
     private function parseAttributesFromName(?string $name): array
     {
         $res = ['overhead' => 0, 'profit' => 0];
-        if (empty($name)) return $res;
+        if (empty($name)) {
+            return $res;
+        }
 
         // Поиск конструкций типа "НР ( 123,45 руб )"
         if (preg_match('/(?:нр|накладные).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-            $res['overhead'] = (float)str_replace([' ', ','], ['', '.'], $m[1]);
+            $res['overhead'] = (float) str_replace([' ', ','], ['', '.'], $m[1]);
         }
         if (preg_match('/(?:сп|сметная).*?\(\s*([\d\s]+[.,]?\d*)\s*(?:руб|р)/ui', $name, $m)) {
-            $res['profit'] = (float)str_replace([' ', ','], ['', '.'], $m[1]);
+            $res['profit'] = (float) str_replace([' ', ','], ['', '.'], $m[1]);
         }
+
         return $res;
     }
 
     public function calculateSectionTotal(EstimateSection $section): float
     {
-        $total = 0;
-        
+        $total = BigDecimal::zero();
+
         // ИСКЛЮЧАЕМ ресурсы из расчета (is_not_accounted = true) и вложенные позиции (parent_work_id != null)
         $items = $this->itemRepository->getBySection($section->id);
         foreach ($items as $item) {
-            if (!$item->is_not_accounted && is_null($item->parent_work_id)) {
-                $total += $item->total_amount;
+            if (! $item->is_not_accounted && is_null($item->parent_work_id)) {
+                $total = $total->plus((string) $item->total_amount);
             }
         }
-        
+
         $childSections = $section->children;
         foreach ($childSections as $childSection) {
-            $total += $this->calculateSectionTotal($childSection);
+            $this->calculateSectionTotal($childSection);
+            $total = $total->plus((string) $childSection->section_total_amount);
         }
-        
-        $section->update(['section_total_amount' => round($total, 2)]);
-        
-        return $total;
+
+        $section->update(['section_total_amount' => (string) $total->toScale(2, RoundingMode::HalfUp)]);
+
+        return $total->toFloat();
     }
 
     public function calculateEstimateTotal(Estimate $estimate): array
@@ -261,11 +283,11 @@ class EstimateCalculationService
                 return $this->performCalculation($estimate);
             });
         }
-        
+
         // Для черновиков считаем без кеша
         return $this->performCalculation($estimate);
     }
-    
+
     private function performCalculation(Estimate $estimate): array
     {
         // ⭐ ЕДИНЫЙ ЗАПРОС: Суммируем всё одним махом без фильтрации по типам.
@@ -278,38 +300,43 @@ class EstimateCalculationService
                 COALESCE(SUM(equipment_cost), 0) as total_equipment,
                 COALESCE(SUM(overhead_amount), 0) as total_overhead,
                 COALESCE(SUM(profit_amount), 0) as total_profit
+                ,COALESCE(SUM(other_cost), 0) as total_other
             ')
             ->first();
 
-        $totalAmount = (float)$totals->grand_total;
-        $totalEquipment = (float)$totals->total_equipment;
-        $totalOverheadCosts = (float)$totals->total_overhead;
-        $totalEstimatedProfit = (float)$totals->total_profit;
-        
+        $baseAmount = BigDecimal::of((string) $totals->grand_total);
+        $totalEquipment = BigDecimal::of((string) $totals->total_equipment);
+        $totalOverheadCosts = BigDecimal::of((string) $totals->total_overhead);
+        $totalEstimatedProfit = BigDecimal::of((string) $totals->total_profit);
+        $contingency = BigDecimal::of((string) ($estimate->contingency_amount ?? '0'));
+        $totalAmount = $baseAmount->plus($contingency);
+
         // Прямые затраты в шапке — это то, что осталось от общего Итога за вычетом ОБ, НР и СП.
         // Такая формула физически исключает расхождение шапки с разделами.
-        $totalDirectCosts = max(0, $totalAmount - $totalEquipment - $totalOverheadCosts - $totalEstimatedProfit);
-        
-        $totalAmountWithVat = $totalAmount * (1 + $estimate->vat_rate / 100);
-        
+        $totalDirectCosts = BigDecimal::max('0', $baseAmount->minus($totalEquipment)->minus($totalOverheadCosts)->minus($totalEstimatedProfit));
+
+        $totalAmountWithVat = $totalAmount->multipliedBy(BigDecimal::one()->plus(BigDecimal::of((string) $estimate->vat_rate)->withPointMovedLeft(2)));
+
         $result = [
-            'total_direct_costs' => round($totalDirectCosts, 2),
-            'total_overhead_costs' => round($totalOverheadCosts, 2),
-            'total_estimated_profit' => round($totalEstimatedProfit, 2),
-            'total_equipment_costs' => round($totalEquipment, 2),
-            'total_amount' => round($totalAmount, 2),
-            'total_amount_with_vat' => round($totalAmountWithVat, 2),
+            'total_direct_costs' => (string) $totalDirectCosts->toScale(2, RoundingMode::HalfUp),
+            'total_overhead_costs' => (string) $totalOverheadCosts->toScale(2, RoundingMode::HalfUp),
+            'total_estimated_profit' => (string) $totalEstimatedProfit->toScale(2, RoundingMode::HalfUp),
+            'total_equipment_costs' => (string) $totalEquipment->toScale(2, RoundingMode::HalfUp),
+            'total_other_costs' => (string) BigDecimal::of((string) $totals->total_other)->toScale(2, RoundingMode::HalfUp),
+            'contingency_amount' => (string) $contingency->toScale(2, RoundingMode::HalfUp),
+            'total_amount' => (string) $totalAmount->toScale(2, RoundingMode::HalfUp),
+            'total_amount_with_vat' => (string) $totalAmountWithVat->toScale(2, RoundingMode::HalfUp),
         ];
-        
+
         $estimate->update($result);
-        
+
         // Инвалидировать кеш после обновления
         $this->cacheService->invalidateTotals($estimate);
         $this->cacheService->invalidateStructure($estimate);
-        
+
         $this->dispatchAsyncUpdates($estimate);
-        
-        return $result;
+
+        return array_map(static fn (string $amount): float => (float) $amount, $result);
     }
 
     public function dispatchAsyncUpdates(Estimate $estimate): void
@@ -336,7 +363,7 @@ class EstimateCalculationService
         }
 
         $startTime = microtime(true);
-        
+
         $items = $this->itemRepository->getAllByEstimate($estimate->id)->keyBy('id');
         $remainingChildren = array_fill_keys($items->keys()->all(), 0);
         foreach ($items as $item) {
@@ -360,16 +387,16 @@ class EstimateCalculationService
         foreach ($orderedIds as $itemId) {
             $this->calculateItemTotal($items[$itemId], $estimate);
         }
-        
+
         $rootSections = $this->sectionRepository->getRootSections($estimate->id);
         foreach ($rootSections as $section) {
             $this->calculateSectionTotal($section);
         }
-        
+
         $result = $this->calculateEstimateTotal($estimate);
-        
+
         $duration = round((microtime(true) - $startTime) * 1000, 2);
-        
+
         // Логирование
         Log::info('estimate.recalculated', [
             'estimate_id' => $estimate->id,
@@ -377,7 +404,7 @@ class EstimateCalculationService
             'total_amount' => $result['total_amount'],
             'duration_ms' => $duration,
         ]);
-        
+
         return $result;
     }
 
@@ -385,16 +412,16 @@ class EstimateCalculationService
     {
         $metadata = $estimate->metadata ?? [];
         $metadata['coefficients'] = array_merge($metadata['coefficients'] ?? [], $coefficients);
-        
+
         $estimate->update(['metadata' => $metadata]);
-        
+
         $this->recalculateAll($estimate);
     }
 
     public function applyVAT(Estimate $estimate, float $vatRate): void
     {
         $estimate->update(['vat_rate' => $vatRate]);
-        
+
         $totalAmountWithVat = $estimate->total_amount * (1 + $vatRate / 100);
         $estimate->update(['total_amount_with_vat' => round($totalAmountWithVat, 2)]);
     }
@@ -402,20 +429,20 @@ class EstimateCalculationService
     public function updateRates(Estimate $estimate, ?float $overheadRate = null, ?float $profitRate = null, ?float $vatRate = null): void
     {
         $updates = [];
-        
+
         if ($overheadRate !== null) {
             $updates['overhead_rate'] = $overheadRate;
         }
-        
+
         if ($profitRate !== null) {
             $updates['profit_rate'] = $profitRate;
         }
-        
+
         if ($vatRate !== null) {
             $updates['vat_rate'] = $vatRate;
         }
-        
-        if (!empty($updates)) {
+
+        if (! empty($updates)) {
             $estimate->update($updates);
             $this->recalculateAll($estimate);
         }
@@ -427,7 +454,7 @@ class EstimateCalculationService
         $totalOverheadCosts = $estimate->total_overhead_costs;
         $totalEstimatedProfit = $estimate->total_estimated_profit;
         $totalAmount = $estimate->total_amount;
-        
+
         if ($totalAmount == 0) {
             return [
                 'direct_costs_percentage' => 0,
@@ -435,7 +462,7 @@ class EstimateCalculationService
                 'profit_percentage' => 0,
             ];
         }
-        
+
         return [
             'direct_costs_percentage' => round(($totalDirectCosts / $totalAmount) * 100, 2),
             'overhead_costs_percentage' => round(($totalOverheadCosts / $totalAmount) * 100, 2),

@@ -745,7 +745,7 @@ final class DerivedQuantityFactoryTest extends TestCase
 
     private function evidence(string $id, string $nativeReference): Evidence
     {
-        return new Evidence($id, 1, 2, 3, self::SOURCE_VERSION, 'artifact:1', 'cad', nativeReference: $nativeReference);
+        return new Evidence($id, 1, 2, 3, self::SOURCE_VERSION, 'artifact:1', 'document', nativeReference: $nativeReference, producerName: 'native_numeric_parser');
     }
 
     private function decision(string $id, string $selectedFactId): Decision
@@ -758,6 +758,26 @@ final class DerivedQuantityFactoryTest extends TestCase
 
     private function snapshot(array $entities, array $facts, array $evidence): ProjectModelSnapshot
     {
+        $evidence = array_map(static fn (Evidence $proof): Evidence => new Evidence($proof->id, $proof->organizationId, $proof->projectId, $proof->sessionId,
+            $proof->sourceVersion, $proof->sourceArtifactId, $proof->sourceType, $proof->page, $proof->region, $proof->nativeReference,
+            $proof->producerName, $proof->sourceReference, $proof->choiceHash, hash('sha256', $proof->id)), $evidence);
+        $proofs = array_column($evidence, null, 'id');
+        $facts = array_map(static function (Fact $fact) use ($proofs): Fact {
+            $bindings = [];
+            foreach ($fact->evidenceIds as $id) {
+                if (($proofs[$id]->producerName ?? null) === 'native_numeric_parser' && is_numeric($fact->value)) {
+                    $bindings[$id] = ['entity_id' => $fact->entityId, 'source_version' => $fact->sourceVersion,
+                        'parameter' => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::parameter($fact->type),
+                        'measurement' => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::measurementSignature((string) $fact->value, $fact->unit),
+                        'evidence_fingerprint' => $proofs[$id]->fingerprint];
+                }
+            }
+
+            return new Fact($fact->id, $fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion, $fact->entityId,
+                $fact->type, $fact->value, $fact->unit, $fact->confidence, $fact->origin, $fact->status, $fact->evidenceIds,
+                $fact->version, $fact->supersedesFactId, $bindings);
+        }, $facts);
+
         return new ProjectModelSnapshot($entities, $facts, $evidence, []);
     }
 }

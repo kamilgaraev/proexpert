@@ -77,6 +77,7 @@ class EstimatePricingService
                 $workItem['materials_cost'] = (string) $materialsCost->toScale(2, RoundingMode::HalfUp);
                 $workItem['machinery_cost'] = (string) $machineryCost->toScale(2, RoundingMode::HalfUp);
                 $workItem['labor_cost'] = (string) $laborCost->toScale(2, RoundingMode::HalfUp);
+                $workItem['other_cost'] = (string) $otherCost->toScale(2, RoundingMode::HalfUp);
                 $workItem['total_cost'] = (string) $total;
                 $workItem['price_snapshot'] = $this->snapshot($resourceSnapshots, $workCost, $total)->toArray();
                 if ($total->isGreaterThan(0)) {
@@ -189,6 +190,9 @@ class EstimatePricingService
                 if ($conversion !== null) {
                     $resource['quantity'] = (string) BigDecimal::of((string) ($resource['quantity'] ?? '0'))
                         ->multipliedBy($conversion->factor);
+                    if (isset($resource['quantity_per_work_unit'])) {
+                        $resource['quantity_per_work_unit'] = (string) BigDecimal::of((string) $resource['quantity_per_work_unit'])->multipliedBy($conversion->factor);
+                    }
                     $resource['normative_ref'] = [
                         ...(is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : []),
                         'unit_conversion_id' => $conversion->id,

@@ -128,6 +128,18 @@ final class GeneratedEstimateWriterRetryTest extends TestCase
         self::assertSame(mb_substr($name, 0, 255), $normalized);
     }
 
+    #[Test]
+    public function publication_uses_exact_net_total_and_explicit_vat_without_implicit_markups(): void
+    {
+        $writer = $this->writer([$this->estimate(91)]);
+        $writer->createEstimateForTest($this->session(), ['vat_rate' => '20', 'contingency_amount' => '0.01'], '100.01');
+        self::assertSame('100.01', $writer->lastAttributes['total_amount']);
+        self::assertSame('120.01', $writer->lastAttributes['total_amount_with_vat']);
+        self::assertSame('100.00', (string) $writer->lastAttributes['total_direct_costs']);
+        self::assertSame(0, $writer->lastAttributes['overhead_rate']);
+        self::assertSame(0, $writer->lastAttributes['profit_rate']);
+    }
+
     /** @param array<int, Estimate|\Throwable> $outcomes */
     private function writer(array $outcomes): TestRetryGeneratedEstimateWriter
     {
@@ -190,6 +202,8 @@ final class TestRetryGeneratedEstimateWriter extends LaravelGeneratedEstimateWri
     /** @var array<int, string> */
     public array $attemptedNumbers = [];
 
+    public array $lastAttributes = [];
+
     /** @param array<int, Estimate|\Throwable> $outcomes */
     public function __construct(
         EstimateDraftPersistenceService $draftService,
@@ -199,14 +213,14 @@ final class TestRetryGeneratedEstimateWriter extends LaravelGeneratedEstimateWri
         parent::__construct($draftService, $numberAllocator);
     }
 
-    public function createEstimateForTest(EstimateGenerationSession $session): Estimate
+    public function createEstimateForTest(EstimateGenerationSession $session, array $draft = [], string $total = '100'): Estimate
     {
         return $this->createEstimate(
             $session,
             new ApplyGeneratedEstimateCommand(42, 10, 20, 0),
+            $draft,
             [],
-            [],
-            100,
+            $total,
         );
     }
 
@@ -224,6 +238,7 @@ final class TestRetryGeneratedEstimateWriter extends LaravelGeneratedEstimateWri
 
     protected function createEstimateAttempt(array $attributes): Estimate
     {
+        $this->lastAttributes = $attributes;
         $this->attemptedNumbers[] = (string) $attributes['number'];
         $outcome = array_shift($this->outcomes);
 

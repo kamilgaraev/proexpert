@@ -430,18 +430,24 @@ final class PipelineStageFunctionalTest extends TestCase
         );
         $lengthEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
             'evidence:room:length', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:length', 'native_numeric_parser',
+            fingerprint: hash('sha256', 'room:length'),
         );
         $widthEvidence = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence(
             'evidence:room:width', 1, 2, 3, $base, 'artifact:plan', 'document', 1, null, 'room:width', 'native_numeric_parser',
+            fingerprint: hash('sha256', 'room:width'),
         );
         $projectModels->saveSourceModel([$room], [
             new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
                 'fact:room:length', 1, 2, 3, $base, $room->id, 'length', '10', 'm', 1.0,
                 'document', 'confirmed', [$lengthEvidence->id],
+                nativeNumericProofs: [$lengthEvidence->id => ['entity_id' => $room->id, 'source_version' => $base,
+                    'parameter' => 'length', 'measurement' => 'm:10', 'evidence_fingerprint' => $lengthEvidence->fingerprint]],
             ),
             new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact(
                 'fact:room:width', 1, 2, 3, $base, $room->id, 'width', '8', 'm', 1.0,
                 'document', 'confirmed', [$widthEvidence->id],
+                nativeNumericProofs: [$widthEvidence->id => ['entity_id' => $room->id, 'source_version' => $base,
+                    'parameter' => 'width', 'measurement' => 'm:8', 'evidence_fingerprint' => $widthEvidence->fingerprint]],
             ),
         ], [$lengthEvidence, $widthEvidence]);
         $snapshotToken = $projectModels->snapshotForPlanning(1, 2, 3, 100)['token'];

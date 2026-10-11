@@ -81,6 +81,7 @@ final readonly class ProjectModelEvidenceWriter
                 $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
                 $this->assertScope($claim, $scope);
                 $evidenceIds = [];
+                $numericProofs = [];
                 foreach ($decision->supportingClaimIds as $supportingClaimId) {
                     $supportingClaim = $byId[$supportingClaimId]
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
@@ -120,6 +121,12 @@ final readonly class ProjectModelEvidenceWriter
                     ));
                     $evidenceId = 'evidence:'.$node->id;
                     $evidenceIds[] = $evidenceId;
+                    if ($numericSources?->certifies($supportingClaim) === true && ($supportingClaim->value['type'] ?? null) === 'number') {
+                        $numericProofs[$evidenceId] = ['source_version' => $node->sourceVersion,
+                            'parameter' => FactVocabulary::parameter($supportingClaim->factType),
+                            'measurement' => FactVocabulary::measurementSignature((string) $supportingClaim->value['data'], $supportingClaim->unit),
+                            'evidence_fingerprint' => $node->fingerprint];
+                    }
                     $domainEvidence[$evidenceId] = $this->domainEvidence($node);
                 }
                 $projection = $this->projectModelEntity($claim)
@@ -192,7 +199,8 @@ final readonly class ProjectModelEvidenceWriter
                     ? 'visual|'.$projection['type'].'|'.$entityIdentity
                     : (new ClaimSemanticMatcher)->key($claim).$entityScope;
                 $factId = 'fact:'.hash('sha256', implode('|', [
-                    $projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity,
+                    ($projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity)
+                        .($numericProofs === [] ? '' : '|native-numeric-proof:v2'),
                     $projectedStatus,
                     $scope->sourceVersion,
                     (string) $documentId,
@@ -212,6 +220,7 @@ final readonly class ProjectModelEvidenceWriter
                     $projectedStatus === 'unresolved' ? 'unresolved' : (PhysicalMeasurementPublicationPolicy::requiresNumericProof($claim) && $numericSources?->certifies($claim) !== true ? 'ai_inference' : 'document'),
                     $projectedStatus,
                     $evidenceIds,
+                    nativeNumericProofs: array_map(static fn (array $proof): array => [...$proof, 'entity_id' => $entityId], $numericProofs),
                 );
                 if (isset($facts[$factId])) {
                     if (! hash_equals($this->canonicalFactPayload($facts[$factId]), $this->canonicalFactPayload($fact))) {
@@ -366,6 +375,7 @@ final readonly class ProjectModelEvidenceWriter
             $evidenceIds,
             $left->version,
             $left->supersedesFactId,
+            [...$right->nativeNumericProofs, ...$left->nativeNumericProofs],
         );
     }
 
@@ -578,6 +588,7 @@ final readonly class ProjectModelEvidenceWriter
             is_string($node->locator['native_reference'] ?? null) ? $node->locator['native_reference'] : 'evidence-node:'.$node->id,
             $node->producerName,
             $node->sourceRef,
+            fingerprint: $node->fingerprint,
         );
     }
 }

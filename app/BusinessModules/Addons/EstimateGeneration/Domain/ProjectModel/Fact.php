@@ -37,6 +37,7 @@ final readonly class Fact
         array $evidenceIds,
         public int $version = 1,
         public ?string $supersedesFactId = null,
+        public array $nativeNumericProofs = [],
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Fact');

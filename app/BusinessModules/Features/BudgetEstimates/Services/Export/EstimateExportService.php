@@ -8,13 +8,14 @@ use App\Models\Estimate;
 use App\Models\File;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class EstimateExportService
 {
     private const CACHE_TTL = 600; // 10 minutes
+
     private const CACHE_PREFIX = 'estimate_export:';
 
     public function __construct(
@@ -26,8 +27,6 @@ class EstimateExportService
     /**
      * Экспорт сметы в Excel формат
      *
-     * @param Estimate $estimate
-     * @param array $options
      * @return array ['content' => binary, 'filename' => string, 's3_path' => string]
      */
     public function exportToExcel(Estimate $estimate, array $options = []): array
@@ -74,8 +73,6 @@ class EstimateExportService
     /**
      * Экспорт сметы в PDF формат
      *
-     * @param Estimate $estimate
-     * @param array $options
      * @return array ['content' => binary, 'filename' => string, 's3_path' => string]
      */
     public function exportToPdf(Estimate $estimate, array $options = []): array
@@ -121,10 +118,6 @@ class EstimateExportService
 
     /**
      * Подготовка данных для экспорта
-     *
-     * @param Estimate $estimate
-     * @param array $options
-     * @return array
      */
     public function prepareExportData(Estimate $estimate, array $options = []): array
     {
@@ -132,6 +125,7 @@ class EstimateExportService
         $cacheKey = $this->getCacheKey($estimate->id, $options);
         if ($cached = Cache::get($cacheKey)) {
             Log::debug('estimate_export.cache_hit', ['estimate_id' => $estimate->id]);
+
             return $cached;
         }
 
@@ -285,6 +279,7 @@ class EstimateExportService
             $itemData['materials_cost'] = (float) $item->materials_cost;
             $itemData['machinery_cost'] = (float) $item->machinery_cost;
             $itemData['labor_cost'] = (float) $item->labor_cost;
+            $itemData['other_cost'] = (string) $item->other_cost;
             $itemData['overhead_amount'] = (float) $item->overhead_amount;
             $itemData['profit_amount'] = (float) $item->profit_amount;
             $itemData['total_amount'] = (float) $item->total_amount;
@@ -309,7 +304,7 @@ class EstimateExportService
                     $childItems[] = $this->prepareItemData($childItem, $options);
                 }
             }
-            if (!empty($childItems)) {
+            if (! empty($childItems)) {
                 $itemData['child_items'] = $childItems;
             }
         }
@@ -329,19 +324,19 @@ class EstimateExportService
     {
         $type = $item->item_type->value;
 
-        if ($type === 'work' && !$options['include_works']) {
+        if ($type === 'work' && ! $options['include_works']) {
             return false;
         }
-        if ($type === 'material' && !$options['include_materials']) {
+        if ($type === 'material' && ! $options['include_materials']) {
             return false;
         }
-        if ($type === 'machinery' && !$options['include_machinery']) {
+        if ($type === 'machinery' && ! $options['include_machinery']) {
             return false;
         }
-        if ($type === 'labor' && !$options['include_labor']) {
+        if ($type === 'labor' && ! $options['include_labor']) {
             return false;
         }
-        if ($type === 'equipment' && !$options['include_machinery']) {
+        if ($type === 'equipment' && ! $options['include_machinery']) {
             return false;
         }
 
@@ -357,6 +352,8 @@ class EstimateExportService
             'total_direct_costs' => (float) $estimate->total_direct_costs,
             'total_overhead_costs' => (float) $estimate->total_overhead_costs,
             'total_estimated_profit' => (float) $estimate->total_estimated_profit,
+            'total_other_costs' => (string) $estimate->total_other_costs,
+            'contingency_amount' => (string) $estimate->contingency_amount,
             'total_amount' => (float) $estimate->total_amount,
             'total_amount_with_vat' => (float) $estimate->total_amount_with_vat,
             'vat_rate' => (float) $estimate->vat_rate,
@@ -418,7 +415,8 @@ class EstimateExportService
     protected function getCacheKey(int $estimateId, array $options): string
     {
         $optionsHash = md5(json_encode($options));
-        return self::CACHE_PREFIX . "{$estimateId}:{$optionsHash}";
+
+        return self::CACHE_PREFIX."{$estimateId}:{$optionsHash}";
     }
 
     /**
@@ -434,10 +432,6 @@ class EstimateExportService
     /**
      * Сохранить файл на S3
      *
-     * @param Estimate $estimate
-     * @param string $content
-     * @param string $filename
-     * @param string $extension
      * @return string S3 path
      */
     protected function saveToS3(Estimate $estimate, string $content, string $filename, string $extension): string
@@ -486,7 +480,7 @@ class EstimateExportService
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
-            
+
             // Не прерываем выполнение, продолжаем работу
             return '';
         }

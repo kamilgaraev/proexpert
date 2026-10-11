@@ -55,12 +55,12 @@ final class OrdinaryEstimateDecimal
 
     public static function resourceQuantity(mixed $value): string
     {
-        return self::storage($value, self::RESOURCE_QUANTITY_LIMIT, 4, 'ordinary_estimate_resource_quantity_out_of_range');
+        return self::storage($value, self::RESOURCE_QUANTITY_LIMIT, 18, 'ordinary_estimate_resource_quantity_out_of_range');
     }
 
     public static function resourceUnitPrice(mixed $value): string
     {
-        return self::storage($value, self::MONEY_LIMIT, 2, 'ordinary_estimate_resource_unit_price_out_of_range');
+        return self::storage($value, self::MONEY_LIMIT, 12, 'ordinary_estimate_resource_unit_price_out_of_range');
     }
 
     private static function fits(mixed $value, string $limit): bool

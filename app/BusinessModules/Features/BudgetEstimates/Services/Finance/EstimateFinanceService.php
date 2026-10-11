@@ -760,7 +760,7 @@ final class EstimateFinanceService
                 }
                 $resource = \App\Models\EstimateItemResource::query()->create([
                     'estimate_item_id' => $id, 'resource_type' => match ($definition['type']) {
-                        'material', 'labor', 'equipment' => $definition['type'], 'machinery' => 'equipment', default => 'other',
+                        'material', 'labor', 'equipment', 'machinery' => $definition['type'], default => 'other',
                     },
                     'name' => $definition['name'], 'finance_unit_label' => $definition['unit'],
                     'finance_source_hash' => hash('sha256', json_encode($this->query->pendingResources($item), JSON_THROW_ON_ERROR)),

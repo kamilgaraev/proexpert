@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\Recalcula
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationPriceSelection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationRequirementDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScopeSelection;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SaveEvaluationRequirementDecisionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
@@ -20,6 +21,19 @@ use Illuminate\Http\Request;
 
 final class EstimateGenerationEvaluationController extends Controller
 {
+    public function quantity(Request $request, Project $project, EstimateGenerationSession $session, SaveEvaluationWorkQuantity $quantities): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'work_item_key' => ['required', 'string', 'max:160'], 'reason' => ['required', 'string', 'max:1000'],
+            'value' => ['required_without:source_fact_id', 'prohibited_with:source_fact_id', 'string', 'max:21'],
+            'unit' => ['required_without:source_fact_id', 'prohibited_with:source_fact_id', 'string', 'max:30'],
+            'source_fact_id' => ['required_without:value', 'string', 'max:191'],
+            'source_fact_version' => ['required_with:source_fact_id', 'integer', 'min:1'],
+            'source_value_hash' => ['required_with:source_fact_id', 'string', 'regex:/\A[a-f0-9]{64}\z/']]);
+
+        return AdminResponse::success($quantities->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
+    }
+
     public function scope(Request $request, Project $project, EstimateGenerationSession $session, SaveEvaluationScopeSelection $scopes): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
