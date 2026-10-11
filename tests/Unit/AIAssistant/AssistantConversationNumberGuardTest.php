@@ -18,6 +18,8 @@ final class AssistantConversationNumberGuardTest extends TestCase
         foreach ([
             'Какое условное число я назвал в предыдущем сообщении?',
             'Реши учебный арифметический пример: 12 + 8 + 5.',
+            'Для учебного примера вычисли 12 + 8 + 5. Это условные числа, не данные сметы или проекта.',
+            'Реши учебный пример: 12 + 8. Это не данные проекта и сметы.',
         ] as $query) {
             self::assertTrue(AssistantFactIntentClassifier::isNarrative($query));
             self::assertFalse(AssistantFactIntentClassifier::isFactual($query));
@@ -38,6 +40,8 @@ final class AssistantConversationNumberGuardTest extends TestCase
             'Реши учебный пример и покажи фактический объём на складе.',
             'Какое условное число я назвал и какова стоимость в смете?',
             'Какое условное число я назвал в предыдущем сообщении и какой статус проекта?',
+            'Реши учебный пример: 12 + 8. Это не данные сметы. Покажи фактический объём на складе.',
+            'Реши учебный пример: 12 + 8. Это не данные сметы. Покажи цену из сметы.',
         ] as $query) {
             self::assertFalse(AssistantFactIntentClassifier::isConversationNumberRequest($query));
             self::assertTrue($verifier->guard('Объём бетона: 12 м³.', [], null, $query)['replaced']);

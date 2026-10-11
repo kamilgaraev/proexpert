@@ -31,11 +31,25 @@ final class ConversationNumberHistoryTest extends TestCase
             ['source_refs' => [['entity_type' => 'estimate', 'entity_id' => 5]]],
             ['source_refs' => null],
             ['actor_user_id' => 8],
+            ['validation_status' => 'verified'],
+            ['validation_status' => 'failed'],
+            ['validation_status' => null],
+            ['validation_status' => 'partial', 'request_state' => 'pending'],
+            ['validation_status' => 'partial', 'source_refs' => [['entity_type' => 'estimate', 'entity_id' => 5]]],
+            ['validation_status' => 'partial', 'conversation_number_context' => false],
         ] as $metadata) {
             self::assertSame('', $this->context($metadata));
         }
         self::assertSame('', $this->context(actorId: 8));
         self::assertSame('', $this->context(actorId: null));
+    }
+
+    public function test_partial_source_free_calculation_is_kept_with_its_conditional_label(): void
+    {
+        $content = $this->context(['validation_status' => 'partial']);
+        self::assertStringContainsString('12 + 8 + 5 = 25', $content);
+        self::assertStringContainsString('не подтверждённые данные МОСТ', $content);
+        self::assertSame('', $this->context(['validation_status' => 'partial'], actorId: 8));
     }
 
     private function context(array $metadata = [], ?int $actorId = 7): string

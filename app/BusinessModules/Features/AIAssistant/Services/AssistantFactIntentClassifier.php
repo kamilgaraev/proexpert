@@ -43,6 +43,7 @@ final class AssistantFactIntentClassifier
 
     public static function isConversationNumberRequest(string $query): bool
     {
+        $query = preg_replace('/(?<![\pL\pN])не\s+данные\s+(?:смет[а-яё]*|проект[а-яё]*)(?:\s+(?:и|или)\s+(?:смет[а-яё]*|проект[а-яё]*))?(?![\pL\pN])/iu', '', $query) ?? $query;
         if (preg_match(self::STATUS, $query) || preg_match(self::DATE, $query)
             || preg_match(self::OVERDUE, $query) || preg_match(self::OWNER, $query)
             || preg_match('/(?:смет|склад|остат|фактич|стоимост|цен[а-яё]*|бюджет|позиц|договор|плат[её]ж|оплат)/iu', $query)) {

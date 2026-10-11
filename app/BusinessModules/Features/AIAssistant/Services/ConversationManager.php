@@ -429,7 +429,7 @@ class ConversationManager
         $refs = $this->messageReferences($meta);
         if ($message->role === 'assistant' && $actor && $refs === [] && ($meta['source_refs'] ?? null) === []
             && ($meta['conversation_number_context'] ?? false) === true
-            && ($meta['validation_status'] ?? null) === 'unverified'
+            && in_array($meta['validation_status'] ?? null, ['unverified', 'partial'], true)
             && (int) ($meta['actor_user_id'] ?? 0) === (int) $actor->id) {
             return trans_message('ai_assistant.conversation_number_history', ['text' => $this->normalize((string) $message->content)]);
         }
