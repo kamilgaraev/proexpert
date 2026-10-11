@@ -534,6 +534,43 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame('за ноябрь', $payload['context']['period']);
     }
 
+    public function test_new_read_request_does_not_inherit_report_mode_period_or_entity(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $request = ['context' => ['source_module' => 'ai-assistant', 'entity_refs' => [['type' => 'project', 'id' => 56]]]];
+        $previous = [
+            'last_task_type' => 'analyze',
+            'last_capability' => 'reports',
+            'last_request' => ['goal' => 'analyze', 'context' => [
+                'source_module' => 'reports', 'period' => 'за год',
+                'entity_refs' => [['type' => 'estimate', 'id' => 7]],
+                'ui_state' => ['assistant_report_focus' => 'payments'],
+            ]],
+        ];
+        foreach (['Покажи доступные договоры и контрагентов.', 'Посмотри наши договоры.', 'Расскажи об объёме бетона в BIM-модели.'] as $query) {
+            self::assertSame($request, $service->exposeMergeContinuationRequestPayload($query, $request, $previous), $query);
+        }
+    }
+
+    public function test_read_command_with_only_a_period_continues_the_previous_report(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $request = ['context' => ['source_module' => 'ai-assistant']];
+        $previous = [
+            'last_task_type' => 'summary', 'last_capability' => 'reports',
+            'last_request' => ['context' => [
+                'source_module' => 'reports', 'period' => null,
+                'entity_refs' => [['type' => 'project', 'id' => 56]],
+            ]],
+        ];
+        foreach (['Покажи за ноябрь', 'Посмотри за ноябрь', 'Покажи его'] as $query) {
+            $payload = $service->exposeMergeContinuationRequestPayload($query, $request, $previous);
+            self::assertSame('reports', $payload['context']['source_module']);
+            self::assertSame(56, $payload['context']['entity_refs'][0]['id']);
+            self::assertSame('summary', $payload['desired_mode']);
+        }
+    }
+
     public function test_detail_follow_up_keeps_previous_rag_topic_and_project_context(): void
     {
         $service = $this->makeService(new AIToolRegistry);

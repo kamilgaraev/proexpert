@@ -167,7 +167,7 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame([(int) $highest->id], array_column(array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item'), 'entity_id'));
     }
 
-    public function test_estimate_answer_uses_the_current_selected_estimate_when_query_has_no_selector(): void
+    public function test_explicit_estimate_tool_argument_overrides_previous_selection_without_reusing_its_filter(): void
     {
         $selected = $this->estimate('SM-SELECTED', 'Смета из контекста');
         $later = $this->estimate('SM-LATER', 'Более поздняя смета');
@@ -176,12 +176,25 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
 
         $result = app(GetEstimateAnswerTool::class)->executeForSelection([
             'query' => 'Покажи позиции в этой смете', 'estimate_id' => (int) $later->id,
-        ], $this->actor, $this->organization, ['estimate_id' => (int) $selected->id, 'position_filter' => [], 'position_numbers' => []]);
+        ], $this->actor, $this->organization, ['estimate_id' => (int) $selected->id, 'position_filter' => ['перекрытия'], 'position_numbers' => ['9']]);
 
         self::assertIsArray($result);
         self::assertSame('resolved', $result['status']);
-        self::assertSame((int) $selected->id, $result['selection']['estimate_id']);
-        self::assertSame('SM-SELECTED', $result['financial_evidence']['estimate']['number']);
+        self::assertSame((int) $later->id, $result['selection']['estimate_id']);
+        self::assertSame('SM-LATER', $result['financial_evidence']['estimate']['number']);
+        self::assertSame([], $result['selection']['position_filter']);
+        self::assertSame([], $result['selection']['position_numbers']);
+
+        $continued = app(GetEstimateAnswerTool::class)->executeForSelection([
+            'query' => 'Покажи позиции в этой смете', 'estimate_id' => null,
+        ], $this->actor, $this->organization, ['estimate_id' => (int) $selected->id]);
+        self::assertSame((int) $selected->id, $continued['selection']['estimate_id']);
+
+        $this->deniedEstimateIds[] = (int) $later->id;
+        $this->expectException(AuthorizationException::class);
+        app(GetEstimateAnswerTool::class)->executeForSelection([
+            'query' => 'Покажи позиции в этой смете', 'estimate_id' => (int) $later->id,
+        ], $this->actor, $this->organization, ['estimate_id' => (int) $selected->id]);
     }
 
     public function test_cross_estimate_search_uses_cursor_for_bounded_pages(): void

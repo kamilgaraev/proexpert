@@ -47,7 +47,7 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
         }
         $contextEstimateId = is_int($selection['estimate_id'] ?? null) && $selection['estimate_id'] > 0
             ? $selection['estimate_id'] : null;
-        $estimateId = $contextEstimateId ?? $arguments['estimate_id'] ?? null;
+        $estimateId = $arguments['estimate_id'] ?? $contextEstimateId;
         $selection = $estimateId !== null && ($selection['estimate_id'] ?? null) === $estimateId ? $selection : null;
         $answer = $this->answers->answer($arguments['query'], (int) $organization->id, $actor, $estimateId, $selection);
         $execution?->assertCanContinue();
