@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagCoverageService;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -25,8 +26,17 @@ final class RefreshRagCoverageJob implements ShouldQueue
 
     public function handle(RagCoverageService $coverage): void
     {
+        $started = hrtime(true);
+        $global = $this->projectId === null && $this->sourceType === null;
+        AssistantStatusSnapshotDiagnostics::coverageRefresh('started', $global);
         try {
-            $coverage->refreshCoverage($this->organizationId, $this->projectId, $this->sourceType, $this->cacheKey);
+            $result = $coverage->refreshCoverage($this->organizationId, $this->projectId, $this->sourceType, $this->cacheKey);
+            AssistantStatusSnapshotDiagnostics::coverageRefresh('finished', $global, (hrtime(true) - $started) / 1_000_000,
+                ($result['eligible_count_known'] ?? false) === true,
+                is_string($result['projection_generation'] ?? null) && $result['projection_generation'] !== '');
+        } catch (Throwable $exception) {
+            AssistantStatusSnapshotDiagnostics::coverageRefresh('failed', $global, (hrtime(true) - $started) / 1_000_000, exception: $exception);
+            throw $exception;
         } finally {
             Cache::forget($this->cacheKey.':queued');
         }
@@ -34,6 +44,7 @@ final class RefreshRagCoverageJob implements ShouldQueue
 
     public function failed(Throwable $exception): void
     {
+        AssistantStatusSnapshotDiagnostics::coverageRefresh('terminal_failed', $this->projectId === null && $this->sourceType === null, exception: $exception);
         Cache::forget($this->cacheKey.':queued');
     }
 }

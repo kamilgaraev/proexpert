@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use App\BusinessModules\Features\AIAssistant\Jobs\RefreshRagCoverageJob;
+use App\BusinessModules\Features\AIAssistant\Services\StatusSnapshots\AssistantStatusSnapshotDiagnostics;
 use Throwable;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -275,7 +276,9 @@ final class RagCoverageService
         }
         try {
             dispatch(new RefreshRagCoverageJob($organizationId, $projectId, $sourceType, $key));
+            AssistantStatusSnapshotDiagnostics::coverageRefresh('queued', $projectId === null && $sourceType === null);
         } catch (Throwable $exception) {
+            AssistantStatusSnapshotDiagnostics::coverageRefresh('queue_failed', $projectId === null && $sourceType === null, exception: $exception);
             Cache::forget($key.':queued');
             Log::warning('ai_assistant.rag.coverage_queue_failed', ['organization_id' => $organizationId, 'exception_class' => $exception::class]);
         }

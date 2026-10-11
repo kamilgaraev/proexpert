@@ -40,6 +40,33 @@ final class AssistantStatusSnapshotDiagnostics
         }
     }
 
+    public static function coverageRefresh(string $phase, bool $global, ?float $durationMs = null, ?bool $countsKnown = null, ?bool $generationPresent = null, ?Throwable $exception = null): void
+    {
+        if (! in_array($phase, ['queued', 'queue_failed', 'started', 'finished', 'failed', 'terminal_failed'], true)) {
+            return;
+        }
+        try {
+            $exceptionClass = $exception === null ? null : $exception::class;
+            Log::channel('api_latency')->info('assistant_rag_coverage_refresh', [
+                'phase' => $phase,
+                'scope' => $global ? 'global' : 'filtered',
+                'release_sha' => self::releaseSha(),
+                'duration_ms' => $durationMs !== null && is_finite($durationMs) && $durationMs >= 0 ? round($durationMs, 2) : null,
+                'counts_known' => $countsKnown,
+                'generation_present' => $generationPresent,
+                'exception_class' => $exceptionClass === null || preg_match('/^[A-Za-z_][A-Za-z0-9_\\\\]{0,199}$/D', $exceptionClass) === 1 ? $exceptionClass : 'unclassified',
+            ]);
+        } catch (Throwable) {
+        }
+    }
+
+    private static function releaseSha(): ?string
+    {
+        $release = config('ai-assistant.status_snapshot_release') ?: getenv('MOST_RELEASE_SHA');
+
+        return is_string($release) && preg_match('/^[a-f0-9]{40}$/D', $release) === 1 ? $release : null;
+    }
+
     private static function failureReason(?string $reason): ?string
     {
         if ($reason === null) {
@@ -66,7 +93,6 @@ final class AssistantStatusSnapshotDiagnostics
 
     private static function context(string $phase, string $section, ?string $cacheKey): array
     {
-        $release = config('ai-assistant.status_snapshot_release') ?: getenv('MOST_RELEASE_SHA');
         $store = (string) config('cache.default');
         $cache = config('cache.stores.'.$store, []);
         $cacheConnection = is_array($cache) ? ($cache['connection'] ?? null) : null;
@@ -75,7 +101,7 @@ final class AssistantStatusSnapshotDiagnostics
         return [
             'phase' => $phase,
             'section' => $section,
-            'release_sha' => is_string($release) && preg_match('/^[a-f0-9]{40}$/D', $release) === 1 ? $release : null,
+            'release_sha' => self::releaseSha(),
             'key_hash' => $cacheKey === null ? null : hash('sha256', $cacheKey),
             'cache_namespace_hash' => hash('sha256', serialize([
                 $store, is_array($cache) ? ($cache['driver'] ?? null) : null,
