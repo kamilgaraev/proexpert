@@ -41,7 +41,7 @@ final readonly class UniversalEvaluationBuilder
                         continue;
                     }
                     $quantity = is_array($item['quantity_basis_details'] ?? null) ? $item['quantity_basis_details'] : [];
-                    $entityId = $quantity['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
+                    $entityId = $item['metadata']['scope_entity_id'] ?? $quantity['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
                     if (! is_string($entityId) || ! isset($entityIds[$entityId])) {
                         $entityId = null;
                     } else {

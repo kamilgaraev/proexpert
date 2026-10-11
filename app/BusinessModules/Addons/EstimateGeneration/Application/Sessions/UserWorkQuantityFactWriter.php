@@ -22,7 +22,7 @@ final readonly class UserWorkQuantityFactWriter
 {
     public function __construct(private ProjectModelRepository $models, private EvidenceRepository $evidence, private EstimateGenerationActionAuthorization $authorization) {}
 
-    public function write(User $actor, EstimateGenerationSession $session, string $workKey, string $amount, string $unit, string $reason, string $requestId): Fact
+    public function write(User $actor, EstimateGenerationSession $session, string $workKey, string $amount, string $unit, string $reason, string $requestId, bool $assumed = false): Fact
     {
         $this->authorization->authorize($actor, $session, 'estimate_generation.review');
         $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
@@ -47,7 +47,7 @@ final readonly class UserWorkQuantityFactWriter
         $proofId = 'evidence:'.$node->id;
         $proof = new Evidence($proofId, ...[...$scope, $version, 'input:'.$scope[2], 'user_input', null, null, 'input_payload.work_quantities',
             EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2]]);
-        $fact = new Fact($factId, ...[...$scope, $version, $entityId, 'quantity', $value, $unit, 0.0, 'user_input', 'confirmed', [$proofId],
+        $fact = new Fact($factId, ...[...$scope, $version, $entityId, 'quantity', $value, $unit, 0.0, $assumed ? 'user_assumption' : 'user_input', 'confirmed', [$proofId],
             ($previous?->version ?? 0) + 1, $previous?->id]);
         $decision = new Decision('decision:'.hash('sha256', $requestId.'|'.$factId), ...[...$scope, $version, 'fact', $previous?->id ?? $factId,
             $factId, 'user', (string) $actor->id, $reason, $fact->version, [$proofId]]);

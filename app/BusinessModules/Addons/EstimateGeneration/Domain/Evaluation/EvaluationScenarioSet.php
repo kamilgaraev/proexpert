@@ -90,7 +90,9 @@ final class EvaluationScenarioSet
         foreach ($definitions as $definition) {
             $overrides = array_column($definition['quantities'], null, 'work_item_key');
             $scenarioPositions = [];
-            $scenarioAssumptions = $assumptions;
+            // A literal scenario volume replaces the earlier quantity recipe, including its operand assumptions.
+            // Retain unrelated/global assumptions and record the accepted scenario basis once below.
+            $scenarioAssumptions = array_values(array_filter($assumptions, static fn (mixed $assumption): bool => ! is_array($assumption) || ! isset($assumption['position_key']) || ! isset($overrides[$assumption['position_key']])));
             foreach ($positions as $position) {
                 $override = $overrides[$position['key']] ?? null;
                 if ($override !== null) {

@@ -24,6 +24,7 @@ final readonly class ConfirmEvaluationScenario
     public function __construct(private Connection $database, private EstimateGenerationActionAuthorization $authorization,
         private EvaluationInputFingerprint $inputs, private ProjectModelRepository $models,
         private EvaluationDraftArithmeticRecalculator $arithmetic, private UserEvaluationChoiceWriter $choices,
+        private MaterializeSelectedEvaluationQuantities $quantities, private SaveEvaluationRevision $revisions,
         private SelectedEvaluationScenario $scenarios = new SelectedEvaluationScenario,
         private UniversalEvaluationBuilder $builder = new UniversalEvaluationBuilder,
         private BuildMostEstimateDraft $artifacts = new BuildMostEstimateDraft) {}
@@ -99,13 +100,57 @@ final readonly class ConfirmEvaluationScenario
             if (! hash_equals($selected['scenario_hash'], $freshSelected['scenario_hash'])) {
                 throw ValidationException::withMessages(['scenario' => 'Объём или источник цены изменился. Подтвердите новую ревизию после пересчёта.']);
             }
+            $sourceRevisionId = $revision->public_id;
+            $sourceContentHash = $revision->content_hash;
+            if ($this->quantities->materialize($actor, $session, $selected, $input['request_id'], $sourceRevisionId)) {
+                $originalPositions = array_column($selected['scenario']['positions'], null, 'key');
+                foreach ($fresh['local_estimates'] ?? [] as $estimateIndex => $estimate) {
+                    foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
+                        foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                            $entityId = $originalPositions[$item['key']]['entity_id'] ?? null;
+                            if (is_string($entityId)) {
+                                // A quantity ledger anchor is not the physical entity whose work scope the user accepted.
+                                $fresh['local_estimates'][$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex]['metadata']['scope_entity_id'] = $entityId;
+                            }
+                        }
+                    }
+                }
+                $inputHash = $this->inputs->fromSession($session);
+                $version = 'sha256:'.$inputHash;
+                $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                if (count($snapshot->facts) > 10000) {
+                    throw ValidationException::withMessages(['scenario' => 'Разделите проект: предел фактов превышен.']);
+                }
+                $decisions = $this->models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+                $context = new PipelineContext($sessionId, $scope[0], $projectId, $session->state_version, $version, $session->status->value,
+                    generationAttemptId: $input['request_id'], baseInputVersion: $version);
+                $fresh = $this->arithmetic->recalculate($fresh, $context, $snapshot, $decisions, $actor, $session);
+                $evaluation = $this->builder->build($fresh, $snapshot, $decisions);
+                try {
+                    $materialized = $this->scenarios->select($evaluation, $input['scenario_id']);
+                } catch (\InvalidArgumentException) {
+                    throw ValidationException::withMessages(['scenario' => 'Подтверждённые объёмы не прошли проверку состава или цен. Изменение не сохранено.']);
+                }
+                if (! hash_equals($selected['scenario_hash'], $materialized['scenario_hash'])) {
+                    throw ValidationException::withMessages(['scenario' => 'Пересчёт изменил выбранные объёмы или деньги. Проверьте новую оценку.']);
+                }
+                $saved = $this->revisions->save($actor, ...[...$scope, $session->state_version, $input['request_id'], $inputHash, $evaluation, 'arithmetic_recalculation']);
+                $revision = (object) ['public_id' => $saved['revision_id'], 'content_hash' => $saved['content_hash']];
+                $fresh['source_input_version'] = $version;
+                $fresh['evaluation_result'] = $evaluation;
+                $fresh['stage6_status'] = 'selected_scenario_confirmed';
+                $session->update(['draft_payload' => $this->artifacts->seal((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($fresh)),
+                    'analysis_payload' => [...($session->analysis_payload ?? []), 'evaluation_revision' => $saved]]);
+                $payload = $session->input_payload;
+            }
             $choice = ['answer_kind' => 'selected_scenario', 'revision_id' => $revision->public_id, 'content_hash' => $revision->content_hash,
                 'input_hash' => $inputHash, 'scenario_id' => $input['scenario_id'], 'scenario_hash' => $selected['scenario_hash'],
-                'selected_scope' => $selected['selected_scope'], 'assumptions_accepted' => $input['assumptions_accepted']];
+                'selected_scope' => $selected['selected_scope'], 'assumptions_accepted' => $input['assumptions_accepted'],
+                'source_revision_id' => $sourceRevisionId, 'source_content_hash' => $sourceContentHash];
             $proof = $this->choices->write($actor, $session, 'selected-scenario', 'evaluation_scenario', $choice,
                 'Пользователь подтвердил конкретный сценарий, состав, объёмы, цены и показанные допущения.', $input['request_id']);
             $payload['confirmed_evaluation'] = [...$choice, ...$proof];
-            $result = [...$proof, 'request_id' => $input['request_id'], 'revision_id' => $revision->public_id,
+            $result = [...$proof, 'request_id' => $input['request_id'], 'revision_id' => $sourceRevisionId, 'result_revision_id' => $revision->public_id,
                 'scenario_id' => $input['scenario_id'], 'state_version' => $session->state_version + 1, 'cost_units' => '0', 'recalculation_required' => false];
             $receipts[$input['request_id']] = ['fingerprint' => $fingerprint, 'result' => $result];
             $payload['scenario_confirmation_receipts'] = $receipts;

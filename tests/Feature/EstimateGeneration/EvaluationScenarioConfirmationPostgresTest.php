@@ -44,6 +44,8 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $current = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
         self::assertFalse($current['result_stale']);
         self::assertSame('base', $current['confirmed_scenario']['scenario_id']);
+        self::assertNotSame($input['revision_id'], $current['revision_id']);
+        self::assertSame($current['revision_id'], $result['result_revision_id']);
         self::assertSame(['RUB' => '2100.00'], $current['confirmed_scenario']['total_by_currency']);
         self::assertNotEmpty($current['confirmed_scenario']['assumptions']);
         $payload = $session->fresh()->input_payload;
@@ -57,12 +59,21 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         self::assertCount(1, array_filter($facts, static fn ($fact): bool => $fact->type === 'evaluation_scenario' && ($fact->value['answer_kind'] ?? null) === 'selected_scenario'));
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
         self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
-        self::assertNull($session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        $item = $session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('1', $item['quantity']);
+        self::assertSame('assumed', $item['quantity_status']);
+        self::assertSame('direct_quantity', $item['quantity_basis_details']['formula_key']);
+        $numbers = array_values(array_filter($facts, static fn ($fact): bool => $fact->type === 'quantity'));
+        self::assertCount(2, $numbers);
+        self::assertSame(['user_assumption'], array_values(array_unique(array_column($numbers, 'origin'))));
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class)
+            ->assertCurrent(...[...$scope, $session->fresh()->draft_payload]));
         Queue::assertNothingPushed();
         $catalog->update(['unit_price' => '200']);
         try {
             $service->handle($actor, (int) $session->project_id, (int) $session->id,
-                [...$input, 'request_id' => (string) Str::uuid(), 'state_version' => $result['state_version']]);
+                [...$input, 'revision_id' => $current['revision_id'], 'content_hash' => $current['content_hash'],
+                    'request_id' => (string) Str::uuid(), 'state_version' => $result['state_version']]);
             self::fail('Changed catalog price was silently confirmed.');
         } catch (ValidationException) {
             self::assertSame($result['state_version'], $session->fresh()->state_version);
@@ -99,6 +110,29 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
     public static function confirmationDenials(): array
     {
         return array_map(static fn (string $change): array => [$change], ['assumptions', 'revision', 'scope', 'actor']);
+    }
+
+    public function test_final_confirmation_remains_verifiable_without_changing_numerical_snapshot_but_quantity_inputs_change_it(): void
+    {
+        [$actor, $session, , $input] = $this->fixture();
+        $models = app(ProjectModelRepository::class);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $before = $models->snapshotForPlanning(...[...$scope, 10001]);
+        $row = app(GetCurrentEvaluation::class)->handle($actor, $scope[1], $scope[2]);
+        $selected = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedEvaluationScenario)->select($row['result'], 'base');
+        $choice = ['answer_kind' => 'selected_scenario', 'revision_id' => $input['revision_id'], 'content_hash' => $input['content_hash'],
+            'input_hash' => $row['input_hash'], 'scenario_id' => 'base', 'scenario_hash' => $selected['scenario_hash'],
+            'selected_scope' => ['finishing'], 'assumptions_accepted' => true];
+        $proof = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserEvaluationChoiceWriter::class)
+            ->write($actor, $session, 'selected-scenario', 'evaluation_scenario', $choice, 'Принят показанный сценарий.', (string) Str::uuid());
+        $after = $models->snapshotForPlanning(...[...$scope, 10001]);
+        self::assertSame($before['token'], $after['token']);
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($after['snapshot']->facts, 'id')]);
+        self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationSelectionVerifier)
+            ->accepted($after['snapshot'], $decisions, [...$choice, ...$proof], 'evaluation_scenario', $choice));
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\UserWorkQuantityFactWriter::class)
+            ->write($actor, $session, 'finishing', '30', 'm2', 'Новое явное допущение объёма.', (string) Str::uuid(), true);
+        self::assertNotSame($after['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
     }
 
     private function fixture(): array

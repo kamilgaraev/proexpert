@@ -39,6 +39,17 @@ final class EvaluationScenarioSetTest extends TestCase
         (new EvaluationScenarioSet)->project($this->positions(), [], $snapshot, $decisions, $selection);
     }
 
+    public function test_replaced_quantity_assumptions_are_not_duplicated_after_canonical_materialization(): void
+    {
+        [$snapshot, $decisions, $selection] = $this->proof();
+        $old = ['position_key' => 'floor', 'basis' => 'fact:previous-canonical-volume'];
+        $scenarios = (new EvaluationScenarioSet)->project($this->positions(), ['Общие условия технологии', $old], $snapshot, $decisions, $selection);
+        self::assertCount(2, $scenarios[1]['assumptions']);
+        self::assertSame('Общие условия технологии', $scenarios[1]['assumptions'][0]);
+        self::assertNotContains($old, $scenarios[1]['assumptions']);
+        self::assertSame('user_assumption', $scenarios[1]['assumptions'][1]['status']);
+    }
+
     public function test_cases_with_different_work_keys_are_rejected(): void
     {
         $definitions = $this->definitions();

@@ -105,6 +105,10 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
             $this->appendFacts([$selectedFact]);
             $this->appendDecisions([$decision]);
+            if (\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::matches($selectedFact)) {
+                // Confirmation does not change source quantities, prices or scope. Those choices invalidate projections separately.
+                return;
+            }
             $this->database->table('estimate_generation_project_understanding_runs')
                 ->where('organization_id', $decision->organizationId)
                 ->where('project_id', $decision->projectId)
@@ -1689,6 +1693,13 @@ SQL, [
                 'fact.fact_version', 'fact.fact_status', 'fact.fact_value', 'fact.assertion_type',
                 'fact.fact_unit', 'fact.confidence', 'fact.fact_origin',
             ]);
+        $facts = $facts->reject(function ($fact) use ($organizationId, $projectId, $sessionId): bool {
+            $value = $this->decode($fact->fact_value);
+
+            return \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::matchesIdentity(
+                $organizationId, $projectId, $sessionId, (string) $fact->source_version, (string) $fact->entity_stable_key,
+                (string) $fact->assertion_type, (string) $fact->fact_origin, (string) $fact->fact_status, $value['value'] ?? $value);
+        });
         $factIds = $facts->pluck('id')->map(static fn ($id): int => (int) $id)->all();
         $bindings = $factIds === [] ? collect() : $this->database
             ->table('estimate_generation_project_model_fact_evidence as binding')
@@ -1775,8 +1786,13 @@ SQL, [
             $sourceVersions[] = (string) $fact->source_version;
         }
         $entities = [];
+        $confirmationAnchor = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::identity($organizationId, $projectId, $sessionId);
         foreach ($entityRows as $entity) {
             $stableKey = (string) $entity->stable_key;
+            if ($stableKey === $confirmationAnchor['entity_id'] && (string) $entity->source_version === $confirmationAnchor['source_version']
+                && ! $facts->contains('entity_stable_key', $stableKey)) {
+                continue;
+            }
             if (isset($entities[$stableKey])) {
                 continue;
             }
