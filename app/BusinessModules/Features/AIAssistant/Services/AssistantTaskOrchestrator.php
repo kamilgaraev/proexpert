@@ -28,6 +28,11 @@ class AssistantTaskOrchestrator
     {
         $request = $this->normalizeRequest($query, $requestPayload);
         $imageDiscussion = ($requestPayload['image_discussion'] ?? false) === true;
+        if (! $imageDiscussion && empty($requestPayload['attachment_ids']) && AssistantFactIntentClassifier::isConversationNumberRequest($query)) {
+            $request['context'] = [];
+            $request['goal'] = $request['desired_mode'] = null;
+            $request['allow_actions'] = false;
+        }
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query,
             is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : $request['context']);
         $taskType = $imageDiscussion ? 'analyze' : $this->resolveTaskType($request, $requestUnderstanding);

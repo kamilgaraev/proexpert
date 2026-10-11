@@ -569,7 +569,9 @@ final class AgentFlowConversationManager extends ConversationManager
         int $maxTotalChars = 4000,
         int $maxUserMessageChars = 4000,
         int $maxAssistantMessageChars = 900,
-        ?User $actor = null
+        ?User $actor = null,
+        bool $includeImageDiscussion = false,
+        bool $conversationNumbersOnly = false
     ): array {
         return [];
     }

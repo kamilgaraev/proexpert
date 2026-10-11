@@ -460,20 +460,21 @@ class AIAssistantService
             }
         }
         $imageDiscussion = AssistantImageDiscussionPolicy::isDiscussion($query, $this->currentAttachmentIds !== [], $previousImageDiscussion);
+        $conversationNumberRequest = ! $imageDiscussion && $this->currentAttachmentIds === [] && AssistantFactIntentClassifier::isConversationNumberRequest($query);
         $requestPayload['image_discussion'] = $imageDiscussion;
-        if ($imageDiscussion) {
+        if ($imageDiscussion || $conversationNumberRequest) {
             $requestPayload['context'] = [];
-            $requestPayload['goal'] = 'analyze';
-            $requestPayload['desired_mode'] = 'analyze';
+            $requestPayload['goal'] = $imageDiscussion ? 'analyze' : null;
+            $requestPayload['desired_mode'] = $imageDiscussion ? 'analyze' : null;
             $requestPayload['allow_actions'] = false;
         }
-        if (! $imageDiscussion && $this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
+        if (! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] && $this->shouldCheckDocumentCorpus($query, $continuationContext)) {
             $this->documentContextBlocked = ! $this->documentCorpusIsComplete($organizationId, $user);
             if ($this->documentContextBlocked) {
                 $continuationContext = $this->suppressDocumentContinuationContext($continuationContext);
             }
         }
-        if (! $imageDiscussion) {
+        if (! $imageDiscussion && ! $conversationNumberRequest) {
             $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $continuationContext);
         }
         if ($this->documentContextBlocked && is_array($requestPayload['context'] ?? null)) {
@@ -486,7 +487,7 @@ class AIAssistantService
         $requestPayload = $this->measurePhase('request_context', fn (): array => $this->filterRequestEntityContext($requestPayload, $user, $organizationId));
         $this->activeEstimateSelection = null;
         $selection = $conversation->context['selected_estimate'] ?? null;
-        if (! $imageDiscussion && is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
+        if (! $imageDiscussion && ! $conversationNumberRequest && is_array($selection) && is_int($selection['estimate_id'] ?? null) && $this->dataAccess !== null
             && $this->dataAccess->withCurrentChecks($user, $organizationId,
                 fn (): bool => $this->dataAccess->canReadEntityContent($user, $organizationId, 'estimate', $selection['estimate_id']), true)) {
             $this->activeEstimateSelection = array_intersect_key($selection, array_flip(['estimate_id', 'position_filter', 'position_numbers']));
@@ -551,7 +552,7 @@ class AIAssistantService
             return $this->answerSectionNavigation($query, $organizationId, $user, $conversation, $requestPayload);
         }
 
-        $agentResult = ! $imageDiscussion && $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
+        $agentResult = ! $imageDiscussion && ! $conversationNumberRequest && $this->currentAttachmentIds === [] ? $this->handleAgentFlow($query, $organizationId, $user, $conversation, $taskPlan) : null;
         if ($agentResult !== null) {
             return $agentResult;
         }
@@ -3206,13 +3207,15 @@ class AIAssistantService
 
     protected function buildMessages(Conversation $conversation, array $context, array $taskPlan, string $ragPrompt = '', ?string $currentQuery = null): array
     {
+        $currentQuery ??= (string) ($taskPlan['request']['message'] ?? '');
+        $conversationNumberRequest = $this->isConversationNumberRequest($taskPlan, $currentQuery);
         $messages = [[
             'role' => 'system',
             'content' => $this->contextBuilder->buildSystemPrompt()."\n\n".trans_message('ai_assistant.trusted_instruction_boundary'),
         ]];
         if ($taskPlan['image_discussion'] ?? false) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_discussion_instructions');
-        } else {
+        } elseif (! $conversationNumberRequest) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.tool_first_instructions');
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.model_tool_selection');
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant_search.instructions');
@@ -3229,12 +3232,12 @@ class AIAssistantService
             self::HISTORY_ASSISTANT_MESSAGE_CHARS,
             $this->activeActor,
             (bool) ($taskPlan['image_discussion'] ?? false),
+            $conversationNumberRequest,
         );
         if ($this->documentContextBlocked) {
             $history = array_values(array_filter($history,
                 static fn (array $message): bool => ($message['role'] ?? null) === 'user'));
         }
-        $currentQuery ??= (string) ($taskPlan['request']['message'] ?? '');
         if ($history !== [] && end($history)['role'] === 'user' && ($currentQuery === '' || end($history)['content'] === $currentQuery)) {
             $last = array_pop($history);
             $currentQuery = (string) $last['content'];
@@ -3243,22 +3246,24 @@ class AIAssistantService
             $messages[] = $message;
         }
 
-        $references = [
-            'kind' => 'untrusted_reference_data',
-            'legacy_context' => $this->formatContextForLLM($context),
-            'search_data' => $ragPrompt,
-            'task_context' => $this->formatStructuredContextForLLM($taskPlan),
-        ];
-        if ($this->activeEstimateSelection !== null) {
-            $references['selected_estimate'] = $this->activeEstimateSelection;
-        }
-        if ($this->activeActor !== null) {
-            if (! $this->documentContextBlocked) {
-                $references['conversation_summary'] = $this->conversationManager->getSummary($conversation, $this->activeActor);
-                $references['personal_memory'] = $this->memoryService?->forContext($this->activeActor, (int) $conversation->organization_id) ?? [];
+        if (! $conversationNumberRequest) {
+            $references = [
+                'kind' => 'untrusted_reference_data',
+                'legacy_context' => $this->formatContextForLLM($context),
+                'search_data' => $ragPrompt,
+                'task_context' => $this->formatStructuredContextForLLM($taskPlan),
+            ];
+            if ($this->activeEstimateSelection !== null) {
+                $references['selected_estimate'] = $this->activeEstimateSelection;
             }
+            if ($this->activeActor !== null) {
+                if (! $this->documentContextBlocked) {
+                    $references['conversation_summary'] = $this->conversationManager->getSummary($conversation, $this->activeActor);
+                    $references['personal_memory'] = $this->memoryService?->forContext($this->activeActor, (int) $conversation->organization_id) ?? [];
+                }
+            }
+            $messages[] = ['role' => 'user', 'content' => json_encode($references, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
         }
-        $messages[] = ['role' => 'user', 'content' => json_encode($references, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
         if ($currentQuery !== '') {
             if ($this->currentAttachmentIds !== []) {
                 if ($this->activeActor === null || $this->activeRequest === null) {
@@ -3503,7 +3508,7 @@ class AIAssistantService
     private function buildPreparationMetadata(array $taskPlan, User $actor, int $organizationId): array
     {
         $this->executionCheckpoint();
-        if ($taskPlan['image_discussion'] ?? false) {
+        if (($taskPlan['image_discussion'] ?? false) || $this->isConversationNumberRequest($taskPlan)) {
             return ['capability_hints' => [], 'tools' => []];
         }
         $metadataFrameActive = $this->dataAccess !== null;
@@ -3536,6 +3541,9 @@ class AIAssistantService
 
     protected function resolveToolDefinitions(array $taskPlan): array
     {
+        if ($this->isConversationNumberRequest($taskPlan)) {
+            return [];
+        }
         $metadataFrameActive = $this->preparationMetadataFrameActive;
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
         if ($this->documentContextBlocked) {
@@ -3616,6 +3624,12 @@ class AIAssistantService
     protected function resolveRelevantToolNames(array $taskPlan): array
     {
         return $this->toolRegistry->getToolNames();
+    }
+
+    private function isConversationNumberRequest(array $taskPlan, ?string $query = null): bool
+    {
+        return ! ($taskPlan['image_discussion'] ?? false) && $this->currentAttachmentIds === []
+            && AssistantFactIntentClassifier::isConversationNumberRequest($query ?? (string) ($taskPlan['request']['message'] ?? ''));
     }
 
     protected function buildDomainCapabilityHints(array $taskPlan): array

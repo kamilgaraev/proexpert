@@ -268,6 +268,9 @@ class AssistantCapabilityRegistry
 
     public function match(string $query, array $context = [], ?string $goal = null): ?array
     {
+        if (AssistantFactIntentClassifier::isConversationNumberRequest($query)) {
+            return null;
+        }
         $normalizedQuery = str_replace('ё', 'е', mb_strtolower(trim($query)));
         $normalizedGoal = mb_strtolower(trim((string) $goal));
         $sourceModule = mb_strtolower(trim((string) ($context['source_module'] ?? '')));

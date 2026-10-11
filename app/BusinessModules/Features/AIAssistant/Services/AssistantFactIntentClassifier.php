@@ -43,14 +43,32 @@ final class AssistantFactIntentClassifier
 
     public static function isConversationNumberRequest(string $query): bool
     {
-        $query = preg_replace('/(?<![\pL\pN])не\s+данные\s+(?:смет[а-яё]*|проект[а-яё]*)(?:\s+(?:и|или)\s+(?:смет[а-яё]*|проект[а-яё]*))?(?![\pL\pN])/iu', '', $query) ?? $query;
-        if (preg_match(self::STATUS, $query) || preg_match(self::DATE, $query)
-            || preg_match(self::OVERDUE, $query) || preg_match(self::OWNER, $query)
-            || preg_match('/(?:смет|склад|остат|фактич|стоимост|цен[а-яё]*|бюджет|позиц|договор|плат[её]ж|оплат)/iu', $query)) {
+        $query = self::withoutNegatedBusinessContext($query);
+        if (self::hasBusinessNumberContext($query)) {
             return false;
         }
 
         return (bool) preg_match('/(?:учебн[а-яё]*\s+(?:арифметическ[а-яё]*\s+)?пример|условн[а-яё]*\s+(?:числ[а-яё]*|объ[её]м[а-яё]*)[^.!?]{0,100}(?:предыдущ[а-яё]*\s+сообщен[а-яё]*|(?:я|мы)\s+(?:назвал[а-яё]*|обсуждал[а-яё]*)))/iu', $query);
+    }
+
+    public static function isConversationNumberContext(string $query): bool
+    {
+        $query = self::withoutNegatedBusinessContext($query);
+
+        return ! self::hasBusinessNumberContext($query) && (self::isConversationNumberRequest($query)
+            || (preg_match('/\d/u', $query) && preg_match('/условн[а-яё]*\s+(?:числ[а-яё]*|объ[её]м[а-яё]*)/iu', $query)));
+    }
+
+    private static function withoutNegatedBusinessContext(string $query): string
+    {
+        return preg_replace('/(?<![\pL\pN])не\s+данные\s+(?:смет[а-яё]*|проект[а-яё]*)(?:\s+(?:и|или)\s+(?:смет[а-яё]*|проект[а-яё]*))?(?![\pL\pN])/iu', '', $query) ?? $query;
+    }
+
+    private static function hasBusinessNumberContext(string $query): bool
+    {
+        return (bool) (preg_match(self::STATUS, $query) || preg_match(self::DATE, $query)
+            || preg_match(self::OVERDUE, $query) || preg_match(self::OWNER, $query)
+            || preg_match('/(?:смет|склад|остат|фактич|стоимост|цен[а-яё]*|бюджет|позиц|договор|плат[её]ж|оплат|проект|объект|bim|ifc|модел|материал|закуп|снабжен|тендер|подряд|бригад|график|документ|отч[её]т|акт[а-яё]*\s+работ)/iu', $query));
     }
 
     public static function requiresStructuredRead(string $query): bool

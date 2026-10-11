@@ -354,6 +354,13 @@ final class AssistantConversationPrivacyTest extends TestCase
             $this->assertStringContainsString('не подтверждённые данные МОСТ', $context[1]['content']);
             $this->assertCount(2, $this->manager->getMessagesForContext($conversation, actor: $this->viewer));
             $this->assertSame([], $this->manager->getMessagesForContext($conversation));
+            $classroom = $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner, conversationNumbersOnly: true);
+            $this->assertCount(2, $classroom);
+            $this->assertStringContainsString('25', $classroom[1]['content']);
+            $this->assertCount(1, $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->viewer, conversationNumbersOnly: true));
+            $this->assistantEnabled = false;
+            $this->assertSame([], $this->manager->getMessagesForContextWithBudget($conversation, actor: $this->owner, conversationNumbersOnly: true));
+            $this->assistantEnabled = true;
         }
     }
 
