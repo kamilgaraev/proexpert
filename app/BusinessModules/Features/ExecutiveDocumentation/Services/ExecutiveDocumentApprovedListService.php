@@ -20,6 +20,7 @@ use App\Services\Storage\FileService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 
 final class ExecutiveDocumentApprovedListService
 {
@@ -167,16 +168,18 @@ final class ExecutiveDocumentApprovedListService
     private function project(int $projectId, User $actor, string $permission): Project
     {
         $project = Project::query()->findOrFail($projectId);
-        $organizationId = (int) $project->organization_id;
-        if ((int) $actor->current_organization_id !== $organizationId
-            || ! $actor->belongsToOrganization($organizationId)
+        $organizationId = (int) $actor->current_organization_id;
+        if ($organizationId <= 0
+            || ! $actor->organizations()->where('organizations.id', $organizationId)
+                ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()
+            || ! $project->hasOrganization($organizationId)
             || ! $this->projectAccess->canAccessProject($actor, $project, $organizationId)) {
-            throw new BusinessLogicException(trans_message('executive_documentation.errors.not_found'), 404);
+            throw new HttpException(404, trans_message('executive_documentation.errors.not_found'));
         }
         if (! $this->authorization->can($actor, $permission, [
             'organization_id' => $organizationId, 'project_id' => $projectId, 'strict_project_scope' => true,
         ])) {
-            throw new BusinessLogicException(trans_message('executive_documentation.errors.forbidden'), 403);
+            throw new HttpException(403, trans_message('executive_documentation.errors.forbidden'));
         }
 
         return $project;
