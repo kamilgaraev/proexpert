@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateChangeProposalRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\EstimateInterpretationAttemptRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted;
+use App\Models\SystemAdmin;
+use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -21,8 +26,14 @@ final readonly class InterpretEstimateCommand
     ) {}
 
     /** @return array<string, mixed> */
-    public function handle(EstimateGenerationSession $session, int $actorId, string $command, string $idempotencyKey): array
+    public function handle(EstimateGenerationSession $session, int|User|SystemAdmin $actor, string $command, string $idempotencyKey): array
     {
+        $actorId = is_int($actor) ? $actor : (int) $actor->id;
+        if (! is_int($actor)) {
+            app(EstimateGenerationActionAuthorization::class)->authorize($actor, $session, 'estimate_generation.review');
+        } elseif ($this->interpreter instanceof GuardedEstimateCommandInterpreter) {
+            throw new AiWireNotStarted('dialogue_trusted_actor_required');
+        }
         $context = $this->contexts->build($session);
         $fingerprint = hash('sha256', json_encode(['command' => $command, 'context_fingerprint' => $context['fingerprint']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         $existing = $this->proposals->findByIdempotency(
@@ -44,10 +55,18 @@ final readonly class InterpretEstimateCommand
             return $claim['result'];
         }
         if ($claim['action'] === 'ambiguous') {
-            throw new InterpretEstimateCommandFailure(
-                'estimate_generation.interpretation_attempt_ambiguous',
-                'attempt_ambiguous_no_retry',
-            );
+            $recovered = $this->interpreter instanceof GuardedEstimateCommandInterpreter && ! is_int($actor)
+                ? $this->interpreter->recoverReceivedResponse($session, $actor, $command, $context, $idempotencyKey) : null;
+            if ($recovered !== null) {
+                $this->attempts->acceptRecoveredResponse((int) $session->organization_id, (int) $session->project_id, (int) $session->id,
+                    $idempotencyKey, $fingerprint, $owner, $recovered->payload);
+                $claim = ['action' => 'resume', 'interpretation' => $recovered->payload];
+            } else {
+                throw new InterpretEstimateCommandFailure(
+                    'estimate_generation.interpretation_attempt_ambiguous',
+                    'attempt_ambiguous_no_retry',
+                );
+            }
         }
         if (! in_array($claim['action'], ['owned', 'resume'], true)) {
             return [
@@ -63,10 +82,18 @@ final readonly class InterpretEstimateCommand
             }
             $interpretation = new EstimateCommandInterpretation($claim['interpretation']);
         } else {
-            $this->attempts->markWireStarted((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner);
+            $beforeSend = fn () => $this->attempts->markWireStarted((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner);
             try {
-                $interpretation = $this->interpreter->interpret($session, $actorId, $command, $context);
+                if ($this->interpreter instanceof GuardedEstimateCommandInterpreter && ! is_int($actor)) {
+                    $interpretation = $this->interpreter->interpretWithAttempt($session, $actor, $command, $context, $idempotencyKey, $beforeSend);
+                } else {
+                    $beforeSend();
+                    $interpretation = $this->interpreter->interpret($session, $actorId, $command, $context);
+                }
                 $this->attempts->storeResponse((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $interpretation->payload);
+            } catch (AiWireNotStarted $exception) {
+                $this->attempts->releaseBeforeWire((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner);
+                throw new InterpretEstimateCommandFailure('estimate_generation.interpretation_not_sent', 'retry_same_attempt', $exception);
             } catch (\Throwable $exception) {
                 $this->attempts->markAmbiguous((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner);
                 throw new InterpretEstimateCommandFailure(
@@ -77,17 +104,28 @@ final readonly class InterpretEstimateCommand
             }
         }
         try {
-            if ($interpretation->kind() === 'explain') {
-                $result = ['kind' => 'explanation', 'explanation' => mb_substr((string) ($interpretation->payload['explanation'] ?? ''), 0, 8000), 'evidence' => array_slice(is_array($interpretation->payload['evidence'] ?? null) ? $interpretation->payload['evidence'] : [], 0, 100), 'read_only' => true];
+            return DB::transaction(function () use ($session, $actor, $actorId, $context, $interpretation, $command, $idempotencyKey, $fingerprint, $owner): array {
+                $current = EstimateGenerationSession::query()->where('organization_id', $session->organization_id)
+                    ->where('project_id', $session->project_id)->whereKey($session->id)->lockForUpdate()->firstOrFail();
+                if ($current->status->isTerminal() || $current->status->value === 'applying'
+                    || $current->state_version !== ($context['snapshot']['state_version'] ?? null)) {
+                    throw new RuntimeException('estimate_generation.interpretation_source_changed');
+                }
+                if (! is_int($actor)) {
+                    app(EstimateGenerationActionAuthorization::class)->authorize($actor, $current, 'estimate_generation.review');
+                }
+                if ($interpretation->kind() === 'explain') {
+                    $result = ['kind' => 'explanation', 'explanation' => mb_substr((string) ($interpretation->payload['explanation'] ?? ''), 0, 8000), 'evidence' => array_slice(is_array($interpretation->payload['evidence'] ?? null) ? $interpretation->payload['evidence'] : [], 0, 100), 'read_only' => true];
+                    $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
+
+                    return $result;
+                }
+
+                $result = ['kind' => 'proposal', 'proposal' => $this->preview->handle($current, $actorId, $command, $idempotencyKey, $interpretation)->payload];
                 $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
 
                 return $result;
-            }
-
-            $result = ['kind' => 'proposal', 'proposal' => $this->preview->handle($session, $actorId, $command, $idempotencyKey, $interpretation)->payload];
-            $this->attempts->complete((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $idempotencyKey, $fingerprint, $owner, $result);
-
-            return $result;
+            }, 3);
         } catch (InterpretEstimateCommandFailure $exception) {
             throw $exception;
         } catch (\Throwable $exception) {

@@ -29,7 +29,7 @@ final readonly class PageAnalysisPlan
             PageAnalysisRoute::SimpleContext => [ObserverProfile::Literal],
             PageAnalysisRoute::StructuredTextual, PageAnalysisRoute::DenseAmbiguous => ObserverProfile::cases(),
         };
-        $arbitration = $route !== PageAnalysisRoute::SimpleContext;
+        $arbitration = $route !== PageAnalysisRoute::SimpleContext && $semanticDisagreement;
         $reasons = $decision->reasons;
         if ($decision->effectiveRoute !== $decision->requestedRoute) {
             $reasons[] = 'server_minimum_analysis_depth';
@@ -58,7 +58,7 @@ final readonly class PageAnalysisPlan
         return new self(
             PageAnalysisRoute::DenseAmbiguous,
             ObserverProfile::cases(),
-            true,
+            false,
             true,
             [...$this->routingReasons, 'cross_document_reference'],
             true,
@@ -68,6 +68,18 @@ final readonly class PageAnalysisPlan
     public function providerCallCount(): int
     {
         return count($this->observers) + ($this->requiresArbitration ? 1 : 0);
+    }
+
+    public function withObservedDisagreement(bool $disagreement): self
+    {
+        return new self($this->route, $this->observers,
+            $disagreement && count($this->observers) === count(ObserverProfile::cases()),
+            $this->usesSemanticRegions, $this->routingReasons, $this->reusesLiteralObserver);
+    }
+
+    public function maximumProviderCallCount(): int
+    {
+        return count($this->observers) + (count($this->observers) > 1 ? 1 : 0);
     }
 
     public function additionalProviderCallCount(): int

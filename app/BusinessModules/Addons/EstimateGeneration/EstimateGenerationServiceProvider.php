@@ -721,6 +721,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiRoleRunRepository::class),
             $app->make(EstimateComposerModel::class),
             (string) config('estimate-generation.estimate_composer.model'),
+            new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner(
+                (int) config('estimate-generation.estimate_composer.max_input_bytes'),
+            ),
         ));
         $this->app->singleton(EstimateComposerInputFactory::class, static fn ($app): EstimateComposerInputFactory => new EstimateComposerInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
@@ -847,7 +850,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandInterpreter::class,
-            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\ExistingProviderEstimateCommandInterpreter::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Infrastructure\Dialogue\TimewebEstimateCommandInterpreter::class,
         );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateDialogueContextSnapshotRepository::class,

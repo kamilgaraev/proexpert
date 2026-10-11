@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => '3490bf89d027834228148043456699e006422d1851f4da58df5429dfdf295ec0',
-        'training' => '4aa12ca3f6448749e935e1136ff821dd77f9b5d6ccaf013266dea38a51ee88dc',
-        'pricing' => '4aa12ca3f6448749e935e1136ff821dd77f9b5d6ccaf013266dea38a51ee88dc',
+        'geometry' => 'f060c9577448baef373b40e2f0b5cb67b17b56c0822d116a6cae474d27b6971f',
+        'training' => '1853c863ab78ef8482cb2d65e5bdec6352ead3e699c95cb2bead809c3c423b17',
+        'pricing' => '1853c863ab78ef8482cb2d65e5bdec6352ead3e699c95cb2bead809c3c423b17',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'f13a07dc31c5b4c3b63ec49d4bb3d6310625357a17e5524b1682fe9521af053e';
+    private const FRESH_INVENTORY_DIGEST = '2a59084f155ba06365629e6e94d3bfdf46ea8ba7dc356fee05cf248c2a04e56b';
 
     private const SUBJECT = [
         'geometry' => [
@@ -205,19 +205,12 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000610_secure_estimate_project_model_v2_schema.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000620_backfill_estimate_project_model_v2.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_10_000630_finalize_estimate_project_model_v2_constraints.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000100_allow_user_input_project_facts.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000200_allow_fact_based_geometry_entities.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000300_allow_exact_native_evidence_references.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000700_create_technology_planning_projections.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_11_000710_create_completeness_planning_projections.php',
         'database/migrations/2026_08_12_000002_create_estimate_change_proposals.php',
         'database/migrations/2026_08_12_000003_add_interpretation_attempts_and_cost_state.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_12_000100_add_derived_quantity_current_projection.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000100_pin_effective_vision_model.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000400_allow_luna6_operation_pins.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000500_create_evaluation_revisions.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000600_preserve_evidence_invalidation_epochs.php',
-        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000700_allow_native_numeric_evidence_producer.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000200_expand_sheet_analysis_source_version.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_allow_sheet_analysis_retry_lineages.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_13_000210_finalize_terminal_explicit_document_retries.php',
@@ -239,6 +232,17 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_08_19_000200_allow_fact_independent_project_model_entities.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_09_28_000100_add_regional_price_component_lookup_index.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_04_000200_add_regional_price_retention_guards.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000100_index_regional_price_retention_json_references.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_07_000200_index_regional_price_retention_version_references.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000100_allow_user_input_project_facts.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000200_allow_fact_based_geometry_entities.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000300_allow_exact_native_evidence_references.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000400_allow_luna6_operation_pins.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000500_create_evaluation_revisions.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000600_preserve_evidence_invalidation_epochs.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000600_track_evaluation_revision_snapshot_mutations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000700_allow_native_numeric_evidence_producer.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000800_allow_guarded_estimate_dialogue_usage.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

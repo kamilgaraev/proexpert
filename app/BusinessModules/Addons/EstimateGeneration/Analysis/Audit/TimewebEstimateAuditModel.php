@@ -75,7 +75,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 ],
             ]);
             $decoded = json_decode($this->normalizedContent((string) ($response['content'] ?? '')), true);
-            if (! is_array($decoded) || ($response['model'] ?? null) !== $this->modelName) {
+            if (! is_array($decoded) || ($response['model'] ?? null) !== $this->modelName || ($response['finish_reason'] ?? null) === 'length') {
                 throw new RerankWireException('malformed_response');
             }
             $status = 'succeeded';

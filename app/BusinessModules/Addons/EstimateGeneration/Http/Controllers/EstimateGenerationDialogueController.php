@@ -40,7 +40,7 @@ final class EstimateGenerationDialogueController extends Controller
     {
         return $this->safe(function () use ($request, $project, $session): array {
             $this->guard($request, $project, $session);
-            $result = $this->interpret->handle($session, (int) $request->user()->id, (string) $request->validated('command'), (string) $request->validated('idempotency_key'));
+            $result = $this->interpret->handle($session, $request->user(), (string) $request->validated('command'), (string) $request->validated('idempotency_key'));
             if (($result['kind'] ?? null) === 'proposal') {
                 $result['proposal'] = (new EstimateChangeProposalResource($result['proposal']))->resolve($request);
             }

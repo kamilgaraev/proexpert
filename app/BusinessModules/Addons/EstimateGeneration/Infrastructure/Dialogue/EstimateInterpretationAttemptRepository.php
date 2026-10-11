@@ -124,4 +124,26 @@ final class EstimateInterpretationAttemptRepository
 
         return is_array($decoded) ? $decoded : null;
     }
+
+    public function releaseBeforeWire(int $organizationId, int $projectId, int $sessionId, string $key, string $fingerprint, string $owner): void
+    {
+        DB::table('estimate_interpretation_attempts')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+            ->where('idempotency_key', $key)->where('request_fingerprint', $fingerprint)->where('owner_uuid', $owner)
+            ->where('state', 'pre_wire')->whereNull('wire_started_at')
+            ->update(['owner_uuid' => null, 'lease_expires_at' => null, 'failure_code' => 'wire_not_started', 'updated_at' => now()]);
+    }
+
+    /** Accepts only a provider response already durably received; never authorizes another send. */
+    public function acceptRecoveredResponse(int $organizationId, int $projectId, int $sessionId, string $key, string $fingerprint, string $owner, array $payload): void
+    {
+        $updated = DB::table('estimate_interpretation_attempts')
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
+            ->where('idempotency_key', $key)->where('request_fingerprint', $fingerprint)->where('state', 'ambiguous')
+            ->update(['state' => 'response_received', 'interpretation_payload' => json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                'owner_uuid' => $owner, 'lease_expires_at' => now()->addSeconds(60), 'response_received_at' => now(), 'updated_at' => now()]);
+        if ($updated !== 1) {
+            throw new RuntimeException('estimate_generation.interpretation_response_collision');
+        }
+    }
 }

@@ -30,7 +30,8 @@ final class AdaptivePageRoutingTest extends TestCase
         ]);
 
         self::assertSame(PageAnalysisRoute::StructuredTextual, $decision->effectiveRoute);
-        self::assertSame(4, PageAnalysisPlan::fromDecision($decision)->providerCallCount());
+        self::assertSame(3, PageAnalysisPlan::fromDecision($decision)->providerCallCount());
+        self::assertSame(4, PageAnalysisPlan::fromDecision($decision)->maximumProviderCallCount());
     }
 
     #[Test]
@@ -76,8 +77,8 @@ final class AdaptivePageRoutingTest extends TestCase
 
         self::assertSame(PageAnalysisRoute::DenseAmbiguous, $plan->route);
         self::assertSame(ObserverProfile::cases(), $plan->observers);
-        self::assertTrue($plan->requiresArbitration);
-        self::assertSame(4, $plan->providerCallCount());
+        self::assertFalse($plan->requiresArbitration);
+        self::assertSame(3, $plan->providerCallCount());
         self::assertContains('server_consistency_hard_floor', $plan->routingReasons);
     }
 
@@ -99,12 +100,12 @@ final class AdaptivePageRoutingTest extends TestCase
         $plan = PageAnalysisPlan::fromDecision($decision, serverSignals: $signals);
 
         self::assertSame(PageAnalysisRoute::DenseAmbiguous, $plan->route);
-        self::assertSame(4, $plan->providerCallCount());
+        self::assertSame(3, $plan->providerCallCount());
         self::assertContains('server_meaningful_geometry_or_engineering', $plan->routingReasons);
     }
 
     #[Test]
-    public function specification_uses_three_independent_observers_and_always_arbitrates(): void
+    public function specification_uses_specialized_observers_and_arbitrates_only_when_their_claims_conflict(): void
     {
         $decision = $this->decision('specification', 'structured_textual');
 
@@ -112,14 +113,14 @@ final class AdaptivePageRoutingTest extends TestCase
         $disagreement = PageAnalysisPlan::fromDecision($decision, semanticDisagreement: true);
 
         self::assertSame(ObserverProfile::cases(), $ordinary->observers);
-        self::assertTrue($ordinary->requiresArbitration);
-        self::assertSame(4, $ordinary->providerCallCount());
+        self::assertFalse($ordinary->requiresArbitration);
+        self::assertSame(3, $ordinary->providerCallCount());
         self::assertTrue($disagreement->requiresArbitration);
         self::assertSame(4, $disagreement->providerCallCount());
     }
 
     #[Test]
-    public function dense_drawing_uses_three_independent_observers_arbiter_and_regions(): void
+    public function dense_drawing_preserves_regions_and_reserves_a_possible_arbiter_without_always_calling_it(): void
     {
         $decision = PageAnalysisRoutingDecision::fromProviderArray([
             'page_kind' => 'drawing',
@@ -141,9 +142,11 @@ final class AdaptivePageRoutingTest extends TestCase
 
         self::assertSame(PageAnalysisRoute::DenseAmbiguous, $plan->route);
         self::assertSame(ObserverProfile::cases(), $plan->observers);
-        self::assertTrue($plan->requiresArbitration);
+        self::assertFalse($plan->requiresArbitration);
         self::assertTrue($plan->usesSemanticRegions);
-        self::assertSame(4, $plan->providerCallCount());
+        self::assertSame(3, $plan->providerCallCount());
+        self::assertSame(4, $plan->withObservedDisagreement(true)->providerCallCount());
+        self::assertFalse($plan->withObservedDisagreement(false)->requiresArbitration);
     }
 
     #[Test]
@@ -164,7 +167,7 @@ final class AdaptivePageRoutingTest extends TestCase
         $plan = PageAnalysisPlan::fromDecision($decision);
 
         self::assertSame(PageAnalysisRoute::DenseAmbiguous, $plan->route);
-        self::assertSame(4, $plan->providerCallCount());
+        self::assertSame(3, $plan->providerCallCount());
         self::assertContains('fail_open_unknown_or_low_confidence', $plan->routingReasons);
     }
 
@@ -175,8 +178,10 @@ final class AdaptivePageRoutingTest extends TestCase
         $escalated = $initial->escalateForCrossDocumentReference();
 
         self::assertTrue($escalated->reusesLiteralObserver);
-        self::assertSame(3, $escalated->additionalProviderCallCount());
-        self::assertSame(4, $escalated->providerCallCount());
+        self::assertSame(2, $escalated->additionalProviderCallCount());
+        self::assertSame(3, $escalated->providerCallCount());
+        self::assertSame(3, $escalated->withObservedDisagreement(true)->additionalProviderCallCount());
+        self::assertTrue($escalated->withObservedDisagreement(true)->reusesLiteralObserver);
     }
 
     #[Test]
@@ -192,7 +197,7 @@ final class AdaptivePageRoutingTest extends TestCase
         $calls = array_sum(array_map(static fn (PageAnalysisPlan $plan): int => $plan->providerCallCount(), $plans));
 
         self::assertSame(200, count($plans));
-        self::assertSame(560, $calls);
+        self::assertSame(440, $calls);
         self::assertLessThan(600, $calls);
     }
 
