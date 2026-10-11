@@ -34,7 +34,7 @@ final class EntryAttachmentService
     {
         $journal = $entry->journal;
 
-        return ! $entry->trashed() && $journal !== null && ! $journal->trashed()
+        return ! $entry->isReportingEntry() && ! $entry->trashed() && $journal !== null && ! $journal->trashed()
             && $journal->project !== null
             && (int) $journal->organization_id === (int) $journal->project->organization_id
             && $this->access->canWrite($actor, $journal, ['edit', '*'])

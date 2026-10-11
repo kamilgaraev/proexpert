@@ -22,6 +22,8 @@ class MobileConstructionJournalService
         'view',
         'create',
         'update',
+        'update_report',
+        'include_in_journal',
         'delete',
         'export',
         'create_entry',

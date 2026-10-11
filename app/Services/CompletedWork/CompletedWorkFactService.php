@@ -40,6 +40,9 @@ class CompletedWorkFactService
 
     public function syncFromJournalEntry(ConstructionJournalEntry $entry): void
     {
+        if ($entry->isReportingEntry()) {
+            return;
+        }
         DB::transaction(function () use ($entry): void {
             $entry = ConstructionJournalEntry::query()
                 ->whereKey($entry->id)

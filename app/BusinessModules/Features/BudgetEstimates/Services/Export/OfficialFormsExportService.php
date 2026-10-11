@@ -1296,6 +1296,7 @@ class OfficialFormsExportService
             ]),
         ];
 
+        $data['entry'] = app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->prepareForExport($data['entry']);
         $pdf = Pdf::loadView('estimates.exports.journal_daily_report', $data);
 
         $journalNumber = $entry->journal->journal_number ?? $entry->journal_id;
@@ -1358,6 +1359,7 @@ class OfficialFormsExportService
             ->tap(fn ($query) => $this->assertPdfExportSize($query))
             ->get();
 
+        $entries = $entries->map(fn ($entry) => app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->prepareForExport($entry));
         $totals = [
             'total_entries' => $entries->count(),
             'total_workers' => $entries->sum(fn ($entry) => $entry->workers->sum('workers_count')),
@@ -1460,6 +1462,7 @@ class OfficialFormsExportService
         $entries = $query->lazy(200);
 
         foreach ($entries as $entry) {
+            $entry = app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->prepareForExport($entry);
             $sheet->setCellValue("A{$row}", $entry->entry_number);
             $sheet->setCellValue("B{$row}", $entry->entry_date->format('d.m.Y'));
             $sheet->setCellValue("C{$row}", $entry->work_description);
@@ -1556,7 +1559,7 @@ class OfficialFormsExportService
 
         return [
             'journal' => $journal->load('organization', 'project.organization', 'contract.contractor', 'contract.organization', 'createdBy'),
-            'entries' => $entries,
+            'entries' => $entries->map(fn ($entry) => app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->prepareForExport($entry)),
             'period_from' => $from,
             'period_to' => $to,
         ];
@@ -2000,6 +2003,7 @@ class OfficialFormsExportService
             'materials' => [],
         ];
         foreach ($entries as $entry) {
+            $entry = app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->prepareForExport($entry);
             $summary['total_entries']++;
             $summary['total_workers'] += (float) $entry->workers->sum('workers_count');
             $summary['total_work_hours'] += (float) $entry->workers->sum('hours_worked');

@@ -119,7 +119,7 @@ class ConstructionJournalPayloadService
 
         $blockers = $this->workflowGuardService->journalEntryBlockers($entry);
 
-        return [
+        $payload = [
             'id' => $entry->id,
             'journal_id' => $entry->journal_id,
             'schedule_task_id' => $entry->schedule_task_id,
@@ -289,6 +289,18 @@ class ConstructionJournalPayloadService
             'available_actions' => $this->buildEntryActions($entry, $user),
             'attachments' => $entry->attachments->map(fn ($attachment): array => $this->attachments->metadata($attachment))->values()->all(),
         ];
+
+        $payload['source_entry_id'] = $entry->source_entry_id;
+        $payload['source_entry'] = $entry->source_entry_snapshot['source'] ?? null;
+        $payload['origin_entry'] = $entry->source_entry_snapshot['origin'] ?? null;
+        $payload['report_comment'] = $entry->isReportingEntry() ? $entry->quality_notes : null;
+        if ($entry->isReportingEntry()) {
+            foreach (['weather_conditions', 'problems_description', 'safety_notes', 'visitors_notes', 'quality_notes', 'workVolumes', 'workers', 'equipment', 'materials'] as $field) {
+                $payload[$field] = $entry->source_entry_snapshot[$field] ?? (in_array($field, ['workVolumes', 'workers', 'equipment', 'materials'], true) ? [] : null);
+            }
+        }
+
+        return $payload;
     }
 
     public function buildJournalSummary(ConstructionJournal $journal): array
@@ -353,7 +365,7 @@ class ConstructionJournalPayloadService
         $actions = ['view'];
 
         if (Gate::forUser($user)->allows('update', $entry)) {
-            $actions[] = 'update';
+            $actions[] = $entry->isReportingEntry() ? 'update_report' : 'update';
             if ($this->attachments->canUpload($user, $entry)) {
                 $actions[] = 'upload_attachment';
             }
@@ -380,6 +392,10 @@ class ConstructionJournalPayloadService
             $actions[] = 'export_daily_report';
         }
 
+        if (app(\App\Services\ConstructionJournal\JournalEntryReportingService::class)->canInclude($user, $entry)) {
+            $actions[] = 'include_in_journal';
+        }
+
         return array_values(array_unique($actions));
     }
 
@@ -389,7 +405,7 @@ class ConstructionJournalPayloadService
 
         if (trim((string) $entry->work_description) === ''
             || $entry->entry_date === null
-            || (float) $entry->workVolumes->sum('quantity') <= 0) {
+            || (! $entry->isReportingEntry() && (float) $entry->workVolumes->sum('quantity') <= 0)) {
             return false;
         }
 

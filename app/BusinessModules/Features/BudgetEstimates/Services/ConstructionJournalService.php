@@ -247,6 +247,9 @@ class ConstructionJournalService
         return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
             $this->assertEntryEditable($entry);
+            if ($entry->isReportingEntry() && array_diff(array_keys($data), ['work_description', 'quality_notes']) !== []) {
+                throw new DomainException(trans_message('construction_journal.errors.reporting_facts_immutable'));
+            }
             $this->assertEntryScope($entry->journal, $data, $entry);
 
             if (array_key_exists('materials', $data)) {
