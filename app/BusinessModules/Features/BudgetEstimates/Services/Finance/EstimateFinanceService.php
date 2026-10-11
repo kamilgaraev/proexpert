@@ -587,7 +587,17 @@ final class EstimateFinanceService
 
         $this->acceptedVolume->assertRetained($estimate, $data['target_keys'], $rows);
 
-        return $this->remainder->apply($estimate, $rows);
+        $normalized = $this->remainder->apply($estimate, $rows);
+        $newKeys = [];
+        foreach ($data['lines'] as $line) {
+            if (! $knownKeys->has($line['key']) && ! isset($line['legacy_link_id'])) {
+                $newKeys[] = $line['key'];
+            }
+        }
+        app(EstimateFinanceContractBudget::class)->assertAvailable($contracts->all(), $estimate, $data['target_keys'], $normalized, $newKeys,
+            $knownKeys->map(fn (EstimateFinanceAllocation $allocation): array => $allocation->getAttributes())->all());
+
+        return $normalized;
     }
 
     private function writeAllocations(array $rows, bool $insert): void

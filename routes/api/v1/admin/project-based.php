@@ -116,6 +116,10 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         // Старые маршруты projects/{project}/contracts/{contract}/payments больше не поддерживаются
 
         // Contract Specifications
+        Route::get('{contract}/work-specification', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractWorkSpecificationController::class, 'show'])
+            ->middleware(['authorize:contracts.view,project,project', 'authorize:specifications.view,project,project']);
+        Route::get('{contract}/work-specification/export', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractWorkSpecificationController::class, 'export'])
+            ->middleware(['authorize:contracts.view,project,project', 'authorize:specifications.view,project,project']);
         Route::prefix('{contract}/specifications')->group(function () {
             Route::get('/', [ContractSpecificationController::class, 'index'])
                 ->middleware('authorize:specifications.view,project,project');
