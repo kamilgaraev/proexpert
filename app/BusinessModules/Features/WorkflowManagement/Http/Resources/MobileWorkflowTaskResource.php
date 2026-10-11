@@ -18,7 +18,12 @@ final class MobileWorkflowTaskResource extends JsonResource
         /** @var CompletedWork $task */
         $task = $this->resource;
         $workflow = $this->workflowData($task);
-        $availableActions = $this->availableActions($request, $task);
+        $workflowActions = $this->availableActions($request, $task);
+        $legacyActions = ['approve', 'reject', 'request_changes', 'comment'];
+        $availableActions = array_values(array_intersect($workflowActions, $legacyActions));
+        $legacyHistory = array_map(static fn (array $entry): array => ($entry['action'] ?? null) === 'confirm'
+            ? [...$entry, 'action' => 'approve'] : $entry, $workflow['status_history']);
+        $legacyHistory = array_values(array_filter($legacyHistory, static fn (array $entry): bool => in_array($entry['action'] ?? null, $legacyActions, true)));
         $nextAction = $availableActions[0] ?? null;
 
         return [
@@ -64,8 +69,10 @@ final class MobileWorkflowTaskResource extends JsonResource
             'status' => $task->status,
             'status_label' => $this->label("workflow_management.statuses.{$task->status}"),
             'comments' => $workflow['comments'],
-            'status_history' => $workflow['status_history'],
+            'status_history' => $legacyHistory,
             'available_actions' => $availableActions,
+            'workflow_actions' => $workflowActions,
+            'workflow_status_history' => $workflow['status_history'],
             'workflow_summary' => [
                 'stage' => $task->status,
                 'status' => $task->status,

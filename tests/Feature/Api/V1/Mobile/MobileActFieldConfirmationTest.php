@@ -9,11 +9,13 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\ContractOrganizationView;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use App\Models\User;
 use App\Services\Auth\JwtTokenIssuer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -181,6 +183,192 @@ final class MobileActFieldConfirmationTest extends TestCase
             'total_amount' => 10000,
             'status' => 'active',
         ]);
+    }
+
+    public function test_second_party_can_read_owner_files_and_confirm_with_actor_organization_snapshot(): void
+    {
+        Storage::fake('s3');
+        [$owner, $reviewer, $project, $contract, $act] = $this->createSharedActFixture();
+        $path = "org-{$owner->organization->id}/acts/{$act->id}/evidence.pdf";
+        Storage::disk('s3')->put($path, 'shared act evidence');
+        $file = File::query()->create([
+            'organization_id' => $owner->organization->id,
+            'fileable_id' => $act->id,
+            'fileable_type' => ContractPerformanceAct::class,
+            'user_id' => $owner->user->id,
+            'name' => 'evidence.pdf',
+            'original_name' => 'evidence.pdf',
+            'path' => $path,
+            'mime_type' => 'application/pdf',
+            'size' => 19,
+            'disk' => 's3',
+            'type' => 'document',
+        ]);
+
+        $this->withHeaders($reviewer->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/acts/{$act->id}")
+            ->assertOk()
+            ->assertJsonPath('data.capabilities.can_field_confirm', true)
+            ->assertJsonPath('data.capabilities.can_view_files', true)
+            ->assertJsonPath('data.files.0.id', $file->id);
+        $this->withHeaders($reviewer->mobileAuthHeaders())
+            ->get("/api/v1/mobile/acts/{$act->id}/files/{$file->id}")
+            ->assertOk()
+            ->assertStreamedContent('shared act evidence');
+
+        $payload = [
+            'signature_data' => base64_encode("\x89PNG\r\n\x1a\n".str_repeat('shared-evidence', 16)),
+            'idempotency_key' => 'second-party-field-confirmation-001',
+        ];
+        $first = $this->withHeaders($reviewer->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/acts/{$act->id}/field-confirmations", $payload)
+            ->assertCreated()
+            ->assertJsonPath('data.organization_id', $reviewer->organization->id)
+            ->assertJsonPath('data.legal_signature', false);
+        $this->withHeaders($reviewer->mobileAuthHeaders())
+            ->postJson("/api/v1/mobile/acts/{$act->id}/field-confirmations", $payload)
+            ->assertOk()
+            ->assertJsonPath('data.id', $first->json('data.id'));
+        $this->assertSame(ContractPerformanceAct::STATUS_APPROVED, $act->fresh()->status);
+        $this->assertDatabaseHas('files', [
+            'id' => $first->json('data.file_id'),
+            'organization_id' => $owner->organization->id,
+            'user_id' => $reviewer->user->id,
+        ]);
+        $this->withHeaders($reviewer->mobileAuthHeaders())
+            ->getJson("/api/v1/mobile/acts/{$act->id}")
+            ->assertOk()
+            ->assertJsonPath('data.capabilities.can_field_confirm', false)
+            ->assertJsonPath('data.field_confirmations.0.organization_id', $reviewer->organization->id);
+    }
+
+    public function test_second_party_without_assignment_or_active_membership_cannot_read_or_confirm(): void
+    {
+        [$owner, $reviewer, $project, $contract, $act] = $this->createSharedActFixture();
+        $payload = [
+            'signature_data' => base64_encode("\x89PNG\r\n\x1a\n".str_repeat('shared-evidence', 16)),
+            'idempotency_key' => 'second-party-denied-confirmation-001',
+        ];
+        $reviewer->user->assignedProjects()->detach($project->id);
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson("/api/v1/mobile/acts/{$act->id}")->assertNotFound();
+        $this->withHeaders($reviewer->mobileAuthHeaders())->postJson("/api/v1/mobile/acts/{$act->id}/field-confirmations", $payload)->assertNotFound();
+
+        $reviewer->user->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        ProjectOrganization::query()->where('project_id', $project->id)->where('organization_id', $reviewer->organization->id)->update(['is_active' => false]);
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson("/api/v1/mobile/acts/{$act->id}")->assertNotFound();
+        $this->assertDatabaseCount('act_field_confirmations', 0);
+    }
+
+    public function test_revoked_contract_party_and_foreign_file_ids_are_denied(): void
+    {
+        Storage::fake('s3');
+        [$owner, $reviewer, $project, $contract, $act] = $this->createSharedActFixture();
+        $foreignAct = $this->createAct($contract->id, $project->id, 'FOREIGN-FILE-ACT');
+        $file = File::query()->create([
+            'organization_id' => $owner->organization->id,
+            'fileable_id' => $foreignAct->id,
+            'fileable_type' => ContractPerformanceAct::class,
+            'user_id' => $owner->user->id,
+            'name' => 'foreign.pdf',
+            'original_name' => 'foreign.pdf',
+            'path' => "org-{$owner->organization->id}/foreign.pdf",
+            'mime_type' => 'application/pdf',
+            'size' => 1,
+            'disk' => 's3',
+            'type' => 'document',
+        ]);
+        $this->withHeaders($reviewer->mobileAuthHeaders())
+            ->get("/api/v1/mobile/acts/{$act->id}/files/{$file->id}")
+            ->assertNotFound();
+        ContractOrganizationView::query()->where('contract_id', $contract->id)->where('organization_id', $reviewer->organization->id)->update(['access_revoked_at' => now()]);
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson("/api/v1/mobile/acts/{$act->id}")->assertForbidden();
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson('/api/v1/mobile/acts?project_id='.$project->id)
+            ->assertOk()->assertJsonPath('data.meta.total', 0);
+    }
+
+    private function createSharedActFixture(): array
+    {
+        $owner = AdminApiTestContext::create(roleSlug: 'foreman');
+        $reviewer = AdminApiTestContext::create(roleSlug: 'foreman');
+        $this->activateActReportingModule((int) $owner->organization->id);
+        $this->activateActReportingModule((int) $reviewer->organization->id);
+        $reviewer->organization->users()->updateExistingPivot($reviewer->user->id, ['project_access_mode' => 'assigned_projects']);
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        ProjectOrganization::query()->create([
+            'project_id' => $project->id,
+            'organization_id' => $reviewer->organization->id,
+            'role' => 'child_contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+        ]);
+        $reviewer->user->assignedProjects()->attach($project->id, ['role' => 'member', 'is_active' => true]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $owner->organization->id,
+            'source_organization_id' => $reviewer->organization->id,
+            'name' => 'Active second contract party',
+        ]);
+        $contract = $this->createContract($owner->organization->id, $project->id, $contractor->id, 'SHARED-FIELD-ACT');
+        ContractOrganizationView::query()->create(['contract_id' => $contract->id, 'organization_id' => $reviewer->organization->id]);
+        $act = $this->createAct($contract->id, $project->id, 'SHARED-FIELD-KS2');
+
+        return [$owner, $reviewer, $project, $contract, $act];
+    }
+
+    public function test_contract_view_without_party_identity_does_not_allow_field_confirmation(): void
+    {
+        [$owner, $reviewer, $project, $contract, $act] = $this->createSharedActFixture();
+        $contract->contractor->update(['source_organization_id' => null]);
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson("/api/v1/mobile/acts/{$act->id}")
+            ->assertOk()->assertJsonPath('data.capabilities.can_field_confirm', false);
+        $this->withHeaders($reviewer->mobileAuthHeaders())->postJson("/api/v1/mobile/acts/{$act->id}/field-confirmations", [
+            'signature_data' => base64_encode("\x89PNG\r\n\x1a\n".str_repeat('shared-evidence', 16)),
+            'idempotency_key' => 'reader-not-party-confirmation-001',
+        ])->assertNotFound();
+        $this->assertDatabaseCount('act_field_confirmations', 0);
+    }
+
+    public function test_multi_project_act_returns_actual_project_and_allows_its_assigned_reviewer(): void
+    {
+        [$owner, $reviewer, $project, $contract, $act] = $this->createSharedActFixture();
+        $actualProject = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        ProjectOrganization::query()->create([
+            'project_id' => $actualProject->id,
+            'organization_id' => $reviewer->organization->id,
+            'role' => 'child_contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+        ]);
+        $reviewer->user->assignedProjects()->detach($project->id);
+        $reviewer->user->assignedProjects()->attach($actualProject->id, ['role' => 'member', 'is_active' => true]);
+        $contract->update(['is_multi_project' => true]);
+        $contract->projects()->attach([$project->id, $actualProject->id]);
+        $act->update(['project_id' => $actualProject->id]);
+
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson("/api/v1/mobile/acts/{$act->id}")
+            ->assertOk()
+            ->assertJsonPath('data.project_id', $actualProject->id)
+            ->assertJsonPath('data.project.id', $actualProject->id)
+            ->assertJsonPath('data.project.name', $actualProject->name)
+            ->assertJsonPath('data.capabilities.can_field_confirm', true);
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson('/api/v1/mobile/acts?project_id='.$actualProject->id)
+            ->assertOk()
+            ->assertJsonPath('data.items.0.project_id', $actualProject->id);
+    }
+
+    public function test_disabled_actor_organization_is_denied_even_with_active_membership_and_project_grants(): void
+    {
+        [$owner, $reviewer, $project, $contract, $act] = $this->createSharedActFixture();
+        $reviewer->organization->update(['is_active' => false]);
+        $this->assertFalse(app(\App\Services\ActReport\ActReportActionAccessService::class)->canAccessRecord(
+            $reviewer->user, $act, $reviewer->organization->id, 'act_reports.field_confirm', true,
+        ));
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson('/api/v1/mobile/acts')->assertForbidden();
+        $this->withHeaders($reviewer->mobileAuthHeaders())->getJson("/api/v1/mobile/acts/{$act->id}")->assertNotFound();
+        $this->withHeaders($reviewer->mobileAuthHeaders())->postJson("/api/v1/mobile/acts/{$act->id}/field-confirmations", [
+            'signature_data' => base64_encode("\x89PNG\r\n\x1a\n".str_repeat('shared-evidence', 16)),
+            'idempotency_key' => 'disabled-actor-confirmation-001',
+        ])->assertNotFound();
+        $this->assertDatabaseCount('act_field_confirmations', 0);
     }
 
     private function createAct(int $contractId, ?int $projectId, string $number): ContractPerformanceAct

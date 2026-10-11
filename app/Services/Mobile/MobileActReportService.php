@@ -7,9 +7,11 @@ namespace App\Services\Mobile;
 use App\Exceptions\BusinessLogicException;
 use App\Models\ActFieldConfirmation;
 use App\Models\ContractPerformanceAct;
+use App\Models\File;
 use App\Models\User;
 use App\Services\ActReport\ActFieldConfirmationService;
 use App\Services\ActReport\ActReportAccessService;
+use App\Services\ActReport\ActReportActionAccessService;
 use App\Services\ActReport\ActReportFileService;
 use App\Services\ActReport\ActReportService;
 use Illuminate\Http\Request;
@@ -21,6 +23,7 @@ final class MobileActReportService
 
     public function __construct(
         private readonly ActReportAccessService $access,
+        private readonly ActReportActionAccessService $actionAccess,
         private readonly ActReportService $acts,
         private readonly ActReportFileService $files,
         private readonly ActFieldConfirmationService $confirmations,
@@ -32,7 +35,7 @@ final class MobileActReportService
     {
         $organizationId = $this->access->currentOrganizationId($request);
         $user = $request->user();
-        if (! $user instanceof User) {
+        if (! $user instanceof User || ! $this->actionAccess->isActiveActor($user, $organizationId)) {
             throw new BusinessLogicException(trans_message('act_reports.access_denied'), 403);
         }
         $selectedProjectId = isset($filters['project_id']) ? (int) $filters['project_id'] : null;
@@ -68,6 +71,7 @@ final class MobileActReportService
         $filters['include_projectless'] = $selectedProjectId === null && $hasOrganizationPermission;
         unset($filters['project_id']);
         $page = $this->acts->getActsList($organizationId, $filters, (int) ($filters['per_page'] ?? 20));
+        $page->getCollection()->loadMissing('project');
         $confirmationActIds = $user instanceof User
             ? ActFieldConfirmation::query()
                 ->whereIn('act_id', array_map(static fn (ContractPerformanceAct $act): int => (int) $act->id, $page->items()))
@@ -82,7 +86,8 @@ final class MobileActReportService
                 $act,
                 $user,
                 alreadyConfirmed: in_array((int) $act->id, $confirmationActIds, true),
-                confirmationPreloaded: true
+                confirmationPreloaded: true,
+                actorOrganizationId: $organizationId
             ))->all(),
             'meta' => [
                 'current_page' => $page->currentPage(),
@@ -99,9 +104,9 @@ final class MobileActReportService
         $organizationId = $this->access->currentOrganizationId($request);
         $record = $this->access->resolveAccessibleAct($request, $act);
         $this->assertRecordPermission($request, $record, ActReportAccessService::PERMISSION_VIEW, $organizationId);
-        $record->loadMissing(['contract.project', 'contract.contractor', 'files', 'completedWorks', 'lines']);
+        $record->loadMissing(['project', 'contract.project', 'contract.contractor', 'files', 'completedWorks', 'lines']);
 
-        return $this->brief($record, $request->user(), true);
+        return $this->brief($record, $request->user(), true, actorOrganizationId: $organizationId);
     }
 
     public function downloadFile(Request $request, int $act, int $file): StreamedResponse
@@ -139,11 +144,15 @@ final class MobileActReportService
         ?User $user,
         bool $detailed = false,
         bool $alreadyConfirmed = false,
-        bool $confirmationPreloaded = false
+        bool $confirmationPreloaded = false,
+        ?int $actorOrganizationId = null
     ): array {
         $organizationId = (int) ($act->contract?->organization_id ?? 0);
+        $actorOrganizationId ??= (int) ($user?->current_organization_id ?? 0);
+        $project = $act->project_id === null ? $act->contract?->project : $act->project;
         $canConfirm = $user instanceof User
-            && $this->canAccessRecord($user, $act, self::PERMISSION_FIELD_CONFIRM)
+            && $act->status !== ContractPerformanceAct::STATUS_ANNULLED
+            && $this->canAccessRecord($user, $act, self::PERMISSION_FIELD_CONFIRM, $actorOrganizationId)
             && ! ($confirmationPreloaded
                 ? $alreadyConfirmed
                 : ActFieldConfirmation::query()->where('act_id', $act->id)->where('user_id', $user->id)->exists());
@@ -161,31 +170,37 @@ final class MobileActReportService
             'currency' => $act->currency,
             'description' => $act->description,
             'created_at' => $act->created_at?->toISOString(),
-            'project' => $act->contract?->project ? [
-                'id' => (int) $act->contract->project->id,
-                'name' => $act->contract->project->name,
+            'project_id' => $act->project_id === null ? $act->contract?->project_id : (int) $act->project_id,
+            'project' => $project ? [
+                'id' => (int) $project->id,
+                'name' => $project->name,
             ] : null,
-            'project_name' => $act->contract?->project?->name,
+            'project_name' => $project?->name,
             'contractor_name' => $act->contract?->contractor?->name,
             'contract' => $act->contract ? [
                 'id' => (int) $act->contract->id,
                 'number' => $act->contract->number,
                 'contractor_name' => $act->contract->contractor?->name,
             ] : null,
-            'capabilities' => ['can_field_confirm' => $canConfirm],
+            'capabilities' => [
+                'can_field_confirm' => $canConfirm,
+                'can_view_files' => true,
+            ],
         ];
         if (! $detailed) {
             return $data;
         }
 
-        $data['files'] = $act->files->map(fn ($file): array => [
-            'id' => (int) $file->id,
-            'name' => $file->original_name ?: $file->name,
-            'mime_type' => $file->mime_type,
-            'size' => (int) $file->size,
-            'category' => $file->category,
-            'download_url' => route('api.v1.mobile.acts.files.download', ['act' => $act->id, 'file' => $file->id]),
-        ])->values()->all();
+        $data['files'] = $act->files
+            ->filter(fn (File $file): bool => (int) $file->organization_id === $organizationId)
+            ->map(fn ($file): array => [
+                'id' => (int) $file->id,
+                'name' => $file->original_name ?: $file->name,
+                'mime_type' => $file->mime_type,
+                'size' => (int) $file->size,
+                'category' => $file->category,
+                'download_url' => route('api.v1.mobile.acts.files.download', ['act' => $act->id, 'file' => $file->id]),
+            ])->values()->all();
         $data['lines'] = $act->lines->map(fn ($line): array => [
             'id' => (int) $line->id,
             'name' => $line->title ?? '',
@@ -201,6 +216,7 @@ final class MobileActReportService
             ->map(fn (ActFieldConfirmation $confirmation): array => [
                 'id' => (int) $confirmation->id,
                 'user_id' => (int) $confirmation->user_id,
+                'organization_id' => (int) $confirmation->organization_id,
                 'user_name' => $confirmation->user?->name,
                 'file_id' => (int) $confirmation->file_id,
                 'confirmed_at' => $confirmation->confirmed_at?->toISOString(),
@@ -214,30 +230,20 @@ final class MobileActReportService
     private function assertRecordPermission(Request $request, ContractPerformanceAct $act, string $permission, int $organizationId): void
     {
         $user = $request->user();
-        if (! $user instanceof User || ! $this->canAccessRecord($user, $act, $permission)) {
-            throw new BusinessLogicException(trans_message('act_reports.act_not_found'), 404);
-        }
-        $contractOrganizationId = (int) ($act->contract?->organization_id ?? 0);
-        if ($contractOrganizationId !== $organizationId) {
+        if (! $user instanceof User || ! $this->canAccessRecord($user, $act, $permission, $organizationId)) {
             throw new BusinessLogicException(trans_message('act_reports.act_not_found'), 404);
         }
     }
 
-    private function canAccessRecord(User $user, ContractPerformanceAct $act, string $permission): bool
+    private function canAccessRecord(User $user, ContractPerformanceAct $act, string $permission, int $organizationId): bool
     {
-        $organizationId = (int) ($act->contract?->organization_id ?? 0);
-        $projectId = $act->project_id === null ? $act->contract?->project_id : $act->project_id;
-        if ($organizationId <= 0) {
-            return false;
-        }
-        if ($projectId === null) {
-            return $user->can($permission, ['organization_id' => $organizationId]);
-        }
-        if (! $this->projects->query($user, $organizationId)->whereKey((int) $projectId)->exists()) {
-            return false;
-        }
-
-        return $this->hasContextPermission($user, $permission, $organizationId, (int) $projectId);
+        return $this->actionAccess->canAccessRecord(
+            $user,
+            $act,
+            $organizationId,
+            $permission,
+            $permission === self::PERMISSION_FIELD_CONFIRM,
+        );
     }
 
     private function hasContextPermission(User $user, string $permission, int $organizationId, int $projectId): bool

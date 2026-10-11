@@ -23,7 +23,7 @@ class JournalEquipment extends Model
 
     protected $casts = [
         'quantity' => 'integer',
-        'hours_used' => 'decimal:2',
+        'hours_used' => 'decimal:8',
     ];
 
     // === RELATIONSHIPS ===
@@ -38,4 +38,3 @@ class JournalEquipment extends Model
         return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
     }
 }
-

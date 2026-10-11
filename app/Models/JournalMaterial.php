@@ -27,7 +27,7 @@ class JournalMaterial extends Model
     ];
 
     protected $casts = [
-        'quantity' => 'decimal:3',
+        'quantity' => 'decimal:8',
     ];
 
     // === RELATIONSHIPS ===
@@ -62,4 +62,3 @@ class JournalMaterial extends Model
         return $this->belongsTo(OrganizationWarehouse::class, 'custody_warehouse_id');
     }
 }
-

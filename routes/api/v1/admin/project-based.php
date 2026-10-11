@@ -151,6 +151,9 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         require __DIR__.'/completed_work_reconciliation.php';
         Route::get('/{completed_work}', [CompletedWorkController::class, 'showProjectWork']);
         Route::post('/{completed_work}/confirm', [CompletedWorkController::class, 'confirmProjectWork']);
+        Route::post('/{completed_work}/reject', [\App\Http\Controllers\Api\V1\Admin\CompletedWorkWorkflowController::class, 'handle'])->defaults('workflow_action', 'reject');
+        Route::post('/{completed_work}/request-changes', [\App\Http\Controllers\Api\V1\Admin\CompletedWorkWorkflowController::class, 'handle'])->defaults('workflow_action', 'request_changes');
+        Route::post('/{completed_work}/submit', [\App\Http\Controllers\Api\V1\Admin\CompletedWorkWorkflowController::class, 'handle'])->defaults('workflow_action', 'submit');
         Route::put('/{completed_work}', [CompletedWorkController::class, 'updateProjectWork']);
         Route::post('/{completed_work}/correction', [CompletedWorkCorrectionController::class, 'store']);
         Route::delete('/{completed_work}', [CompletedWorkController::class, 'destroyProjectWork']);

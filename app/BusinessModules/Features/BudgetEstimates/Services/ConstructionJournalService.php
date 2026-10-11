@@ -47,6 +47,7 @@ class ConstructionJournalService
         if (! $access->canAccessProject($user, $project) || ! $access->hasPermission($user, $project, ['create', '*'])) {
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
         }
+
         return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
             if (! isset($data['contract_id'])) {
                 throw new DomainException(trans_message('construction_journal.errors.contract_required'));
@@ -93,6 +94,7 @@ class ConstructionJournalService
     public function deleteJournal(ConstructionJournal $journal, ?User $actor = null): bool
     {
         $this->assertJournalWrite($journal, ['delete', '*'], $actor);
+
         return DB::transaction(function () use ($journal): bool {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::ACTIVE || $journal->entries()->withTrashed()->exists()) {
@@ -109,6 +111,7 @@ class ConstructionJournalService
     public function closeJournal(ConstructionJournal $journal, ?User $actor = null): ConstructionJournal
     {
         $this->assertJournalWrite($journal, ['edit', '*'], $actor);
+
         return DB::transaction(function () use ($journal): ConstructionJournal {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::ACTIVE || $journal->entries()->whereIn('status', [
@@ -128,6 +131,7 @@ class ConstructionJournalService
     public function archiveJournal(ConstructionJournal $journal, ?User $actor = null): ConstructionJournal
     {
         $this->assertJournalWrite($journal, ['edit', '*'], $actor);
+
         return DB::transaction(function () use ($journal): ConstructionJournal {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::CLOSED) {
@@ -143,6 +147,7 @@ class ConstructionJournalService
     public function reopenJournal(ConstructionJournal $journal, ?User $actor = null): ConstructionJournal
     {
         $this->assertJournalWrite($journal, ['reopen', '*'], $actor);
+
         return DB::transaction(function () use ($journal): ConstructionJournal {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             if ($journal->status !== JournalStatusEnum::CLOSED) {
@@ -158,6 +163,7 @@ class ConstructionJournalService
     public function createEntry(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
     {
         $this->assertJournalWrite($journal, ['create', '*'], $user);
+
         return DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
             $journal = ConstructionJournal::query()->whereKey($journal->id)->lockForUpdate()->firstOrFail();
             $this->assertJournalActive($journal);
@@ -237,6 +243,7 @@ class ConstructionJournalService
         if (! $actor || ! app(\App\Policies\ConstructionJournalEntryPolicy::class)->update($actor, $entry)) {
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
         }
+
         return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
             $entry = $this->lockJournalAndEntry($entry);
             $this->assertEntryEditable($entry);
@@ -343,6 +350,7 @@ class ConstructionJournalService
         if (! $actor || ! app(\App\Policies\ConstructionJournalEntryPolicy::class)->delete($actor, $entry)) {
             throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
         }
+
         return DB::transaction(function () use ($entry): bool {
             $entry = $this->lockJournalAndEntry($entry);
             if ($entry->status !== JournalEntryStatusEnum::DRAFT || $entry->approvalEvents()->exists()) {
@@ -389,6 +397,7 @@ class ConstructionJournalService
     public function getDailyEntries(ConstructionJournal $journal, Carbon $date, ?User $actor = null): Collection
     {
         $this->assertJournalRead($journal, $actor);
+
         return $journal->entries()
             ->byDate($date)
             ->with([
@@ -409,6 +418,7 @@ class ConstructionJournalService
     public function getEntriesForPeriod(ConstructionJournal $journal, Carbon $from, Carbon $to, ?User $actor = null): Collection
     {
         $this->assertJournalRead($journal, $actor);
+
         return $journal->entries()
             ->byDateRange($from, $to)
             ->with([
@@ -819,6 +829,8 @@ class ConstructionJournalService
         $this->assertScheduleTaskScope($journal, $scheduleTaskId, $estimateId);
         $this->assertEntryEstimateConsistency($data['work_volumes'] ?? [], $estimateId);
         $this->assertScheduleTaskVolumeCompatibility($data['work_volumes'] ?? [], $scheduleTaskId);
+        $resourceParentIds = collect(array_key_exists('work_volumes', $data) ? ($data['work_volumes'] ?? []) : ($entry?->workVolumes?->all() ?? []))
+            ->pluck('estimate_item_id')->filter()->map(static fn ($id): int => (int) $id)->all();
         foreach (['work_volumes' => 'workVolumes', 'workers' => 'workers', 'equipment' => 'equipment', 'materials' => 'materials'] as $key => $relation) {
             $seenIds = [];
             foreach ($data[$key] ?? [] as $row) {
@@ -863,7 +875,7 @@ class ConstructionJournalService
 
         foreach (($data['materials'] ?? []) as $material) {
             $this->assertMaterialScope($journal, $material['material_id'] ?? null);
-            $this->assertEstimateResourceItemScope($journal, $material['estimate_item_id'] ?? null, $estimateId, ['material']);
+            $this->assertEstimateResourceItemScope($journal, $material['estimate_item_id'] ?? null, $estimateId, ['material'], $resourceParentIds);
             $this->assertProjectMaterialDeliveryScope($journal, $material, $entry, $user);
         }
 
@@ -873,11 +885,22 @@ class ConstructionJournalService
                 $equipment['estimate_item_id'] ?? null,
                 $estimateId,
                 ['equipment', 'machinery'],
+                $resourceParentIds,
             );
         }
 
         foreach (($data['workers'] ?? []) as $worker) {
-            $this->assertEstimateResourceItemScope($journal, $worker['estimate_item_id'] ?? null, $estimateId, ['labor']);
+            $this->assertEstimateResourceItemScope($journal, $worker['estimate_item_id'] ?? null, $estimateId, ['labor'], $resourceParentIds);
+        }
+        if ($entry && (array_key_exists('work_volumes', $data) || array_key_exists('estimate_id', $data))) {
+            foreach (['materials' => ['material'], 'workers' => ['labor'], 'equipment' => ['equipment', 'machinery']] as $relation => $types) {
+                if (array_key_exists($relation, $data)) {
+                    continue;
+                }
+                foreach ($entry->{$relation} as $savedResource) {
+                    $this->assertEstimateResourceItemScope($journal, $savedResource->estimate_item_id, $estimateId, $types, $resourceParentIds);
+                }
+            }
         }
     }
 
@@ -1016,7 +1039,8 @@ class ConstructionJournalService
         ConstructionJournal $journal,
         ?int $estimateItemId,
         ?int $estimateId,
-        array $allowedTypes
+        array $allowedTypes,
+        array $parentWorkIds = [],
     ): void {
         if (! $estimateItemId) {
             return;
@@ -1024,7 +1048,7 @@ class ConstructionJournalService
 
         $item = EstimateItem::query()
             ->where('id', $estimateItemId)
-            ->whereIn('item_type', $allowedTypes)
+            ->with(['measurementUnit', 'material', 'parentWork'])
             ->whereHas('estimate', function ($query) use ($journal, $estimateId): void {
                 $query->where('organization_id', $journal->organization_id)
                     ->where('project_id', $journal->project_id);
@@ -1035,7 +1059,13 @@ class ConstructionJournalService
             })
             ->first();
 
-        if (! $item) {
+        if (! $item || ! in_array(app(\App\Services\ConstructionJournal\JournalEstimateResourceMapper::class)->resourceTypeForItem($item, (int) $journal->organization_id), $allowedTypes, true)
+            || ($item->measurement_unit_id !== null && (! $item->measurementUnit || (int) $item->measurementUnit->organization_id !== (int) $journal->organization_id))
+            || ($item->material_id !== null && (! $item->material || (int) $item->material->organization_id !== (int) $journal->organization_id))
+            || ($item->parent_work_id !== null && (! $item->parentWork
+                || $item->parentWork->item_type !== \App\Enums\EstimatePositionItemType::WORK
+                || (int) $item->parentWork->estimate_id !== (int) $item->estimate_id
+                || ! in_array((int) $item->parent_work_id, $parentWorkIds, true)))) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
         }
     }

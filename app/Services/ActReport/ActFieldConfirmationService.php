@@ -12,7 +12,10 @@ use Illuminate\Support\Facades\DB;
 
 final class ActFieldConfirmationService
 {
-    public function __construct(private readonly ActFieldSignatureFileService $files) {}
+    public function __construct(
+        private readonly ActFieldSignatureFileService $files,
+        private readonly ActReportActionAccessService $access,
+    ) {}
 
     /** @return array<string, mixed> */
     public function confirm(
@@ -23,7 +26,7 @@ final class ActFieldConfirmationService
         string $idempotencyKey
     ): array {
         $act->loadMissing('contract.organization');
-        if (! $act->contract || (int) $act->contract->organization_id !== $organizationId) {
+        if (! $this->access->canAccessRecord($user, $act, $organizationId, ActReportActionAccessService::PERMISSION_FIELD_CONFIRM, true)) {
             throw new \DomainException(trans_message('act_reports.access_denied'), 404);
         }
 
@@ -31,12 +34,16 @@ final class ActFieldConfirmationService
         $bytes = base64_decode((string) $signature, true);
         if (! is_string($bytes) || strlen($bytes) < 64 || strlen($bytes) > 1_000_000
             || ! str_starts_with($bytes, "\x89PNG\r\n\x1a\n")) {
-            throw new \InvalidArgumentException('Некорректное изображение подписи.');
+            throw new \InvalidArgumentException(trans_message('act_reports.invalid_field_signature'));
         }
         $hash = hash('sha256', $bytes);
 
         try {
             return DB::transaction(function () use ($act, $user, $organizationId, $bytes, $hash, $idempotencyKey): array {
+                $lockedAct = ContractPerformanceAct::query()->whereKey($act->id)->lockForUpdate()->firstOrFail();
+                if (! $this->access->canAccessRecord($user, $lockedAct, $organizationId, ActReportActionAccessService::PERMISSION_FIELD_CONFIRM, true)) {
+                    throw new \DomainException(trans_message('act_reports.access_denied'), 404);
+                }
                 if (DB::getDriverName() === 'pgsql') {
                     $lockKeys = [
                         "act-field-confirmation-key:{$organizationId}:{$idempotencyKey}",
@@ -56,7 +63,7 @@ final class ActFieldConfirmationService
                     if ((int) $existing->act_id !== (int) $act->id
                         || (int) $existing->user_id !== (int) $user->id
                         || ! hash_equals((string) $existing->signature_sha256, $hash)) {
-                        throw new \DomainException('Ключ идемпотентности уже использован для другой фиксации.', 409);
+                        throw new \DomainException(trans_message('act_reports.field_confirmation_retry_conflict'), 409);
                     }
 
                     return ['data' => $this->present($existing), 'created' => false];
@@ -66,13 +73,13 @@ final class ActFieldConfirmationService
                     ->where('user_id', $user->id)
                     ->first();
                 if ($userConfirmation) {
-                    throw new \DomainException('Вы уже зафиксировали приёмку этого акта.', 409);
+                    throw new \DomainException(trans_message('act_reports.field_confirmation_exists'), 409);
                 }
-                if ($act->status === ContractPerformanceAct::STATUS_ANNULLED) {
-                    throw new \DomainException('По аннулированному акту нельзя зафиксировать приёмку.', 409);
+                if ($lockedAct->status === ContractPerformanceAct::STATUS_ANNULLED) {
+                    throw new \DomainException(trans_message('act_reports.field_confirmation_annulled'), 409);
                 }
 
-                $file = $this->files->store($act, $bytes, $user);
+                $file = $this->files->store($lockedAct, $bytes, $user);
                 try {
                     $confirmation = ActFieldConfirmation::query()->create([
                         'act_id' => (int) $act->id,
@@ -99,13 +106,13 @@ final class ActFieldConfirmationService
                 if ((int) $existing->act_id !== (int) $act->id
                     || (int) $existing->user_id !== (int) $user->id
                     || ! hash_equals((string) $existing->signature_sha256, $hash)) {
-                    throw new \DomainException('Ключ идемпотентности уже использован для другой фиксации.', 409, $exception);
+                    throw new \DomainException(trans_message('act_reports.field_confirmation_retry_conflict'), 409, $exception);
                 }
 
                 return ['data' => $this->present($existing), 'created' => false];
             }
             if (ActFieldConfirmation::query()->where('act_id', $act->id)->where('user_id', $user->id)->exists()) {
-                throw new \DomainException('Вы уже зафиксировали приёмку этого акта.', 409, $exception);
+                throw new \DomainException(trans_message('act_reports.field_confirmation_exists'), 409, $exception);
             }
 
             throw $exception;
@@ -120,6 +127,7 @@ final class ActFieldConfirmationService
             'act_id' => (int) $confirmation->act_id,
             'file_id' => (int) $confirmation->file_id,
             'user_id' => (int) $confirmation->user_id,
+            'organization_id' => (int) $confirmation->organization_id,
             'confirmed_at' => $confirmation->confirmed_at->toISOString(),
             'evidence_type' => 'field_acceptance',
             'legal_signature' => false,

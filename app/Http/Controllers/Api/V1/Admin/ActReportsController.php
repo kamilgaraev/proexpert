@@ -471,7 +471,7 @@ class ActReportsController extends Controller
         try {
             $organizationId = $this->accessService->currentOrganizationId($request);
             $act = $this->accessService->resolveAccessibleAct($request, $act);
-            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_EDIT, $organizationId);
+            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_APPROVE, $organizationId);
 
             return AdminResponse::success(
                 new ContractPerformanceActResource(
@@ -624,7 +624,7 @@ class ActReportsController extends Controller
         try {
             $organizationId = $this->accessService->currentOrganizationId($request);
             $act = $this->accessService->resolveAccessibleAct($request, $act);
-            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_DOWNLOAD_PDF, $organizationId);
+            $this->accessService->authorize($request, ActReportAccessService::PERMISSION_VIEW, $organizationId);
 
             return $this->fileService->download($act, $file);
         } catch (BusinessLogicException $e) {

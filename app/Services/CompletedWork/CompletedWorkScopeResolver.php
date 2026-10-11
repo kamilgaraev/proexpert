@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\CompletedWork;
 
-use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Project\ValueObjects\ProjectContext;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
@@ -19,8 +19,8 @@ use App\Models\ProjectOrganization;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
-use App\Services\Project\UserProjectAccessService;
 use App\Services\Project\ProjectContextService;
+use App\Services\Project\UserProjectAccessService;
 
 use function trans_message;
 
@@ -41,8 +41,8 @@ final class CompletedWorkScopeResolver
         $context ??= $this->contextFor($dto->project_id, $actor);
         $project = $this->assertProject($dto->project_id, $dto->organization_id, $actor, $context);
 
-        $this->assertReferences($dto, $project, $context);
         $this->assertManage($context, $actor, 'completed_works.create');
+        $this->assertReferences($dto, $project, $context);
     }
 
     public function assertFormOptions(Project $project, User $actor, ProjectContext $context): void
@@ -79,6 +79,23 @@ final class CompletedWorkScopeResolver
         $context ??= $this->contextFor($work->project_id, $actor);
         $this->assertProject($work->project_id, $work->organization_id, $actor, $context);
         $this->assertManage($context, $actor, 'completed_works.delete');
+    }
+
+    public function assertRead(CompletedWork $work, User $actor): void
+    {
+        $context = $this->contextFor($work->project_id, $actor);
+        $this->assertProject($work->project_id, $work->organization_id, $actor, $context);
+        if (! $this->authorization->can($actor, 'completed_works.view', [
+            'organization_id' => $context->organizationId, 'project_id' => $context->projectId, 'strict_project_scope' => true,
+        ])) {
+            throw new BusinessLogicException(trans_message('completed_work.forbidden'), 403);
+        }
+        if ((int) $actor->current_organization_id !== (int) $work->organization_id
+            && in_array($context->role, [ProjectOrganizationRole::CONTRACTOR, ProjectOrganizationRole::SUBCONTRACTOR], true)
+            && ! Contractor::query()->whereKey($work->contractor_id)->where('organization_id', $work->organization_id)
+                ->where('source_organization_id', $actor->current_organization_id)->exists()) {
+            throw $this->notFound();
+        }
     }
 
     public function assertCorrection(CompletedWork $work, User $actor, ?ProjectContext $context = null): void
@@ -128,7 +145,8 @@ final class CompletedWorkScopeResolver
         }
 
         $accessOrganizationId = $context?->organizationId ?? (int) $actor->current_organization_id;
-        if (! $accessOrganizationId || ! $actor->belongsToOrganization($accessOrganizationId)
+        if (! $accessOrganizationId || ! $actor->organizations()->where('organizations.id', $accessOrganizationId)
+            ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()
             || ! $this->projectAccess->canAccessProject($actor, $project, $accessOrganizationId)) {
             throw $this->notFound();
         }

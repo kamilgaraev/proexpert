@@ -27,6 +27,8 @@ class ConstructionJournalPayloadService
         'workVolumes.estimateItem.resources.measurementUnit',
         'workVolumes.estimateItem.workType.measurementUnit',
         'workVolumes.estimateItem.measurementUnit',
+        'workVolumes.estimateItem.childItems.measurementUnit',
+        'workVolumes.estimateItem.childItems.material',
         'journal.performingOrganization',
         'workVolumes.workType',
         'workVolumes.measurementUnit',
@@ -36,6 +38,7 @@ class ConstructionJournalPayloadService
         'workers.estimateItem',
         'approvalEvents.actor',
         'approvalEvents.actorOrganization',
+        'attachments',
     ];
 
     public function __construct(
@@ -43,6 +46,7 @@ class ConstructionJournalPayloadService
         private readonly WorkflowGuardService $workflowGuardService,
         private readonly JournalScheduleTaskResolver $journalScheduleTaskResolver,
         private readonly \App\Services\ConstructionJournal\ConstructionJournalFormOptionsService $formOptions,
+        private readonly \App\Services\ConstructionJournal\EntryAttachmentService $attachments,
     ) {}
 
     public static function journalCountRelations(): array
@@ -283,6 +287,7 @@ class ConstructionJournalPayloadService
             'workflow_state' => $blockers === [] ? 'ready' : 'blocked',
             'blockers' => $blockers,
             'available_actions' => $this->buildEntryActions($entry, $user),
+            'attachments' => $entry->attachments->map(fn ($attachment): array => $this->attachments->metadata($attachment))->values()->all(),
         ];
     }
 
@@ -349,6 +354,9 @@ class ConstructionJournalPayloadService
 
         if (Gate::forUser($user)->allows('update', $entry)) {
             $actions[] = 'update';
+            if ($this->attachments->canUpload($user, $entry)) {
+                $actions[] = 'upload_attachment';
+            }
             if ($entry->status?->canSubmit() && $this->entryReadyForSubmission($entry)) {
                 $actions[] = 'submit';
             }

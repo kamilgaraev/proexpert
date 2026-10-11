@@ -13,9 +13,9 @@ use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
 use App\Exceptions\BusinessLogicException;
 use App\Exceptions\ContractException;
 use App\Models\CompletedWork;
+use App\Models\ConstructionJournalEntry;
 use App\Models\Contract;
 use App\Models\Contractor;
-use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
 use App\Models\User;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
@@ -250,6 +250,7 @@ class CompletedWorkService
     public function update(int $id, CompletedWorkDTO $dto, ?User $actor = null, ?ProjectContext $projectContext = null): CompletedWork
     {
         $actor ??= request()->user();
+
         return DB::transaction(function () use ($id, $dto, $actor, $projectContext) {
             $existingWork = $this->lockedWork($id, $dto->organization_id);
 
@@ -257,8 +258,25 @@ class CompletedWorkService
             $this->assertOrdinaryMutationAllowed($existingWork);
 
             $this->assertUpdateSourcePolicy($existingWork, $dto);
+            $submitAfterUpdate = $dto->status === CompletedWork::STATUS_IN_REVIEW && $existingWork->status !== CompletedWork::STATUS_IN_REVIEW;
+            if ($dto->status !== $existingWork->status && ! $submitAfterUpdate) {
+                throw new BusinessLogicException(trans_message('completed_work.workflow_operation_required'), 422);
+            }
+            app(CompletedWorkWorkflowService::class)->assertEditable($existingWork, $actor);
+            $oldWorkflow = data_get($existingWork->additional_info, 'mobile_workflow');
+            if (isset($dto->additional_info['mobile_workflow']) && $dto->additional_info['mobile_workflow'] !== $oldWorkflow) {
+                throw new BusinessLogicException(trans_message('completed_work.workflow_operation_required'), 422);
+            }
 
             $data = $this->prepareUpdatedFinancialData($existingWork, $dto);
+            if ($submitAfterUpdate) {
+                $data['status'] = $existingWork->status;
+            }
+            if ($oldWorkflow !== null) {
+                $data['additional_info'] = is_array($data['additional_info'] ?? null) ? $data['additional_info'] : [];
+                $data['additional_info']['mobile_workflow'] = $oldWorkflow;
+            }
+
             $newContractId = $dto->contract_id;
             $contractChanged = (int) ($newContractId ?? 0) !== (int) ($existingWork->contract_id ?? 0);
             $contractorChanged = (int) ($dto->contractor_id ?? 0) !== (int) ($existingWork->contractor_id ?? 0);
@@ -281,7 +299,6 @@ class CompletedWorkService
                 );
             }
 
-
             $success = $this->completedWorkRepository->update($id, $data);
             if (! $success) {
                 throw new BusinessLogicException('Не удалось обновить запись о выполненной работе.', 500);
@@ -302,16 +319,20 @@ class CompletedWorkService
                 $this->updateContractStatus($dto->contract_id);
             }
 
-            return $updatedWork->fresh(['materials.measurementUnit']);
+            return $submitAfterUpdate
+                ? app(CompletedWorkWorkflowService::class)->submit($updatedWork, $actor)
+                : $updatedWork->fresh(['materials.measurementUnit']);
         });
     }
 
     public function delete(int $id, int $organizationId, ?User $actor = null, ?ProjectContext $projectContext = null): bool
     {
         $actor ??= request()->user();
+
         return DB::transaction(function () use ($id, $organizationId, $actor, $projectContext): bool {
             $work = $this->lockedWork($id, $organizationId);
             $this->scopeResolver->assertDelete($work, $actor, $projectContext);
+            app(CompletedWorkWorkflowService::class)->assertDeletable($work, $actor);
             $this->assertOrdinaryMutationAllowed($work);
 
             if (! $this->completedWorkRepository->delete($id)) {

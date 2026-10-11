@@ -19,8 +19,9 @@ class ActReportsIndexContractTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_owner_act_details_include_invoice_recipient(): void
+    protected function setUp(): void
     {
+        parent::setUp();
         Module::query()->create([
             'name' => 'Управление актами',
             'slug' => 'act-reporting',
@@ -32,6 +33,10 @@ class ActReportsIndexContractTest extends TestCase
             'is_system_module' => true,
             'can_deactivate' => false,
         ]);
+    }
+
+    public function test_owner_act_details_include_invoice_recipient(): void
+    {
         $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $contractor = Contractor::query()->create([
@@ -51,7 +56,7 @@ class ActReportsIndexContractTest extends TestCase
 
     public function test_index_returns_paginated_contract_with_filtered_summary(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $contractor = Contractor::query()->create([
             'organization_id' => $context->organization->id,
@@ -74,7 +79,7 @@ class ActReportsIndexContractTest extends TestCase
         $response = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/act-reports?per_page=1&sort_by=amount&sort_direction=asc');
 
-        $response->assertOk();
+        $this->assertSame(200, $response->status(), $response->getContent());
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.0.id', $draftAct->id);
         $response->assertJsonPath('meta.current_page', 1);
@@ -97,7 +102,7 @@ class ActReportsIndexContractTest extends TestCase
 
     public function test_contractor_organization_can_read_acts_for_owner_contract(): void
     {
-        $contractorContext = AdminApiTestContext::create();
+        $contractorContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $ownerOrganization = Organization::factory()->verified()->create();
         $project = Project::factory()->create(['organization_id' => $ownerOrganization->id]);
         $contractor = Contractor::query()->create([
@@ -127,6 +132,7 @@ class ActReportsIndexContractTest extends TestCase
         $showResponse->assertOk();
         $showResponse->assertJsonPath('success', true);
         $showResponse->assertJsonPath('data.id', $act->id);
+        $showResponse->assertJsonPath('data.financial_summary', null);
     }
 
     public function test_annulled_act_has_no_payable_balance_and_is_not_pending(): void

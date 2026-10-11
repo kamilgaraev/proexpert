@@ -20,7 +20,7 @@ class JournalWorker extends Model
 
     protected $casts = [
         'workers_count' => 'integer',
-        'hours_worked' => 'decimal:2',
+        'hours_worked' => 'decimal:8',
     ];
 
     // === RELATIONSHIPS ===
@@ -35,4 +35,3 @@ class JournalWorker extends Model
         return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
     }
 }
-

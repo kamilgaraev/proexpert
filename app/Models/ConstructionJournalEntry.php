@@ -74,6 +74,11 @@ class ConstructionJournalEntry extends Model
         return $this->hasMany(JournalWorkVolume::class, 'journal_entry_id');
     }
 
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(JournalEntryAttachment::class, 'journal_entry_id');
+    }
+
     public function workers(): HasMany
     {
         return $this->hasMany(JournalWorker::class, 'journal_entry_id');
