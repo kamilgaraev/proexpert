@@ -27,13 +27,13 @@ final readonly class EstimatorCreditOperations
         private EstimateGenerationActionAuthorization $authorization, private AiPricingCatalog $prices,
         private EstimatorProcessingPlan $plans, private EvaluationInputFingerprint $inputs) {}
 
-    public function quote(User $actor, int $projectId, int $sessionId, int $stateVersion, string $requestId, string $kind): array
+    public function quote(User $actor, int $projectId, int $sessionId, int $stateVersion, string $requestId, string $kind, array $parameters = []): array
     {
         if (! Str::isUuid($requestId)) {
             throw new DomainException('estimator_credit_request_id_invalid');
         }
 
-        return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $stateVersion, $requestId, $kind): array {
+        return $this->database->transaction(function () use ($actor, $projectId, $sessionId, $stateVersion, $requestId, $kind, $parameters): array {
             $session = $this->session($actor, $projectId, $sessionId);
             $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
             app(EstimatorProductAccess::class)->requireAvailable((int) $session->organization_id);
@@ -45,7 +45,7 @@ final readonly class EstimatorCreditOperations
                 || ($session->status->value === 'failed' && $session->resume_status?->value !== 'generating')) {
                 throw new StaleEstimateGenerationState($sessionId, $stateVersion);
             }
-            [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind);
+            [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind, $this->parameters($session, $kind, $parameters));
             $existing = $this->database->table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)->lockForUpdate()->first();
             if ($existing !== null && CanonicalPipelineJson::encode(json_decode($existing->credit_request, true, 64, JSON_THROW_ON_ERROR))
                 !== CanonicalPipelineJson::encode($request->identity())) {
@@ -81,7 +81,7 @@ final readonly class EstimatorCreditOperations
     }
 
     /** Caller holds the session transaction; state transition, reserve and queued receipt commit together. */
-    public function begin(User $actor, EstimateGenerationSession $session, int $stateVersion, string $requestId, string $quoteId, string $kind): string
+    public function begin(User $actor, EstimateGenerationSession $session, int $stateVersion, string $requestId, string $quoteId, string $kind, array $parameters = []): string
     {
         if ($this->database->transactionLevel() < 1 || ! Str::isUuid($requestId) || ! Str::isUuid($quoteId)) {
             throw new DomainException('estimator_credit_begin_requires_transaction');
@@ -103,6 +103,10 @@ final readonly class EstimatorCreditOperations
             || (int) $operation->approved_state_version !== $stateVersion
             || ! in_array($operation->status, ['quoted', 'reserved', 'running'], true)) {
             throw new DomainException('estimator_credit_quote_not_approved');
+        }
+        $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+        if (CanonicalPipelineJson::encode($plan['operation_parameters'] ?? []) !== CanonicalPipelineJson::encode($this->parameters($session, $kind, $parameters))) {
+            throw new DomainException('estimator_credit_operation_parameters_changed');
         }
         if ($operation->status !== 'quoted') {
             return (string) $operation->operation_id;
@@ -126,7 +130,7 @@ final readonly class EstimatorCreditOperations
             ->where('project_id', $projectId)->whereKey($sessionId)->lockForUpdate()->firstOrFail();
     }
 
-    private function capture(User $actor, EstimateGenerationSession $session, string $operationId, string $kind): array
+    private function capture(User $actor, EstimateGenerationSession $session, string $operationId, string $kind, array $parameters): array
     {
         $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->where('status', '<>', 'ignored')->orderBy('id')->get();
@@ -158,6 +162,9 @@ final readonly class EstimatorCreditOperations
         $plan = $this->plans->build($kind, $rasterUnits, $workItems, count($manifest) > 1 || ($session->input_payload['profile_id'] ?? null) === 'industrial', $tariff,
             ($session->input_payload['regional_context']['normative_rerank_requested'] ?? null) === true);
         $plan['documents'] = $manifest;
+        if ($parameters !== []) {
+            $plan['operation_parameters'] = $parameters;
+        }
         $manifestHash = hash('sha256', CanonicalPipelineJson::encode($manifest));
         $identity = ['organization_id' => (int) $session->organization_id, 'project_id' => (int) $session->project_id,
             'session_id' => (int) $session->id, 'actor_user_id' => (int) $actor->id, 'operation_id' => $operationId, 'operation_kind' => $kind,
@@ -176,5 +183,29 @@ final readonly class EstimatorCreditOperations
             $identity['operation_id'], $identity['operation_kind'], $identity['state_version'], $identity['evaluation_input_hash'],
             $identity['source_input_version'], $identity['manifest_hash'], $identity['processing_plan_hash'],
             $identity['maximum_provider_cost_micro_rub'], $identity['maximum_calls'], $identity['supplier_tariff']);
+    }
+
+    private function parameters(EstimateGenerationSession $session, string $kind, array $parameters): array
+    {
+        if ($kind !== 'rebuild') {
+            if ($parameters !== []) {
+                throw new DomainException('estimator_credit_operation_parameters_invalid');
+            }
+
+            return [];
+        }
+        $key = $parameters['local_estimate_key'] ?? null;
+        if (! is_string($key) || trim($key) === '' || strlen($key) > 255 || array_keys($parameters) !== ['local_estimate_key']) {
+            throw new DomainException('estimator_credit_operation_parameters_invalid');
+        }
+        $matches = array_values(array_filter($session->draft_payload['local_estimates'] ?? [],
+            static fn (array $estimate): bool => ($estimate['key'] ?? null) === $key));
+        if (count($matches) !== 1 || (($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && ! in_array(\App\BusinessModules\Addons\EstimateGeneration\Planning\EvaluationSectionMap::forPackage($key),
+                $session->input_payload['selected_sections'] ?? [], true))) {
+            throw new DomainException('estimator_credit_rebuild_target_invalid');
+        }
+
+        return ['local_estimate_key' => $key];
     }
 }

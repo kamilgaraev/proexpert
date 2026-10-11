@@ -406,6 +406,49 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $credits->beginEstimator($organization, $actor, $quote['quote_id'], $request);
     }
 
+    public function test_section_rebuild_requires_its_own_approved_target_and_replays_without_another_reserve(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $request] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        \Illuminate\Support\Facades\Queue::fake();
+        $session = EstimateGenerationSession::query()->findOrFail($request->sessionId);
+        $draft = ['source_input_version' => 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session),
+            'local_estimates' => [['key' => 'roof:level2', 'title' => 'Roof', 'sections' => []], ['key' => 'walls:level1', 'title' => 'Walls', 'sections' => []]]];
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalReviewSummaryProjector)->project($draft);
+        $session->update(['status' => 'estimate_review_required', 'draft_payload' => (new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft)->seal($draft)]);
+        $rebuild = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RebuildGeneratedSection::class);
+        try {
+            $rebuild->handle($session, 0, 'roof:level2', $actor);
+            self::fail('Rebuild started without an approved quote.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        }
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:approved-rebuild');
+        $id = (string) Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'rebuild', ['local_estimate_key' => 'roof:level2']);
+        $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id']];
+        try {
+            $rebuild->handle($session, 0, 'walls:level1', $actor, $approval);
+            self::fail('A rebuild quote was accepted for another section.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+            self::assertSame(0, $session->fresh()->state_version);
+        }
+        $started = $rebuild->handle($session, 0, 'roof:level2', $actor, $approval);
+        self::assertSame('generating', $started->status->value);
+        self::assertSame($id, $started->input_payload['generation_credit_operation_id']);
+        self::assertSame('roof:level2', $started->input_payload['rebuild_section_key']);
+        $replayed = $rebuild->handle($session, 0, 'roof:level2', $actor, $approval);
+        self::assertSame($started->state_version, $replayed->state_version);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, 1);
+        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('organization_id', $organization->id)->count());
+    }
+
     private function fixture(): array
     {
         $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);

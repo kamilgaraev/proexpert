@@ -33,13 +33,15 @@ final class EstimateGenerationCreditController extends Controller
     public function quote(Request $request, Project $project, EstimateGenerationSession $session, EstimatorCreditOperations $operations): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
-            'operation_kind' => ['required', 'in:generation,analysis']]);
+            'operation_kind' => ['required', 'in:generation,analysis,rebuild'],
+            'operation_parameters' => ['sometimes', 'array:local_estimate_key'],
+            'operation_parameters.local_estimate_key' => ['required_if:operation_kind,rebuild', 'string', 'max:255']]);
         if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $request->user()->current_organization_id)) {
             return AdminResponse::error('Общий кошелёк сметчика ещё не включён.', 409);
         }
         try {
             return AdminResponse::success($operations->quote($request->user(), (int) $project->id, (int) $session->id,
-                $input['state_version'], $input['request_id'], $input['operation_kind']))->header('Cache-Control', 'private, no-store');
+                $input['state_version'], $input['request_id'], $input['operation_kind'], $input['operation_parameters'] ?? []))->header('Cache-Control', 'private, no-store');
         } catch (\DomainException $exception) {
             throw ValidationException::withMessages(['quote' => match ($exception->getMessage()) {
                 'estimator_product_not_available' => trans_message('estimate_evaluation.product_not_available'),

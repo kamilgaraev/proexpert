@@ -266,6 +266,7 @@ final class EstimateGenerationActionController extends Controller
                 (int) $request->validated('state_version'),
                 (string) $request->validated('local_estimate_key'),
                 $request->user(),
+                $request->filled('quote_id') ? $request->safe()->only(['quote_id', 'request_id']) : null,
             );
 
             return AdminResponse::success(
@@ -279,6 +280,8 @@ final class EstimateGenerationActionController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (ValidationException $exception) {
+            throw $exception;
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Rebuild section failed', [
                 'failure_code' => 'section_rebuild_failed',

@@ -58,6 +58,10 @@ final readonly class EstimatorCreditAttemptAdmission
         }
         $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
+        if ($operation->kind === 'rebuild'
+            && ($plan['operation_parameters']['local_estimate_key'] ?? null) !== ($session->input_payload['rebuild_section_key'] ?? null)) {
+            throw new SessionAiCostLimitReached('estimator_credit_rebuild_target_changed');
+        }
         $quote = AICreditQuote::query()->whereKey($operation->quote_id)->where('organization_id', $organizationId)
             ->where('user_id', $operation->actor_user_id)->first();
         if ($quote === null || $quote->profile !== \App\Services\Credits\EstimatorCreditRequest::PROFILE
