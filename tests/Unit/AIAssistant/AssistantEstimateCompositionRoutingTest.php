@@ -88,9 +88,9 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
             'task_type' => 'summary', 'capability' => ['id' => 'warehouse'], 'request' => ['message' => self::productionQuery()],
         ]);
 
-        self::assertSame($allowed ? ['get_estimate_positions'] : [], array_column(array_column($definitions, 'function'), 'name'));
+        self::assertSame($allowed ? ['get_estimate_positions'] : [], array_column($definitions, 'name'));
         if ($allowed) {
-            self::assertSame('boolean', $definitions[0]['function']['parameters']['properties']['include_composition']['type']);
+            self::assertSame('boolean', $definitions[0]['parameters']['properties']['include_composition']['type']);
         }
     }
 

@@ -74,6 +74,59 @@ final class AssistantFinancialEvidenceTest extends TestCase
         self::assertTrue($answers->isApplicable('SM-2026'));
     }
 
+    public function test_natural_estimate_choice_uses_current_project_and_shows_one_position(): void
+    {
+        $selected = $this->estimate('AUTO-1', 'Доступная смета');
+        $this->item($selected, '1', 'Бетон', '12', '500');
+        $this->item($selected, '2', 'Арматура', '8', '200');
+        $this->estimate('AUTO-2', 'Новая пустая смета');
+        $otherProject = Project::factory()->create(['organization_id' => $this->organization->id]);
+        $other = $this->estimate('AUTO-3', 'Другой проект');
+        $other->update(['project_id' => $otherProject->id]);
+        $this->item($other, '1', 'Чужой проект', '99', '9900');
+        $foreign = $this->estimate('AUTO-4', 'Чужая организация');
+        $foreign->update(['organization_id' => Organization::factory()->create()->id]);
+        $this->item($foreign, '1', 'Чужая организация', '999', '99900');
+
+        $answer = app(AssistantFinancialAnswerService::class)->answer(
+            'Выбери одну доступную смету текущего проекта и одну её позицию.',
+            $this->organization->id, $this->actor, $other->id, null, $this->project->id
+        );
+
+        self::assertSame($selected->id, $answer['pinned_estimate_id']);
+        self::assertFalse($answer['needs_clarification']);
+        self::assertCount(1, array_filter($answer['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'estimate_item'));
+        self::assertStringNotContainsString('Арматура', $answer['text']);
+        self::assertStringNotContainsString('Чужой проект', $answer['text']);
+    }
+
+    public function test_natural_estimate_choice_requires_project_scope_and_current_finance_permission(): void
+    {
+        $estimate = $this->estimate('AUTO-1', 'Смета');
+        $this->item($estimate, '1', 'Бетон', '12', '500');
+        $resolver = app(AssistantEstimateResolver::class);
+        $query = 'Сам выбери одну доступную смету текущего проекта.';
+        self::assertSame('not_found', $resolver->resolve($query, $this->organization->id, $this->actor, $estimate->id)['status']);
+        self::assertSame($estimate->id, $resolver->resolve($query, $this->organization->id, $this->actor, null, $this->project->id)['estimate_id']);
+        $this->financeAllowed = false;
+        self::assertSame('not_found', $resolver->resolve($query, $this->organization->id, $this->actor, null, $this->project->id)['status']);
+    }
+
+    public function test_explicit_estimate_name_keeps_priority_over_natural_choice_in_project_scope(): void
+    {
+        $first = $this->estimate('AUTO-1', 'Фундамент');
+        $second = $this->estimate('AUTO-2', 'Кровля');
+        $resolver = app(AssistantEstimateResolver::class);
+        $result = $resolver->resolve('Сам выбери смету «Фундамент».', $this->organization->id, $this->actor, $second->id, $this->project->id);
+        self::assertSame($first->id, $result['estimate_id']);
+        self::assertTrue($result['explicit_selection']);
+        foreach (['Сам выбери смету Фундамент.', 'Выбери одну доступную смету AUTO-1.'] as $query) {
+            self::assertSame($first->id, $resolver->resolve($query, $this->organization->id, $this->actor, $second->id, $this->project->id)['estimate_id']);
+        }
+        $other = Project::factory()->create(['organization_id' => $this->organization->id]);
+        self::assertSame('not_found', $resolver->resolve('Смета «Фундамент».', $this->organization->id, $this->actor, $first->id, $other->id)['status']);
+    }
+
     public function test_ambiguous_selector_lists_only_accessible_same_organization_options(): void
     {
         $first = $this->estimate('DUP-1', 'Общая смета');

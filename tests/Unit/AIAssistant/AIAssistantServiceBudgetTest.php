@@ -227,6 +227,31 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertNotEmpty($failures);
     }
 
+    public function test_current_project_estimate_tools_use_the_ui_scope_even_with_another_model_project(): void
+    {
+        foreach (['resolve_estimate', 'get_estimate_answer'] as $name) {
+            $arguments = ['query' => 'Выбери одну доступную смету.', 'project_id' => 95];
+            $expected = $arguments;
+            $expected['project_id'] = 52;
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn($name);
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'query' => ['type' => 'string'], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with($expected, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $query = 'Выбери одну доступную смету текущего проекта.';
+            $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+                'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'scope_'.$name, 'name' => $name,
+                'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+            self::assertSame([], $failures);
+        }
+    }
+
 
     public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void
     {

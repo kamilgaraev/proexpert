@@ -19,6 +19,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentStateS
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialAnswerService;
+use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateResolver;
 use App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantFinancialClaimVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
@@ -1811,7 +1812,9 @@ class AIAssistantService
             return null;
         }
         $this->stage('tools');
-        $answer = $this->financialAnswers->answer($query, $organizationId, $user, $pinnedId, $selection);
+        $projectId = AssistantEstimateResolver::requiresCurrentProject($query)
+            ? $this->resolveRagProjectId($taskPlan['request']['context'] ?? []) : null;
+        $answer = $this->financialAnswers->answer($query, $organizationId, $user, $pinnedId, $selection, $projectId);
         if (($answer['resolution']['status'] ?? null) === 'resolved' && is_array($answer['financial_evidence'] ?? null)
             && ($answer['source_refs'] ?? []) !== []) {
             $this->progress('estimates', 'completed');
@@ -1968,6 +1971,13 @@ class AIAssistantService
         }
         $arguments = json_decode((string) ($toolCall['arguments'] ?? '{}'), true);
         $args = is_array($arguments) ? $arguments : [];
+        $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
+        if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
+            $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+            if ($args['project_id'] === null) {
+                $args['query'] = $requestQuery;
+            }
+        }
         if ($toolName === 'get_bim_model_elements' && ! array_key_exists('project_id', $args)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
         }

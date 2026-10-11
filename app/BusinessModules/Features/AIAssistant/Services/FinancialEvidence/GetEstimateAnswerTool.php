@@ -27,7 +27,8 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
     public function getParametersSchema(): array
     {
         return $this->schema(['query' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 4000],
-            'estimate_id' => ['type' => ['integer', 'null'], 'minimum' => 1]]);
+            'estimate_id' => ['type' => ['integer', 'null'], 'minimum' => 1],
+            'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1]]);
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
@@ -40,7 +41,8 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
         $execution = app()->bound(AssistantRequestExecutionContext::class) ? app(AssistantRequestExecutionContext::class) : null;
         $execution?->assertCanContinue();
         $actor = $this->actor($user);
-        $arguments = $this->validate($arguments, ['query' => ['required', 'string', 'max:4000'], 'estimate_id' => ['nullable', 'integer', 'min:1']]);
+        $arguments = $this->validate($arguments, ['query' => ['required', 'string', 'max:4000'], 'estimate_id' => ['nullable', 'integer', 'min:1'],
+            'project_id' => ['nullable', 'integer', 'min:1']]);
         if ((int) $actor->current_organization_id !== (int) $organization->id
             || ! $this->permissions->canExecuteTool($actor, $this->getName(), $arguments)) {
             throw new AuthorizationException;
@@ -49,7 +51,7 @@ final class GetEstimateAnswerTool extends ReadonlyEstimateTool
             ? $selection['estimate_id'] : null;
         $estimateId = $arguments['estimate_id'] ?? $contextEstimateId;
         $selection = $estimateId !== null && ($selection['estimate_id'] ?? null) === $estimateId ? $selection : null;
-        $answer = $this->answers->answer($arguments['query'], (int) $organization->id, $actor, $estimateId, $selection);
+        $answer = $this->answers->answer($arguments['query'], (int) $organization->id, $actor, $estimateId, $selection, $arguments['project_id'] ?? null);
         $execution?->assertCanContinue();
         $sourceRefs = $answer['source_refs'] ?? [];
         if ($answer['needs_clarification']) {

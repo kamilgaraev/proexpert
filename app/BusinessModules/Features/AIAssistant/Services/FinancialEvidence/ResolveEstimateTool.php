@@ -17,14 +17,15 @@ final class ResolveEstimateTool extends ReadonlyEstimateTool
 
     public function getParametersSchema(): array
     {
-        return $this->schema(['query' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 4000]]);
+        return $this->schema(['query' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 4000],
+            'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1]]);
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
         $actor = $this->actor($user);
-        $arguments = $this->validate($arguments, ['query' => ['required', 'string', 'max:4000']]);
+        $arguments = $this->validate($arguments, ['query' => ['required', 'string', 'max:4000'], 'project_id' => ['nullable', 'integer', 'min:1']]);
 
-        return $this->resolver->resolve($arguments['query'], (int) $organization->id, $actor);
+        return $this->resolver->resolve($arguments['query'], (int) $organization->id, $actor, null, $arguments['project_id'] ?? null);
     }
 }
