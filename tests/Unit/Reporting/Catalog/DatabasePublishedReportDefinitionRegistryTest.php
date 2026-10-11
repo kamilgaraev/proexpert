@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Catalog;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationFeatureStore;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportPublicationRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
@@ -17,6 +19,37 @@ use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class DatabasePublishedReportDefinitionRegistryTest extends TestCase
 {
+    public function test_missing_publication_does_not_query_its_feature_configuration(): void
+    {
+        $code = 'missing_report';
+        $publications = $this->createMock(ReportPublicationRegistry::class);
+        $publications->expects(self::once())->method('current')->with($code)->willReturn(null);
+        $features = $this->createMock(ReportPublicationFeatureStore::class);
+        $features->expects(self::never())->method('current');
+        $registry = new DatabasePublishedReportDefinitionRegistry($publications, $features);
+
+        $this->expectException(ReportContractException::class);
+        $this->expectExceptionMessage(ReportErrorCode::REPORT_NOT_FOUND->value);
+
+        $registry->published($code);
+    }
+
+    public function test_unbound_publication_does_not_query_its_feature_configuration(): void
+    {
+        $code = 'unbound_report';
+        $published = (new ReportDefinitionBuilder)->code($code)->published();
+        $publications = $this->createMock(ReportPublicationRegistry::class);
+        $publications->expects(self::once())->method('current')->with($code)->willReturn($published);
+        $features = $this->createMock(ReportPublicationFeatureStore::class);
+        $features->expects(self::never())->method('current');
+        $registry = new DatabasePublishedReportDefinitionRegistry($publications, $features);
+
+        $this->expectException(ReportContractException::class);
+        $this->expectExceptionMessage(ReportErrorCode::REPORT_NOT_FOUND->value);
+
+        $registry->published($code);
+    }
+
     public function test_definition_map_reads_each_publication_once_and_rechecks_the_next_read(): void
     {
         $code = 'active_report';

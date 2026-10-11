@@ -24,10 +24,12 @@ final readonly class DatabasePublishedReportDefinitionRegistry implements Publis
     public function published(string $code): PublishedReportDefinition
     {
         $definition = $this->publications->current($code);
+        if ($definition === null || $definition->publicationIdentity === null) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+
         $feature = $this->features->current($code);
-        if ($definition === null
-            || $definition->publicationIdentity === null
-            || $feature === null
+        if ($feature === null
             || $feature->mode !== ReportPublicationFeatureMode::ON
             || ! hash_equals($feature->publicationId, $definition->publicationIdentity->publicationId)
             || ! hash_equals($feature->proofHash->value, $definition->publicationIdentity->proofHash->value)) {
