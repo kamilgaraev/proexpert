@@ -7,6 +7,9 @@ namespace Tests\Unit\Monitoring;
 use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Logging\SensitiveDataRedactor;
 use App\Domain\Authorization\Services\RoleScanner;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\PermissionResolver;
+use App\Models\User;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -22,10 +25,81 @@ final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
 
+    public function test_measured_operation_preserves_return_value_exception_and_opt_in_sql_deltas(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $calls = 0;
+        $value = new \stdClass;
+        $result = ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', static function () use (&$calls, $request, $value): object {
+            $calls++;
+            ApiQueryMetrics::record($request, 2.5);
+
+            return $value;
+        });
+        self::assertSame($value, $result);
+        self::assertSame(1, $calls);
+        $phase = $metrics->summary()['processing_phases']['rag_acl_entity_build'];
+        self::assertSame(1, $phase['count']);
+        self::assertSame(1, $phase['sql_count']);
+        self::assertSame(2.5, $phase['sql_total_ms']);
+        $failure = new \RuntimeException('expected failure');
+        try {
+            ApiQueryMetrics::measureProcessingPhase('rag_acl_register', static function () use ($failure): never { throw $failure; });
+            self::fail('The operation exception must propagate.');
+        } catch (\RuntimeException $actual) {
+            self::assertSame($failure, $actual);
+        }
+        self::assertSame(1, $metrics->summary()['processing_phases']['rag_acl_register']['count']);
+        [$request, $disabled] = $this->metrics(false);
+        app()->instance('request', $request);
+        self::assertSame($value, ApiQueryMetrics::measureProcessingPhase('rag_acl_register', static fn (): object => $value));
+        self::assertArrayNotHasKey('processing_phases', $disabled->summary());
+        Container::setInstance(new Container);
+        self::assertSame($value, ApiQueryMetrics::measureProcessingPhase('rag_acl_register', static fn (): object => $value));
+    }
+
+    public function test_access_evaluation_counts_actual_cache_misses_and_preserves_false_decisions_and_fresh_scope(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $resolver = \Mockery::mock(PermissionResolver::class);
+        $resolver->shouldReceive('forCurrentChecks')->andReturnSelf();
+        $resolver->shouldReceive('forReadScope')->andReturnSelf();
+        $service = new class($resolver) extends AuthorizationService {
+            public int $evaluations = 0;
+            public bool $allowed = false;
+
+            public function __construct(PermissionResolver $resolver) { $this->permissionResolver = $resolver; }
+
+            protected function checkPermission(User $user, string $permission, ?array $context = null): bool
+            {
+                $this->evaluations++;
+
+                return $this->allowed;
+            }
+        };
+        $scope = $service->forCurrentChecks(true);
+        $actor = new User;
+        $actor->id = 71;
+        foreach ([false, false] as $expected) {
+            self::assertSame($expected, $scope->canCurrent($actor, 'projects.view', ['organization_id' => 1]));
+        }
+        self::assertSame(1, $scope->evaluations);
+        $scope->allowed = true;
+        self::assertFalse($scope->canCurrent($actor, 'projects.view', ['organization_id' => 1]));
+        self::assertTrue($scope->forCurrentChecks(true)->canCurrent($actor, 'projects.view', ['organization_id' => 1]));
+        $phases = $metrics->summary()['processing_phases'];
+        self::assertSame(4, $phases['current_access_check']['count']);
+        self::assertSame(2, $phases['current_access_evaluate']['count']);
+        \Mockery::close();
+    }
+
     public function test_numeric_access_and_acl_phases_survive_production_redaction(): void
     {
         [$request, $metrics] = $this->metrics();
-        foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish'] as $phase) {
+        foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
+            'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register'] as $phase) {
             $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
             self::assertNotNull($checkpoint);
             ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);

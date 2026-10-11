@@ -13,6 +13,8 @@ use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
@@ -29,6 +31,10 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
             'project-management' => ['projects.view'],
         ]]);
         $authorization = app(AuthorizationService::class)->forCurrentChecks(true);
+        $request = Request::create('/api/v1/admin/ai-assistant/rag/status', 'GET');
+        $metrics = new ApiQueryMetrics(true);
+        $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+        $this->app->instance('request', $request);
         $connection = DB::connection();
         $connection->enableQueryLog();
 
@@ -38,9 +44,12 @@ final class AuthorizationCurrentReadScopeTest extends TestCase
             $this->assertNotEmpty($this->authorizationReads($firstQueries));
             $this->assertCount(1, $this->effectiveModuleListReads($firstQueries));
             $this->assertCount(2, array_filter($firstQueries, static fn (array $query): bool => str_contains(strtolower($query['query']), 'from "authorization_contexts"')));
+            $evaluations = $metrics->summary()['processing_phases']['current_access_evaluate']['count'];
+            $this->assertGreaterThan(0, $evaluations);
 
             $connection->flushQueryLog();
             $this->assertTrue($authorization->canCurrent($fixture->member, 'ai_assistant.chat', ['organization_id' => $organizationId]));
+            $this->assertSame($evaluations, $metrics->summary()['processing_phases']['current_access_evaluate']['count']);
             $this->assertTrue($authorization->canCurrent($fixture->member, 'projects.view', ['organization_id' => $organizationId]));
             $this->assertSame([], $this->authorizationReads($connection->getQueryLog()));
         } finally {

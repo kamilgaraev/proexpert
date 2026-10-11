@@ -65,7 +65,8 @@ class AuthorizationService
             if ($this->trustedDecisionInputs !== []) { $context = array_replace($this->trustedDecisionInputs, $context ?? []); }
             $scope = $this->currentChecks && $this->readCache !== null ? $this : $this->forCurrentChecks();
             $result = $scope->rememberRead('current_permission:'.$user->id.':'.$permission.':'.hash('sha256', serialize($context)),
-                fn (): bool => $scope->checkPermission($user, $permission, $context));
+                fn (): bool => ApiQueryMetrics::measureProcessingPhase('current_access_evaluate',
+                    fn (): bool => $scope->checkPermission($user, $permission, $context)));
             $this->currentDecisionObserver?->__invoke($user, $permission, $context, $result);
 
             return $result;
