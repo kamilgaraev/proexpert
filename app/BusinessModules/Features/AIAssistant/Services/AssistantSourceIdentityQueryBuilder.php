@@ -31,7 +31,7 @@ final class AssistantSourceIdentityQueryBuilder
         return $planned;
     }
 
-    public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false): QueryBuilder
+    public function identityBranch(Builder $entities, string $sourceType, string $entityType, ?QueryBuilder $identitySources, string $table, bool $expectedProjection = false, ?array $sourceColumns = null): QueryBuilder
     {
         $key = $entities->getModel()->getQualifiedKeyName();
         if ($identitySources === null) {
@@ -42,6 +42,9 @@ final class AssistantSourceIdentityQueryBuilder
         }
         $sources = (clone $identitySources)->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType)
             ->selectRaw($table.'.id AS admitted_source_id, '.$table.'.entity_id AS admitted_entity_id');
+        if ($sourceColumns !== null) { $sources->addSelect($sourceColumns); }
+        $output = $sourceColumns === null ? ['eligible_identity_source.admitted_source_id AS source_id']
+            : array_map(static fn (string $column): string => 'eligible_identity_source.'.substr($column, strrpos($column, '.') + 1), $sourceColumns);
         $grammar = $entities->getQuery()->getGrammar();
 
         if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'design_ifc_model_element'], true)) {
@@ -53,12 +56,12 @@ final class AssistantSourceIdentityQueryBuilder
                 $entities->distinct();
             }
 
-            return $entities->select('eligible_identity_source.admitted_source_id AS source_id')
+            return $entities->select($output)
                 ->joinSub($sources, 'eligible_identity_source', static fn (\Illuminate\Database\Query\JoinClause $join) => $join
                     ->on('eligible_identity_source.admitted_entity_key', '=', $key))->toBase();
         }
         if (! in_array($entityType, ['design_ifc_model_element', 'approved_estimate_norm', 'approved_construction_resource'], true)) { $entities->distinct(); }
-        return $entities->select('eligible_identity_source.admitted_source_id AS source_id')
+        return $entities->select($output)
             ->joinSub($sources, 'eligible_identity_source', static fn (\Illuminate\Database\Query\JoinClause $join) => $join
                 ->whereRaw($grammar->wrap('eligible_identity_source.admitted_entity_id').' COLLATE "C" = CAST('.$grammar->wrap($key).' AS TEXT)'))->toBase();
     }

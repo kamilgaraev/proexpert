@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
-use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
@@ -121,8 +121,12 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($build): void {
             $nativeScans = [];
             $collect = static function (array $node) use (&$collect, &$nativeScans): void {
-                if (($node['Relation Name'] ?? null) === 'design_ifc_model_elements') { $nativeScans[] = $node; }
-                foreach ($node['Plans'] ?? [] as $child) { $collect($child); }
+                if (($node['Relation Name'] ?? null) === 'design_ifc_model_elements') {
+                    $nativeScans[] = $node;
+                }
+                foreach ($node['Plans'] ?? [] as $child) {
+                    $collect($child);
+                }
             };
             foreach ($build() as $batch) {
                 $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batch->toSql(), $batch->getBindings());
@@ -162,5 +166,32 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
                 self::assertStringNotContainsString('ARRAY_AGG', $batch->toSql());
             }
         }, fresh: true);
+        if (! $expectedProjection) {
+            $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($policy, $fixture, $organizationId): void {
+                $batches = $policy->aggregateSourceIdentityBatches(
+                    RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->owner, $organizationId,
+                    ['ai_rag_sources.id', 'ai_rag_sources.source_type', 'ai_rag_sources.project_id', 'ai_rag_sources.chunk_count', 'ai_rag_sources.indexed_chunk_count'],
+                    static fn ($visible) => DB::query()->fromSub($visible, 'accessible_sources')
+                        ->groupBy('accessible_sources.source_type')->selectRaw('accessible_sources.source_type, COUNT(*) AS stored_count, COALESCE(pg_catalog.SUM(accessible_sources.chunk_count), 0) AS chunk_count, COUNT(CASE WHEN accessible_sources.indexed_chunk_count > 0 THEN 1 END) AS indexed_count'),
+                );
+                self::assertCount(1, $batches);
+                $counts = $batches[0]->first();
+                self::assertSame(20005, (int) $counts->stored_count);
+                self::assertSame(0, (int) $counts->chunk_count);
+                self::assertSame(0, (int) $counts->indexed_count);
+                $row = DB::selectOne('EXPLAIN (ANALYZE, BUFFERS, TIMING FALSE, FORMAT JSON) '.$batches[0]->toSql(), $batches[0]->getBindings());
+                $scanned = 0;
+                $collect = static function (array $node) use (&$collect, &$scanned): void {
+                    if (($node['Relation Name'] ?? null) === 'ai_rag_status_sources') {
+                        $scanned += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 1);
+                    }
+                    foreach ($node['Plans'] ?? [] as $child) {
+                        $collect($child);
+                    }
+                };
+                $collect(json_decode($row->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan']);
+                self::assertLessThanOrEqual(21000, $scanned, 'Counting a dense IFC corpus must not reread every source row to recover its counters.');
+            }, fresh: true);
+        }
     }
 }
