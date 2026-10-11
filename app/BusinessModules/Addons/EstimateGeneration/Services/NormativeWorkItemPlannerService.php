@@ -166,16 +166,16 @@ final class NormativeWorkItemPlannerService
         return ['key' => $key, 'parent_key' => null, 'level' => 0, 'item_type' => 'priced_work',
             'name' => $definition['name'], 'description' => $definition['normative_search_text'],
             'normative_search_text' => $definition['normative_search_text'], 'normative_rate_code' => null,
-            'work_category' => $definition['category'], 'unit' => null, 'quantity' => null,
+            'work_category' => $definition['category'], 'unit' => $definition['unit'] ?? null, 'quantity' => null,
             'quantity_formula' => $definition['quantity_key'], 'quantity_basis' => 'Количество отсутствует в исходных данных.',
             'work_cost' => null, 'materials_cost' => null, 'machinery_cost' => null, 'labor_cost' => null, 'total_cost' => null,
             'materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => [],
             'work_composition' => $definition['operations'], 'source_refs' => [], 'confidence' => 0,
-            'validation_flags' => ['quantity_unknown', 'unit_requires_confirmation'], 'price_source' => null,
+            'validation_flags' => isset($definition['unit']) ? ['quantity_unknown'] : ['quantity_unknown', 'unit_requires_confirmation'], 'price_source' => null,
             'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_unknown',
             'skip_normative_matching' => true,
             'metadata' => ['generation_source' => 'qualitative_work_catalog', 'quantity_key' => $definition['quantity_key'],
-                'quantity_source' => 'unknown', 'package_key' => $estimate['key'], 'section_key' => $section['key']]];
+                'quantity_source' => 'unknown', 'package_key' => $estimate['key'], 'section_key' => $section['key'], ...($definition['metadata'] ?? [])]];
     }
 
     /** @param array<string, mixed> $definition */
@@ -1147,6 +1147,22 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
                 $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
+            'process_pipelines' => [
+                $this->industrialDefinition('Монтаж технологического трубопровода по спецификации', 'engineering', 'process_pipelines.length', 'm', 'installation'),
+                $this->industrialDefinition('Испытания технологического трубопровода по программе', 'engineering', 'process_pipelines.testing_length', 'm', 'pipeline_testing'),
+            ],
+            'automation' => [
+                $this->industrialDefinition('Монтаж приборов и средств автоматизации', 'electrical', 'automation.devices_count', 'count', 'installation'),
+                $this->industrialDefinition('Проверка контуров автоматизации по программе', 'electrical', 'automation.loops_count', 'count', 'automation_testing'),
+            ],
+            'equipment' => [
+                $this->industrialDefinition('Покупка оборудования по спецификации', 'engineering', 'equipment.units_count', 'count', 'equipment_purchase', 'equipment'),
+                $this->industrialDefinition('Доставка оборудования по условиям поставщика', 'engineering', 'equipment.deliveries_count', 'count', 'delivery', 'other'),
+                $this->industrialDefinition('Монтаж оборудования по требованиям изготовителя', 'engineering', 'equipment.units_count', 'count', 'installation'),
+            ],
+            'commissioning' => [
+                $this->industrialDefinition('Пусконаладка оборудования по согласованной программе', 'engineering', 'commissioning.units_count', 'count', 'commissioning'),
+            ],
             'external_networks', 'siteworks', 'roads' => [
                 $this->definition('Наружные сети', 'site', 'устройство наружных инженерных сетей', 'networks.external'),
                 $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
@@ -1154,6 +1170,13 @@ final class NormativeWorkItemPlannerService
             ],
             default => [],
         };
+    }
+
+    private function industrialDefinition(string $name, string $category, string $quantityKey, string $unit, string $requirement, string $ordinaryType = 'work'): array
+    {
+        return [...$this->definition($name, $category, $name, $quantityKey), 'unit' => $unit,
+            'metadata' => ['requirement_key' => $requirement, 'ordinary_item_type' => $ordinaryType,
+                'requires_specification' => true, 'requires_technology_confirmation' => true]];
     }
 
     /** @param array<string, mixed> $analysis @return list<array<string, mixed>> */

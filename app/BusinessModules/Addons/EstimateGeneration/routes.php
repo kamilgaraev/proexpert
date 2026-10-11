@@ -44,6 +44,11 @@ Route::middleware([
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');
         Route::post('/{session}/initial-facts', [EstimateGenerationManualFactsController::class, 'store'])->middleware('authorize:estimate_generation.review,project,project')->name('initial-facts');
         Route::get('/{session}/evaluation', [EstimateGenerationEvaluationController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation');
+        Route::post('/{session}/evaluation/requirement', [EstimateGenerationEvaluationController::class, 'requirement'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.requirement');
+        Route::post('/{session}/evaluation/recalculate', [EstimateGenerationEvaluationController::class, 'recalculate'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.recalculate');
+        Route::post('/{session}/evaluation/price', [EstimateGenerationEvaluationController::class, 'price'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.price');
+        Route::post('/{session}/evaluation/scope', [EstimateGenerationEvaluationController::class, 'scope'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.scope');
+        Route::get('/{session}/evaluation/price-sources', [EstimateGenerationEvaluationController::class, 'sources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.price-sources');
         Route::get('/{session}/analysis-basis', [EstimateGenerationAnalysisBasisController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('analysis-basis.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');
         Route::post('/{session}/cancel', [EstimateGenerationActionController::class, 'cancel'])->middleware('authorize:estimate_generation.generate,project,project')->name('cancel');

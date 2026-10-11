@@ -21,6 +21,7 @@ final readonly class GetCurrentEvaluation
             $policy = ['evaluation_mode' => $session->input_payload['evaluation_mode'] ?? 'legacy',
                 'price_policy' => $session->input_payload['price_policy'] ?? 'normative',
                 'profile_id' => $session->input_payload['profile_id'] ?? 'construction',
+                'construction_type' => $session->input_payload['construction_type'] ?? 'new_construction',
                 'selected_sections' => $session->input_payload['selected_sections'] ?? []];
             $row = $this->database->table('estimate_generation_evaluation_revisions')->where('organization_id', $session->organization_id)
                 ->where('project_id', $projectId)->where('session_id', $sessionId)->orderByDesc('revision')->first();

@@ -23,11 +23,14 @@ final class RequirementApplicability
             }
             $decision = $decisions[$fact->id] ?? null;
             if (! $decision instanceof Decision || $decision->actorType !== 'user' || ! ctype_digit($decision->actorId)
-                || $decision->targetType !== 'fact' || $decision->targetId !== $fact->id
+                || $decision->targetType !== 'fact' || $decision->targetId !== ($fact->supersedesFactId ?? $fact->id)
                 || $decision->organizationId !== $fact->organizationId || $decision->projectId !== $fact->projectId
                 || $decision->sessionId !== $fact->sessionId || $decision->sourceVersion !== $fact->sourceVersion
                 || ($fact->value['decision_id'] ?? null) !== $decision->id
                 || ($fact->value['reason'] ?? null) !== $decision->reason) {
+                continue;
+            }
+            if (! (new EvaluationChoiceProof)->accepted($snapshot, $fact, $decision)) {
                 continue;
             }
             foreach ($fact->evidenceIds as $id) {

@@ -37,6 +37,7 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
         $policy = $data['evaluation_policy']['price_policy'] ?? 'normative';
         $session = null;
         $actor = null;
+        $priceProof = null;
         if ($universal) {
             $session = EstimateGenerationSession::query()->where('organization_id', $context->organizationId)
                 ->where('project_id', $context->projectId)->whereKey($context->sessionId)->firstOrFail();
@@ -48,13 +49,14 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
                 throw new \DomainException('universal_price_authorization_unavailable');
             }
             $this->authorization->authorize($actor, $session, 'estimate_generation.generate');
+            $priceProof = $this->commercialPrices->proofContext($session);
         }
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $items = $section['work_items'];
                 if ($universal && $session !== null && $actor !== null) {
                     foreach ($items as $itemIndex => $item) {
-                        $selected = $policy === 'normative' ? null : $this->commercialPrices?->resolve($actor, $session, $item);
+                        $selected = $policy === 'normative' ? null : $this->commercialPrices?->resolve($actor, $session, $item, ...$priceProof);
                         if ($selected !== null) {
                             $items[$itemIndex]['commercial_price_snapshot'] = $selected;
                             $items[$itemIndex]['price_snapshot'] = null;

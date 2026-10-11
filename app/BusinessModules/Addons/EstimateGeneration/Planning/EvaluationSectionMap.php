@@ -10,12 +10,12 @@ final class EvaluationSectionMap
     {
         return match ($package) {
             'rough_finishing', 'finish_finishing', 'office_finishing' => 'finishing',
-            'walls', 'slabs', 'stairs', 'metal_frame', 'foundation' => 'structures',
+            'walls', 'slabs', 'stairs', 'metal_frame', 'foundation', 'foundations', 'industrial_floor', 'envelope', 'gates' => 'structures',
             'roof' => 'roofing', 'earthworks' => 'earthworks',
-            'electrical', 'lighting', 'low_current', 'server_room' => 'electricity',
+            'electrical', 'power_supply', 'lighting', 'low_current', 'server_room' => 'electricity',
             'plumbing', 'water_sewerage' => 'water_supply', 'heating' => 'heating', 'ventilation' => 'ventilation',
             'process_pipelines' => 'technological_pipelines', 'automation' => 'automation',
-            'equipment' => 'equipment', default => $package,
+            'equipment', 'commissioning' => 'equipment', 'site_preparation' => 'earthworks', default => $package,
         };
     }
 }

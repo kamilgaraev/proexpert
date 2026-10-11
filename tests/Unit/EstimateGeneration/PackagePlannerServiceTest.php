@@ -10,6 +10,16 @@ use PHPUnit\Framework\TestCase;
 
 class PackagePlannerServiceTest extends TestCase
 {
+    public function test_industrial_profile_has_process_equipment_automation_and_commissioning_packages(): void
+    {
+        $profile = $this->planner()->profileFromAnalysis(['object' => ['object_type' => 'industrial', 'description' => 'Технологический комплекс']]);
+        $keys = array_column($this->planner()->plan($profile)->packages, 'key');
+        foreach (['industrial_floor', 'metal_frame', 'process_pipelines', 'automation', 'equipment', 'commissioning'] as $key) {
+            self::assertContains($key, $keys);
+        }
+        self::assertNotContains('stairs', $keys);
+    }
+
     public function test_house_plan_contains_required_local_estimates_and_has_product_density(): void
     {
         $profile = new ObjectProfileData(

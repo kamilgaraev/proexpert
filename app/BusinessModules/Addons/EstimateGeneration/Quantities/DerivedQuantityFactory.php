@@ -374,6 +374,9 @@ final class DerivedQuantityFactory
         if ($fact->status !== 'confirmed') {
             return ['issue' => $this->issue('operand_not_confirmed', $role, $fact->id)];
         }
+        if (! in_array($fact->origin, ['document', 'user_input', 'user_assumption'], true)) {
+            return ['issue' => $this->issue('operand_origin_requires_confirmation', $role, $fact->id)];
+        }
         if (! is_string($fact->value) && ! is_int($fact->value)) {
             return ['issue' => $this->issue('decimal_value_required', $role, $fact->id)];
         }

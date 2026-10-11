@@ -21,6 +21,7 @@ final readonly class Evidence
         public ?string $nativeReference = null,
         public ?string $producerName = null,
         public ?string $sourceReference = null,
+        public ?string $choiceHash = null,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Evidence');
@@ -37,6 +38,9 @@ final readonly class Evidence
         }
         if ($page === null && $region === null && $nativeReference === null) {
             throw new InvalidArgumentException('Evidence has no exact source locator.');
+        }
+        if ($choiceHash !== null && preg_match('/\A[a-f0-9]{64}\z/', $choiceHash) !== 1) {
+            throw new InvalidArgumentException('Evidence choice hash is invalid.');
         }
     }
 

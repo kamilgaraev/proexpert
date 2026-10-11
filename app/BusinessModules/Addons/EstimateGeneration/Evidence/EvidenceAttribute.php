@@ -23,4 +23,5 @@ enum EvidenceAttribute: string
     case MaterialCode = 'material_code';
     case Quantity = 'quantity';
     case ElementTypeCode = 'element_type_code';
+    case EvaluationChoice = 'evaluation_choice';
 }

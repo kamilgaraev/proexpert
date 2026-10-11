@@ -14,7 +14,9 @@ class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        if ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
+        if ($profile->objectType === 'industrial' || ($profile->planningSignals['evaluation_profile'] ?? null) === 'industrial') {
+            $packages = $this->industrialPackages();
+        } elseif ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
             $packages = $this->floorPlanEvidencePackages($profile);
         } elseif ($this->isDocumentEvidenceOnly($profile)) {
             $packages = $this->documentEvidencePackages($profile);
@@ -93,6 +95,7 @@ class PackagePlannerService
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
         $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
+        $planningSignals['evaluation_profile'] = $analysis['evaluation_policy']['profile_id'] ?? null;
         $roofType = (new RoofTypeResolver)->resolve($analysis);
         if ($roofType !== null) {
             $planningSignals['roof_type'] = $roofType;
@@ -262,6 +265,16 @@ class PackagePlannerService
             $this->package('fire_safety', 'Пожарная безопасность', 'engineering', 50, 110),
             $this->package('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 35, 80),
             $this->package('low_current', 'Слаботочные системы', 'electrical', 25, 60),
+        ];
+    }
+
+    private function industrialPackages(): array
+    {
+        return [...$this->warehousePackages(),
+            $this->package('process_pipelines', 'Технологические трубопроводы', 'engineering', 30, 80),
+            $this->package('automation', 'Автоматизация и управление', 'electrical', 30, 80),
+            $this->package('equipment', 'Технологическое оборудование', 'engineering', 30, 80),
+            $this->package('commissioning', 'Испытания и пусконаладка', 'engineering', 20, 60),
         ];
     }
 

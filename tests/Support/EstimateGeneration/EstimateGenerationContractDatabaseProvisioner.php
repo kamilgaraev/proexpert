@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => 'f060c9577448baef373b40e2f0b5cb67b17b56c0822d116a6cae474d27b6971f',
-        'training' => '1853c863ab78ef8482cb2d65e5bdec6352ead3e699c95cb2bead809c3c423b17',
-        'pricing' => '1853c863ab78ef8482cb2d65e5bdec6352ead3e699c95cb2bead809c3c423b17',
+        'geometry' => '89b79efb7e79f8af787b35041461f7ac54b427ebc866cff3e1cf00b750dc54b6',
+        'training' => '76c414af6e8099402bd116bbdc441bb4ca3110b3e096a5ec2bc64c14a7f01d84',
+        'pricing' => '76c414af6e8099402bd116bbdc441bb4ca3110b3e096a5ec2bc64c14a7f01d84',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '2a59084f155ba06365629e6e94d3bfdf46ea8ba7dc356fee05cf248c2a04e56b';
+    private const FRESH_INVENTORY_DIGEST = 'b47cdb91ee8a4b531685ff22fd5183f4e0a7652658c4639c144a6f86d5172b54';
 
     private const SUBJECT = [
         'geometry' => [
@@ -95,6 +95,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2025_11_05_150000_add_full_section_number_to_estimate_sections.php',
         'database/migrations/2025_11_06_000003_add_hierarchy_fields_to_estimate_items.php',
         'database/migrations/2025_11_13_092257_add_is_onboarding_demo_to_multiple_tables.php',
+        'database/migrations/2025_11_15_120000_create_estimate_position_catalog_tables.php',
         'database/migrations/2026_02_16_193000_increase_estimate_sections_column_lengths.php',
         'database/migrations/2026_02_19_203122_update_estimate_items_item_type_check_constraint.php',
         'database/migrations/2026_03_04_000001_create_organization_package_subscriptions_table.php',
@@ -243,6 +244,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000600_track_evaluation_revision_snapshot_mutations.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000700_allow_native_numeric_evidence_producer.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000800_allow_guarded_estimate_dialogue_usage.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000900_allow_proven_evaluation_choices.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void
