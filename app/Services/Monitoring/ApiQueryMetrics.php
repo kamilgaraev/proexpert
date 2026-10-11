@@ -81,6 +81,19 @@ final class ApiQueryMetrics
         $metrics->maximum = max($metrics->maximum, $milliseconds);
     }
 
+    public static function measureProcessingPhase(string $phase, callable $operation): mixed
+    {
+        $request = app()->bound('request') ? app('request') : null;
+        $checkpoint = $request instanceof Request ? self::processingCheckpoint($request) : null;
+        if ($checkpoint === null) { return $operation(); }
+
+        try {
+            return $operation();
+        } finally {
+            self::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);
+        }
+    }
+
     public static function processingCheckpoint(Request $request): ?array
     {
         $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
@@ -103,6 +116,7 @@ final class ApiQueryMetrics
             'rag_expected_counts', 'rag_documents', 'rag_finalize',
             'sql_tracing',
             'current_access_check', 'role_catalog', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
+            'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
         ], true)) {
             return;
         }

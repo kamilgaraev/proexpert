@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use App\Services\Monitoring\ApiQueryMetrics;
 
 final class AssistantAclQueryCompiler
 {
@@ -47,6 +48,12 @@ final class AssistantAclQueryCompiler
     }
 
     public function register(string $type, Builder $query, array $internalColumns, array $ancestors = [], bool $materialize = true): Builder
+    {
+        return ApiQueryMetrics::measureProcessingPhase('rag_acl_register',
+            fn (): Builder => $this->registerDefinition($type, $query, $internalColumns, $ancestors, $materialize));
+    }
+
+    private function registerDefinition(string $type, Builder $query, array $internalColumns, array $ancestors, bool $materialize): Builder
     {
         $materialize = $materialize && ! in_array($type, $this->inlineTypes, true);
         $model = $query->getModel();

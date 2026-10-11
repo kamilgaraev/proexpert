@@ -931,7 +931,8 @@ final class AssistantDataAccessPolicy
         }
         $this->entityQueryPath[] = $type;
         try {
-            $query = $this->buildEntityQuery($user, $organizationId, $type);
+            $build = fn (): ?Builder => $this->buildEntityQuery($user, $organizationId, $type);
+            $query = count($this->entityQueryPath) === 1 ? ApiQueryMetrics::measureProcessingPhase('rag_acl_entity_build', $build) : $build();
             if ($query === null) { return null; }
             $table = $query->getModel()->getTable();
             $columns = $this->schemaColumns($table);
