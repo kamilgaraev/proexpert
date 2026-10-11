@@ -10,6 +10,9 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\User;
+use App\Services\Logging\SecurityLogger;
+use App\Services\Logging\SafeLogWriter;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Cache\ArrayStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Container\Container;
@@ -24,6 +27,57 @@ use PHPUnit\Framework\TestCase;
 final class ApiQuerySourceMetricsTest extends TestCase
 {
     private Container $previousContainer;
+
+    public function test_security_emit_metrics_preserve_log_levels_redaction_alerts_and_entry_exception(): void
+    {
+        [$request, $metrics] = $this->metrics();
+        app()->instance('request', $request);
+        $previousFacadeApp = Facade::getFacadeApplication();
+        Facade::setFacadeApplication(Container::getInstance());
+        $channel = \Mockery::mock();
+        $payload = ['cookie' => '[REDACTED]', 'safe' => 3];
+        $channel->shouldReceive('log')->once()->with('warning', '[SECURITY] event.checked', $payload);
+        $channel->shouldReceive('log')->once()->with('error', '[SECURITY] event.checked', $payload);
+        Log::shouldReceive('channel')->twice()->with('security')->andReturn($channel);
+        $logger = new class(new SafeLogWriter) extends SecurityLogger {
+            public int $entries = 0;
+            public int $alerts = 0;
+            public ?\RuntimeException $failure = null;
+
+            public function __construct(SafeLogWriter $writer) { $this->writer = $writer; }
+
+            protected function createSecurityEntry(string $event, array $context, string $level): array
+            {
+                $this->entries++;
+                if ($this->failure !== null) { throw $this->failure; }
+
+                return $context;
+            }
+
+            protected function sendSecurityAlert(string $event, array $context, string $level): void { $this->alerts++; }
+        };
+        try {
+            foreach (['INFO', 'warning', 'error'] as $level) {
+                $logger->log('event.checked', ['cookie' => 'private-cookie', 'safe' => 3], $level);
+            }
+            self::assertSame(2, $logger->entries);
+            self::assertSame(1, $logger->alerts);
+            self::assertSame(2, $metrics->summary()['processing_phases']['security_emit']['count']);
+            $failure = new \RuntimeException('entry failure');
+            $logger->failure = $failure;
+            try {
+                $logger->log('event.checked');
+                self::fail('Entry exception must propagate.');
+            } catch (\RuntimeException $actual) {
+                self::assertSame($failure, $actual);
+            }
+            self::assertSame(3, $metrics->summary()['processing_phases']['security_emit']['count']);
+        } finally {
+            Log::clearResolvedInstance('log');
+            Facade::setFacadeApplication($previousFacadeApp);
+            \Mockery::close();
+        }
+    }
 
     public function test_measured_operation_preserves_return_value_exception_and_opt_in_sql_deltas(): void
     {
@@ -99,7 +153,8 @@ final class ApiQuerySourceMetricsTest extends TestCase
     {
         [$request, $metrics] = $this->metrics();
         foreach (['current_access_check', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
-            'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register'] as $phase) {
+            'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
+            'access_system_match', 'access_module_match', 'security_emit'] as $phase) {
             $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
             self::assertNotNull($checkpoint);
             ApiQueryMetrics::recordProcessingPhase($request, $phase, $checkpoint['started_at'], $checkpoint);

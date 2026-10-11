@@ -117,6 +117,7 @@ final class ApiQueryMetrics
             'sql_tracing',
             'current_access_check', 'role_catalog', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish',
             'current_access_evaluate', 'rag_acl_entity_build', 'rag_acl_register',
+            'access_system_match', 'access_module_match', 'security_emit',
         ], true)) {
             return;
         }

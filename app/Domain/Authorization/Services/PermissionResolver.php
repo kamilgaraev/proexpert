@@ -6,6 +6,7 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\ValueObjects\ModulePermissionAliases;
 use App\Services\Logging\LoggingService;
+use App\Services\Monitoring\ApiQueryMetrics;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -126,7 +127,8 @@ class PermissionResolver
                 ]);
             }
 
-            $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
+            $hasSystemPerm = ApiQueryMetrics::measureProcessingPhase('access_system_match',
+                fn (): bool => $this->hasSystemPermission($assignment, $permission));
 
             if ($hasSystemPerm) {
                 if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
@@ -143,7 +145,8 @@ class PermissionResolver
                 return true;
             }
 
-            $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
+            $hasModulePerm = ApiQueryMetrics::measureProcessingPhase('access_module_match',
+                fn (): bool => $this->hasModulePermission($assignment, $permission, $context));
 
             if ($hasModulePerm) {
                 if (! $this->currentChecks) { Cache::put($cacheKey, true, 300); }
