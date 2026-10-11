@@ -89,6 +89,13 @@ class AssistantSourceReferenceGuard
             if (! $entity) {
                 return false;
             }
+            if ($type === 'design_source_link' && array_key_exists('source_link_identity', $reference)) {
+                $identity = AssistantSourceReferenceIdentity::key(array_intersect_key($entity->getAttributes(),
+                    array_flip($reference['checked_fields'] ?? [])));
+                if (! is_string($reference['source_link_identity']) || ! hash_equals($identity, $reference['source_link_identity'])) {
+                    return false;
+                }
+            }
             if (! $entity->updated_at) {
                 $fields = $reference['checked_fields'] ?? null;
                 if (($reference['content_scope'] ?? null) === 'structured') {

@@ -13,6 +13,10 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\MeasurementUnit;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -178,6 +182,112 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertSame($rfi->question, $read['results'][0]['fields']['question']);
         self::assertStringContainsString('Вопрос', $read['server_formatted_facts']);
         self::assertStringContainsString('Ответ', $read['server_formatted_facts']);
+    }
+
+    public function test_estimate_links_use_exact_version_and_current_target_fields_with_scope_checks(): void
+    {
+        $this->allowEstimateLinks();
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $element = $this->element($version, 'IFCSLAB', 'Перекрытие');
+        $work = $this->estimateItem($this->project, 'Текущее имя работы');
+        $link = $this->link($version, $element, $work);
+        $other = $this->model('Гаражная другая', 'другая.ifc');
+        $otherElement = $this->element($other, 'IFCSLAB', 'Другое перекрытие');
+        $otherElement->updateQuietly(['express_id' => $element->express_id]);
+        $this->link($other, $otherElement, $this->estimateItem($this->project, 'Другая версия'));
+        $ended = $this->link($version, $element, $this->estimateItem($this->project, 'Завершённая связь'));
+        $ended->forceFill(['status' => 'ended'])->saveQuietly();
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        $foreign = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->foreignOrganization->id]));
+        $this->link($version, $element, $this->estimateItem($hidden, 'Скрытая работа'));
+        $this->link($version, $element, $this->estimateItem($foreign, 'Чужая работа'));
+
+        self::assertSame([], $this->read(['version_id' => $version->id])['models'][0]['elements'][0]['estimate_links']);
+        $result = $this->read(['version_id' => $version->id, 'include_estimate_links' => true]);
+        $links = $result['models'][0]['elements'][0]['estimate_links'];
+        self::assertCount(1, $links);
+        self::assertSame($link->id, $links[0]['link_id']);
+        self::assertSame('Текущее имя работы', $links[0]['target']['name']);
+        self::assertSame($work->estimate_id, $links[0]['target']['estimate_id']);
+        self::assertSame('page_limited', $result['models'][0]['estimate_link_coverage']);
+        self::assertStringNotContainsString('snapshot-secret', json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertStringNotContainsString('private-secret', json_encode($result, JSON_UNESCAPED_UNICODE));
+        self::assertArrayNotHasKey('unit_price', $links[0]['target']);
+        self::assertNotNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+    }
+
+    public function test_estimate_link_receipt_and_history_refs_reject_ended_links_moved_targets_and_revoked_access(): void
+    {
+        $this->allowEstimateLinks();
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $element = $this->element($version, 'IFCSLAB', 'Перекрытие');
+        $work = $this->estimateItem($this->project, 'Работа');
+        $link = $this->link($version, $element, $work);
+        $result = $this->read(['version_id' => $version->id, 'include_estimate_links' => true]);
+        $link->forceFill(['status' => 'ended', 'row_version' => 2])->saveQuietly();
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+        $link->forceFill(['status' => 'active', 'row_version' => 3])->saveQuietly();
+        $result = $this->read(['version_id' => $version->id, 'include_estimate_links' => true]);
+        $hidden = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        $work->estimate->updateQuietly(['project_id' => $hidden->id]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->canRead($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+        $work->estimate->updateQuietly(['project_id' => $this->project->id]);
+        $result = $this->read(['version_id' => $version->id, 'include_estimate_links' => true]);
+        $permissions = $this->fixture->memberRole->module_permissions;
+        $permissions['budget-estimates'] = ['budget-estimates.view'];
+        $this->fixture->memberRole->update(['module_permissions' => $permissions]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        self::assertFalse(app(AssistantSourceReferenceGuard::class)->canRead($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
+        self::assertSame('unavailable', $this->read(['version_id' => $version->id, 'include_estimate_links' => true])['models'][0]['estimate_link_coverage']);
+    }
+
+    public function test_estimate_links_are_bounded_to_the_requested_element_page(): void
+    {
+        $this->allowEstimateLinks();
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $first = $this->element($version, 'IFCSLAB', 'Первое');
+        $second = $this->element($version, 'IFCSLAB', 'Второе');
+        for ($index = 0; $index < 21; $index++) {
+            $this->link($version, $first, $this->estimateItem($this->project, 'Работа '.$index));
+        }
+        $this->link($version, $second, $this->estimateItem($this->project, 'Другая страница'));
+        $result = $this->read(['version_id' => $version->id, 'limit' => 1, 'include_estimate_links' => true]);
+        self::assertCount(20, $result['models'][0]['elements'][0]['estimate_links']);
+        self::assertTrue($result['models'][0]['has_more']);
+        self::assertStringContainsString('полный поиск всех связей не выполнен', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('Другая страница', $result['server_formatted_answer']);
+    }
+
+    private function allowEstimateLinks(): void
+    {
+        $this->fixture->activatePackages(['finance-contracts']);
+        $permissions = $this->fixture->memberRole->module_permissions;
+        $permissions['budget-estimates'] = ['budget-estimates.view', 'budget-estimates.finance.view'];
+        $this->fixture->memberRole->update(['module_permissions' => $permissions]);
+    }
+
+    private function estimateItem(Project $project, string $name): EstimateItem
+    {
+        $estimate = Estimate::withoutEvents(fn () => Estimate::query()->create(['organization_id' => $project->organization_id,
+            'project_id' => $project->id, 'number' => 'EST-'.$name, 'name' => $name, 'type' => 'local', 'status' => 'draft',
+            'estimate_date' => '2026-10-11', 'total_amount' => 123, 'total_amount_with_vat' => 123]));
+        $unit = MeasurementUnit::query()->firstOrCreate(['organization_id' => $project->organization_id, 'short_name' => 'link-unit'],
+            ['name' => 'Единица', 'type' => 'work', 'is_default' => false, 'is_system' => false]);
+
+        return EstimateItem::withoutEvents(fn () => EstimateItem::query()->create(['estimate_id' => $estimate->id,
+            'position_number' => '1', 'item_type' => 'work', 'name' => $name, 'measurement_unit_id' => $unit->id,
+            'quantity' => 2, 'unit_price' => 50, 'direct_costs' => 123, 'total_amount' => 123, 'is_manual' => true]));
+    }
+
+    private function link(DesignArtifactVersion $version, DesignIfcModelElement $element, EstimateItem $work): DesignSourceLink
+    {
+        return DesignSourceLink::withoutEvents(fn () => DesignSourceLink::query()->create(['organization_id' => $version->organization_id,
+            'project_id' => $version->project_id, 'source_version_id' => $version->id, 'source_element_id' => $element->express_id,
+            'target_type' => 'estimate_item', 'target_id' => $work->id, 'target_snapshot' => ['label' => 'snapshot-secret', 'unit_price' => 999],
+            'created_by' => $this->fixture->owner->id]));
     }
 
     private function read(array $filters): array
