@@ -110,7 +110,6 @@ class UpdateScheduleTaskRequest extends FormRequest
                 'integer',
                 'nullable',
                 Rule::exists('schedule_tasks', 'id')
-                    ->where('organization_id', $organizationId)
                     ->where('schedule_id', $scheduleId)
                     ->whereNull('deleted_at'),
                 Rule::notIn([$taskId]),

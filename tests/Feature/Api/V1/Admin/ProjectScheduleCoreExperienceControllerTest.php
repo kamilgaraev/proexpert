@@ -15,6 +15,7 @@ use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Project;
+use App\Models\ProjectOrganization;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
@@ -215,6 +216,153 @@ class ProjectScheduleCoreExperienceControllerTest extends TestCase
             'schedule_id' => $schedule->id,
             'name' => 'Scoped task',
         ]);
+    }
+
+    public function test_shared_project_member_can_insert_and_edit_tasks_in_schedule_hierarchy(): void
+    {
+        $owner = AdminApiTestContext::create();
+        $member = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        ProjectOrganization::query()->create([
+            'project_id' => $project->id,
+            'organization_id' => $member->organization->id,
+            'role' => 'child_contractor',
+            'role_new' => 'subcontractor',
+            'is_active' => true,
+        ]);
+        $member->organization->users()->updateExistingPivot($member->user->id, [
+            'project_access_mode' => 'all_projects',
+        ]);
+        $schedule = $this->createSchedule($owner->organization, $project, $owner->user);
+        $parent = $this->createTask($owner->organization, $schedule, $owner->user, ['task_type' => 'summary']);
+        $firstChild = $this->createTask($owner->organization, $schedule, $owner->user, [
+            'parent_task_id' => $parent->id,
+            'level' => 1,
+            'sort_order' => 1,
+        ]);
+        $nextChild = $this->createTask($owner->organization, $schedule, $owner->user, [
+            'parent_task_id' => $parent->id,
+            'level' => 1,
+            'sort_order' => 2,
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($member->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks")
+            ->assertOk()
+            ->assertJsonFragment(['id' => $firstChild->id]);
+
+        $response = $this->withHeaders($member->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks", [
+                'name' => 'Shared project insertion',
+                'parent_task_id' => $parent->id,
+                'insert_after_id' => $firstChild->id,
+                'planned_start_date' => '2026-06-02',
+                'planned_end_date' => '2026-06-05',
+            ]);
+
+        $response->assertCreated()
+            ->assertJsonPath('data.parent_task_id', $parent->id)
+            ->assertJsonPath('data.level', 1)
+            ->assertJsonPath('data.sort_order', 2);
+        $task = ScheduleTask::query()->findOrFail($response->json('data.id'));
+        $this->assertSame($owner->organization->id, $task->organization_id);
+        $this->assertSame($member->user->id, $task->created_by_user_id);
+        $this->assertSame(3, $nextChild->fresh()->sort_order);
+
+        $this->withHeaders($member->authHeaders())
+            ->patchJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks/{$task->id}", [
+                'name' => 'Updated shared project task',
+                'parent_task_id' => $parent->id,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.task.parent_task_id', $parent->id);
+        $this->assertSame('Updated shared project task', $task->fresh()->name);
+
+        $rootResponse = $this->withHeaders($member->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks", [
+                'name' => 'Shared root insertion',
+                'insert_after_id' => $parent->id,
+                'planned_start_date' => '2026-06-02',
+                'planned_end_date' => '2026-06-05',
+            ]);
+        $rootResponse->assertCreated()
+            ->assertJsonPath('data.parent_task_id', null)
+            ->assertJsonPath('data.sort_order', 2);
+        $this->assertDatabaseHas('schedule_tasks', [
+            'id' => $rootResponse->json('data.id'),
+            'organization_id' => $owner->organization->id,
+        ]);
+    }
+
+    public function test_schedule_task_create_rejects_other_schedule_and_deleted_hierarchy_links(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $schedule = $this->createSchedule($context->organization, $project, $context->user);
+        $otherSchedule = $this->createSchedule($context->organization, $project, $context->user);
+        $otherTask = $this->createTask($context->organization, $otherSchedule, $context->user);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProjectSchedule = $this->createSchedule($context->organization, $otherProject, $context->user);
+        $otherProjectTask = $this->createTask($context->organization, $otherProjectSchedule, $context->user);
+        $deletedTask = $this->createTask($context->organization, $schedule, $context->user);
+        $deletedTask->delete();
+        $this->allowAdminAccess();
+
+        foreach ([$otherTask, $otherProjectTask, $deletedTask] as $linkedTask) {
+            foreach (['parent_task_id', 'insert_after_id'] as $field) {
+                $this->withHeaders($context->authHeaders())
+                    ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks", [
+                        'name' => 'Invalid hierarchy link',
+                        'planned_start_date' => '2026-06-01',
+                        'planned_end_date' => '2026-06-05',
+                        $field => $linkedTask->id,
+                    ])
+                    ->assertStatus(422)
+                    ->assertJsonValidationErrors([$field]);
+            }
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$otherProjectSchedule->id}/tasks", [
+                'name' => 'Invalid hierarchy link',
+                'planned_start_date' => '2026-06-01',
+                'planned_end_date' => '2026-06-05',
+                'parent_task_id' => $otherProjectTask->id,
+                'insert_after_id' => $otherProjectTask->id,
+            ])
+            ->assertNotFound();
+
+        $this->assertDatabaseMissing('schedule_tasks', ['name' => 'Invalid hierarchy link']);
+        $this->assertSame(1, $otherTask->fresh()->sort_order);
+    }
+
+    public function test_inactive_shared_project_member_cannot_insert_schedule_task(): void
+    {
+        $owner = AdminApiTestContext::create();
+        $member = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        ProjectOrganization::query()->create([
+            'project_id' => $project->id,
+            'organization_id' => $member->organization->id,
+            'role' => 'child_contractor',
+            'role_new' => 'subcontractor',
+            'is_active' => false,
+        ]);
+        $schedule = $this->createSchedule($owner->organization, $project, $owner->user);
+        $task = $this->createTask($owner->organization, $schedule, $owner->user);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($member->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/schedules/{$schedule->id}/tasks", [
+                'name' => 'Forbidden shared task',
+                'parent_task_id' => $task->id,
+                'insert_after_id' => $task->id,
+                'planned_start_date' => '2026-06-01',
+                'planned_end_date' => '2026-06-05',
+            ])
+            ->assertForbidden();
+        $this->assertDatabaseMissing('schedule_tasks', ['name' => 'Forbidden shared task']);
     }
 
     public function test_schedule_task_update_rejects_foreign_links_without_mutating_task(): void

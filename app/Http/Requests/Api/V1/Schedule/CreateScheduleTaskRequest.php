@@ -79,7 +79,6 @@ class CreateScheduleTaskRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('schedule_tasks', 'id')
-                    ->where('organization_id', $organizationId)
                     ->where('schedule_id', $scheduleId)
                     ->whereNull('deleted_at'),
             ],
@@ -87,7 +86,6 @@ class CreateScheduleTaskRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('schedule_tasks', 'id')
-                    ->where('organization_id', $organizationId)
                     ->where('schedule_id', $scheduleId)
                     ->whereNull('deleted_at'),
             ],

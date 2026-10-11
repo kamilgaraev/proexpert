@@ -203,7 +203,7 @@ trait HasScheduleOperations
         $schedule = $this->findScheduleOrFail($scheduleId, $finder);
         $data = $request->validated();
         $data['schedule_id'] = $schedule->id;
-        $data['organization_id'] = $organizationId;
+        $data['organization_id'] = $schedule->organization_id;
         $data['created_by_user_id'] = $request->user()->id;
 
         $parentTask = null;
