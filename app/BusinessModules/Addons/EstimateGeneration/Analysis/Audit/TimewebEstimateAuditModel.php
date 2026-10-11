@@ -50,6 +50,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
             'validate_draft',
             'estimate_audit',
             $input->cycle + 1,
+            creditOperationId: $input->wireScope?->creditOperationId,
         );
         $price = $this->prices->resolve($context, $this->wire->provider(), $this->modelName);
         $response = [];
@@ -66,7 +67,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,

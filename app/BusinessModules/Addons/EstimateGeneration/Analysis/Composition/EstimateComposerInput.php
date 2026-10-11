@@ -70,7 +70,12 @@ final readonly class EstimateComposerInput
 
     public function fingerprint(): string
     {
-        return hash('sha256', json_encode($this->canonicalPayload(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        $payload = $this->canonicalPayload();
+        if ($this->wireScope?->creditOperationId !== null) {
+            $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
+        }
+
+        return hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
     }
 
     /** @return array<string, mixed> */

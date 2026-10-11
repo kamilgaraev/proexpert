@@ -81,6 +81,7 @@ final class ArbitrationInputBuilder
                     $source->pageId,
                     $source->processingUnitId,
                     $source->operationContext->processingLineageId,
+                    $source->operationContext->creditOperationId,
                 ),
                 sourceTransform: $source->sourceTransform,
                 sheetRole: $source->sheetRole,

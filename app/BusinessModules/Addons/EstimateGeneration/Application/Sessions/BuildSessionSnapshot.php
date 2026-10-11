@@ -126,7 +126,29 @@ final class BuildSessionSnapshot
                 )->toArray(),
             recommendedStep: $workflow['recommended_step'],
             workflowSteps: $workflow['steps'],
+            creditPolicy: $this->creditPolicy($session),
         );
+    }
+
+    private function creditPolicy(EstimateGenerationSession $session): array
+    {
+        if (! config('estimate-generation.credits.enabled', false)) {
+            return ['enabled' => false];
+        }
+        $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
+        $balance = app(\App\Services\Credits\AICreditService::class)->balance($organization);
+        $operationId = $session->input_payload['generation_credit_operation_id'] ?? null;
+        $receipt = $session->analysis_payload['credit_operation_receipt'] ?? null;
+        if (! is_array($receipt) || ($receipt['operation_id'] ?? null) !== $operationId) {
+            $receipt = null;
+        }
+
+        return ['enabled' => true, 'quote_required' => true, 'wallet' => 'most_shared',
+            'available_units_minor' => $balance['available_minor'], 'reserved_units_minor' => $balance['reserved_minor'],
+            'minimum_units_minor' => (int) config('ai-assistant-credits.minimum_units_minor', 50),
+            'charge_step_minor' => (int) config('ai-assistant-credits.charge_step_minor', 50),
+            'current_operation_id' => $operationId,
+            'receipt' => $receipt];
     }
 
     /**

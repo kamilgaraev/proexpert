@@ -21,6 +21,7 @@ final readonly class NormativeCandidateDecisionContextData
         public array $sourceEvidence,
         public ?int $stateVersion = null,
         public ?string $generationAttemptId = null,
+        public ?string $creditOperationId = null,
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }

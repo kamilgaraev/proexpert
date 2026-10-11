@@ -56,6 +56,7 @@ final class EstimateGenerationActionController extends Controller
                 $session,
                 (int) $request->validated('state_version'),
                 $request->user(),
+                $request->only(['quote_id', 'request_id']),
             );
             if (! $result->successful) {
                 return AdminResponse::error(
@@ -77,6 +78,9 @@ final class EstimateGenerationActionController extends Controller
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return AdminResponse::error('Операция требует актуального подтверждения стоимости.', 422, $e->errors());
+            }
             Log::error('[EstimateGeneration] Analyze failed', [
                 'failure_code' => 'analysis_failed',
                 'session_id' => $session->id,
@@ -96,6 +100,7 @@ final class EstimateGenerationActionController extends Controller
                 $request->validated('generation_mode'),
                 $request->user(),
                 $request->validated('estimate_regional_price_version_id'),
+                $request->only(['quote_id', 'request_id']),
             );
             if (! $result->successful) {
                 return AdminResponse::error(
@@ -117,6 +122,8 @@ final class EstimateGenerationActionController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error('Операция требует актуального подтверждения стоимости.', 422, $exception->errors());
         } catch (CommercialQuotaExceededException) {
             return AdminResponse::error(trans_message('estimate_generation.ai_estimate_quota_exceeded'), 429);
         } catch (\InvalidArgumentException) {
@@ -154,6 +161,7 @@ final class EstimateGenerationActionController extends Controller
                 (int) $project->getKey(),
                 (int) $request->validated('state_version'),
                 $request->user(),
+                $request->only(['request_id', 'quote_id']),
             ));
 
             return AdminResponse::success(
@@ -162,6 +170,8 @@ final class EstimateGenerationActionController extends Controller
             );
         } catch (AuthorizationException) {
             return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error('Повторный запуск требует актуального подтверждения стоимости.', 422, $exception->errors());
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (HttpExceptionInterface $exception) {

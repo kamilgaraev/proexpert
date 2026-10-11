@@ -23,6 +23,8 @@ final class GenerateEstimateGenerationRequest extends FormRequest
     {
         return [
             'state_version' => ['required', 'integer', 'min:0'],
+            'quote_id' => [config('estimate-generation.credits.enabled', false) ? 'required' : 'nullable', 'uuid'],
+            'request_id' => [config('estimate-generation.credits.enabled', false) ? 'required' : 'nullable', 'uuid'],
             'generation_mode' => ['nullable', 'string', Rule::in(EstimateGenerationMode::values())],
             'estimate_regional_price_version_id' => [
                 'nullable',

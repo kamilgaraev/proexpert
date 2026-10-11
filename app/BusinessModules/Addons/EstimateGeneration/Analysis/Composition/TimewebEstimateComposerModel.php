@@ -55,6 +55,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             'plan_work_items',
             'estimate_composition',
             1,
+            creditOperationId: $input->wireScope?->creditOperationId,
         );
         $price = $this->prices->resolve($context, $this->wire->provider(), $this->modelName);
         $response = [];
@@ -81,7 +82,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,
@@ -145,6 +146,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
             'validate_draft',
             'estimate_composer_correction',
             $audit->cycle + 1,
+            creditOperationId: $audit->wireScope?->creditOperationId,
         );
         $price = $this->prices->resolve($context, $this->wire->provider(), $this->modelName);
         $response = [];
@@ -171,7 +173,7 @@ final readonly class TimewebEstimateComposerModel implements EstimateComposerCor
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
                 'estimate_generation_scope' => [
                     'organization_id' => $audit->organizationId,
                     'project_id' => $audit->projectId,

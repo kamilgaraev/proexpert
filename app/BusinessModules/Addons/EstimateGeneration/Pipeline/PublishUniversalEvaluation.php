@@ -40,8 +40,12 @@ final readonly class PublishUniversalEvaluation
         }
         $receipt = $this->revisions->save($actor, $context->organizationId, $context->projectId, $context->sessionId,
             $context->stateVersion, $context->generationAttemptId, $inputHash, $draft['evaluation_result']);
+        $creditReceipt = $context->creditOperationId === null ? null
+            : app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                ->publish($session, $context->creditOperationId, $draft, $receipt['revision_id']);
         $this->advance->generationCompleted($session, true, ['draft_payload' => $draft,
-            'analysis_payload' => [...($session->analysis_payload ?? []), 'evaluation_revision' => $receipt],
+            'analysis_payload' => [...($session->analysis_payload ?? []), 'evaluation_revision' => $receipt,
+                ...($creditReceipt === null ? [] : ['credit_operation_receipt' => $creditReceipt])],
             'processing_stage' => ProcessingStage::ValidateDraft->value, 'processing_progress' => 100, 'last_error' => null]);
     }
 }

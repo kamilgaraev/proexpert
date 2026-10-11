@@ -13,7 +13,8 @@ use Illuminate\Database\Connection;
 
 final readonly class SessionAiCostGuard
 {
-    public function __construct(private Connection $database, private ?EstimateGenerationActionAuthorization $authorization = null) {}
+    public function __construct(private Connection $database, private ?EstimateGenerationActionAuthorization $authorization = null,
+        private ?EstimatorCreditAttemptAdmission $creditAdmission = null) {}
 
     public function authorize(int $organizationId, int $projectId, int $sessionId, ?TextAiWireAttempt $attempt = null): void
     {
@@ -140,6 +141,9 @@ SQL, [
             if ($attempt === null) {
                 return;
             }
+            if (config('estimate-generation.credits.enabled', false) && $attempt->creditOperationId === null) {
+                throw new SessionAiCostLimitReached('estimator_credit_quote_required');
+            }
 
             $now = new DateTimeImmutable;
             $query = $this->database->table('estimate_generation_vision_physical_attempts')
@@ -155,6 +159,7 @@ SQL, [
                 'owner_token' => $attempt->attemptId,
                 'lease_expires_at' => $now->modify('+'.$attempt->leaseSeconds.' seconds'),
                 'usage_recorded' => false,
+                ...($attempt->creditOperationId === null ? [] : ['credit_operation_id' => $attempt->creditOperationId, 'credit_role' => $attempt->operation]),
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -162,6 +167,8 @@ SQL, [
             if ($row === null || (int) $row->organization_id !== $organizationId
                 || (int) $row->project_id !== $projectId || (int) $row->session_id !== $sessionId
                 || $row->unit_id !== null
+                || ($row->credit_operation_id ?? null) !== $attempt->creditOperationId
+                || ($attempt->creditOperationId !== null && ($row->credit_role ?? null) !== $attempt->operation)
                 || ! hash_equals((string) $row->request_fingerprint, $attempt->requestFingerprint)) {
                 throw new UsageInvariantViolation('Text AI physical attempt scope collision.');
             }
@@ -188,6 +195,10 @@ SQL, [
             // The logical dialogue receipt joins this same pre-wire transaction.
             // A refusal rolls back both reservations and cannot become an ambiguous paid call.
             ($attempt->beforeSend ?? static fn () => null)();
+            if ($attempt->creditOperationId !== null) {
+                ($this->creditAdmission ?? app(EstimatorCreditAttemptAdmission::class))->admit($attempt->creditOperationId,
+                    $attempt->attemptId, $organizationId, $projectId, $sessionId, (string) $attempt->operation, $attempt->reservation);
+            }
             $updated = $query->where('state', 'pre_wire')->update([
                 'state' => 'wire_started',
                 'cost_reservation_amount' => $attempt->reservation->amount,

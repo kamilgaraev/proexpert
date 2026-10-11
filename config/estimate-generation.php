@@ -40,6 +40,8 @@ $lunaPrice = [[
 
 return [
     'universal_enabled' => (bool) env('ESTIMATE_GENERATION_UNIVERSAL_ENABLED', false),
+    'credits' => ['enabled' => (bool) env('ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED', false),
+        'service_daily_expense_limit_rub' => '250.00', 'service_monthly_expense_limit_rub' => '4000.00'],
     'project_engineer' => [
         'model' => $lunaModel('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL'),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_INPUT_BYTES', 524_288),

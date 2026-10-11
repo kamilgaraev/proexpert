@@ -66,8 +66,13 @@ final readonly class AiUsageData
             throw new InvalidArgumentException('Invalid usage request context.');
         }
 
+        $contextIdentity = get_object_vars($context);
+        // Preserve fingerprints of historical attempts that predate the shared wallet.
+        if ($context->creditOperationId === null) {
+            unset($contextIdentity['creditOperationId']);
+        }
         $this->immutableFingerprint = 'sha256:'.hash('sha256', json_encode([
-            'context' => get_object_vars($context), 'provider' => $provider,
+            'context' => $contextIdentity, 'provider' => $provider,
             'requested_model' => $requestedModel, 'reported_model' => $reportedModel,
             'status' => $status, 'usage_status' => $usageStatus, 'http_code' => $httpCode,
             'duration_ms' => $durationMs, 'input_tokens' => $inputTokens,

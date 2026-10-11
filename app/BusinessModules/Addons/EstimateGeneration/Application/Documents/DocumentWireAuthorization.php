@@ -47,7 +47,8 @@ final readonly class DocumentWireAuthorization
             ->where('session_id', $scope->session_id)
             ->lockForUpdate()
             ->first();
-        if ($document === null || ! hash_equals((string) $document->source_version, (string) $scope->source_version)) {
+        if ($document === null || in_array((string) $document->status, ['failed', 'ignored'], true)
+            || ! hash_equals((string) $document->source_version, (string) $scope->source_version)) {
             return 'document_processing_stopped';
         }
         $input = is_string($session->input_payload) ? json_decode($session->input_payload, true) : $session->input_payload;

@@ -25,6 +25,9 @@ final readonly class FailureNormalizer
             $error instanceof OcrConfigurationException => [FailureCategory::Terminal, 'ocr_not_configured', []],
             $error instanceof PipelineStageException => [$error->category, $error->safeCode, []],
             $error instanceof TypedFailureException => [$error->category, $error->safeCode, $error->safeContext],
+            $error instanceof SessionAiCostLimitReached && str_starts_with($error->reason, 'estimator_credit_') => [
+                FailureCategory::UserActionRequired, 'estimator_credit_operation_stopped', ['reason' => $error->reason],
+            ],
             $error instanceof SessionAiCostLimitReached => [
                 FailureCategory::Recoverable,
                 'session_cost_limit_reached',
@@ -88,6 +91,7 @@ final readonly class FailureNormalizer
     private function unitCategory(string $code): FailureCategory
     {
         return match (true) {
+            str_starts_with($code, 'estimator_credit_') => FailureCategory::UserActionRequired,
             in_array($code, ['unit_claim_lost', 'unit_page_reservation_conflict'], true) => FailureCategory::Recoverable,
             in_array($code, [
                 'document_input_invalid', 'drawing_geometry_unreadable', 'unit_page_lineage_conflict',

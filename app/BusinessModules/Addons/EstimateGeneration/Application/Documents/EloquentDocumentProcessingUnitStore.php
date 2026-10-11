@@ -107,6 +107,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                     );
                 },
                 processingAttemptId: $this->processingAttemptId($unit),
+                creditOperationId: is_string($metadata['credit_operation_id'] ?? null) ? $metadata['credit_operation_id'] : null,
             );
         }, 3);
     }

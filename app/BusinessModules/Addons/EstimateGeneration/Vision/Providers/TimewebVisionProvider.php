@@ -1291,6 +1291,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
         } catch (UsageInvariantViolation $exception) {
             throw $exception;
         } catch (Throwable $exception) {
+            if ($physicalContext->creditOperationId !== null) {
+                throw $exception;
+            }
             Log::error('[EstimateGeneration Vision] usage recording failed', ['exception_class' => $exception::class]);
 
             return false;
@@ -1300,13 +1303,15 @@ final readonly class TimewebVisionProvider implements VisionProvider
     private function physicalContext(VisionDocumentInput $input, string $model, int $wireAttempt, string $contractHash): AiOperationContext
     {
         $context = $input->operationContext;
+        $creditIdentity = $context->creditOperationId === null ? '' : '|credit:'.$context->creditOperationId;
 
         return new AiOperationContext(
             $context->correlationId,
-            AiPhysicalAttemptIdentity::fromParts($context->attemptId, $model, $wireAttempt, self::PROMPT_VERSION.'|'.$contractHash.'|'.$input->derivativeHash),
+            AiPhysicalAttemptIdentity::fromParts($context->attemptId, $model, $wireAttempt, self::PROMPT_VERSION.'|'.$contractHash.'|'.$input->derivativeHash.$creditIdentity),
             $context->organizationId, $context->projectId, $context->sessionId, $context->stage, $context->operation,
             $context->attemptOrdinal + $wireAttempt - 1, $context->documentId, $context->pageId, $context->unitId,
             $context->processingLineageId,
+            $context->creditOperationId,
         );
     }
 

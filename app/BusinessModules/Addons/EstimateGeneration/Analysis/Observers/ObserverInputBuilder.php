@@ -64,6 +64,7 @@ final class ObserverInputBuilder
                 $source->pageId,
                 $source->processingUnitId,
                 $source->operationContext->processingLineageId,
+                $source->operationContext->creditOperationId,
             ),
             sourceTransform: $source->sourceTransform,
             sheetRole: 'unknown',

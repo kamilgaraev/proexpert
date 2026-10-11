@@ -13,7 +13,7 @@ use JsonException;
 
 final class BuildMostEstimateDraft
 {
-    private const CONTRACT = 'most_ordinary_estimate:v1';
+    public const CONTRACT = 'most_ordinary_estimate:v1';
 
     private const MAX_CANDIDATE_ROWS = 1000;
 
@@ -245,11 +245,16 @@ final class BuildMostEstimateDraft
             if (! is_array($operand)) {
                 return false;
             }
-            foreach (['organization_id', 'project_id', 'session_id', 'source_version'] as $key) {
+            foreach (['organization_id', 'project_id', 'session_id'] as $key) {
                 if (! array_key_exists($key, $scope) || ! array_key_exists($key, $operand)
                     || $operand[$key] !== $scope[$key]) {
                     return false;
                 }
+            }
+            $versions = $scope['source_versions'] ?? [$scope['source_version'] ?? null];
+            if (! is_array($versions) || $versions === [] || count($versions) > 10001
+                || ! is_string($operand['source_version'] ?? null) || ! in_array($operand['source_version'], $versions, true)) {
+                return false;
             }
         }
 

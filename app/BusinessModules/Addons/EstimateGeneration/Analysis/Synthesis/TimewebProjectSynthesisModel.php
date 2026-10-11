@@ -60,6 +60,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
             'understand_documents',
             'project_synthesis',
             1,
+            creditOperationId: $input->wireScope?->creditOperationId,
         );
         $price = $this->prices->resolve($context, $this->wire->provider(), $this->modelName);
         $response = [];
@@ -86,7 +87,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,

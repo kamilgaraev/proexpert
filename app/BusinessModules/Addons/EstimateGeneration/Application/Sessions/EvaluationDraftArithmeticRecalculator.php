@@ -59,7 +59,7 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     if ($quantity !== null && $quantity->reviewBlockers === [] && is_string($oldUnit)) {
                         $factor = NormativeUnitNormalizer::safeQuantityFactorDecimal($quantity->unit, $oldUnit);
                         if ($factor !== null) {
-                            $amount = (string) BigDecimal::of($quantity->amount)->multipliedBy($factor);
+                            $amount = (string) BigDecimal::of($quantity->amount)->multipliedBy($factor)->strippedOfTrailingZeros();
                             $quantity = new QuantityData($quantity->key, $oldUnit, $amount, $quantity->formulaKey, $quantity->formulaVersion,
                                 $quantity->formulaInputs, $quantity->source, $quantity->evidenceIds, $quantity->modelVersion, $quantity->assumptions);
                             $item['quantity'] = $amount;

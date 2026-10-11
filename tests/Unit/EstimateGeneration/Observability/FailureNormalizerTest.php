@@ -38,6 +38,11 @@ final class FailureNormalizerTest extends TestCase
     /** @return iterable<string, array{\Throwable, FailureCategory, string}> */
     public static function knownFailures(): iterable
     {
+        yield 'approved estimator budget exhausted' => [
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached('estimator_credit_supplier_limit_reached'),
+            FailureCategory::UserActionRequired,
+            'estimator_credit_operation_stopped',
+        ];
         yield 'provider timeout' => [
             new OcrProviderException('secret provider message', 503, 'timeout'),
             FailureCategory::Recoverable,

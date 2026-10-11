@@ -22,7 +22,17 @@ final readonly class FailDocumentProcessing
     public function handle(FailureExecutionSnapshot $snapshot, string $errorCode, array $context = []): void
     {
         $session = $this->database->transaction(function () use ($snapshot, $errorCode, $context): ?EstimateGenerationSession {
-            $document = EstimateGenerationDocument::query()->with('session')->lockForUpdate()->find($snapshot->documentId);
+            $session = EstimateGenerationSession::query()->where('organization_id', $snapshot->organizationId)
+                ->where('project_id', $snapshot->projectId)->whereKey($snapshot->sessionId)->lockForUpdate()->first();
+            if (! $session instanceof EstimateGenerationSession || (int) $session->state_version !== $snapshot->stateVersion
+                || $session->status->value !== $snapshot->status || $session->status->isTerminal()) {
+                return null;
+            }
+            $document = EstimateGenerationDocument::query()->where('organization_id', $snapshot->organizationId)
+                ->where('project_id', $snapshot->projectId)->where('session_id', $snapshot->sessionId)->lockForUpdate()->find($snapshot->documentId);
+            if ($document instanceof EstimateGenerationDocument) {
+                $document->setRelation('session', $session);
+            }
             if (! $document instanceof EstimateGenerationDocument
                 || ! $document->session instanceof EstimateGenerationSession
                 || (int) $document->organization_id !== $snapshot->organizationId
@@ -34,6 +44,16 @@ final readonly class FailDocumentProcessing
                 || in_array((string) $document->status, ['ready', 'ignored'], true)) {
                 return null;
             }
+            $lineage = $document->meta['processing_attempt_id'] ?? null;
+            if (is_string($lineage) && $lineage !== '' && ! hash_equals($lineage, $snapshot->attemptId)) {
+                return null;
+            }
+
+            if (config('estimate-generation.credits.enabled', false)) {
+                app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditSourceInvalidation::class)
+                    ->handle($session, 'document_failed');
+                $session->save();
+            }
 
             $document->forceFill([
                 'status' => 'failed',
@@ -43,6 +63,9 @@ final readonly class FailDocumentProcessing
                 'error_message_key' => 'estimate_generation.ocr_provider_error',
                 'error_context' => $this->diagnostics->sanitize($context),
                 'ocr_finished_at' => now(),
+                'processing_control_status' => 'cancelled',
+                'processing_control_reason' => 'document_failed',
+                'processing_control_at' => now(),
             ])->save();
 
             return $document->session;

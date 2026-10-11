@@ -24,9 +24,14 @@ final readonly class AiUsageAttemptExecutor
         try {
             return $attempt();
         } finally {
+            $usage = null;
             try {
-                $this->store->record($measurement());
+                $usage = $measurement();
+                $this->store->record($usage);
             } catch (Throwable $exception) {
+                if ($usage?->context->creditOperationId !== null) {
+                    throw $exception;
+                }
                 try {
                     Log::error('[EstimateGeneration] AI usage recording failed', [
                         'exception_class' => $exception::class,

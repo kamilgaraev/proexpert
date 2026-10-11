@@ -53,6 +53,8 @@ final class TimewebRerankWireClient implements RerankWireClient
                 $options['estimate_generation_trusted_actor'] ?? null,
                 (string) ($options['estimate_generation_permission'] ?? 'estimate_generation.generate'),
                 $options['estimate_generation_before_send'] ?? null,
+                is_string($scope['credit_operation_id'] ?? null) ? $scope['credit_operation_id'] : null,
+                is_string($identity['operation'] ?? null) ? $identity['operation'] : null,
             );
         } catch (AiWireNotStarted $exception) {
             throw $exception;

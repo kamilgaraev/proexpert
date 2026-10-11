@@ -18,6 +18,8 @@ final class AnalyzeEstimateGenerationRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['state_version' => ['required', 'integer', 'min:0']];
+        return ['state_version' => ['required', 'integer', 'min:0'],
+            'quote_id' => [config('estimate-generation.credits.enabled', false) ? 'required' : 'nullable', 'uuid'],
+            'request_id' => [config('estimate-generation.credits.enabled', false) ? 'required' : 'nullable', 'uuid']];
     }
 }

@@ -34,6 +34,13 @@ final readonly class DocumentSourceReplacementCoordinator
             $accept,
         ): mixed {
             if ($previousSourceVersion !== $acceptedSourceVersion) {
+                if (config('estimate-generation.credits.enabled', false)) {
+                    $session = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()
+                        ->where('organization_id', $organizationId)->where('project_id', $projectId)->whereKey($sessionId)->lockForUpdate()->firstOrFail();
+                    app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditSourceInvalidation::class)
+                        ->handle($session, 'source_replaced');
+                    $session->save();
+                }
                 $this->pages->removeStalePages(
                     $organizationId,
                     $projectId,

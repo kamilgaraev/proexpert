@@ -60,9 +60,10 @@ final readonly class TimewebEstimateCommandInterpreter implements GuardedEstimat
             ], ['profile' => 'json', 'temperature' => 0, 'max_tokens' => 2048, 'timeout' => 60,
                 'estimate_generation_trusted_actor' => $actor, 'estimate_generation_permission' => 'estimate_generation.review',
                 'estimate_generation_before_send' => $beforeSend,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $fingerprint, 'price_snapshot' => $price->toArray()],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $fingerprint, 'price_snapshot' => $price->toArray(), 'operation' => $operation->operation],
                 'estimate_generation_scope' => ['organization_id' => (int) $session->organization_id,
-                    'project_id' => (int) $session->project_id, 'session_id' => (int) $session->id, 'state_version' => $stateVersion],
+                    'project_id' => (int) $session->project_id, 'session_id' => (int) $session->id, 'state_version' => $stateVersion,
+                    ...($operation->creditOperationId === null ? [] : ['credit_operation_id' => $operation->creditOperationId])],
             ]);
             $status = 'malformed_response';
             $interpretation = $this->decode($response, $context);
@@ -123,7 +124,8 @@ final readonly class TimewebEstimateCommandInterpreter implements GuardedEstimat
         $attemptId = AiOperationContext::deterministicId('estimate-dialogue-physical|'.$fingerprint);
         $operation = new AiOperationContext(AiOperationContext::deterministicId('estimate-dialogue|'.$fingerprint), $attemptId,
             (int) $session->organization_id, (int) $session->project_id, (int) $session->id,
-            'estimate_dialogue', 'estimate_dialogue_interpretation', 1);
+            'estimate_dialogue', 'estimate_dialogue_interpretation', 1,
+            creditOperationId: is_string($context['credit_operation_id'] ?? null) ? $context['credit_operation_id'] : null);
 
         return [$payload, $fingerprint, $attemptId, $operation];
     }

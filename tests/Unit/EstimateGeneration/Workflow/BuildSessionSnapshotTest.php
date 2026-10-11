@@ -550,7 +550,7 @@ final class BuildSessionSnapshotTest extends TestCase
             'documents_summary', 'estimate_summary', 'review_summary',
             'scope_summary',
             'ai_estimate_quota',
-            'applied_estimate_id', 'updated_at',
+            'applied_estimate_id', 'updated_at', 'credit_policy',
         ], array_keys($snapshot->toArray()));
         self::assertSame(['total_count' => 2, 'ready_count' => 2], $snapshot->documentsSummary);
         self::assertSame(['review_items_total' => 3, 'review_items_blocking' => 1], $snapshot->reviewSummary);

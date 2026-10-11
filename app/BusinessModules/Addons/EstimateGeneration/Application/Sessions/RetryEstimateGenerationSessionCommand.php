@@ -15,5 +15,6 @@ final readonly class RetryEstimateGenerationSessionCommand
         public int $projectId,
         public int $expectedStateVersion,
         public User|SystemAdmin|null $actor = null,
+        public ?array $creditApproval = null,
     ) {}
 }

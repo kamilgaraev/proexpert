@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
@@ -66,7 +64,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
     }
 
     #[Test]
-    public function each_model_wire_attempt_gets_one_row_and_new_operation_gets_new_ids(): void
+    public function each_physical_attempt_has_stable_identity_across_queue_claims_and_new_work_gets_new_ids(): void
     {
         $wire = new class implements RerankWireClient
         {
@@ -80,9 +78,6 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             public function call(string $model, array $messages, array $options): array
             {
                 $this->calls++;
-                if ($this->calls % 2 === 1) {
-                    throw new RuntimeException('wire failed');
-                }
 
                 return ['content' => '{}', 'provider' => 'timeweb', 'model' => $model, 'input_tokens' => 10, 'output_tokens' => 2, 'usage_available' => true];
             }
@@ -100,17 +95,57 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         $client = new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], [], settingsResolver: $this->settingsResolver(timeout: 30, retries: 1));
 
         $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
-        self::assertCount(2, $store->rows);
-        self::assertSame(['connection_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
-        self::assertNotSame($store->rows[0]->context->attemptId, $store->rows[1]->context->attemptId);
+        self::assertCount(1, $store->rows);
+        self::assertSame('succeeded', $store->rows[0]->status);
 
         $firstClaimId = $store->rows[0]->context->attemptId;
         $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
-        self::assertSame($firstClaimId, $store->rows[2]->context->attemptId);
-        self::assertSame($store->rows[0]->context->correlationId, $store->rows[2]->context->correlationId);
+        self::assertSame($firstClaimId, $store->rows[1]->context->attemptId);
+        self::assertSame($store->rows[0]->context->correlationId, $store->rows[1]->context->correlationId);
 
         $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'));
-        self::assertNotSame($firstClaimId, $store->rows[4]->context->attemptId);
+        self::assertSame($firstClaimId, $store->rows[2]->context->attemptId);
+        $client->chat([], [], [...$this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'), 'work_item_key' => 'another-work']);
+        self::assertNotSame($firstClaimId, $store->rows[3]->context->attemptId);
+    }
+
+    #[Test]
+    public function an_unmeasured_transport_failure_is_not_automatically_sent_again(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public int $calls = 0;
+
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                $this->calls++;
+                throw new RuntimeException('wire failed');
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->rows[] = $data;
+            }
+        };
+        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], [], settingsResolver: $this->settingsResolver(timeout: 30, retries: 2));
+        try {
+            $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+            self::fail('An unknown wire outcome must stop retries.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('wire failed', $exception->getMessage());
+        }
+        self::assertSame(1, $wire->calls);
+        self::assertCount(1, $store->rows);
+        self::assertSame('unavailable', $store->rows[0]->usageStatus);
     }
 
     #[Test]
@@ -302,7 +337,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
     }
 
     #[Test]
-    public function recorder_failure_never_masks_typed_provider_error(): void
+    public function accounting_failure_is_not_silently_discarded_after_a_provider_error(): void
     {
         $wire = new class implements RerankWireClient
         {
@@ -324,8 +359,8 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             }
         };
 
-        $this->expectException(RerankWireException::class);
-        $this->expectExceptionMessage('reranker_wire_failed');
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('recorder failed');
         (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-6-luna'], []))
             ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
     }
@@ -381,6 +416,7 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             self::assertCount(0, $store->rows);
         }
     }
+
     #[Test]
     public function normalized_caller_timeout_caps_effective_timeout_and_changes_correlation_identity(): void
     {

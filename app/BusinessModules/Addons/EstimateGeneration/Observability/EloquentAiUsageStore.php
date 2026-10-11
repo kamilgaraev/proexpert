@@ -11,6 +11,7 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
     public function __construct(
         private AiCostCalculator $calculator,
         private Connection $database,
+        private ?EstimatorCreditUsageTransfer $creditUsage = null,
     ) {}
 
     public function record(AiUsageData $data): void
@@ -65,17 +66,27 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
             'created_at' => now(),
         ];
 
-        $this->database->table('estimate_generation_ai_usage')->insertOrIgnore($attributes);
-        $existing = $this->database->table('estimate_generation_ai_usage')->where('attempt_id', $data->context->attemptId)->first();
-        if ($existing === null || ! hash_equals((string) $existing->immutable_fingerprint, $data->immutableFingerprint)) {
-            throw new UsageInvariantViolation('AI usage attempt collision.');
+        $persist = function () use ($data, $attributes, $cost): void {
+            $this->database->table('estimate_generation_ai_usage')->insertOrIgnore($attributes);
+            $existing = $this->database->table('estimate_generation_ai_usage')->where('attempt_id', $data->context->attemptId)->first();
+            if ($existing === null || ! hash_equals((string) $existing->immutable_fingerprint, $data->immutableFingerprint)) {
+                throw new UsageInvariantViolation('AI usage attempt collision.');
+            }
+            if ($data->context->creditOperationId !== null) {
+                ($this->creditUsage ?? app(EstimatorCreditUsageTransfer::class))->record($data, $cost);
+            }
+            $this->database->table('estimate_generation_vision_physical_attempts')
+                ->where('attempt_id', $data->context->attemptId)->where('organization_id', $data->context->organizationId)
+                ->where('project_id', $data->context->projectId)->where('session_id', $data->context->sessionId)
+                ->whereNull('unit_id')->where('state', 'response_received')->update([
+                    'state' => 'completed', 'usage_recorded' => true, 'owner_token' => null,
+                    'lease_expires_at' => null, 'updated_at' => now(),
+                ]);
+        };
+        if ($data->context->creditOperationId !== null) {
+            $this->database->transaction($persist, 3);
+        } else {
+            $persist();
         }
-        $this->database->table('estimate_generation_vision_physical_attempts')
-            ->where('attempt_id', $data->context->attemptId)->where('organization_id', $data->context->organizationId)
-            ->where('project_id', $data->context->projectId)->where('session_id', $data->context->sessionId)
-            ->whereNull('unit_id')->where('state', 'response_received')->update([
-                'state' => 'completed', 'usage_recorded' => true, 'owner_token' => null,
-                'lease_expires_at' => null, 'updated_at' => now(),
-            ]);
     }
 }

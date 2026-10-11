@@ -12,6 +12,20 @@ use PHPUnit\Framework\TestCase;
 final class GeometryReviewPublicationGateTest extends TestCase
 {
     #[Test]
+    public function operand_scope_allows_only_the_current_source_manifest_and_never_another_tenant(): void
+    {
+        $method = new \ReflectionMethod(BuildMostEstimateDraft::class, 'operandsMatchScope');
+        $scope = ['organization_id' => 1, 'project_id' => 2, 'session_id' => 3, 'source_version' => 'source:first',
+            'source_versions' => ['source:first', 'source:second']];
+        $operand = ['organization_id' => 1, 'project_id' => 2, 'session_id' => 3, 'source_version' => 'source:second'];
+        self::assertTrue($method->invoke(new BuildMostEstimateDraft, [$operand], $scope));
+        self::assertFalse($method->invoke(new BuildMostEstimateDraft, [[...$operand, 'source_version' => 'source:undeclared']], $scope));
+        self::assertFalse($method->invoke(new BuildMostEstimateDraft, [[...$operand, 'organization_id' => 4]], $scope));
+        unset($scope['source_versions']);
+        self::assertFalse($method->invoke(new BuildMostEstimateDraft, [$operand], $scope));
+    }
+
+    #[Test]
     public function canonical_geometry_review_item_blocks_writer_and_is_human_readable(): void
     {
         $draft = (new BuildMostEstimateDraft(static fn (string $key): string => match ($key) {

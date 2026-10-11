@@ -53,7 +53,7 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
             $context->projectId,
             $context->sessionId,
             $draft,
-            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId),
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId, $context->creditOperationId),
         ));
         $draft = $this->readiness->project($this->validation->validate($audit['draft']));
         $draft = $this->artifacts->seal($draft);
@@ -72,7 +72,7 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
             throw new \DomainException('universal_project_snapshot_unavailable');
         }
         $audit = $this->auditCycles->apply($this->auditInputs->capture($context->organizationId, $context->projectId, $context->sessionId,
-            $draft, new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId)));
+            $draft, new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope($context->stateVersion, $context->generationAttemptId, $context->creditOperationId)));
         $draft = $audit['draft'];
         $snapshot = $this->models->snapshot($context->organizationId, $context->projectId, $context->sessionId);
         $decisions = $this->models->decisionsForSelectedFacts($context->organizationId, $context->projectId, $context->sessionId, array_column($snapshot->facts, 'id'));

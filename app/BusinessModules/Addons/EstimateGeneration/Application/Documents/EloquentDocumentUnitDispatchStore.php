@@ -89,6 +89,10 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
             if ($unit === null || (int) $unit->dispatch_attempt_count >= DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS) {
                 return false;
             }
+            if ((config('estimate-generation.credits.enabled', false) || isset($unit->metadata['credit_operation_id']))
+                && ! app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorDocumentCreditBinding::class)->canDispatch($unit)) {
+                return false;
+            }
 
             $dispatch();
             $unit->forceFill([
@@ -105,6 +109,13 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
     private function due(DateTimeImmutable $now): Builder
     {
         return $this->query()
+            ->when(config('estimate-generation.credits.enabled', false), static fn (Builder $query): Builder => $query->whereExists(
+                static fn ($operations) => $operations->selectRaw('1')->from('estimate_generation_credit_operations as credit_operations')
+                    ->whereRaw("credit_operations.operation_id::text = estimate_generation_processing_units.metadata->>'credit_operation_id'")
+                    ->whereColumn('credit_operations.organization_id', 'estimate_generation_processing_units.organization_id')
+                    ->whereColumn('credit_operations.project_id', 'estimate_generation_processing_units.project_id')
+                    ->whereColumn('credit_operations.session_id', 'estimate_generation_processing_units.session_id')
+                    ->whereIn('credit_operations.status', ['reserved', 'running'])))
             ->where('dispatch_attempt_count', '<', DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS)
             ->whereHas('document.session', static fn (Builder $query): Builder => $query
                 ->whereNotIn('status', ['cancelled', 'archived', 'applied', 'applying'])

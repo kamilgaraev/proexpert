@@ -29,6 +29,7 @@ final readonly class DocumentUnitExecutionContext
         public ?int $pageId = null,
         public ?\Closure $renewLease = null,
         public string $processingAttemptId = '',
+        public ?string $creditOperationId = null,
     ) {}
 
     public function renewLeaseOrFail(): void

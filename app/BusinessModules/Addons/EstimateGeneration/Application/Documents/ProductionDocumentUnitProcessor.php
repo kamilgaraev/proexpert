@@ -372,6 +372,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 processingLineageId: preg_match('/\A[0-9a-f-]{36}\z/i', $context->processingAttemptId) === 1
                     ? strtolower($context->processingAttemptId)
                     : null,
+                creditOperationId: $context->creditOperationId,
             ),
             sourceTransform: $preprocessed->transform,
             nativeReferences: $nativeReferences,

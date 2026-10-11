@@ -71,7 +71,12 @@ final readonly class EstimateAuditInput
 
     public function fingerprint(): string
     {
-        return hash('sha256', $this->canonicalJson($this->canonicalPayload()));
+        $payload = $this->canonicalPayload();
+        if ($this->wireScope?->creditOperationId !== null) {
+            $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
+        }
+
+        return hash('sha256', $this->canonicalJson($payload));
     }
 
     public function withDraft(array $draft, int $cycle): self

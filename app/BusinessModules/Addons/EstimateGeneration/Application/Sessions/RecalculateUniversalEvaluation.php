@@ -31,6 +31,12 @@ final readonly class RecalculateUniversalEvaluation
 
     public function handle(User $actor, int $projectId, int $sessionId, int $stateVersion, string $requestId): array
     {
+        $mode = EstimateGenerationSession::query()->where('organization_id', $actor->current_organization_id)
+            ->where('project_id', $projectId)->whereKey($sessionId)->value('input_payload');
+        $mode = is_string($mode) ? json_decode($mode, true, 64, JSON_THROW_ON_ERROR) : $mode;
+        if (($mode['evaluation_mode'] ?? null) !== 'universal') {
+            return app(RecalculateLegacyEstimateDraft::class)->handle($actor, $projectId, $sessionId, $stateVersion, $requestId);
+        }
         if (! Str::isUuid($requestId) || $stateVersion < 0) {
             throw ValidationException::withMessages(['request_id' => 'Укажите идентификатор запроса и версию состояния.']);
         }

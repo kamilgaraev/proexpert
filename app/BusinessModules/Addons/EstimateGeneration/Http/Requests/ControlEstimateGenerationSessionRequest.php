@@ -18,6 +18,6 @@ final class ControlEstimateGenerationSessionRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['state_version' => ['required', 'integer', 'min:0']];
+        return ['state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['nullable', 'uuid'], 'quote_id' => ['nullable', 'uuid']];
     }
 }

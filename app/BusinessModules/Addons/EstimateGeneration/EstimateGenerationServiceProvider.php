@@ -660,6 +660,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(EffectiveSettingsResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
+            physicalAttempts: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class),
         ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(AiRoleRunRepository::class, static fn ($app): AiRoleRunRepository => new EloquentAiRoleRunRepository(

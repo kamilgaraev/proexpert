@@ -126,6 +126,27 @@ final class OrdinaryEstimateWriterRoundTripPostgresTest extends EstimateGenerati
             self::assertSame('738.66', (string) $export['total_amount_with_vat']);
             self::assertSame('15.55', $export['contingency_amount']);
         }
+        $session->refresh()->update(['status' => 'estimate_review_required']);
+        $beforeUsage = DB::table('estimate_generation_ai_usage')->count();
+        $quantityReceipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity::class)
+            ->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(), 'state_version' => (int) $session->state_version,
+                'work_item_key' => 'work:floor', 'value' => '25', 'unit' => 'm2', 'reason' => 'Выбранный объём включает подтверждённую дополнительную площадь.']);
+        $requestId = (string) Str::uuid();
+        $recalculator = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RecalculateUniversalEvaluation::class);
+        $result = $recalculator->handle($actor, $scope[1], $scope[2], $quantityReceipt['state_version'], $requestId);
+        self::assertSame('0', $result['cost_units']);
+        self::assertEquals($result, $recalculator->handle($actor, $scope[1], $scope[2], $quantityReceipt['state_version'], $requestId));
+        $session->refresh();
+        $updated = $session->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertTrue(\Brick\Math\BigDecimal::of($updated['quantity'])->isEqualTo('25'));
+        self::assertSame('750', $updated['total_cost']);
+        self::assertSame('765.55', $session->draft_payload['totals']['total_cost']);
+        self::assertSame($beforeUsage, DB::table('estimate_generation_ai_usage')->count());
+        self::assertSame('615.55', $estimate->fresh()->total_amount, 'A free source revision must not rewrite the existing ordinary estimate.');
+        self::assertTrue($builder->verifyArtifact($session->draft_payload));
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class)
+            ->assertCurrent(...[...$scope, $session->draft_payload]));
+        self::addToAssertionCount(1);
     }
 
     private function catalog(): array

@@ -41,6 +41,8 @@ Route::middleware([
         Route::post('/{session}/documents/{document}/pages/restore', [EstimateGenerationDocumentController::class, 'restorePages'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.pages.restore');
         Route::post('/{session}/analyze', [EstimateGenerationActionController::class, 'analyze'])->middleware('authorize:estimate_generation.generate,project,project')->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationActionController::class, 'generate'])->middleware('authorize:estimate_generation.generate,project,project')->name('generate');
+        Route::post('/{session}/operations/quote', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCreditController::class, 'quote'])->middleware('authorize:estimate_generation.generate,project,project')->name('operations.quote');
+        Route::get('/{session}/operations/{operation}', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationCreditController::class, 'show'])->whereUuid('operation')->middleware('authorize:estimate_generation.view,project,project')->name('operations.show');
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');
         Route::post('/{session}/initial-facts', [EstimateGenerationManualFactsController::class, 'store'])->middleware('authorize:estimate_generation.review,project,project')->name('initial-facts');
         Route::get('/{session}/evaluation', [EstimateGenerationEvaluationController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation');

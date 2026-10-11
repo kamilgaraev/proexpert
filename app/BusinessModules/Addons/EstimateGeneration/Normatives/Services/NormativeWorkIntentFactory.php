@@ -99,6 +99,7 @@ final class NormativeWorkIntentFactory
             $this->evidence($context['source_refs'] ?? []),
             isset($context['state_version']) ? (int) $context['state_version'] : null,
             is_string($context['generation_attempt_id'] ?? null) ? $context['generation_attempt_id'] : null,
+            is_string($context['credit_operation_id'] ?? null) ? $context['credit_operation_id'] : null,
         );
     }
 

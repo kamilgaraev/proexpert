@@ -12,7 +12,7 @@ final class AnalyzeEstimateGenerationSession
 {
     public function __construct(private RequestEstimateGeneration $generation) {}
 
-    public function handle(EstimateGenerationSession $session, int $expectedVersion, User $actor): SessionActionResult
+    public function handle(EstimateGenerationSession $session, int $expectedVersion, User $actor, ?array $creditApproval = null): SessionActionResult
     {
         return $this->generation->handle(
             $session,
@@ -21,6 +21,8 @@ final class AnalyzeEstimateGenerationSession
                 ? $session->input_payload['generation_mode']
                 : null,
             actor: $actor,
+            creditApproval: $creditApproval,
+            creditKind: 'analysis',
         );
     }
 }

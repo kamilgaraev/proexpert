@@ -164,7 +164,7 @@ final class AdvanceEstimateGeneration
     /** @param callable(EstimateGenerationSession): EstimateGenerationSession $transition */
     private function withQuotaForGeneration(EstimateGenerationSession $session, callable $transition): EstimateGenerationSession
     {
-        if ($this->aiEstimateQuota === null) {
+        if ($this->aiEstimateQuota === null || config('estimate-generation.credits.enabled', false)) {
             return $transition($session);
         }
 
@@ -275,6 +275,10 @@ final class AdvanceEstimateGeneration
 
     public function documentsChanged(EstimateGenerationSession $session): EstimateGenerationSession
     {
+        if (config('estimate-generation.credits.enabled', false)) {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditSourceInvalidation::class)
+                ->handle($session, 'source_changed');
+        }
         $resumeRequestedGeneration = $this->hasBlockedPlanningReview($session)
             && ($session->input_payload['generation_requested'] ?? false) === true;
         if ($session->status === EstimateGenerationStatus::Failed
