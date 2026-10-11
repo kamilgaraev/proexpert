@@ -22,6 +22,7 @@ use Tests\TestCase;
 final class AssistantDomainToolsTest extends TestCase
 {
     private AssistantDomainReadService $reader;
+    private AssistantDataAccessPolicy $policy;
     private bool $permissions = true;
     private bool $financialPermissions = false;
 
@@ -35,6 +36,7 @@ final class AssistantDomainToolsTest extends TestCase
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService(), $entitlements);
+        $this->policy = $policy;
         $this->reader = new AssistantDomainReadService(new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $policy, $authorization);
     }
 
@@ -153,6 +155,35 @@ final class AssistantDomainToolsTest extends TestCase
         self::assertSame([$project->id], array_column($checked['source_refs'], 'entity_id'));
         self::assertNull($result['results'][0]['fields']['currency']);
         self::assertArrayNotHasKey('rows', \App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection::forProvider('assistant_domain_read', $result)['structured_fact_evidence']);
+    }
+
+    public function test_empty_named_project_search_rechecks_scope_and_permissions(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'СевГУ', 'is_archived' => false]);
+        Project::factory()->create(['name' => 'СевГУ', 'is_archived' => false]);
+        $permissions = Mockery::mock(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class);
+        $permissions->shouldReceive('canExecuteTool')->andReturnUsing(fn (): bool => $this->permissions);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker::class, $permissions);
+        app()->instance(AssistantDataAccessPolicy::class, $this->policy);
+        $registry = new \App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+        $registry->registerTool(new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\SearchProjectsTool);
+        $class = new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AIAssistantService::class);
+        $service = $class->newInstanceWithoutConstructor();
+        foreach (['dataAccess' => $this->policy, 'permissionChecker' => $permissions, 'toolRegistry' => $registry] as $name => $value) {
+            $class->getProperty($name)->setValue($service, $value);
+        }
+        $method = $class->getMethod('verifyEmptyNamedProjectSearch');
+        $empty = [['_tool_name' => 'search_projects', 'status' => 'success', 'results' => [],
+            'result_window' => ['returned' => 0, 'has_more' => false]]];
+        $check = fn () => $method->invoke($service, 'В проекте СевГУ сколько кондиционеров?', $empty, $actor, $organization->id);
+        self::assertSame(trans_message('ai_assistant.project_search_no_matches'), $check()['text']);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        self::assertNull($check());
+        $actor->assignedProjects()->detach($project->id);
+        self::assertSame([], $check()['source_refs']);
+        $this->permissions = false;
+        self::assertNull($check());
     }
 
     private function actor(): array
