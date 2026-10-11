@@ -28,6 +28,10 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     private bool $renamedEvaluationEpochTable = false;
 
+    private bool $createdJournalAttachmentEpochFixture = false;
+
+    private bool $renamedJournalAttachmentEpochTable = false;
+
     public function beginDatabaseTransaction(): void
     {
         self::assertSame('pgsql', DB::connection()->getDriverName());
@@ -84,6 +88,12 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
             }
             if ($this->renamedEvaluationEpochTable) {
                 DB::statement('ALTER TABLE public.assistant_snapshot_evaluation_original_test RENAME TO estimate_generation_evaluation_revisions');
+            }
+            if ($this->createdJournalAttachmentEpochFixture) {
+                DB::statement('DROP TABLE IF EXISTS public.journal_entry_attachments');
+            }
+            if ($this->renamedJournalAttachmentEpochTable) {
+                DB::statement('ALTER TABLE public.assistant_snapshot_journal_attachments_original_test RENAME TO journal_entry_attachments');
             }
             if ($this->createdLegalEpochFixture) {
                 DB::statement('DROP TABLE public.legal_acceptance_events');
@@ -326,6 +336,47 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertFalse($this->capture()['cacheable']);
         $repair->up();
         self::assertTrue($this->capture()['cacheable']);
+    }
+
+    public function test_late_journal_attachment_table_restores_epoch_and_tracks_every_mutation(): void
+    {
+        if (DB::selectOne("SELECT to_regclass('public.journal_entry_attachments') AS relation")->relation !== null) {
+            DB::statement('ALTER TABLE public.journal_entry_attachments RENAME TO assistant_snapshot_journal_attachments_original_test');
+            $this->renamedJournalAttachmentEpochTable = true;
+        }
+        $repair = require base_path('database/migrations/2026_10_11_150000_track_journal_attachment_snapshot_mutations.php');
+        $repair->up();
+        DB::statement('CREATE TABLE public.journal_entry_attachments (id bigint PRIMARY KEY, payload text)');
+        $this->createdJournalAttachmentEpochFixture = true;
+        self::assertFalse($this->capture()['cacheable']);
+        $generation = DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->value('gc_generation');
+        $repair->up();
+        $repair->up();
+        self::assertSame($generation, DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->value('gc_generation'));
+        self::assertTrue($this->capture()['cacheable']);
+        foreach ([
+            "INSERT INTO public.journal_entry_attachments VALUES (1, 'original')",
+            'UPDATE public.journal_entry_attachments SET payload = NULL',
+            'DELETE FROM public.journal_entry_attachments',
+            'TRUNCATE public.journal_entry_attachments',
+        ] as $statement) {
+            $state = $this->readOnly(fn (): array => $this->epoch->capture(['public.journal_entry_attachments']));
+            self::assertTrue($state['cacheable']);
+            self::assertTrue($this->valid($state));
+            DB::statement($statement);
+            self::assertFalse($this->valid($state));
+        }
+        self::assertSame($generation, DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->value('gc_generation'));
+        $state = $this->readOnly(fn (): array => $this->epoch->capture(['public.journal_entry_attachments']));
+        self::assertTrue($this->valid($state));
+        $repair->down();
+        $repair->down();
+        self::assertSame((int) $generation + 1, (int) DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->value('gc_generation'));
+        self::assertFalse($this->capture()['cacheable']);
+        DB::statement("INSERT INTO public.journal_entry_attachments VALUES (2, 'untracked')");
+        $repair->up();
+        self::assertTrue($this->capture()['cacheable']);
+        self::assertFalse($this->valid($state));
     }
 
     public function test_schema_views_trigger_coverage_and_epoch_recreation_fail_closed(): void
