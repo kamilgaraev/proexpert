@@ -75,6 +75,24 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertSame(1, $this->read(['element_query' => 'перекрытия'])['models'][0]['total']);
     }
 
+    public function test_project_name_is_not_a_model_filename_and_count_remains_a_text_match(): void
+    {
+        $this->project->update(['name' => 'СевГУ: учебный корпус']);
+        $version = $this->model('Вентиляция', 'hvac.ifc');
+        $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'Кондиционер 1');
+        $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'Кондиционер 2');
+        $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'Вентилятор');
+        $selector = \App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelSelector::withoutProjectAlias(
+            'севгу', $this->project->name, 'у нас в проекте севгу есть кондиционеры, сколько их?'
+        );
+        $result = $this->read(['model_query' => $selector, 'element_query' => 'кондиционер', 'project_id' => $this->project->id]);
+        self::assertCount(1, $result['models']);
+        self::assertSame(2, $result['models'][0]['total']);
+        self::assertStringContainsString('названию', $result['server_formatted_answer']);
+        self::assertStringNotContainsString('IFC-модель с таким названием не нашёл', $result['server_formatted_answer']);
+        self::assertSame('verified', $this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id)['validation_status']);
+    }
+
     public function test_current_version_and_explicit_historical_version_have_bounded_pages(): void
     {
         $version = $this->model('Гаражная', 'гаражная.ifc');

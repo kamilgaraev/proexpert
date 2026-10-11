@@ -252,6 +252,56 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_bim_project_question_without_verified_scope_does_not_read_all_organization_models(): void
+    {
+        foreach (['Сколько кондиционеров в текущем проекте?', 'У нас в проекте севгу есть кондиционеры, сколько их?'] as $query) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->never())->method('execute');
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+                'request' => ['message' => $query, 'context' => []]];
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'bim_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => '{"model_query":null,"project_id":null}'], $plan, $failures);
+            self::assertSame('insufficient_data', $result['status']);
+            self::assertSame([], $result['source_refs']);
+            self::assertTrue($result['needs_clarification']);
+        }
+    }
+
+    public function test_nullable_bim_project_uses_canonical_context_name_and_preserves_explicit_file(): void
+    {
+        foreach ([
+            ['У нас в проекте севгу есть кондиционеры, сколько их?', 'севгу', null],
+            ['У нас в проекте севгу есть кондиционеры, сколько их?', null, null],
+            ['В текущем проекте есть кондиционеры, сколько их?', null, null],
+            ["В проекте СевГУ проверь модель 'СевГУ'.", 'севгу', 'севгу'],
+        ] as [$query, $inputSelector, $expectedSelector]) {
+            $expected = ['model_query' => $expectedSelector, 'project_id' => 52];
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_bim_model_elements');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+                'model_query' => ['type' => ['string', 'null']], 'project_id' => ['type' => ['integer', 'null']],
+            ], 'additionalProperties' => false]);
+            $tool->expects($this->once())->method('execute')->with($expected, $this->anything(), $this->anything())->willReturn(['status' => 'success']);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $service->canonicalBimProjects = [52 => 'СевГУ: учебный корпус'];
+            $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+                'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52, 'label' => 'Поддельное имя']]]]];
+            $failures = [];
+            $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'bim_scope', 'name' => 'get_bim_model_elements',
+                'arguments' => json_encode(['model_query' => $inputSelector, 'project_id' => null], JSON_THROW_ON_ERROR)], $plan, $failures);
+            self::assertSame('success', $result['status']);
+        }
+    }
+
 
     public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void
     {
@@ -1149,6 +1199,12 @@ class AIAssistantServiceBudgetTest extends TestCase
 class TestableAIAssistantService extends AIAssistantService
 {
     public bool $ragQueryResolved = false;
+    public array $canonicalBimProjects = [];
+
+    protected function readableBimProjectName(User $actor, int $organizationId, int $projectId): ?string
+    {
+        return $this->canonicalBimProjects[$projectId] ?? null;
+    }
 
     protected function resolveRagSearchQuery(string $query, array $requestPayload): string
     {
