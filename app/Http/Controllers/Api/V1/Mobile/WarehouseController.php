@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BasicWarehouse\Exceptions\WarehouseOperationIde
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReceiptRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\TransferRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehousePhotoUploadRequest;
+use App\BusinessModules\Features\BasicWarehouse\Http\Requests\MobileWarehouseBalanceListRequest;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
@@ -53,13 +54,13 @@ class WarehouseController extends Controller
         }
     }
 
-    public function balances(Request $request, int $warehouseId): JsonResponse
+    public function balances(MobileWarehouseBalanceListRequest $request, int $warehouseId): JsonResponse
     {
         try {
             return MobileResponse::success(
                 $this->basicWarehouseService->getStockData(
                     (int) $request->user()->current_organization_id,
-                    ['warehouse_id' => $warehouseId]
+                    ['warehouse_id' => $warehouseId, ...$request->validated()]
                 )
             );
         } catch (\Throwable $exception) {

@@ -44,6 +44,23 @@ class WarehouseServiceTest extends TestCase
         $this->assertIsArray($data);
     }
 
+    public function test_stock_search_matches_zero_and_material_name_and_code(): void
+    {
+        [$organization, $warehouse, $material] = $this->createWarehouseContext();
+        $material->update(['name' => 'Цемент М500', 'code' => 'CEM-500']);
+        $other = $material->replicate();
+        $other->fill(['name' => 'Кирпич', 'code' => 'BRICK']);
+        $other->save();
+        $this->createBalance($organization->id, $warehouse->id, $material->id, 10);
+        $this->createBalance($organization->id, $warehouse->id, $other->id, 20);
+        foreach (['0', 'ЦЕМЕНТ', 'cem-500'] as $search) {
+            $results = $this->service->getStockData($organization->id, ['warehouse_id' => $warehouse->id, 'search' => $search]);
+            self::assertCount(1, $results);
+            self::assertSame($material->id, $results[0]['material_id']);
+        }
+        self::assertCount(2, $this->service->getStockData($organization->id, ['warehouse_id' => $warehouse->id, 'search' => '  ']));
+    }
+
     public function test_get_stock_data_keeps_same_material_separate_across_warehouses(): void
     {
         [$organization, $mainWarehouse, $material] = $this->createWarehouseContext();

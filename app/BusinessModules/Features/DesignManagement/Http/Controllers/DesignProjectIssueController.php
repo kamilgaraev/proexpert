@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Controllers;
 
 use App\BusinessModules\Features\DesignManagement\Http\Requests\StoreDesignProjectIssueRequest;
+use App\BusinessModules\Features\DesignManagement\Http\Requests\ListDesignProjectIssuesRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\ListDesignProjectIssueAssigneesRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\DesignProjectIssueActionRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource;
@@ -22,10 +23,10 @@ final class DesignProjectIssueController extends Controller
 {
     public function __construct(private readonly DesignProjectIssueService $issues) {}
 
-    public function index(Request $request, int $projectId): JsonResponse
+    public function index(ListDesignProjectIssuesRequest $request, int $projectId): JsonResponse
     {
         try {
-            return AdminResponse::success(DesignProjectIssueResource::collection($this->issues->list($request->user(), $this->organizationId($request), $projectId, $request->only(['status', 'version_id']))));
+            return AdminResponse::success(DesignProjectIssueResource::collection($this->issues->list($request->user(), $this->organizationId($request), $projectId, $request->validated())));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         }

@@ -42,6 +42,133 @@ use Tests\TestCase;
 
 final class DesignManagementApiTest extends TestCase
 {
+    public function test_board_custom_section_creates_a_composition_revision_and_preserves_documents(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project, ['composition' => [
+            'brand' => 'AR', 'document_groups' => [[
+                'code' => 'AR', 'documents' => [['document_code' => 'AR-01', 'document_title' => 'План']],
+            ]],
+        ]]);
+        $artifact = DesignArtifact::query()->where('package_id', $packageId)->sole();
+        $this->approveComposition($context, $packageId);
+        $previousRevision = DesignPackage::query()->findOrFail($packageId)->composition_revision_id;
+        $payload = ['section_code' => ' custom ', 'section_title' => 'Дополнительный раздел',
+            'document_code' => ' custom-01 ', 'document_title' => 'Схема', 'artifact_type' => 'drawing_set'];
+        $endpoint = "/api/v1/admin/design-management/packages/{$packageId}/sections/custom";
+
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, $payload)->assertCreated()
+            ->assertJsonPath('data.code', 'CUSTOM');
+        $package = DesignPackage::query()->findOrFail($packageId);
+        self::assertNotSame($previousRevision, $package->composition_revision_id);
+        self::assertSame('draft', $package->composition_status);
+        self::assertSame($artifact->id, DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'AR-01')->sole()->id);
+        $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->findOrFail($package->composition_revision_id);
+        self::assertSame(2, $revision->revision_number);
+        self::assertSame(['AR', 'CUSTOM'], array_column($revision->composition['document_groups'], 'code'));
+        $this->withHeaders($context->authHeaders())->postJson($endpoint, $payload)->assertUnprocessable();
+        self::assertSame(2, \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->where('package_id', $packageId)->count());
+
+    }
+
+    public function test_board_custom_section_requires_composition_permission_without_partial_changes(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess(['design-management.composition.edit']);
+        $this->allowModuleAccess();
+        $package = DesignPackage::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'title' => 'Комплект', 'stage' => 'rd', 'project_stage' => 'rd', 'status' => 'draft',
+            'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+        ]);
+        $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'package_id' => $package->id, 'revision_number' => 1, 'state_version' => 1, 'status' => 'draft',
+            'fingerprint' => hash('sha256', 'permission-test'),
+            'created_by' => $context->user->id, 'composition' => ['brand' => 'AR', 'document_groups' => [['code' => 'AR']]],
+        ]);
+        $package->update(['composition_revision_id' => $revision->id, 'composition_status' => 'draft']);
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/sections/custom", [
+                'section_code' => 'CUSTOM', 'section_title' => 'Раздел',
+                'document_code' => 'CUSTOM-01', 'document_title' => 'Документ',
+            ])->assertUnprocessable();
+        self::assertSame(1, \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->where('package_id', $package->id)->count());
+        self::assertSame(0, DesignPackageSection::query()->where('package_id', $package->id)->count());
+    }
+
+    public function test_board_custom_document_keeps_existing_unlisted_documents_in_pd_and_rd_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        foreach (['pd' => 'sections', 'rd' => 'document_groups'] as $stage => $key) {
+            $packageId = $this->createPackage($context, $project, [
+                'stage' => $stage, 'project_stage' => $stage,
+                'composition' => ['brand' => 'AR', $key => [['code' => 'AR', 'title' => 'Раздел']]],
+            ]);
+            $section = DesignPackageSection::query()->where('package_id', $packageId)->sole();
+            $existing = DesignArtifact::query()->create([
+                'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                'package_id' => $packageId, 'section_id' => $section->id,
+                'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+                'artifact_type' => 'drawing_set', 'document_code' => 'plan-a', 'title' => 'Существующие чертежи',
+            ]);
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/design-management/packages/{$packageId}/sections/custom", [
+                    'section_code' => 'AR', 'section_title' => 'Раздел',
+                    'document_code' => 'CUSTOM-01', 'document_title' => 'Новые чертежи', 'artifact_type' => 'drawing_set',
+                ])->assertCreated();
+            $this->approveComposition($context, $packageId);
+            $package = DesignPackage::query()->findOrFail($packageId)->load('sections.artifacts');
+            $scope = new \App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessScope($package);
+            self::assertContains($existing->id, $scope->artifacts()->pluck('id')->all());
+            self::assertCount(2, $scope->artifacts());
+            self::assertSame(1, DesignArtifact::query()->where('package_id', $packageId)->where('document_code', 'plan-a')->count());
+            $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->findOrFail($package->composition_revision_id);
+            $documents = $revision->composition[$key][0]['documents'];
+            self::assertSame('plan-a', $documents[0]['document_code']);
+            self::assertFalse($documents[0]['required']);
+            self::assertTrue($documents[1]['required']);
+            $preview = $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/design-management/composition/preview', [
+                'project_id' => $project->id, 'project_stage' => $stage, 'composition' => $revision->composition,
+            ])->assertOk()->json('data.effective_composition');
+            $this->withHeaders($context->authHeaders())
+                ->postJson("/api/v1/admin/design-management/composition/packages/{$packageId}/revisions", [
+                    'composition' => $preview, 'expected_revision' => 2, 'expected_state_version' => $revision->state_version,
+                ])->assertCreated()->assertJsonPath('data.composition.'.$key.'.0.documents.0.document_code', 'plan-a');
+            self::assertSame(2, DesignArtifact::query()->where('package_id', $packageId)->count());
+        }
+    }
+
+    public function test_board_issue_register_filters_by_package_and_rejects_foreign_targets(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $otherPackageId = $this->createPackage($context, $project, ['title' => 'Другой комплект']);
+        $endpoint = "/api/v1/admin/design-management/projects/{$project->id}/issues";
+        foreach ([$packageId, $otherPackageId] as $id) {
+            $this->withHeaders($context->authHeaders())->postJson($endpoint, [
+                'title' => 'Замечание к комплекту '.$id, 'severity' => 'major', 'package_id' => $id,
+            ])->assertCreated();
+        }
+        $this->withHeaders($context->authHeaders())->getJson($endpoint.'?package_id='.$packageId)
+            ->assertOk()->assertJsonCount(1, 'data')->assertJsonPath('data.0.context.package_id', $packageId);
+        $this->withHeaders($context->authHeaders())->getJson($endpoint)->assertOk()->assertJsonCount(2, 'data');
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignPackageId = $this->createPackage($context, $otherProject);
+        $this->withHeaders($context->authHeaders())->getJson($endpoint.'?package_id='.$foreignPackageId)->assertUnprocessable();
+        $this->withHeaders($context->authHeaders())->getJson($endpoint.'?package_id=0')->assertUnprocessable();
+    }
+
     public function test_quality_keeps_the_project_snapshot_when_pir_is_disabled(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');

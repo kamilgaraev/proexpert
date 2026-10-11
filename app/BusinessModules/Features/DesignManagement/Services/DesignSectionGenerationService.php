@@ -10,7 +10,11 @@ use App\BusinessModules\Features\DesignManagement\Enums\DesignFileFormatEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentTemplate;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
+use App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision;
+use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use BackedEnum;
 use DomainException;
 use Illuminate\Support\Collection;
@@ -20,6 +24,8 @@ final class DesignSectionGenerationService
 {
     public function __construct(
         private readonly DesignNormativeCatalogService $catalogService,
+        private readonly DesignCompositionService $compositionService,
+        private readonly AuthorizationService $authorization,
     ) {}
 
     public function generateForPackage(DesignPackage $package): Collection
@@ -114,17 +120,27 @@ final class DesignSectionGenerationService
         });
     }
 
-    public function storeCustomSectionDocument(DesignPackage $package, array $payload): DesignPackageSection
+    public function storeCustomSectionDocument(DesignPackage $package, User $actor, array $payload): DesignPackageSection
     {
-        if ($package->composition_revision_id !== null) {
-            throw new DomainException(trans_message('design_composition.errors.composition_controls_structure'));
+        if (! $this->authorization->can($actor, 'design-management.documents.manage_structure', [
+            'organization_id' => (int) $package->organization_id,
+            'project_id' => (int) $package->project_id,
+        ])) {
+            throw new DomainException(trans_message('design_composition.errors.forbidden'));
         }
 
-        if (! DesignPackageWorkflow::canChangeDocuments($package)) {
-            throw new DomainException(trans_message('design_management.errors.package_locked_for_document_changes'));
-        }
+        return DB::transaction(function () use ($package, $actor, $payload): DesignPackageSection {
+            $package = DesignPackage::query()
+                ->where('organization_id', $package->organization_id)
+                ->where('project_id', $package->project_id)
+                ->whereKey($package->id)->lockForUpdate()->firstOrFail();
+            if (! DesignPackageWorkflow::canChangeDocuments($package)) {
+                throw new DomainException(trans_message('design_management.errors.package_locked_for_document_changes'));
+            }
+            if ($package->composition_revision_id !== null) {
+                return $this->storeCompositionDocument($package, $actor, $payload);
+            }
 
-        return DB::transaction(function () use ($package, $payload): DesignPackageSection {
             $sectionCode = $this->normalizeCode((string) $payload['section_code']);
             $documentCode = $this->normalizeCode((string) $payload['document_code']);
             $document = $this->customDocumentMetadata($payload, $documentCode);
@@ -161,6 +177,75 @@ final class DesignSectionGenerationService
 
             return $this->freshSection($section);
         });
+    }
+
+    private function storeCompositionDocument(DesignPackage $package, User $actor, array $payload): DesignPackageSection
+    {
+        $revision = DesignCompositionRevision::query()
+            ->where('organization_id', $package->organization_id)
+            ->where('project_id', $package->project_id)
+            ->where('package_id', $package->id)
+            ->whereKey($package->composition_revision_id)->lockForUpdate()->firstOrFail();
+        $composition = $revision->composition;
+        $stage = $this->value($package->project_stage);
+        $key = match ($stage) {
+            'pd' => 'sections',
+            'rd' => 'document_groups',
+            default => 'items',
+        };
+        $excluded = $revision->exclusions()->pluck('item_key')->all();
+        $positions = array_values(array_filter($composition[$key] ?? [],
+            static fn (array $position): bool => ! in_array((string) ($position['code'] ?? ''), $excluded, true)));
+        $sectionCode = $this->normalizeCode((string) $payload['section_code']);
+        $documentCode = $this->normalizeCode((string) $payload['document_code']);
+        $document = $this->customDocumentMetadata($payload, $documentCode);
+        $index = null;
+        foreach ($positions as $positionIndex => $position) {
+            if ($this->normalizeCode((string) $position['code']) === $sectionCode) {
+                $index = $positionIndex;
+                break;
+            }
+        }
+        if ($index === null) {
+            $positions[] = [
+                'code' => $sectionCode, 'title' => trim((string) $payload['section_title']),
+                'required' => (bool) ($payload['required'] ?? true), 'documents' => [$document],
+            ];
+        } else {
+            if (empty($positions[$index]['documents'])) {
+                $section = DesignPackageSection::query()
+                    ->where('organization_id', $package->organization_id)
+                    ->where('package_id', $package->id)->where('code', $sectionCode)->firstOrFail();
+                $artifacts = DesignArtifact::query()->where('organization_id', $package->organization_id)
+                    ->where('package_id', $package->id)->where('section_id', $section->id)->get();
+                $positions[$index]['documents'] = $artifacts->map(function (DesignArtifact $artifact): array {
+                    if (trim((string) $artifact->document_code) === '') {
+                        throw new DomainException(trans_message('design_management.errors.existing_document_code_required'));
+                    }
+
+                    return [
+                        'document_code' => (string) $artifact->document_code,
+                        'document_title' => (string) ($artifact->document_title ?: $artifact->title),
+                        'artifact_type' => $this->value($artifact->artifact_type),
+                        'required' => false,
+                        'sheet_registry_required' => (bool) $artifact->requires_sheet_registry,
+                    ];
+                })->all();
+            }
+            $positions[$index]['documents'] = $this->appendDocumentMetadata(
+                ['documents' => $positions[$index]['documents'] ?? []], $document, $documentCode,
+            )['documents'];
+        }
+        $composition[$key] = $positions;
+        $this->compositionService->createRevision($package, $actor, [
+            'composition' => $composition,
+            'expected_revision' => (int) $revision->revision_number,
+            'expected_state_version' => (int) $revision->state_version,
+        ]);
+
+        return $this->freshSection(DesignPackageSection::query()
+            ->where('organization_id', $package->organization_id)
+            ->where('package_id', $package->id)->where('code', $sectionCode)->firstOrFail());
     }
 
     public function sectionsForPackage(DesignPackage $package): Collection

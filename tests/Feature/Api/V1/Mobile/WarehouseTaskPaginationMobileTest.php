@@ -19,6 +19,21 @@ final class WarehouseTaskPaginationMobileTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_balance_search_is_validated_and_keeps_warehouse_and_organization_scope(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $this->allowAccess();
+        $this->mock(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class, function (MockInterface $mock) use ($context): void {
+            $mock->shouldReceive('getStockData')->once()
+                ->with((int) $context->organization->id, ['warehouse_id' => 42, 'search' => 'CEM-500'])
+                ->andReturn([['material_name' => 'Цемент М500']]);
+        });
+        $path = '/api/v1/mobile/warehouse/warehouses/42/balances';
+        $this->withHeaders($context->mobileAuthHeaders())->getJson($path.'?search=CEM-500&warehouse_id=999')
+            ->assertOk()->assertJsonPath('data.0.material_name', 'Цемент М500');
+        $this->withHeaders($context->mobileAuthHeaders())->getJson($path.'?search[]=invalid')->assertUnprocessable();
+    }
+
     public function test_task_list_keeps_legacy_array_and_supports_scoped_pages(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'foreman');
