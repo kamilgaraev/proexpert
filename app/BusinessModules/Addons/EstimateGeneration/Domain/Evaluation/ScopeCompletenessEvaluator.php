@@ -10,7 +10,7 @@ use InvalidArgumentException;
 
 final class ScopeCompletenessEvaluator
 {
-    public const VERSION = 'universal-scope:v1';
+    public const VERSION = 'universal-scope:v2';
 
     private const REQUIREMENTS = [
         'finishing' => ['preparation', 'finishing'],
@@ -26,6 +26,19 @@ final class ScopeCompletenessEvaluator
         'technological_pipelines' => ['installation', 'pipeline_specification', 'pipeline_test_program', 'pipeline_testing'],
         'equipment' => ['equipment_specification', 'equipment_purchase', 'delivery', 'installation', 'commissioning'],
     ];
+
+    public static function requirementsFor(mixed $section, string $constructionType, string $profile): array
+    {
+        $requirements = is_string($section) ? (self::REQUIREMENTS[$section] ?? []) : [];
+        if ($requirements !== [] && $constructionType !== 'new_construction') {
+            $requirements = [...$requirements, 'demolition', 'waste_removal', 'existing_structures_protection'];
+        }
+        if ($requirements !== [] && $profile === 'industrial') {
+            $requirements = [...$requirements, 'industrial_specification', 'technology_requirements', 'industry_work_checklist'];
+        }
+
+        return array_values(array_unique($requirements));
+    }
 
     public function evaluate(ProjectModelSnapshot $snapshot, string $profile, string $constructionType, array $selectedScope, array $positions, array $decisions = [], array $technologies = []): array
     {

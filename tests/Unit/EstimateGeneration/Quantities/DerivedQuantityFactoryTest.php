@@ -16,6 +16,18 @@ use PHPUnit\Framework\TestCase;
 final class DerivedQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function agreement_or_confirmed_status_does_not_make_a_model_number_a_physical_measurement(): void
+    {
+        $fact = $this->fact('area', 'room:1', 'area', '25.97', 'm2', ['evidence:area'], origin: 'ai_inference');
+        $proof = new Evidence('evidence:area', 1, 2, 3, self::SOURCE_VERSION, 'document:1', 'document', 1,
+            nativeReference: 'xlsx:sheet:Размеры!C2', producerName: 'native_numeric_parser');
+        $result = (new DerivedQuantityFactory)->derive($this->snapshot([$this->entity('room:1', 'room')], [$fact], [$proof]), [],
+            $this->request('direct_floor_area', 'room:1', ['measurement' => 'area']));
+        self::assertFalse($result->isReady());
+        self::assertContains('operand_origin_requires_confirmation', array_column($result->unresolvedInputs, 'code'));
+    }
+
+    #[Test]
     public function old_confirmed_vision_number_with_a_locator_requires_confirmation_before_new_calculation(): void
     {
         $fact = $this->fact('area', 'room:1', 'area', '25.97', 'm2', ['evidence:area']);

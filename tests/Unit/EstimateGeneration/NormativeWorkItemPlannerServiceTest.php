@@ -11,6 +11,23 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerServiceTest extends TestCase
 {
+    public function test_industrial_scope_without_dimensions_keeps_named_work_and_units_with_unknown_volume(): void
+    {
+        foreach (['process_pipelines' => 2, 'automation' => 2, 'equipment' => 3, 'commissioning' => 1] as $package => $minimum) {
+            $section = ['key' => $package.'-section', 'title' => 'Раздел', 'construction_part' => 'engineering'];
+            $items = $this->planner()->build(['key' => $package, 'scope_type' => 'engineering', 'sections' => [$section]], $section,
+                ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'industrial']]);
+            self::assertGreaterThanOrEqual($minimum, count($items));
+            foreach ($items as $item) {
+                self::assertNull($item['quantity']);
+                self::assertNull($item['total_cost']);
+                self::assertContains($item['unit'], ['m', 'count']);
+                self::assertNotEmpty($item['metadata']['requirement_key']);
+                self::assertTrue($item['metadata']['requires_specification']);
+            }
+        }
+    }
+
     public function test_fsbc_resource_reference_stays_review_item_without_work_norm_code(): void
     {
         $items = $this->planner()->build(
@@ -64,8 +81,8 @@ final class NormativeWorkItemPlannerServiceTest extends TestCase
     private function planner(): NormativeWorkItemPlannerService
     {
         return new NormativeWorkItemPlannerService(
-            new ProjectDocumentNormativeReferenceExtractor(),
-            new EstimatorScopeInferenceService(),
+            new ProjectDocumentNormativeReferenceExtractor,
+            new EstimatorScopeInferenceService,
         );
     }
 }

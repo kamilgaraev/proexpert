@@ -269,6 +269,9 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                 $nativeReference = $locator['native_reference'] ?? $locator['handle']
                     ?? $locator['element_key'] ?? $locator['source_key'] ?? null;
                 $sourceArtifactId = $locator['source_artifact_id'] ?? $row->source_ref;
+                $value = $this->decode($row->value);
+                $choiceHash = $row->type === 'source_fact' && ($value['fact_key'] ?? null) === 'evaluation_choice'
+                    && is_string($value['fact_value'] ?? null) ? $value['fact_value'] : null;
                 $evidence[] = new Evidence(
                     'evidence:'.$row->id,
                     (int) $row->organization_id,
@@ -282,6 +285,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     is_string($nativeReference) && trim($nativeReference) !== '' ? $nativeReference : null,
                     (string) $row->producer_name,
                     (string) $row->source_ref,
+                    $choiceHash,
                 );
             }
         }
@@ -654,6 +658,9 @@ SQL, [
                     }
                     $projectionScopeId = $this->projectionScopeId($decision);
                     $selectedFact = $this->factRow($decision, $decision->selectedFactId);
+                    if ($decision->targetType === 'fact') {
+                        $this->factRow($decision, $decision->targetId);
+                    }
                     if ($decision->actorType === 'system'
                         && ((string) $selectedFact->fact_status !== 'confirmed'
                             || in_array((string) $selectedFact->fact_origin, [
@@ -679,6 +686,7 @@ SQL, [
                         'system_actor_key' => $decision->actorType === 'system' ? $decision->actorId : null,
                         'decision_version' => $decision->version,
                         'target_conflict_key' => $decision->targetType === 'conflict' ? $decision->targetId : null,
+                        'target_fact_stable_key' => $decision->targetType === 'fact' ? $decision->targetId : null,
                         'selected_fact_stable_key' => $decision->selectedFactId,
                         'evidence_lineage' => $this->json($decision->evidenceIds),
                         'created_at' => now(),
@@ -1430,7 +1438,7 @@ SQL, [
     public function decisionsForSelectedFacts(int $organizationId, int $projectId, int $sessionId, array $factIds): array
     {
         $factIds = array_values(array_unique($factIds));
-        if (count($factIds) > 100) {
+        if (count($factIds) > 10000) {
             throw new InvalidArgumentException('Decision fact read batch exceeds its limit.');
         }
         foreach ($factIds as $factId) {
@@ -1486,7 +1494,7 @@ SQL, [
             $actorType = (string) $row->decision_actor_type;
             $actorId = $actorType === 'user' ? (string) $row->actor_id : (string) $row->system_actor_key;
             $targetId = $row->target_conflict_key === null
-                ? (string) $row->selected_fact_stable_key
+                ? (string) ($row->target_fact_stable_key ?? $row->selected_fact_stable_key)
                 : (string) $row->target_conflict_key;
 
             return new Decision(

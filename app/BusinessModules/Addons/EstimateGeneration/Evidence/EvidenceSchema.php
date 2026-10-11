@@ -35,6 +35,9 @@ final class EvidenceSchema
 
     public static function value(EvidenceType $type, array $value): array
     {
+        if ($type === EvidenceType::Extracted && ($value['field_key'] ?? null) === EvidenceAttribute::EvaluationChoice->value) {
+            throw new InvalidArgumentException('Evaluation choices require explicit user input.');
+        }
         [$schema, $required] = match ($type) {
             EvidenceType::SourceFact => [['fact_key' => 'attribute', 'fact_value' => 'normalized_scalar', 'unit' => 'unit'], ['fact_key', 'fact_value']],
             EvidenceType::Extracted => [['field_key' => 'attribute', 'field_value' => 'normalized_scalar', 'unit' => 'unit'], ['field_key', 'field_value']],
@@ -47,7 +50,9 @@ final class EvidenceSchema
             EvidenceType::NormativeMatch => [['norm_key' => 'norm_ref', 'score' => 'confidence', 'dataset_version' => 'version'], ['norm_key', 'score', 'dataset_version']],
             EvidenceType::Price => [['amount' => 'nonnegative_number', 'currency' => 'currency', 'price_version' => 'version', 'region_code' => 'region_code'], ['amount', 'currency', 'price_version']],
         };
-        if ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::Elevation->value) {
+        if ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::EvaluationChoice->value) {
+            $schema = ['fact_key' => 'attribute', 'fact_value' => 'sha256'];
+        } elseif ($type === EvidenceType::SourceFact && ($value['fact_key'] ?? null) === EvidenceAttribute::Elevation->value) {
             $schema['fact_value'] = 'signed_source_decimal';
         } elseif ($type === EvidenceType::Extracted && ($value['field_key'] ?? null) === EvidenceAttribute::Elevation->value) {
             $schema['field_value'] = 'signed_source_decimal';

@@ -759,6 +759,7 @@ final readonly class CurrentProjectDerivedQuantityService
             formulaKey: $quantity->formulaIdentity ?? $quantity->formula,
             formulaVersion: $quantity->formulaVersion ?? '1',
             formulaInputs: [
+                'entity_id' => $quantity->entityId,
                 'operands' => $quantity->operands,
                 'rounding_policy' => [
                     'mode' => $quantity->roundingMode,

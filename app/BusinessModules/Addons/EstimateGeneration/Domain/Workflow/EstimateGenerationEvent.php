@@ -16,6 +16,7 @@ enum EstimateGenerationEvent: string
     case GenerationReady = 'generation_ready';
     case ReviewUpdated = 'review_updated';
     case ReviewReopened = 'review_reopened';
+    case EvaluationRecalculated = 'evaluation_recalculated';
     case ApplyStarted = 'apply_started';
     case ApplyCompleted = 'apply_completed';
     case Failed = 'failed';

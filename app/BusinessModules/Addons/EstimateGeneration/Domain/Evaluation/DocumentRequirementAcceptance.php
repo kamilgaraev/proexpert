@@ -30,8 +30,11 @@ final class DocumentRequirementAcceptance
             if (! $decision instanceof Decision || $decision->actorType !== 'user' || ! ctype_digit($decision->actorId)
                 || $decision->organizationId !== $approval->organizationId || $decision->projectId !== $approval->projectId
                 || $decision->sessionId !== $approval->sessionId || $decision->sourceVersion !== $approval->sourceVersion
-                || $decision->targetType !== 'fact' || $decision->targetId !== $approval->id || ($value['decision_id'] ?? null) !== $decision->id
+                || $decision->targetType !== 'fact' || $decision->targetId !== ($approval->supersedesFactId ?? $approval->id) || ($value['decision_id'] ?? null) !== $decision->id
                 || ($value['reason'] ?? null) !== $decision->reason) {
+                continue;
+            }
+            if (! (new EvaluationChoiceProof)->accepted($snapshot, $approval, $decision)) {
                 continue;
             }
             foreach ($approval->evidenceIds as $id) {

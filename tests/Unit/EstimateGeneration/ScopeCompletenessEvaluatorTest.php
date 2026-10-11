@@ -10,6 +10,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Evidence;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use PHPUnit\Framework\TestCase;
 
 final class ScopeCompletenessEvaluatorTest extends TestCase
@@ -26,6 +28,7 @@ final class ScopeCompletenessEvaluatorTest extends TestCase
             ['disposition' => 'document_verified', 'scope_version' => ScopeCompletenessEvaluator::VERSION, 'technology_key' => 'unspecified',
                 'document_fact_id' => $fact->id, 'document_source_version' => $version, 'document_source_ref' => $evidence->sourceArtifactId,
                 'decision_id' => $decision->id, 'reason' => $decision->reason], null, 0, 'user_input', 'confirmed', [$userEvidence->id]);
+        $userEvidence = $this->choiceEvidence($userEvidence->id, $version, $approval->value);
         $positions = [];
         foreach (['water_supply' => ['water:1', 'water:2'], 'electricity' => ['electricity:1']] as $section => $ids) {
             foreach ($ids as $id) {
@@ -42,6 +45,11 @@ final class ScopeCompletenessEvaluatorTest extends TestCase
         self::assertFalse($result['scope_complete']);
         self::assertSame(['water:2', 'electricity:1'], array_column($result['missing_requirements'], 'entity_id'));
         self::assertSame(['water_supply_test_program', 'electricity_test_program'], array_column($result['missing_requirements'], 'requirement'));
+        $irrelevant = new Evidence($userEvidence->id, 1, 2, 3, $version, 'input:3', 'user_input',
+            nativeReference: 'input_payload.evaluation_choices', producerName: EvidenceProducer::UserInputNormalizer->value,
+            sourceReference: 'input:3', choiceHash: str_repeat('0', 64));
+        $wrongValueProof = new ProjectModelSnapshot($entities, [$fact, $approval], [$evidence, $irrelevant], []);
+        self::assertCount(3, (new ScopeCompletenessEvaluator)->evaluate($wrongValueProof, 'construction', 'new_construction', $scope, $positions, [$decision])['missing_requirements']);
     }
 
     public function test_roof_covering_does_not_mean_the_whole_roof_scope_is_complete(): void
@@ -63,6 +71,7 @@ final class ScopeCompletenessEvaluatorTest extends TestCase
         $fact = new Fact('fact:1', 1, 2, 3, $version, $entity->id, 'evaluation_requirement.demolition',
             ['disposition' => 'not_applicable', 'scope_version' => ScopeCompletenessEvaluator::VERSION, 'technology_key' => 'paint:v1',
                 'decision_id' => $decision->id, 'reason' => $decision->reason], null, 0, 'user_input', 'confirmed', [$evidence->id]);
+        $evidence = $this->choiceEvidence($evidence->id, $version, $fact->value);
         $snapshot = new ProjectModelSnapshot([$entity], [$fact], [$evidence], []);
         $positions = array_map(static fn (string $work): array => ['key' => $work, 'section' => 'finishing', 'entity_id' => 'room:1', 'work_key' => $work],
             ['preparation', 'finishing', 'waste_removal', 'existing_structures_protection']);
@@ -71,5 +80,12 @@ final class ScopeCompletenessEvaluatorTest extends TestCase
         self::assertTrue($evaluate([$decision], 'paint:v1')['scope_complete']);
         self::assertSame('demolition', $evaluate([], 'paint:v1')['missing_requirements'][0]['requirement']);
         self::assertSame('demolition', $evaluate([$decision], 'paint:v2')['missing_requirements'][0]['requirement']);
+    }
+
+    private function choiceEvidence(string $id, string $version, array $value): Evidence
+    {
+        return new Evidence($id, 1, 2, 3, $version, 'input:3', 'user_input', nativeReference: 'input_payload.evaluation_choices',
+            producerName: EvidenceProducer::UserInputNormalizer->value, sourceReference: 'input:3',
+            choiceHash: hash('sha256', CanonicalPipelineJson::encode($value)));
     }
 }

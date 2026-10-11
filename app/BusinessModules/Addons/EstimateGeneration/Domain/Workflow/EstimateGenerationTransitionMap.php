@@ -9,6 +9,7 @@ final class EstimateGenerationTransitionMap
     /** @var array<string, array<string, string>> */
     private const TRANSITIONS = [
         'draft' => [
+            'evaluation_recalculated' => 'estimate_review_required',
             'start_document_processing' => 'processing_documents',
             'cancelled' => 'cancelled',
         ],
@@ -20,6 +21,7 @@ final class EstimateGenerationTransitionMap
             'cancelled' => 'cancelled',
         ],
         'input_review_required' => [
+            'evaluation_recalculated' => 'estimate_review_required',
             'input_confirmed' => 'ready_to_generate',
             'retried' => 'processing_documents',
             'documents_changed' => 'processing_documents',
@@ -27,6 +29,7 @@ final class EstimateGenerationTransitionMap
             'cancelled' => 'cancelled',
         ],
         'ready_to_generate' => [
+            'evaluation_recalculated' => 'estimate_review_required',
             'generation_started' => 'generating',
             'documents_changed' => 'processing_documents',
             'cancelled' => 'cancelled',
@@ -39,6 +42,7 @@ final class EstimateGenerationTransitionMap
             'cancelled' => 'cancelled',
         ],
         'estimate_review_required' => [
+            'evaluation_recalculated' => 'estimate_review_required',
             'generation_ready' => 'ready_to_apply',
             'generation_started' => 'generating',
             'documents_changed' => 'processing_documents',
@@ -46,6 +50,7 @@ final class EstimateGenerationTransitionMap
             'cancelled' => 'cancelled',
         ],
         'ready_to_apply' => [
+            'evaluation_recalculated' => 'estimate_review_required',
             'apply_started' => 'applying',
             'generation_started' => 'generating',
             'documents_changed' => 'processing_documents',
