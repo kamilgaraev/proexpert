@@ -4,6 +4,16 @@ namespace App\Helpers;
 
 class NumberToWordsHelper
 {
+    public static function integerToWords(int $number, bool $neuter = false): string
+    {
+        $words = self::numberToWords($number);
+        if ($neuter) {
+            $words = preg_replace('/(^|\s)один$/u', '$1одно', $words) ?? $words;
+        }
+
+        return mb_ucfirst($words);
+    }
+
     /**
      * Склонения для числовых разрядов
      */
