@@ -5,6 +5,7 @@ namespace App\Services\Logging;
 use App\Services\Logging\Context\RequestContext;
 use App\Services\Logging\Context\UserContext;
 use App\Services\Logging\Context\PerformanceContext;
+use App\Services\Monitoring\ApiQueryMetrics;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 
@@ -35,6 +36,11 @@ class SecurityLogger
         if (! in_array(strtolower($level), ['critical', 'error', 'warning'], true)) {
             return;
         }
+        ApiQueryMetrics::measureProcessingPhase('security_emit', fn () => $this->emitSecurityEvent($event, $context, $level));
+    }
+
+    private function emitSecurityEvent(string $event, array $context, string $level): void
+    {
         $securityEntry = $this->createSecurityEntry($event, $context, $level);
         
         // Логировать с соответствующим уровнем
