@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
 
@@ -198,6 +199,8 @@ SQL, [
             // The logical dialogue receipt joins this same pre-wire transaction.
             // A refusal rolls back both reservations and cannot become an ambiguous paid call.
             ($attempt->beforeSend ?? static fn () => null)();
+            app(EstimatorOrganizationExpenseBudget::class)->admit($organizationId,
+                BigDecimal::of((string) $attempt->reservation->amount)->multipliedBy('1000000')->toScale(0, RoundingMode::Ceiling)->toInt());
             app(EstimatorQaSupplierExpenseGuard::class)->admit($attempt->attemptId, $attempt->reservation);
             if ($attempt->creditOperationId !== null) {
                 ($this->creditAdmission ?? app(EstimatorCreditAttemptAdmission::class))->admit($attempt->creditOperationId,

@@ -104,6 +104,11 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             return $session;
         }
 
+        if (\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)
+            && ! is_string($session->input_payload['generation_credit_operation_id'] ?? null)) {
+            return $this->advance->documentsNeedReview($session, 'project_planning_requires_approval', ['planning_requires_paid_approval']);
+        }
+
         $planning = $this->planning->refresh(
             (int) $session->organization_id,
             (int) $session->project_id,

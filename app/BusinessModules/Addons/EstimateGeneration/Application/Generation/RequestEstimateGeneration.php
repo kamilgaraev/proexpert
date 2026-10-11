@@ -89,6 +89,17 @@ final class RequestEstimateGeneration
                 } catch (\DomainException $exception) {
                     throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Предложение стоимости недействительно либо баланса недостаточно. Получите актуальное предложение.']);
                 }
+                $payload = $result->session->input_payload ?? [];
+                $review = $payload['planning_review'] ?? null;
+                if (is_array($review) && in_array('planning_requires_paid_approval', $review['limitations'] ?? [], true)) {
+                    $remaining = array_values(array_filter($review['limitations'], static fn (string $limitation): bool => $limitation !== 'planning_requires_paid_approval'));
+                    if ($remaining === []) {
+                        unset($payload['planning_review']);
+                    } else {
+                        $payload['planning_review']['limitations'] = $remaining;
+                    }
+                    $result->session->update(['input_payload' => $payload]);
+                }
                 \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->update([
                     'receipt' => \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
                         'operation_id' => $operationId, 'status' => 'queued', 'state_version' => (int) $result->session->state_version]), 'updated_at' => now()]);

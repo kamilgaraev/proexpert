@@ -71,6 +71,10 @@ final readonly class EstimatorDocumentCreditBinding
 
     public function canDispatch(EstimateGenerationProcessingUnit $unit): bool
     {
+        if ($unit->status === \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus::Completed
+            || ! \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPaidWirePolicy::requiresPaidWire($unit->unit_type, $unit->locator ?? [])) {
+            return true;
+        }
         $metadata = $unit->metadata ?? [];
         $operationId = $metadata['credit_operation_id'] ?? null;
         if ($operationId === null) {

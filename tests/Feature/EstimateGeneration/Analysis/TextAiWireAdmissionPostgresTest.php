@@ -76,6 +76,7 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
             CREATE TABLE estimate_generation_document_pages (id bigint PRIMARY KEY);
             SQL);
         foreach ([
+            '2026_07_11_002000_create_estimate_generation_settings_and_budgets.php',
             '2026_08_10_000300_create_vision_physical_attempts.php',
             '2026_08_10_000400_add_recovery_lease_to_vision_physical_attempts.php',
             '2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php',

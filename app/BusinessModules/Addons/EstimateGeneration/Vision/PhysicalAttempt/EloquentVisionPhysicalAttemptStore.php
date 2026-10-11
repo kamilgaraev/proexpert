@@ -139,6 +139,11 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
                 return 'estimator_credit_quote_required';
             }
             try {
+                if ($costReservation->currency === 'RUB' && $costReservation->amount !== null) {
+                    app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorOrganizationExpenseBudget::class)
+                        ->admit((int) $creditAttempt->organization_id, \Brick\Math\BigDecimal::of($costReservation->amount)
+                            ->multipliedBy('1000000')->toScale(0, \Brick\Math\RoundingMode::Ceiling)->toInt());
+                }
                 app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->admit($attemptId, $costReservation);
             } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
                 return $exception->reason;
