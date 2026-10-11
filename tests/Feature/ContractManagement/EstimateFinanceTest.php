@@ -63,6 +63,21 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_report_exposes_base_work_quantity_without_changing_allocation_quantity(): void
+    {
+        $this->item->update(['quantity' => '10', 'quantity_coefficient' => '2', 'quantity_total' => '20']);
+        $this->save($this->command([$this->line($this->customer, '20', '100000'), $this->line($this->contractor, '20', '30000')]));
+
+        $row = $this->report()['rows'][0];
+        self::assertSame(0, FinanceDecimal::compare('10', $row['base_quantity']));
+        self::assertSame(0, FinanceDecimal::compare('2', $row['quantity_coefficient']));
+        self::assertSame(0, FinanceDecimal::compare('20', $row['quantity']));
+        self::assertCount(2, $row['allocations']);
+        foreach ($row['allocations'] as $allocation) {
+            self::assertSame(0, FinanceDecimal::compare('20', $allocation['quantity']));
+        }
+    }
+
     public function test_cash_distribution_saves_once_and_preserves_refund_limits_and_versions(): void
     {
         $parent = EstimateSection::query()->create(['estimate_id' => $this->estimate->id, 'name' => 'Раздел оплат', 'section_number' => '1']);
