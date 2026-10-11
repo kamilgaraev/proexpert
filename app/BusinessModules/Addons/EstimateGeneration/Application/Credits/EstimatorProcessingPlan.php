@@ -31,7 +31,7 @@ final class EstimatorProcessingPlan
                 $roles['ocr'] = $this->role($rasterUnits * 3,
                     (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);
             }
-            if ($complex) {
+            if ($complex && $kind !== 'documents') {
                 $roles['project_synthesis'] = $this->role(3, (int) config('estimate-generation.project_engineer.max_input_bytes', 524288),
                     (int) config('estimate-generation.project_engineer.max_output_tokens', 4096), $tariff);
             }

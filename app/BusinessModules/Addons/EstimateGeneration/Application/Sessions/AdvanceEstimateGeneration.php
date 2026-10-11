@@ -275,7 +275,7 @@ final class AdvanceEstimateGeneration
 
     public function documentsChanged(EstimateGenerationSession $session): EstimateGenerationSession
     {
-        if (isset($session->input_payload['generation_credit_operation_id'])
+        if (isset($session->input_payload['generation_credit_operation_id']) || isset($session->input_payload['documents_credit_operation_id'])
             || \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
             app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditSourceInvalidation::class)
                 ->handle($session, 'source_changed');

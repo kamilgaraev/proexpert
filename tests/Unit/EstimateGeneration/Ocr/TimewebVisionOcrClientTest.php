@@ -47,7 +47,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
             ]),
         ]);
 
-        $result = (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+        $result = $this->client()->recognize(new OcrDocumentInput(
             content: 'binary-content',
             mimeType: 'image/png',
             filename: 'plan.png',
@@ -73,8 +73,8 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
             return $request->url() === 'https://api.timeweb.ai/v1/chat/completions'
                 && $request->hasHeader('Authorization', 'Bearer timeweb-key')
                 && $payload['model'] === 'openai/gpt-6-luna'
-                && !array_key_exists('temperature', $payload)
-                && !array_key_exists('max_tokens', $payload)
+                && ! array_key_exists('temperature', $payload)
+                && ! array_key_exists('max_tokens', $payload)
                 && $payload['max_completion_tokens'] === 4096
                 && $payload['reasoning_effort'] === 'none'
                 && $imagePart['type'] === 'image_url'
@@ -112,7 +112,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
             ]),
         ]);
 
-        $result = (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+        $result = $this->client()->recognize(new OcrDocumentInput(
             content: '%PDF content',
             mimeType: 'application/pdf',
             filename: 'project.pdf',
@@ -143,9 +143,10 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
 
         Http::fake([
             'https://api.timeweb.ai/v1/chat/completions' => Http::sequence()
-                ->push(['error' => ['code' => 'model_failed']], 503)
+                ->push(['error' => ['code' => 'model_failed'], 'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 0, 'total_tokens' => 100]], 503)
                 ->push([
                     'model' => 'openai/gpt-6-luna',
+                    'usage' => ['prompt_tokens' => 200, 'completion_tokens' => 50, 'total_tokens' => 250],
                     'choices' => [
                         [
                             'message' => [
@@ -156,7 +157,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
                 ]),
         ]);
 
-        $result = (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+        $result = $this->client()->recognize(new OcrDocumentInput(
             content: 'image',
             mimeType: 'image/jpeg',
             operationContext: $this->operationContext(),
@@ -176,7 +177,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         $this->expectException(OcrConfigurationException::class);
 
         try {
-            (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+            $this->client()->recognize(new OcrDocumentInput(
                 content: 'binary-content',
                 mimeType: 'image/png',
                 operationContext: $this->operationContext(),
@@ -199,7 +200,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         ]);
 
         try {
-            (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+            $this->client()->recognize(new OcrDocumentInput(
                 content: 'binary-content',
                 mimeType: 'image/png',
                 operationContext: $this->operationContext(),
@@ -231,7 +232,7 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         ]);
 
         try {
-            (new TimewebVisionOcrClient)->recognize(new OcrDocumentInput(
+            $this->client()->recognize(new OcrDocumentInput(
                 content: 'image',
                 mimeType: 'image/jpeg',
                 operationContext: $this->operationContext(),
@@ -262,6 +263,18 @@ final class TimewebVisionOcrClientTest extends EstimateGenerationApplicationTest
         foreach (array_merge($defaults, $overrides) as $key => $value) {
             config()->set($key, $value);
         }
+    }
+
+    private function client(): TimewebVisionOcrClient
+    {
+        return new TimewebVisionOcrClient(
+            usageStore: new class implements \App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore
+            {
+                public function record(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData $data): void {}
+            },
+            priceResolver: app(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
+            physicalAttempts: new \Tests\Support\EstimateGeneration\InMemoryVisionPhysicalAttemptStore,
+        );
     }
 
     private function operationContext(): AiOperationContext

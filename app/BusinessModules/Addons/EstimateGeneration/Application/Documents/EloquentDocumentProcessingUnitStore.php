@@ -296,6 +296,22 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 return false;
             }
 
+            $session = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()
+                ->whereKey($claim->sessionId)->where('organization_id', $claim->organizationId)
+                ->where('project_id', $claim->projectId)->firstOrFail();
+            if (is_string($session->input_payload['documents_credit_operation_id'] ?? null)) {
+                $denial = app(DocumentResultAuthorization::class)->denialReason($session, (int) $document->user_id);
+                if ($denial !== null) {
+                    app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                        ->abort($session, $session->input_payload['documents_credit_operation_id'], $denial);
+                    $this->claimQuery($claim)->where('status', DocumentProcessingUnitStatus::Running->value)
+                        ->where('claim_token', $claim->token)->update(['status' => DocumentProcessingUnitStatus::Superseded->value,
+                            'claim_token' => null, 'lease_expires_at' => null, 'updated_at' => $now]);
+
+                    return false;
+                }
+            }
+
             if ($output->publication !== null) {
                 if ($this->publicationWriter === null) {
                     throw new DocumentUnitProcessingException('document_unit_publication_writer_missing');

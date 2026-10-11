@@ -138,7 +138,10 @@ final class BuildSessionSnapshot
         }
         $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
         $balance = app(\App\Services\Credits\AICreditService::class)->balance($organization);
-        $operationId = $session->input_payload['generation_credit_operation_id'] ?? null;
+        $operationId = $session->input_payload['generation_credit_operation_id'] ?? $session->input_payload['documents_credit_operation_id'] ?? null;
+        $activeDocuments = is_string($operationId) && \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
+            ->where('operation_id', $operationId)->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+            ->where('session_id', $session->id)->where('kind', 'documents')->whereIn('status', ['reserved', 'running'])->exists();
         $receipt = $session->analysis_payload['credit_operation_receipt'] ?? null;
         if (! is_array($receipt) || ($receipt['operation_id'] ?? null) !== $operationId) {
             $receipt = null;
@@ -149,6 +152,7 @@ final class BuildSessionSnapshot
             'minimum_units_minor' => (int) config('ai-assistant-credits.minimum_units_minor', 50),
             'charge_step_minor' => (int) config('ai-assistant-credits.charge_step_minor', 50),
             'current_operation_id' => $operationId,
+            'active_document_operation' => $activeDocuments,
             'receipt' => $receipt];
     }
 

@@ -536,6 +536,159 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
     }
 
+    public function test_documents_only_operation_reserves_one_manifest_replays_and_completes_without_charging_or_generating(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $request] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        \Illuminate\Support\Facades\Queue::fake();
+        $session = EstimateGenerationSession::query()->findOrFail($request->sessionId);
+        $source = 'sha256:'.hash('sha256', 'documents-only-fixture');
+        $lineage = (string) Str::uuid();
+        $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $session->project_id, 'session_id' => $session->id, 'user_id' => $actor->id,
+            'filename' => 'room.png', 'mime_type' => 'image/png', 'storage_path' => 'fixture/private/room.png',
+            'checksum_sha256' => substr($source, 7), 'source_version' => $source, 'page_count' => 1, 'status' => 'queued',
+            'processing_control_status' => 'active', 'processing_control_source_version' => $source,
+            'processing_control_attempt_id' => $lineage, 'meta' => ['processing_attempt_id' => $lineage]]);
+        $unit = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $session->project_id, 'session_id' => $session->id,
+            'document_id' => $document->id, 'unit_type' => 'raster_image', 'unit_index' => 1, 'source_version' => $source, 'status' => 'pending',
+            'locator' => ['source_kind' => 'image', 'source_version' => $source, 'coordinate_space' => 'image_pixels',
+                'artifact_path' => 'fixture/private/room.png', 'artifact_sha256' => 'sha256:'.hash('sha256', 'room-artifact'),
+                'artifact_version_id' => 'fixture.v1', 'content_type' => 'image/png'], 'metadata' => ['processing_attempt_id' => $lineage]]);
+        $starter = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\StartEstimatorDocumentOperation::class);
+        $ignored = $document->replicate();
+        $ignored->fill(['filename' => 'ignored.png', 'source_version' => 'sha256:'.hash('sha256', 'ignored-document'),
+            'checksum_sha256' => hash('sha256', 'ignored-document'), 'status' => 'ignored'])->save();
+        try {
+            $starter->handle($actor, (int) $session->project_id, (int) $session->id, ['state_version' => 0]);
+            self::fail('An unapproved document operation was started');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        }
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:documents-only');
+        $id = (string) Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'documents');
+        $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => 0];
+        $started = $starter->handle($actor, (int) $session->project_id, (int) $session->id, $approval);
+        self::assertSame('processing_documents', $started->status->value);
+        self::assertFalse($started->input_payload['generation_requested']);
+        self::assertSame($id, $unit->fresh()->metadata['credit_operation_id']);
+        $replayed = $starter->handle($actor, (int) $session->project_id, (int) $session->id, $approval);
+        self::assertSame($started->state_version, $replayed->state_version);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        $complete = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation::class);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StopEstimateGenerationDocumentProcessing::class)
+            ->handle($started, $ignored, $actor, $started->state_version, $ignored->source_version, (string) Str::uuid());
+        self::assertSame('reserved', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
+        self::assertTrue(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorDocumentCreditBinding::class)->canDispatch($unit->fresh()));
+        self::assertTrue($complete->handle($started));
+        self::assertSame('reserved', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
+        try {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+                ->quote($actor, (int) $session->project_id, (int) $session->id, $started->state_version, (string) Str::uuid(), 'generation');
+            self::fail('A new paid operation raced the active document manifest');
+        } catch (\DomainException $exception) {
+            self::assertSame('estimator_credit_documents_processing_active', $exception->getMessage());
+        }
+        $unit->update(['status' => 'running', 'claim_token' => (string) Str::uuid(), 'attempt_count' => 1,
+            'lease_expires_at' => now()->addMinutes(5), 'started_at' => now()]);
+        config(['estimate-generation.ocr.timeweb.api_key' => 'fixture-not-real', 'estimate-generation.ocr.timeweb.base_uri' => 'https://fixture.invalid/v1']);
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        \Illuminate\Support\Facades\Http::fake(['https://fixture.invalid/v1/chat/completions' => \Illuminate\Support\Facades\Http::response([
+            'model' => 'openai/gpt-6-luna', 'choices' => [['message' => ['content' => '{"pages":[{"page_number":1,"text":"Нужны размеры"}]}']]],
+            'usage' => ['prompt_tokens' => 200, 'completion_tokens' => 50, 'total_tokens' => 250]], 200)]);
+        $context = new AiOperationContext((string) Str::uuid(), (string) Str::uuid(), (int) $organization->id, (int) $session->project_id,
+            (int) $session->id, 'understand_documents', 'ocr', 1, documentId: (int) $document->id, unitId: (int) $unit->id,
+            processingLineageId: $lineage, creditOperationId: $id);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface::class)
+            ->recognize(new \App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput(str_repeat('fixture-image', 12000), 'image/png', 'room.png', 1, $context));
+        \Illuminate\Support\Facades\Http::assertSentCount(1);
+        self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->count());
+        $unit->update(['status' => 'completed', 'claim_token' => null, 'lease_expires_at' => null,
+            'output_version' => hash('sha256', 'facts-only-output'), 'output_count' => 1, 'completed_at' => now()]);
+        self::assertTrue($complete->handle($started->fresh()));
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        self::assertSame('settled', $operation->status);
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertSame(1, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->count());
+        self::assertSame(1000000, app(AICreditService::class)->balance($organization)['available_minor']);
+        self::assertSame('input_review_required', $session->fresh()->status->value);
+        \Illuminate\Support\Facades\Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+        self::assertTrue($complete->handle($session->fresh()));
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('documentCompletionDenials')]
+    public function test_document_results_do_not_publish_or_charge_after_access_changes(string $change): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $request] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        \Illuminate\Support\Facades\Queue::fake();
+        $session = EstimateGenerationSession::query()->findOrFail($request->sessionId);
+        $source = 'sha256:'.hash('sha256', 'result-denial-'.$change);
+        $lineage = (string) Str::uuid();
+        $document = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $session->project_id, 'session_id' => $session->id, 'user_id' => $actor->id,
+            'filename' => 'room.png', 'mime_type' => 'image/png', 'storage_path' => 'fixture/private/room.png',
+            'checksum_sha256' => substr($source, 7), 'source_version' => $source, 'page_count' => 1, 'status' => 'queued',
+            'processing_control_status' => 'active', 'processing_control_source_version' => $source,
+            'processing_control_attempt_id' => $lineage, 'meta' => ['processing_attempt_id' => $lineage]]);
+        $unit = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit::query()->create([
+            'organization_id' => $organization->id, 'project_id' => $session->project_id, 'session_id' => $session->id,
+            'document_id' => $document->id, 'unit_type' => 'raster_image', 'unit_index' => 1, 'source_version' => $source, 'status' => 'pending',
+            'locator' => ['source_kind' => 'image', 'source_version' => $source, 'coordinate_space' => 'image_pixels',
+                'artifact_path' => 'fixture/private/room.png', 'artifact_sha256' => 'sha256:'.hash('sha256', 'room-artifact'),
+                'artifact_version_id' => 'fixture.v1', 'content_type' => 'image/png'], 'metadata' => ['processing_attempt_id' => $lineage]]);
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:document-result-'.$change);
+        $id = (string) Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'documents');
+        $started = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\StartEstimatorDocumentOperation::class)
+            ->handle($actor, (int) $session->project_id, (int) $session->id, ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => 0]);
+        $token = (string) Str::uuid();
+        $unit->update(['status' => 'running', 'claim_token' => $token, 'attempt_count' => 1,
+            'lease_expires_at' => now()->addMinutes(5), 'started_at' => now()]);
+        config(['estimate-generation.universal_enabled' => false, 'estimate-generation.credits.enabled' => false]);
+        match ($change) {
+            'actor' => $actor->update(['is_active' => false]),
+            'membership' => $actor->organizations()->updateExistingPivot($organization->id, ['is_active' => false]),
+            'product' => $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class,
+                \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class)->allows('hasModuleAccess')->andReturn(false)->getMock()),
+            'rollout' => $started->update(['input_payload' => [...$started->input_payload, 'evaluation_mode' => 'universal']]),
+            'cancel' => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession::class)
+                ->handle($started, $started->state_version, \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent::Cancelled, $actor),
+        };
+        $published = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore::class)->publish(
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaim((int) $unit->id,
+                \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus::Acquired, $token,
+                organizationId: (int) $organization->id, projectId: (int) $session->project_id, sessionId: (int) $session->id,
+                documentId: (int) $document->id, sourceVersion: $source),
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput(hash('sha256', 'late-output'), 'Never publish this'),
+            now()->toDateTimeImmutable());
+        self::assertFalse($published);
+        self::assertTrue(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation::class)->handle($started->fresh()));
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        self::assertContains($operation->status, ['failed', 'cancelled']);
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertNull($unit->fresh()->output_version);
+        self::assertSame(1000000, app(AICreditService::class)->balance($organization)['available_minor']);
+        self::assertSame($change === 'cancel' ? 'cancelled' : 'processing_documents', $session->fresh()->status->value);
+        \Illuminate\Support\Facades\Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+    }
+
+    public static function documentCompletionDenials(): array
+    {
+        return array_map(static fn (string $change): array => [$change], ['actor', 'membership', 'product', 'rollout', 'cancel']);
+    }
+
     private function fixture(): array
     {
         $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);

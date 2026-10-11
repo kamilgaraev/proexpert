@@ -30,6 +30,7 @@ final readonly class EstimatorCreditSourceInvalidation
                 $unit->forceFill(['metadata' => $metadata])->save();
             });
         $session->input_payload = [...($session->input_payload ?? []), 'generation_credit_operation_id' => null,
+            'documents_credit_operation_id' => null,
             'generation_attempt_id' => null, 'generation_requested' => false];
     }
 }

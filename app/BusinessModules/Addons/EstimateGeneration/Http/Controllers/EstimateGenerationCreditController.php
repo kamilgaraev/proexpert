@@ -15,6 +15,17 @@ use Illuminate\Validation\ValidationException;
 
 final class EstimateGenerationCreditController extends Controller
 {
+    public function startDocuments(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\StartEstimatorDocumentOperation $operation): JsonResponse
+    {
+        $approval = $request->validate(['request_id' => ['required', 'uuid'], 'quote_id' => ['required', 'uuid'],
+            'state_version' => ['required', 'integer', 'min:0']]);
+        $started = $operation->handle($request->user(), (int) $project->id, (int) $session->id, $approval);
+
+        return AdminResponse::success(['operation_id' => strtolower($approval['request_id']), 'state_version' => (int) $started->state_version,
+            'status' => $started->status->value], null, 202)->header('Cache-Control', 'private, no-store');
+    }
+
     public function show(Request $request, Project $project, EstimateGenerationSession $session, string $operation): JsonResponse
     {
         $scoped = EstimateGenerationSession::query()->where('organization_id', $request->user()->current_organization_id)
@@ -33,7 +44,7 @@ final class EstimateGenerationCreditController extends Controller
     public function quote(Request $request, Project $project, EstimateGenerationSession $session, EstimatorCreditOperations $operations): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
-            'operation_kind' => ['required', 'in:generation,analysis,rebuild,dialogue'],
+            'operation_kind' => ['required', 'in:generation,analysis,rebuild,dialogue,documents'],
             'operation_parameters' => ['sometimes', 'array:local_estimate_key,command,idempotency_key'],
             'operation_parameters.local_estimate_key' => ['required_if:operation_kind,rebuild', 'string', 'max:255'],
             'operation_parameters.command' => ['required_if:operation_kind,dialogue', 'string', 'max:4000'],
@@ -48,6 +59,8 @@ final class EstimateGenerationCreditController extends Controller
             throw ValidationException::withMessages(['quote' => match ($exception->getMessage()) {
                 'estimator_product_not_available' => trans_message('estimate_evaluation.product_not_available'),
                 'estimator_credit_document_preparation_required' => 'Сначала дождитесь подготовки страниц документа. Она не расходует единицы ИИ.',
+                'estimator_processing_plan_empty_or_oversized' => 'Для этого пакета не требуется отдельное распознавание ИИ либо превышены ограничения обработки. Локальные форматы обрабатываются бесплатно.',
+                'estimator_credit_documents_processing_active' => 'Дождитесь завершения текущего распознавания или остановите его перед новым запуском.',
                 'estimator_credit_quote_expired' => 'Предложение стоимости истекло. Получите новое перед запуском.',
                 'estimator_credit_request_id_conflict' => 'Этот запрос относится к другой версии исходных данных. Получите новое предложение.',
                 default => 'Не удалось рассчитать стоимость операции для текущих данных.',

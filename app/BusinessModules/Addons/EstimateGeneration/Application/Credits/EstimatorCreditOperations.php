@@ -45,6 +45,14 @@ final readonly class EstimatorCreditOperations
                 || ($session->status->value === 'failed' && $session->resume_status?->value !== 'generating')) {
                 throw new StaleEstimateGenerationState($sessionId, $stateVersion);
             }
+            if ($kind === 'documents' && ! in_array($session->status->value, ['draft', 'processing_documents'], true)) {
+                throw new StaleEstimateGenerationState($sessionId, $stateVersion);
+            }
+            $activeDocuments = $this->database->table('estimate_generation_credit_operations')->where('organization_id', $session->organization_id)
+                ->where('project_id', $projectId)->where('session_id', $sessionId)->where('kind', 'documents')->whereIn('status', ['reserved', 'running'])->first(['operation_id']);
+            if ($activeDocuments !== null && $activeDocuments->operation_id !== strtolower($requestId)) {
+                throw new DomainException('estimator_credit_documents_processing_active');
+            }
             [$request, $plan] = $this->capture($actor, $session, strtolower($requestId), $kind, $this->parameters($session, $kind, $parameters));
             $existing = $this->database->table('estimate_generation_credit_operations')->where('operation_id', $request->operationId)->lockForUpdate()->first();
             if ($existing !== null && CanonicalPipelineJson::encode(json_decode($existing->credit_request, true, 64, JSON_THROW_ON_ERROR))
@@ -157,7 +165,9 @@ final readonly class EstimatorCreditOperations
                     throw new DomainException('estimator_credit_document_preparation_required');
                 }
             }
-            $rasterUnits += $pending->filter(static fn ($unit): bool => in_array($unit->unit_type, ['pdf_page', 'raster_image', 'sketch'], true))->count();
+            $rasterUnits += $pending->filter(static fn ($unit): bool => \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPaidWirePolicy::requiresPaidWire(
+                \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType::from($unit->unit_type),
+                json_decode($unit->locator, true, 64, JSON_THROW_ON_ERROR)))->count();
         }
         $inputHash = $this->inputs->fromSession($session);
         $tariff = $this->prices->resolve('estimate_composition', 'timeweb', 'openai/gpt-6-luna', new DateTimeImmutable);

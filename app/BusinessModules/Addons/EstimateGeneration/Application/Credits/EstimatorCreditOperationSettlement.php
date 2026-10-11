@@ -59,6 +59,11 @@ final readonly class EstimatorCreditOperationSettlement
         return $receipt;
     }
 
+    public function publishDocuments(EstimateGenerationSession $session, string $operationId, array $outcome): array
+    {
+        return $this->settle($session, $operationId, hash('sha256', CanonicalPipelineJson::encode(['prepared_documents' => $outcome])), false, null);
+    }
+
     private function settle(EstimateGenerationSession $session, string $operationId, string $contentHash, bool $useful, ?string $revisionId): array
     {
         $operation = $this->operation($session, $operationId);

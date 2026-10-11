@@ -112,6 +112,8 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             throw new OcrConfigurationException;
         }
         $attempts = $this->physicalAttempts ?? app(VisionPhysicalAttemptStore::class);
+        $inputUpper = \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrWireReservationTokens::inputUpper(
+            $requestPayload['messages'], (int) config('estimate-generation.vision.max_input_tokens', 32768));
 
         $response = null;
         $lastException = null;
@@ -140,7 +142,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                 throw new OcrProviderException('estimate_generation.ocr_provider_unavailable', providerCode: 'physical_attempt_outcome_unknown');
             }
             if (! $replay) {
-                $upperCost = (new AiCostCalculator)->calculate(strlen(json_encode($requestPayload['messages'], JSON_THROW_ON_ERROR)) + 1024,
+                $upperCost = (new AiCostCalculator)->calculate($inputUpper,
                     0, $requestPayload['max_completion_tokens'], 0, $this->isImage($input) ? 1 : 0,
                     max(0, $input->pageCount ?? 0), $priceSnapshot->toArray());
                 $attempts->markWireStarted($physicalContext->attemptId, $fingerprint, $owner, $now, $expiresAt, $upperCost);

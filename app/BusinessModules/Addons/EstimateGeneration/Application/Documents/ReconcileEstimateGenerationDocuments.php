@@ -76,6 +76,10 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             return $session;
         }
 
+        if (app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation::class)->handle($session)) {
+            return $session->fresh(['documents.processingUnits']) ?? $session;
+        }
+
         $readiness = $this->readiness->evaluate($session);
         if (! $readiness['can_generate']) {
             if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
