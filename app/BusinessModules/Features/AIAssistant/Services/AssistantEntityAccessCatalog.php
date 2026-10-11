@@ -9,6 +9,8 @@ use App\Models\User;
 
 final class AssistantEntityAccessCatalog
 {
+    private static ?array $referencedParentColumns = null;
+
     private const DOMAINS = [
         'assistant' => ['ai-assistant', ['ai_assistant.chat']],
         'projects' => ['project-management', ['projects.view']],
@@ -63,6 +65,23 @@ final class AssistantEntityAccessCatalog
     public static function parentColumns(): array
     {
         return AssistantExtendedDomainRegistry::values('parentColumns') + self::SECURITY_PARENT_COLUMNS;
+    }
+
+    public static function referencedParentColumns(string $type): array
+    {
+        if (self::$referencedParentColumns === null) {
+            self::$referencedParentColumns = [];
+            foreach (self::parentColumns() as $parents) {
+                foreach ($parents as $parent) {
+                    $parentType = $parent['type'];
+                    self::$referencedParentColumns[$parentType][] = $parent['key'] ?? 'id';
+                    array_push(self::$referencedParentColumns[$parentType], ...array_keys($parent['matches'] ?? []));
+                    if ($parent['match_project'] ?? false) { self::$referencedParentColumns[$parentType][] = 'project_id'; }
+                }
+            }
+        }
+
+        return self::$referencedParentColumns[$type] ?? [];
     }
 
     public static function entityDefinitions(): array
