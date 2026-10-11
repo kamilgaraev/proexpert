@@ -96,6 +96,7 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
         $status = 'connection_failed';
         $httpCode = null;
         $response = [];
+        $sent = true;
         try {
             $response = $this->wire->call($this->configuredModel, [
                 ['role' => 'system', 'content' => $systemPrompt],
@@ -123,12 +124,17 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
             $status = 'succeeded';
 
             return [...$decoded, 'input_tokens' => $inputTokens, 'output_tokens' => $outputTokens];
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted $exception) {
+            $sent = false;
+            throw $exception;
         } catch (RerankWireException $exception) {
             $status = $exception->attemptStatus;
             $httpCode = $exception->httpCode;
             throw $exception;
         } finally {
-            $this->record($attempt, $status, $httpCode, $response, $started, $price);
+            if ($sent) {
+                $this->record($attempt, $status, $httpCode, $response, $started, $price);
+            }
         }
     }
 

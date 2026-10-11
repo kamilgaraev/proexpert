@@ -138,6 +138,11 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             if ($creditOperationId === null && \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) ($creditAttempt->organization_id ?? 0))) {
                 return 'estimator_credit_quote_required';
             }
+            try {
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->admit($attemptId, $costReservation);
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+                return $exception->reason;
+            }
             if ($creditOperationId !== null) {
                 app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorCreditAttemptAdmission::class)
                     ->admit((string) $creditOperationId, $attemptId, (int) $creditAttempt->organization_id,

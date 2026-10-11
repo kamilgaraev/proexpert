@@ -211,6 +211,7 @@ SQL);
     {
         [$session, $actor, $interpreter] = $this->fixture(realPrices: true);
         config(['estimate-generation.credits.enabled' => true, 'ai-assistant-credits.enforce' => false]);
+        config(['estimate-generation.live_qa.enabled' => true, 'estimate-generation.live_qa.run_id' => (string) \Illuminate\Support\Str::uuid()]);
         $handler = $this->handler($session, $actor, $interpreter);
         $id = (string) \Illuminate\Support\Str::uuid();
         try {
@@ -245,6 +246,8 @@ SQL);
             \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($handler->handle($session, $actor, 'Объясни', $id, $approval)));
         self::assertSame(1, $this->calls);
         self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+        self::assertSame(1, DB::table('estimate_generation_qa_expense_attempts')->where('attempt_id',
+            DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->value('attempt_id'))->count());
     }
 
     public function test_shared_dialogue_late_cancel_revocation_and_unknown_response_release_the_reserve_without_another_send(): void

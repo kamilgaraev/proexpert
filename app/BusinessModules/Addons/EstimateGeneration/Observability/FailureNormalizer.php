@@ -28,6 +28,9 @@ final readonly class FailureNormalizer
             $error instanceof SessionAiCostLimitReached && $error->reason === 'estimator_product_not_available' => [
                 FailureCategory::UserActionRequired, 'estimator_product_not_available', [],
             ],
+            $error instanceof SessionAiCostLimitReached && str_starts_with($error->reason, 'estimator_live_qa_') => [
+                FailureCategory::UserActionRequired, 'estimator_live_qa_operation_stopped', ['reason' => $error->reason],
+            ],
             $error instanceof SessionAiCostLimitReached && str_starts_with($error->reason, 'estimator_credit_') => [
                 FailureCategory::UserActionRequired, 'estimator_credit_operation_stopped', ['reason' => $error->reason],
             ],
@@ -96,6 +99,7 @@ final readonly class FailureNormalizer
         return match (true) {
             $code === 'estimator_product_not_available' => FailureCategory::UserActionRequired,
             str_starts_with($code, 'estimator_credit_') => FailureCategory::UserActionRequired,
+            str_starts_with($code, 'estimator_live_qa_') => FailureCategory::UserActionRequired,
             in_array($code, ['unit_claim_lost', 'unit_page_reservation_conflict'], true) => FailureCategory::Recoverable,
             in_array($code, [
                 'document_input_invalid', 'drawing_geometry_unreadable', 'unit_page_lineage_conflict',

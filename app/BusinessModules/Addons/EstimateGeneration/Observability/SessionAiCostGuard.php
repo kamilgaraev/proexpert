@@ -198,6 +198,7 @@ SQL, [
             // The logical dialogue receipt joins this same pre-wire transaction.
             // A refusal rolls back both reservations and cannot become an ambiguous paid call.
             ($attempt->beforeSend ?? static fn () => null)();
+            app(EstimatorQaSupplierExpenseGuard::class)->admit($attempt->attemptId, $attempt->reservation);
             if ($attempt->creditOperationId !== null) {
                 ($this->creditAdmission ?? app(EstimatorCreditAttemptAdmission::class))->admit($attempt->creditOperationId,
                     $attempt->attemptId, $organizationId, $projectId, $sessionId, (string) $attempt->operation, $attempt->reservation);

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Credits;
 
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -13,11 +15,19 @@ final class AICreditEconomicsMonitor
 {
     public function report(CarbonImmutable $from, CarbonImmutable $until): array
     {
-        if ($from->greaterThanOrEqualTo($until)) { throw new InvalidArgumentException('economics_period_invalid'); }
+        if ($from->greaterThanOrEqualTo($until)) {
+            throw new InvalidArgumentException('economics_period_invalid');
+        }
         $required = ['ai_credit_provider_usages', 'ai_usage_records', 'commercial_orders', 'commercial_payments', 'commercial_refunds', 'ai_credit_lots'];
         $missing = array_values(array_filter($required, static fn (string $table): bool => ! Schema::hasTable($table)));
         if ($missing !== []) {
-            $report = $this->evaluate([], [], [], [], count($missing));
+            $canonical = Schema::hasTable('ai_credit_provider_usages')
+                ? DB::table('ai_credit_provider_usages')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)->orderBy('id')->cursor() : [];
+            $legacy = Schema::hasTable('ai_usage_records')
+                ? DB::table('ai_usage_records')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)->orderBy('id')->cursor() : [];
+            $estimator = Schema::hasTable('estimate_generation_ai_usage')
+                ? DB::table('estimate_generation_ai_usage')->where('created_at', '>=', $from)->where('created_at', '<', $until)->orderBy('attempt_id')->cursor() : [];
+            $report = $this->evaluate($canonical, $legacy, [], [], count($missing), $estimator);
         } else {
             $canonical = DB::table('ai_credit_provider_usages')->where('occurred_at', '>=', $from)->where('occurred_at', '<', $until)
                 ->orderBy('id')->cursor();
@@ -42,7 +52,9 @@ final class AICreditEconomicsMonitor
                     $orders->where('o.kind', 'ai_credits')->orWhereExists(function ($lots): void {
                         $lots->selectRaw('1')->from('ai_credit_lots as l')->whereColumn('l.commercial_order_id', 'o.id')->where('l.source', 'subscription');
                     });
-                    if ($hasAllocation) { $orders->orWhereNotNull('o.assistant_revenue_allocation'); }
+                    if ($hasAllocation) {
+                        $orders->orWhereNotNull('o.assistant_revenue_allocation');
+                    }
                 })
                 ->select(['p.id', 'p.provider', 'p.provider_payment_id', 'p.provider_status', 'p.amount_minor', 'p.currency', 'p.refunded_amount_minor', 'p.reconciliation_required',
                     'o.kind', 'o.status as order_status', 'o.amount_minor as order_amount_minor', 'o.currency as order_currency',
@@ -52,7 +64,10 @@ final class AICreditEconomicsMonitor
                 ->orderBy('p.id')->get()->map(static fn ($row): array => (array) $row)->all();
             $refunds = DB::table('commercial_refunds')->whereIn('commercial_payment_id', array_column($payments, 'id'))
                 ->where('provider_status', 'succeeded')->orderBy('id')->cursor();
-            $report = $this->evaluate($canonical, $legacy, $payments, $refunds);
+            $estimator = Schema::hasTable('estimate_generation_ai_usage')
+                ? DB::table('estimate_generation_ai_usage')->where('created_at', '>=', $from)->where('created_at', '<', $until)->orderBy('attempt_id')->cursor()
+                : [];
+            $report = $this->evaluate($canonical, $legacy, $payments, $refunds, estimator: $estimator);
         }
 
         return $report + ['period' => ['from' => $from->toAtomString(), 'until' => $until->toAtomString()],
@@ -63,7 +78,7 @@ final class AICreditEconomicsMonitor
             'automatic_paid_approval' => false];
     }
 
-    public function evaluate(iterable $canonical, iterable $legacy, iterable $payments, iterable $refunds, int $missingSources = 0): array
+    public function evaluate(iterable $canonical, iterable $legacy, iterable $payments, iterable $refunds, int $missingSources = 0, iterable $estimator = []): array
     {
         $cost = 0;
         $unknown = 0;
@@ -72,24 +87,42 @@ final class AICreditEconomicsMonitor
         $duplicates = 0;
         $excluded = 0;
         $calls = [];
-        foreach ([$canonical, $legacy] as $journal => $rows) {
+        foreach ([$canonical, $legacy, $estimator] as $journal => $rows) {
             foreach ($rows as $value) {
                 $row = (array) $value;
+                if ($journal === 2) {
+                    $row = $this->estimatorUsage($row);
+                }
                 $operation = (string) ($row['operation'] ?? '');
-                if (str_starts_with($operation, 'estimate_generation')) { $excluded++; continue; }
+                if ($journal !== 2 && str_starts_with($operation, 'estimate_generation')) {
+                    $excluded++;
+
+                    continue;
+                }
                 $metadata = $this->metadata($row['metadata'] ?? []);
                 $key = $this->callKey($row, $metadata);
-                if ($key !== null && isset($calls[$key])) { $duplicates++; continue; }
-                if ($journal === 1 && $operation === 'assistant_chat' && $key === null) { $unknown++; continue; }
-                if ($key !== null) { $calls[$key] = true; }
+                if ($key !== null && isset($calls[$key])) {
+                    $duplicates++;
+
+                    continue;
+                }
+                if ($journal === 1 && $operation === 'assistant_chat' && $key === null) {
+                    $unknown++;
+
+                    continue;
+                }
+                if ($key !== null) {
+                    $calls[$key] = true;
+                }
                 $count++;
                 $available = ($metadata['cost_available'] ?? null) !== false
                     && ($metadata['provider_usage_available'] ?? null) !== false
                     && ($metadata['cost_is_estimate'] ?? false) !== true
                     && ($row['currency'] ?? 'RUB') === 'RUB';
-                $amount = $journal === 0 ? $this->integer($row['cost_micro_rub'] ?? null) : $this->rubToMicro($row['total_cost_rub'] ?? null);
+                $amount = $journal !== 1 ? $this->integer($row['cost_micro_rub'] ?? null) : $this->rubToMicro($row['total_cost_rub'] ?? null);
                 if (! $available || $amount === null || ($journal === 0 && $amount === 0 && ($metadata['cost_available'] ?? null) !== true && ! $this->hasTokens($metadata))) {
                     $unknown++;
+
                     continue;
                 }
                 $cost = $this->add($cost, $amount);
@@ -99,15 +132,26 @@ final class AICreditEconomicsMonitor
         $refundKeys = [];
         foreach ($refunds as $value) {
             $row = (array) $value;
-            if (($row['provider_status'] ?? null) !== 'succeeded') { continue; }
+            if (($row['provider_status'] ?? null) !== 'succeeded') {
+                continue;
+            }
             $id = (string) ($row['provider_refund_id'] ?? '');
-            if ($id !== '') { $id = ($row['provider'] ?? 'unknown').':'.$id; }
-            if ($id === '' || isset($refundKeys[$id])) { if ($id === '') { $unknownAllocation++; } continue; }
+            if ($id !== '') {
+                $id = ($row['provider'] ?? 'unknown').':'.$id;
+            }
+            if ($id === '' || isset($refundKeys[$id])) {
+                if ($id === '') {
+                    $unknownAllocation++;
+                }
+
+                continue;
+            }
             $refundKeys[$id] = true;
             $payment = (string) ($row['commercial_payment_id'] ?? '');
             $amount = $this->integer($row['amount_minor'] ?? null);
             if ($amount === null || ($row['currency'] ?? null) !== 'RUB' || ($row['reconciliation_required'] ?? false)) {
                 $unknownAllocation++;
+
                 continue;
             }
             $refundTotals[$payment] = $this->add($refundTotals[$payment] ?? 0, $amount);
@@ -123,23 +167,40 @@ final class AICreditEconomicsMonitor
         $paymentKeys = [];
         foreach ($payments as $value) {
             $row = (array) $value;
-            if (($row['provider_status'] ?? null) !== 'succeeded' || ! in_array($row['order_status'] ?? null, ['paid', 'refunded'], true)) { continue; }
+            if (($row['provider_status'] ?? null) !== 'succeeded' || ! in_array($row['order_status'] ?? null, ['paid', 'refunded'], true)) {
+                continue;
+            }
             $key = (string) ($row['provider_payment_id'] ?? '');
-            if ($key !== '') { $key = ($row['provider'] ?? 'unknown').':'.$key; }
-            if ($key === '' || isset($paymentKeys[$key])) { if ($key === '') { $unknownAllocation++; } continue; }
+            if ($key !== '') {
+                $key = ($row['provider'] ?? 'unknown').':'.$key;
+            }
+            if ($key === '' || isset($paymentKeys[$key])) {
+                if ($key === '') {
+                    $unknownAllocation++;
+                }
+
+                continue;
+            }
             $paymentKeys[$key] = true;
             $amount = $this->integer($row['amount_minor'] ?? null);
             $cumulative = $this->integer($row['refunded_amount_minor'] ?? null);
             $refund = max($cumulative ?? 0, $refundTotals[(string) ($row['id'] ?? '')] ?? 0);
             if ($amount === null || $cumulative === null || $amount !== $this->integer($row['order_amount_minor'] ?? null)
                 || ($row['currency'] ?? null) !== 'RUB' || ($row['order_currency'] ?? null) !== 'RUB'
-                || ($row['reconciliation_required'] ?? false) || $refund > $amount) { $unknownAllocation++; continue; }
+                || ($row['reconciliation_required'] ?? false) || $refund > $amount) {
+                $unknownAllocation++;
+
+                continue;
+            }
             $snapshot = $this->metadata($row['assistant_revenue_allocation'] ?? null);
             if (array_key_exists('settled_at', $row) && $row['settled_at'] === null) {
                 if (($row['kind'] ?? null) !== 'ai_credits' && ($snapshot['mode'] ?? null) === ($row['kind'] ?? null)
                     && $this->allocationPeriodMatches($snapshot, $row) && AssistantRevenueAllocation::verify($snapshot, $amount, $amount) === 0) {
                     $excludedZeroAllocation++;
-                } else { $unknownAllocation++; }
+                } else {
+                    $unknownAllocation++;
+                }
+
                 continue;
             }
             $totalCash = $this->add($totalCash, $amount - $refund);
@@ -148,10 +209,18 @@ final class AICreditEconomicsMonitor
                 $refunded = $this->add($refunded, $refund);
                 $directRevenue = $this->add($directRevenue, $amount - $refund);
             } else {
-                if ($snapshot === [] || ($snapshot['mode'] ?? null) !== ($row['kind'] ?? null) || ! $this->allocationPeriodMatches($snapshot, $row)) { $unknownAllocation++; continue; }
+                if ($snapshot === [] || ($snapshot['mode'] ?? null) !== ($row['kind'] ?? null) || ! $this->allocationPeriodMatches($snapshot, $row)) {
+                    $unknownAllocation++;
+
+                    continue;
+                }
                 $allocation = AssistantRevenueAllocation::verify($snapshot, $amount, $amount);
                 $net = AssistantRevenueAllocation::netAfterRefund($snapshot, $amount, $amount, $refund);
-                if ($allocation === null || $net === null) { $unknownAllocation++; continue; }
+                if ($allocation === null || $net === null) {
+                    $unknownAllocation++;
+
+                    continue;
+                }
                 $gross = $this->add($gross, $allocation);
                 $refunded = $this->add($refunded, $allocation - $net);
                 $attributedRevenue = $this->add($attributedRevenue, $net);
@@ -177,15 +246,41 @@ final class AICreditEconomicsMonitor
 
     private function metadata(mixed $value): array
     {
-        if (is_array($value)) { return $value; }
+        if (is_array($value)) {
+            return $value;
+        }
         $decoded = is_string($value) ? json_decode($value, true) : null;
+
         return is_array($decoded) ? $decoded : [];
     }
 
     private function callKey(array $row, array $metadata): ?string
     {
         $id = $metadata['provider_call_id'] ?? $row['usage_key'] ?? $metadata['usage_key'] ?? $metadata['credit_usage_key'] ?? null;
+
         return is_string($id) && $id !== '' ? hash('sha256', implode('|', [(string) ($row['organization_id'] ?? 0), (string) ($row['provider'] ?? ''), (string) ($row['model'] ?? ''), (string) ($row['operation'] ?? ''), $id])) : null;
+    }
+
+    /** Source journal supplements missing transfers and grandfathered operations; physical attempt IDs deduplicate it. */
+    private function estimatorUsage(array $row): array
+    {
+        $available = ($row['usage_status'] ?? null) === 'measured' && ($row['pricing_status'] ?? null) === 'available'
+            && ($row['currency'] ?? null) === 'RUB' && is_string($row['cost_amount'] ?? null);
+        $amount = null;
+        if ($available) {
+            try {
+                $amount = BigDecimal::of($row['cost_amount'])->multipliedBy('1000000')->toScale(0, RoundingMode::Ceiling)->toInt();
+                $available = $amount >= 0;
+            } catch (\Throwable) {
+                $available = false;
+            }
+        }
+
+        return ['organization_id' => $row['organization_id'] ?? 0, 'provider' => $row['provider'] ?? '',
+            'model' => $row['requested_model'] ?? '', 'operation' => $row['operation'] ?? '', 'usage_key' => $row['attempt_id'] ?? null,
+            'currency' => $row['currency'] ?? null, 'cost_micro_rub' => $amount,
+            'metadata' => ['provider_usage_available' => $available, 'cost_available' => $available,
+                'input_tokens' => $row['input_tokens'] ?? 0, 'output_tokens' => $row['output_tokens'] ?? 0]];
     }
 
     private function allocationPeriodMatches(array $snapshot, array $row): bool
@@ -193,8 +288,11 @@ final class AICreditEconomicsMonitor
         try {
             foreach (['period_start_at', 'period_end_at'] as $field) {
                 if (array_key_exists('order_'.$field, $row) && (! is_string($row['order_'.$field])
-                    || ! is_string($snapshot[$field] ?? null) || ! CarbonImmutable::parse($row['order_'.$field])->equalTo(CarbonImmutable::parse($snapshot[$field])))) { return false; }
+                    || ! is_string($snapshot[$field] ?? null) || ! CarbonImmutable::parse($row['order_'.$field])->equalTo(CarbonImmutable::parse($snapshot[$field])))) {
+                    return false;
+                }
             }
+
             return true;
         } catch (\Throwable) {
             return false;
@@ -204,34 +302,51 @@ final class AICreditEconomicsMonitor
     private function hasTokens(array $metadata): bool
     {
         $usage = is_array($metadata['usage'] ?? null) ? $metadata['usage'] : [];
+
         return (int) ($metadata['input_tokens'] ?? $usage['prompt_tokens'] ?? 0) > 0 || (int) ($metadata['output_tokens'] ?? $usage['completion_tokens'] ?? 0) > 0;
     }
 
     private function integer(mixed $value): ?int
     {
-        if (is_int($value)) { return $value >= 0 ? $value : null; }
+        if (is_int($value)) {
+            return $value >= 0 ? $value : null;
+        }
         if (! is_string($value) || preg_match('/^[0-9]+$/D', $value) !== 1 || strlen($value) > strlen((string) PHP_INT_MAX)
-            || (strlen($value) === strlen((string) PHP_INT_MAX) && strcmp($value, (string) PHP_INT_MAX) > 0)) { return null; }
+            || (strlen($value) === strlen((string) PHP_INT_MAX) && strcmp($value, (string) PHP_INT_MAX) > 0)) {
+            return null;
+        }
+
         return (int) $value;
     }
 
     private function rubToMicro(mixed $value): ?int
     {
-        if (! is_string($value) || preg_match('/^([0-9]+)(?:\.([0-9]{1,6}))?$/D', $value, $matches) !== 1) { return null; }
+        if (! is_string($value) || preg_match('/^([0-9]+)(?:\.([0-9]{1,6}))?$/D', $value, $matches) !== 1) {
+            return null;
+        }
         $whole = $this->integer($matches[1]);
-        if ($whole === null || $whole > intdiv(PHP_INT_MAX, 1000000)) { return null; }
+        if ($whole === null || $whole > intdiv(PHP_INT_MAX, 1000000)) {
+            return null;
+        }
+
         return $this->add($whole * 1000000, (int) str_pad($matches[2] ?? '', 6, '0'));
     }
 
     private function add(int $left, int $right): int
     {
-        if ($left > PHP_INT_MAX - $right) { throw new InvalidArgumentException('economics_integer_overflow'); }
+        if ($left > PHP_INT_MAX - $right) {
+            throw new InvalidArgumentException('economics_integer_overflow');
+        }
+
         return $left + $right;
     }
 
     private function multiply(int $value, int $factor): int
     {
-        if ($value > intdiv(PHP_INT_MAX, $factor)) { throw new InvalidArgumentException('economics_integer_overflow'); }
+        if ($value > intdiv(PHP_INT_MAX, $factor)) {
+            throw new InvalidArgumentException('economics_integer_overflow');
+        }
+
         return $value * $factor;
     }
 }

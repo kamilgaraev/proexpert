@@ -38,6 +38,16 @@ final class FailureNormalizerTest extends TestCase
     /** @return iterable<string, array{\Throwable, FailureCategory, string}> */
     public static function knownFailures(): iterable
     {
+        yield 'live QA supplier ceiling' => [
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached('estimator_live_qa_expense_limit_reached'),
+            FailureCategory::UserActionRequired,
+            'estimator_live_qa_operation_stopped',
+        ];
+        yield 'live QA document ceiling' => [
+            new DocumentUnitProcessingException('estimator_live_qa_expense_limit_reached'),
+            FailureCategory::UserActionRequired,
+            'estimator_live_qa_expense_limit_reached',
+        ];
         yield 'estimator product revoked' => [
             new DocumentUnitProcessingException('estimator_product_not_available'),
             FailureCategory::UserActionRequired,

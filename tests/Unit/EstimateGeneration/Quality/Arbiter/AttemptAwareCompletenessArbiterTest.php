@@ -18,6 +18,21 @@ use PHPUnit\Framework\TestCase;
 final class AttemptAwareCompletenessArbiterTest extends TestCase
 {
     #[Test]
+    public function pre_wire_refusal_does_not_create_an_unknown_supplier_expense(): void
+    {
+        $wire = $this->createMock(RerankWireClient::class);
+        $wire->method('provider')->willReturn('timeweb');
+        $wire->expects(self::once())->method('call')->willThrowException(
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted('text_ai_wire_scope_required'));
+        $usage = $this->createMock(AiUsageStore::class);
+        $usage->expects(self::never())->method('record');
+        $arbiter = new AttemptAwareCompletenessArbiter($wire, $usage, new TestAiPriceSnapshotResolver,
+            'openai/gpt-6-luna', 'completeness-arbiter:v1', 'completeness-arbiter:v1', 1000, 70, 15);
+        $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiWireNotStarted::class);
+        $arbiter->review(['input_hash' => 'sha256:'.str_repeat('a', 64), 'operation' => $this->operation()]);
+    }
+
+    #[Test]
     public function it_stops_before_the_wire_when_the_conservative_input_token_limit_is_exceeded(): void
     {
         $wire = new class implements RerankWireClient
@@ -197,7 +212,6 @@ final class AttemptAwareCompletenessArbiterTest extends TestCase
             1,
         );
     }
-
 }
 
 final class TestAiPriceSnapshotResolver implements AiPriceSnapshotResolver

@@ -42,6 +42,8 @@ return [
     'universal_enabled' => (bool) env('ESTIMATE_GENERATION_UNIVERSAL_ENABLED', false),
     'credits' => ['enabled' => (bool) env('ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED', false),
         'service_daily_expense_limit_rub' => '250.00', 'service_monthly_expense_limit_rub' => '4000.00'],
+    'live_qa' => ['enabled' => (bool) env('ESTIMATE_GENERATION_LIVE_QA_ENABLED', false),
+        'run_id' => env('ESTIMATE_GENERATION_LIVE_QA_RUN_ID')],
     'project_engineer' => [
         'model' => $lunaModel('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL'),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_INPUT_BYTES', 524_288),

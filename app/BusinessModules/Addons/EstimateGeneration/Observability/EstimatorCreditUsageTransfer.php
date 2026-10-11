@@ -54,7 +54,7 @@ final readonly class EstimatorCreditUsageTransfer
         $available = $cost->pricingStatus === 'available' && $cost->currency === 'RUB' && $cost->amount !== null;
         $microRub = $available ? BigDecimal::of($cost->amount)->multipliedBy('1000000')->toScale(0, RoundingMode::Ceiling)->toInt() : 0;
         $this->credits->recordProviderCost($reservation, $microRub, $data->provider, $data->requestedModel, $context->operation, [
-            'usage_key' => $context->attemptId, 'provider_usage_available' => $available,
+            'usage_key' => $context->attemptId, 'provider_usage_available' => $available, 'cost_available' => $available,
             'estimator_operation_id' => $context->creditOperationId, 'estimator_usage_fingerprint' => $fingerprint,
             'estimator_tariff' => $identity['supplier_tariff'], 'reported_model' => $data->reportedModel,
             'input_tokens' => $data->inputTokens, 'cached_input_tokens' => $data->cachedInputTokens,

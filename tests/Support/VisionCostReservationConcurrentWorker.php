@@ -24,6 +24,9 @@ if (! $app->environment('testing') || DB::getDriverName() !== 'pgsql'
 $permissions = Mockery::mock(AuthorizationService::class);
 $permissions->allows('canCurrent')->andReturnTrue();
 $app->instance(EstimateGenerationActionAuthorization::class, new EstimateGenerationActionAuthorizer($permissions));
+$entitlements = Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+$entitlements->allows('hasModuleAccess')->andReturnTrue();
+$app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
 
 [$script, $attemptId, $fingerprint, $owner, $reservation] = $argv;
 
