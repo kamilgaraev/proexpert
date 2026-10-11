@@ -648,8 +648,13 @@ final class AssistantDataAccessPolicy
                     $batchIdentitySources = $expectedProjection && $joinSourceIds
                         ? $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($table.'.*'), [], materialize: true)->select([])->toBase()
                         : $identitySources;
+                    $sourceColumns = ! $expectedProjection && $joinSourceIds && $types === ['design_additional'] && ! in_array($table.'.*', $columns, true)
+                        ? $candidateColumns : null;
+                    if ($sourceColumns !== null) {
+                        $batchIdentitySources = $this->aclCompiler->register('__assistant_batch_sources_'.count($compiled), (clone $batch)->select($sourceColumns), [], materialize: false)->select([])->toBase();
+                    }
                     $visible = $this->applySourceIdentityScope($batch, $user, $organizationId, $expectedProjection, preparedCandidates: true,
-                        splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
+                        splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities, sourceColumns: $sourceColumns)->select($columns)->toBase();
                     $checkpoint?->__invoke();
                     $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
                     $finishCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
@@ -686,7 +691,7 @@ final class AssistantDataAccessPolicy
         return $this->sourceQueries->discoverIdentities($query, $this->finishAclDiscovery(...), $sourceCounts);
     }
 
-    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null): Builder
+    private function applySourceIdentityScope(Builder $query, User $user, int $organizationId, bool $expectedProjection, ?string $knownSourceType = null, ?string $knownEntityType = null, bool $preparedCandidates = false, bool $splitIdentities = false, ?QueryBuilder $identitySources = null, ?array $sourceIdentities = null, ?array $sourceColumns = null): Builder
     {
         if ($this->aclCompiler === null) {
             if ($preparedCandidates) { throw new \LogicException('assistant_prepared_candidates_require_query_compilation'); }
@@ -711,7 +716,7 @@ final class AssistantDataAccessPolicy
                     || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { continue; }
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $entityType) : null;
                 if ($entities === null) { continue; }
-                $branch = $this->sourceQueries->identityBranch($entities, $definition[0], $entityType, $identitySources, $table, $expectedProjection);
+                $branch = $this->sourceQueries->identityBranch($entities, $definition[0], $entityType, $identitySources, $table, $expectedProjection, $sourceColumns);
                 if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
             }
             if (isset($sourceIdentities['assistant_document']['file_document'])) {
@@ -723,7 +728,7 @@ final class AssistantDataAccessPolicy
                 if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
             }
 
-            if ($union !== null && $expectedProjection && $identitySources !== null) {
+            if ($union !== null && ($expectedProjection || $sourceColumns !== null) && $identitySources !== null) {
                 return $query->getModel()->newQueryWithoutScopes()->fromSub($union, $table);
             }
 
