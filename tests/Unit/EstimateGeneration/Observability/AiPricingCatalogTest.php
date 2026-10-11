@@ -94,7 +94,7 @@ final class AiPricingCatalogTest extends TestCase
             \Illuminate\Container\Container::setInstance($previousContainer);
         }
         $catalog = new AiPricingCatalog($configuration['ai_pricing_catalog']);
-        $operations = ['vision', 'ocr', 'rerank', 'project_synthesis', 'estimate_composition', 'estimate_audit', 'completeness_review'];
+        $operations = ['vision', 'ocr', 'rerank', 'project_synthesis', 'estimate_composition', 'estimate_audit', 'completeness_review', 'estimate_dialogue_interpretation', 'estimate_composer_correction'];
         self::assertEqualsCanonicalizing($operations, array_keys($configuration['ai_pricing_catalog']));
         foreach ($operations as $operation) {
             $before = $catalog->resolve($operation, 'timeweb', 'openai/gpt-6-luna', new DateTimeImmutable('2026-09-28T23:59:59+00:00'));

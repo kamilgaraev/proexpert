@@ -40,7 +40,8 @@ final class EstimateGenerationDialogueController extends Controller
     {
         return $this->safe(function () use ($request, $project, $session): array {
             $this->guard($request, $project, $session);
-            $result = $this->interpret->handle($session, $request->user(), (string) $request->validated('command'), (string) $request->validated('idempotency_key'));
+            $approval = array_intersect_key($request->validated(), array_flip(['quote_id', 'request_id', 'state_version']));
+            $result = $this->interpret->handle($session, $request->user(), (string) $request->validated('command'), (string) $request->validated('idempotency_key'), $approval === [] ? null : $approval);
             if (($result['kind'] ?? null) === 'proposal') {
                 $result['proposal'] = (new EstimateChangeProposalResource($result['proposal']))->resolve($request);
             }
@@ -141,6 +142,8 @@ final class EstimateGenerationDialogueController extends Controller
     {
         try {
             return AdminResponse::success($callback());
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            throw $exception;
         } catch (InterpretEstimateCommandFailure $exception) {
             [$machineCode, $messageKey, $code] = $this->publicError($exception);
 

@@ -58,8 +58,8 @@ final class TimewebRerankWireClient implements RerankWireClient
             );
         } catch (AiWireNotStarted $exception) {
             throw $exception;
-        } catch (Throwable) {
-            throw new AiWireNotStarted('text_ai_wire_preparation_failed');
+        } catch (Throwable $exception) {
+            throw new AiWireNotStarted('text_ai_wire_preparation_failed', 0, $exception);
         }
         $organizationId = (int) ($scope['organization_id'] ?? 0);
         $projectId = (int) ($scope['project_id'] ?? 0);
@@ -78,8 +78,8 @@ final class TimewebRerankWireClient implements RerankWireClient
             );
         } catch (AiWireNotStarted $exception) {
             throw $exception;
-        } catch (Throwable) {
-            throw new AiWireNotStarted('text_ai_wire_admission_failed');
+        } catch (Throwable $exception) {
+            throw new AiWireNotStarted('text_ai_wire_admission_failed', 0, $exception);
         }
         $started = hrtime(true);
         $received = [];

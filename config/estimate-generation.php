@@ -297,6 +297,8 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
         ]]]],
+        'estimate_dialogue_interpretation' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice]],
+        'estimate_composer_correction' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice]],
         'estimate_audit' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'openai/gpt-5-mini' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),

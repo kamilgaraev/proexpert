@@ -119,7 +119,9 @@ final readonly class EstimatorCreditOperations
         $reservation = $this->credits->beginEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $quoteId, $request);
         $this->database->table('estimate_generation_credit_operations')->where('operation_id', $operation->operation_id)
             ->update(['reservation_id' => $reservation->id, 'status' => 'reserved', 'updated_at' => now()]);
-        app(EstimatorDocumentCreditBinding::class)->bind($session, (string) $operation->operation_id);
+        if ($kind !== 'dialogue') {
+            app(EstimatorDocumentCreditBinding::class)->bind($session, (string) $operation->operation_id);
+        }
 
         return (string) $operation->operation_id;
     }
@@ -132,11 +134,14 @@ final readonly class EstimatorCreditOperations
 
     private function capture(User $actor, EstimateGenerationSession $session, string $operationId, string $kind, array $parameters): array
     {
+        if ($kind === 'dialogue' && ($parameters['idempotency_key'] ?? null) !== $operationId) {
+            throw new DomainException('estimator_credit_dialogue_request_id_mismatch');
+        }
         $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->where('status', '<>', 'ignored')->orderBy('id')->get();
         $manifest = [];
         $rasterUnits = 0;
-        foreach ($documents as $document) {
+        foreach ($kind === 'dialogue' ? [] : $documents as $document) {
             $source = DocumentSourceVersion::fromDocument($document);
             $units = $this->database->table('estimate_generation_processing_units')->where('organization_id', $session->organization_id)
                 ->where('project_id', $session->project_id)->where('session_id', $session->id)->where('document_id', $document->id)
@@ -187,6 +192,19 @@ final readonly class EstimatorCreditOperations
 
     private function parameters(EstimateGenerationSession $session, string $kind, array $parameters): array
     {
+        if ($kind === 'dialogue') {
+            $command = $parameters['command'] ?? null;
+            $key = $parameters['idempotency_key'] ?? null;
+            if (! is_string($command) || trim($command) === '' || mb_strlen($command) > 4000
+                || ! is_string($key) || strlen($key) < 8 || strlen($key) > 128
+                || preg_match('/\A[A-Za-z0-9][A-Za-z0-9._:-]+\z/D', $key) !== 1
+                || count($parameters) !== 2) {
+                throw new DomainException('estimator_credit_operation_parameters_invalid');
+            }
+            $context = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\EstimateCommandContextBuilder::class)->build($session);
+
+            return ['command_hash' => hash('sha256', $command), 'idempotency_key' => $key, 'context_fingerprint' => $context['fingerprint']];
+        }
         if ($kind !== 'rebuild') {
             if ($parameters !== []) {
                 throw new DomainException('estimator_credit_operation_parameters_invalid');

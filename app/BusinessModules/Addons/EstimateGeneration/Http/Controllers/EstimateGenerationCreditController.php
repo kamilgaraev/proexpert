@@ -33,9 +33,11 @@ final class EstimateGenerationCreditController extends Controller
     public function quote(Request $request, Project $project, EstimateGenerationSession $session, EstimatorCreditOperations $operations): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
-            'operation_kind' => ['required', 'in:generation,analysis,rebuild'],
-            'operation_parameters' => ['sometimes', 'array:local_estimate_key'],
-            'operation_parameters.local_estimate_key' => ['required_if:operation_kind,rebuild', 'string', 'max:255']]);
+            'operation_kind' => ['required', 'in:generation,analysis,rebuild,dialogue'],
+            'operation_parameters' => ['sometimes', 'array:local_estimate_key,command,idempotency_key'],
+            'operation_parameters.local_estimate_key' => ['required_if:operation_kind,rebuild', 'string', 'max:255'],
+            'operation_parameters.command' => ['required_if:operation_kind,dialogue', 'string', 'max:4000'],
+            'operation_parameters.idempotency_key' => ['required_if:operation_kind,dialogue', 'string', 'min:8', 'max:128']]);
         if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $request->user()->current_organization_id)) {
             return AdminResponse::error('Общий кошелёк сметчика ещё не включён.', 409);
         }

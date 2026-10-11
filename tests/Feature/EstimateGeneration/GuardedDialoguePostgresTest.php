@@ -207,6 +207,86 @@ SQL);
         self::assertSame(1, $this->calls);
     }
 
+    public function test_shared_wallet_dialogue_requires_the_exact_quote_and_replays_one_settled_questions_result(): void
+    {
+        [$session, $actor, $interpreter] = $this->fixture(realPrices: true);
+        config(['estimate-generation.credits.enabled' => true, 'ai-assistant-credits.enforce' => false]);
+        $handler = $this->handler($session, $actor, $interpreter);
+        $id = (string) \Illuminate\Support\Str::uuid();
+        try {
+            $handler->handle($session, $actor, 'Объясни', $id);
+            self::fail('Dialogue sent without a quote.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, $this->calls);
+        }
+        $credits = app(\App\Services\Credits\AICreditService::class);
+        $organization = Organization::query()->findOrFail($session->organization_id);
+        $credits->grant($organization, 1000000, 'purchase', null, 'fixture:shared-dialogue');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'dialogue', ['command' => 'Объясни', 'idempotency_key' => $id]);
+        $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => 0];
+        try {
+            $handler->handle($session, $actor, 'Измени площадь', $id, $approval);
+            self::fail('Quote accepted a changed command.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, $this->calls);
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+        }
+        $result = $handler->handle($session, $actor, 'Объясни', $id, $approval);
+        self::assertSame('explanation', $result['kind']);
+        self::assertSame(1, $this->calls);
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+        self::assertSame('settled', $operation->status);
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertSame(1000000, $credits->balance($organization)['available_minor']);
+        self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->count());
+        self::assertSame(1, DB::table('ai_credit_provider_usages')->where('ai_credit_reservation_id', $operation->reservation_id)->count());
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($result),
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($handler->handle($session, $actor, 'Объясни', $id, $approval)));
+        self::assertSame(1, $this->calls);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+    }
+
+    public function test_shared_dialogue_late_cancel_revocation_and_unknown_response_release_the_reserve_without_another_send(): void
+    {
+        foreach (['cancel', 'revoked', 'unknown'] as $event) {
+            $this->calls = 0;
+            $this->afterWire = null;
+            [$session, $actor, $interpreter] = $this->fixture(realPrices: true);
+            config(['estimate-generation.credits.enabled' => true, 'ai-assistant-credits.enforce' => false]);
+            $handler = $this->handler($session, $actor, $interpreter);
+            $organization = Organization::query()->findOrFail($session->organization_id);
+            $credits = app(\App\Services\Credits\AICreditService::class);
+            $credits->grant($organization, 1000000, 'purchase', null, 'fixture:late-dialogue:'.$event);
+            $id = (string) \Illuminate\Support\Str::uuid();
+            $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+                ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'dialogue', ['command' => 'Объясни', 'idempotency_key' => $id]);
+            $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => 0];
+            $this->afterWire = match ($event) {
+                'cancel' => static fn () => $session->update(['status' => 'cancelled', 'state_version' => 1]),
+                'revoked' => static fn () => $actor->update(['is_active' => false]),
+                'unknown' => static fn () => throw new \RuntimeException('fixture_timeout_after_dispatch'),
+            };
+            try {
+                $handler->handle($session, $actor, 'Объясни', $id, $approval);
+                self::fail('A late/unknown dialogue published its result: '.$event);
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Dialogue\InterpretEstimateCommandFailure) {
+                $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->sole();
+                self::assertSame('failed', $operation->status, $event);
+                self::assertSame(0, (int) $operation->consumed_units_minor, $event);
+                self::assertSame(1000000, $credits->balance($organization)['available_minor'], $event);
+                self::assertSame(1, $this->calls, $event);
+                self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count(), $event);
+                self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $id)->count(), $event);
+            }
+            try {
+                $handler->handle($session->fresh(), $actor, 'Объясни', $id, $approval);
+            } catch (\Throwable) {
+            }
+            self::assertSame(1, $this->calls, $event);
+        }
+    }
+
     private function handler(EstimateGenerationSession $session, User $actor, TimewebEstimateCommandInterpreter $interpreter): InterpretEstimateCommand
     {
         $session->update(['input_payload' => ['area' => '20']]);
@@ -216,7 +296,7 @@ SQL);
         return app(InterpretEstimateCommand::class);
     }
 
-    private function fixture(?\GuzzleHttp\ClientInterface $httpClient = null): array
+    private function fixture(?\GuzzleHttp\ClientInterface $httpClient = null, bool $realPrices = false): array
     {
         $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
         $entitlements->allows('hasModuleAccess')->andReturn(true);
@@ -247,7 +327,7 @@ SQL);
         $prices->method('resolve')->willReturn(AiPriceSnapshot::fromArray(['currency' => 'RUB', 'source' => 'fixture',
             'version' => 'dialogue-v1', 'effective_at' => '2026-10-10T00:00:00+00:00', 'input_per_million' => '13.5',
             'cached_input_per_million' => '13.5', 'output_per_million' => '67.5', 'reasoning_per_million' => '67.5', 'reasoning_mode' => 'included_in_output']));
-        $interpreter = new TimewebEstimateCommandInterpreter($wire, app(AiUsageStore::class), $prices, $responses, new CanonicalEstimateCommandProposalResolver, $authorization);
+        $interpreter = new TimewebEstimateCommandInterpreter($wire, app(AiUsageStore::class), $realPrices ? app(AiPriceSnapshotResolver::class) : $prices, $responses, new CanonicalEstimateCommandProposalResolver, $authorization);
         $context = ['scope' => ['organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'session_id' => (int) $session->id],
             'snapshot' => ['state_version' => 0], 'facts' => [], 'allowed_references' => [], 'evidence' => []];
 
