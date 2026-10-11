@@ -19,7 +19,8 @@ final class BudgetCatalogService
 {
     public function __construct(
         private readonly BudgetPeriodClosureService $periodClosureService,
-        private readonly BudgetPeriodReopenService $periodReopenService
+        private readonly BudgetPeriodReopenService $periodReopenService,
+        private readonly BudgetStarterCatalogService $starterCatalogService
     ) {}
 
     public function organizationId(User $user, array $input = []): int
@@ -37,6 +38,7 @@ final class BudgetCatalogService
         $organizationId = $this->organizationId($user, $filters);
 
         return [
+            'starter_catalogs' => $this->starterCatalogService->templates(),
             'periods' => $this->periods($organizationId, ['status' => $filters['period_status'] ?? null]),
             'scenarios' => $this->scenarios($organizationId, ['is_active' => true]),
             'responsibility_centers' => $this->responsibilityCenters($organizationId, ['is_active' => true]),
