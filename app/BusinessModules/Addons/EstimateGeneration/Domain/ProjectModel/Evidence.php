@@ -19,6 +19,8 @@ final readonly class Evidence
         public ?int $page = null,
         public ?array $region = null,
         public ?string $nativeReference = null,
+        public ?string $producerName = null,
+        public ?string $sourceReference = null,
     ) {
         ProjectModelInvariant::scope($organizationId, $projectId, $sessionId, $sourceVersion);
         ProjectModelInvariant::id($id, 'Evidence');

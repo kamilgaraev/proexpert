@@ -15,6 +15,24 @@ use PHPUnit\Framework\TestCase;
 
 final class DerivedQuantityFactoryTest extends TestCase
 {
+    #[Test]
+    public function old_confirmed_vision_number_with_a_locator_requires_confirmation_before_new_calculation(): void
+    {
+        $fact = $this->fact('area', 'room:1', 'area', '25.97', 'm2', ['evidence:area']);
+        $unverified = new Evidence('evidence:area', 1, 2, 3, self::SOURCE_VERSION, 'document:1', 'document', 1,
+            nativeReference: 'cad:fake-reference', producerName: 'drawing_analyzer');
+        $request = $this->request('direct_floor_area', 'room:1', ['measurement' => 'area']);
+        $factory = new DerivedQuantityFactory;
+        $result = $factory->derive($this->snapshot([$this->entity('room:1', 'room')], [$fact], [$unverified]), [], $request);
+        self::assertFalse($result->isReady());
+        self::assertContains('document_number_requires_confirmation', array_column($result->unresolvedInputs, 'code'));
+        $verified = new Evidence('evidence:area', 1, 2, 3, self::SOURCE_VERSION, 'document:1', 'document', 1,
+            nativeReference: 'xlsx:sheet:Размеры!C2', producerName: 'native_numeric_parser');
+        $result = $factory->derive($this->snapshot([$this->entity('room:1', 'room')], [$fact], [$verified]), [], $request);
+        self::assertTrue($result->isReady());
+        self::assertSame('25.97', $result->quantity?->value);
+    }
+
     private const SOURCE_VERSION = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     #[Test]

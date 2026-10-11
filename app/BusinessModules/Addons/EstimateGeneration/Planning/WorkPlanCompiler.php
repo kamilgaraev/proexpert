@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
 
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
@@ -32,6 +33,12 @@ final readonly class WorkPlanCompiler
     {
         $profile = $this->packagePlanner->profileFromAnalysis($analysis);
         $plan = $this->packagePlanner->plan($profile);
+        $selected = $analysis['evaluation_policy']['selected_sections'] ?? [];
+        if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' && $selected !== []) {
+            $plan = new PackagePlanData(array_values(array_filter($plan->packages, static fn (array $package): bool => in_array(
+                EvaluationSectionMap::forPackage((string) $package['key']), $selected, true,
+            ) || in_array((string) $package['key'], $selected, true))), $plan->assumptions);
+        }
         $localEstimates = $this->decomposition->decomposePackagePlan($analysis, $plan);
         foreach ($localEstimates as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
@@ -49,7 +56,7 @@ final readonly class WorkPlanCompiler
 
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
 
-        return [
+        $payload = [
             'object_profile' => $profile->toArray(),
             'package_plan' => $plan->toArray(),
             'document_requirements' => $this->packagePlanner->documentRequirements($profile),
@@ -64,6 +71,11 @@ final readonly class WorkPlanCompiler
                 ),
             'local_estimates' => $localEstimates,
         ];
+        if (isset($analysis['evaluation_policy'])) {
+            $payload['evaluation_policy'] = $analysis['evaluation_policy'];
+        }
+
+        return $payload;
     }
 
     /** @param list<array<string, mixed>> $localEstimates

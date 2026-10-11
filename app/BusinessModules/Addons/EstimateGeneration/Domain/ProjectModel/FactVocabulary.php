@@ -21,15 +21,15 @@ final class FactVocabulary
     ];
 
     private const ALIASES = [
-        'area' => ['area', 'room_area', 'floor_area', 'opening_area'],
-        'length' => ['length', 'room_length', 'wall_length'],
-        'width' => ['width', 'room_width', 'opening_width'],
-        'height' => ['height', 'room_height', 'wall_height', 'opening_height'],
-        'thickness' => ['thickness', 'wall_thickness'],
-        'depth' => ['depth', 'excavation_depth'],
-        'plan_area' => ['plan_area', 'roof_plan_area'],
-        'slope_rise' => ['slope_rise', 'roof_slope_rise'],
-        'slope_run' => ['slope_run', 'roof_slope_run'],
+        'area' => ['area', 'room_area', 'floor_area', 'opening_area', 'площадь', 'площадь пола', 'площадь помещения', 'площадь проёма', 'площадь проема'],
+        'length' => ['length', 'room_length', 'wall_length', 'длина', 'длина стены'],
+        'width' => ['width', 'room_width', 'opening_width', 'ширина', 'ширина проёма', 'ширина проема'],
+        'height' => ['height', 'room_height', 'wall_height', 'opening_height', 'высота', 'высота стены', 'высота помещения', 'высота проёма', 'высота проема'],
+        'thickness' => ['thickness', 'wall_thickness', 'толщина', 'толщина стены'],
+        'depth' => ['depth', 'excavation_depth', 'глубина', 'глубина выемки'],
+        'plan_area' => ['plan_area', 'roof_plan_area', 'площадь кровли в плане'],
+        'slope_rise' => ['slope_rise', 'roof_slope_rise', 'подъём ската', 'подъем ската'],
+        'slope_run' => ['slope_run', 'roof_slope_run', 'заложение ската'],
     ];
 
     private const METRIC_UNITS = [
@@ -56,7 +56,7 @@ final class FactVocabulary
 
     public static function parameter(string $type): string
     {
-        $type = mb_strtolower(trim($type));
+        $type = mb_strtolower(trim(preg_replace('/([a-z])([A-Z])/', '$1_$2', $type) ?? $type));
         foreach (self::ALIASES as $canonical => $aliases) {
             if (in_array($type, $aliases, true)) {
                 return $canonical;

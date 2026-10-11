@@ -39,6 +39,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             throw new LogicException('document_unit_publication_transaction_required');
         }
         $publication->assertScope($organizationId, $projectId, $sessionId, $sourceVersion);
+        (new DocumentPageProjectionReplacement($this->database))->replace($organizationId, $projectId, $sessionId, $documentId, $pageNumber, $sourceVersion);
         if ($publication->claims === []) {
             return;
         }
@@ -48,6 +49,7 @@ final readonly class AtomicDocumentUnitPublicationWriter implements DocumentUnit
             $publication->decisions,
             $documentId,
             $pageNumber,
+            $publication->numericSources,
         );
         $this->writeAcceptedDocumentFacts(
             $publication,

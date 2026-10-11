@@ -197,7 +197,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         $pinStartedAt = microtime(true);
         $pinCompleted = false;
         try {
-            $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
+            $pricePolicy = $analysis['evaluation_policy']['price_policy'] ?? 'normative';
+            $canUseNormatives = $pricePolicy === 'normative' || ($pricePolicy === 'mixed' && isset($regionalContext['normative_dataset_version']));
+            $payload['normative_context_pin'] = $canUseNormatives ? $this->compiler->resolveNormativeContextPin(
                 $regionalContext,
                 $payload['local_estimates'],
                 is_string($payload['object_profile']['object_type'] ?? null)
@@ -214,7 +216,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                         ]);
                     }
                 },
-            );
+            ) : ['status' => 'not_required', 'blocking_issues' => []];
             $pinCompleted = true;
         } finally {
             if ($this->canLog()) {

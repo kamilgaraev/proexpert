@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\BuildMostEstimateDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
@@ -21,6 +23,8 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
     public function __construct(
         private StageResultFactory $results,
         private BuildMostEstimateDraft $draftBuilder = new BuildMostEstimateDraft,
+        private UniversalDraftProjector $universalDrafts = new UniversalDraftProjector,
+        private ?AcceptedQuantityEvidenceVerifier $quantityEvidence = null,
     ) {}
 
     public function stage(): ProcessingStage
@@ -105,7 +109,15 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
             }
         }
 
-        $draft = $this->draftBuilder->build($draft);
+        if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal') {
+            if ($this->quantityEvidence === null) {
+                throw new \DomainException('universal_quantity_verifier_unavailable');
+            }
+            $draft['evaluation_policy'] = $analysis['evaluation_policy'];
+            $draft = $this->universalDrafts->project($draft, fn (array $row): bool => $this->quantityEvidence->verify($context, $row));
+        } else {
+            $draft = $this->draftBuilder->build($draft);
+        }
 
         return $this->results->make($context, $this->stage(), ['draft' => $draft], warnings: $warnings);
     }

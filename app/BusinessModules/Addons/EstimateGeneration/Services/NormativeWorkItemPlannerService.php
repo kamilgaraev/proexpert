@@ -111,6 +111,10 @@ final class NormativeWorkItemPlannerService
         $key = $packageKey.'-norm-intent-'.($index + 1);
 
         if ($this->isPlannerFallbackQuantity($quantity)) {
+            if (($analysis['evaluation_policy']['mode'] ?? null) === 'universal') {
+                return $this->unknownQuantityWorkItem($definition, $localEstimate, $section, $key);
+            }
+
             return null;
         }
 
@@ -155,6 +159,23 @@ final class NormativeWorkItemPlannerService
             normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
             operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
         );
+    }
+
+    private function unknownQuantityWorkItem(array $definition, array $estimate, array $section, string $key): array
+    {
+        return ['key' => $key, 'parent_key' => null, 'level' => 0, 'item_type' => 'priced_work',
+            'name' => $definition['name'], 'description' => $definition['normative_search_text'],
+            'normative_search_text' => $definition['normative_search_text'], 'normative_rate_code' => null,
+            'work_category' => $definition['category'], 'unit' => null, 'quantity' => null,
+            'quantity_formula' => $definition['quantity_key'], 'quantity_basis' => 'Количество отсутствует в исходных данных.',
+            'work_cost' => null, 'materials_cost' => null, 'machinery_cost' => null, 'labor_cost' => null, 'total_cost' => null,
+            'materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => [],
+            'work_composition' => $definition['operations'], 'source_refs' => [], 'confidence' => 0,
+            'validation_flags' => ['quantity_unknown', 'unit_requires_confirmation'], 'price_source' => null,
+            'pricing_status' => 'not_calculated', 'pricing_blocker' => 'quantity_unknown',
+            'skip_normative_matching' => true,
+            'metadata' => ['generation_source' => 'qualitative_work_catalog', 'quantity_key' => $definition['quantity_key'],
+                'quantity_source' => 'unknown', 'package_key' => $estimate['key'], 'section_key' => $section['key']]];
     }
 
     /** @param array<string, mixed> $definition */
@@ -628,7 +649,7 @@ final class NormativeWorkItemPlannerService
         return array_values(array_filter(
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
-                && $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys)
+                && (($analysis['evaluation_policy']['mode'] ?? null) === 'universal' || $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys))
                 && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
         ));
     }

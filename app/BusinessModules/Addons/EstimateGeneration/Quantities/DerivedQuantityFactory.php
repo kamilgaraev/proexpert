@@ -406,6 +406,7 @@ final class DerivedQuantityFactory
             }
         }
         $evidencePayload = [];
+        $documentNumber = $verifiedDocumentNumber = false;
         foreach ($fact->evidenceIds as $evidenceId) {
             $item = $evidence[$evidenceId] ?? null;
             if (! $item instanceof Evidence
@@ -422,6 +423,11 @@ final class DerivedQuantityFactory
                 'region' => $item->region,
                 'native_reference' => $item->nativeReference,
             ];
+            $documentNumber = $documentNumber || ($fact->origin === 'document' && $item->sourceType === 'document');
+            $verifiedDocumentNumber = $verifiedDocumentNumber || ($item->sourceType === 'document' && in_array($item->producerName, ['native_numeric_parser', 'pdf_geometry'], true));
+        }
+        if ($documentNumber && ! $verifiedDocumentNumber) {
+            return ['issue' => $this->issue('document_number_requires_confirmation', $role, $fact->id)];
         }
         if ($evidencePayload === [] && ! $decision instanceof Decision) {
             return ['issue' => $this->issue('evidence_missing_or_replaced', $role, $fact->id)];
@@ -572,6 +578,7 @@ final class DerivedQuantityFactory
         if ($fact->evidenceIds === []) {
             return 'evidence_missing_or_replaced';
         }
+        $documentNumber = $verifiedDocumentNumber = false;
         foreach ($fact->evidenceIds as $evidenceId) {
             $item = $evidence[$evidenceId] ?? null;
             if (! $item instanceof Evidence
@@ -579,6 +586,11 @@ final class DerivedQuantityFactory
                     !== [$fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion]) {
                 return 'evidence_missing_or_replaced';
             }
+            $documentNumber = $documentNumber || ($fact->origin === 'document' && $item->sourceType === 'document');
+            $verifiedDocumentNumber = $verifiedDocumentNumber || ($item->sourceType === 'document' && in_array($item->producerName, ['native_numeric_parser', 'pdf_geometry'], true));
+        }
+        if ($documentNumber && ! $verifiedDocumentNumber) {
+            return 'document_number_requires_confirmation';
         }
 
         return null;

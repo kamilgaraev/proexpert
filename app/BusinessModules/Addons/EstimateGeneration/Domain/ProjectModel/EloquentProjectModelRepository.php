@@ -280,6 +280,8 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     is_int($page) && $page > 0 ? $page : null,
                     $region,
                     is_string($nativeReference) && trim($nativeReference) !== '' ? $nativeReference : null,
+                    (string) $row->producer_name,
+                    (string) $row->source_ref,
                 );
             }
         }
@@ -2582,7 +2584,13 @@ SQL, [
                     'invalidated_at' => now(),
                 ]);
         }
-        $this->database->table('estimate_generation_project_model_fact_projections')->insertOrIgnore([
+        $this->database->table('estimate_generation_project_model_fact_projections')->updateOrInsert([
+            'organization_id' => $fact->organizationId,
+            'project_id' => $fact->projectId,
+            'session_id' => $fact->sessionId,
+            'fact_id' => (int) $factDatabaseId,
+            'projection_version' => $fact->version,
+        ], [
             'organization_id' => $fact->organizationId,
             'project_id' => $fact->projectId,
             'session_id' => $fact->sessionId,
@@ -2592,6 +2600,8 @@ SQL, [
             'fact_type' => $fact->type,
             'projection_version' => $fact->version,
             'is_current' => true,
+            'invalidated_at' => null,
+            'replacement_source_version' => null,
             'created_at' => now(),
         ]);
     }
@@ -2710,8 +2720,12 @@ SQL, [
         $databaseIds = $rows->pluck('database_id')->map(static fn ($id): int => (int) $id)->all();
         $evidenceByFact = [];
         if ($databaseIds !== []) {
-            foreach ($this->database->table('estimate_generation_project_model_fact_evidence')
-                ->whereIn('fact_id', $databaseIds)->orderBy('evidence_id')->get(['fact_id', 'evidence_id']) as $binding) {
+            foreach ($this->database->table('estimate_generation_project_model_fact_evidence as binding')
+                ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'binding.evidence_id')
+                ->whereIn('binding.fact_id', $databaseIds)->whereNull('evidence.invalidated_at')
+                ->whereColumn('evidence.source_version', 'binding.evidence_source_version')
+                ->whereColumn('evidence.invalidation_version', 'binding.evidence_invalidation_version')
+                ->orderBy('binding.evidence_id')->get(['binding.fact_id', 'binding.evidence_id']) as $binding) {
                 $evidenceByFact[(int) $binding->fact_id][] = 'evidence:'.$binding->evidence_id;
             }
         }

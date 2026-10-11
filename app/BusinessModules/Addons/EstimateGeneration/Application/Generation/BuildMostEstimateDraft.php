@@ -495,7 +495,7 @@ final class BuildMostEstimateDraft
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
             foreach (is_array($localEstimate) ? ($localEstimate['sections'] ?? []) : [] as $sectionIndex => $section) {
                 foreach (is_array($section) ? ($section['work_items'] ?? []) : [] as $rowIndex => $row) {
-                    if (! is_array($row)) {
+                    if (! is_array($row) || ! is_array($row['metadata']['stage6_provenance']['artifact'] ?? null)) {
                         continue;
                     }
                     if ($artifactHash === null) {

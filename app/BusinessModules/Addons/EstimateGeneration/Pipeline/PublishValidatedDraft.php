@@ -27,6 +27,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private TargetedPackageRebuildOperationService $targetedRebuilds,
         private DraftPublicationGate $publicationGate,
         private AiEstimateQuotaService $quota,
+        private ?PublishUniversalEvaluation $universal = null,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
@@ -38,6 +39,14 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         $draft = $data['draft'] ?? null;
         if (! is_array($draft) || ! is_bool($data['requires_review'] ?? null)) {
             throw new \DomainException('Validated draft output is incomplete.');
+        }
+        if (($draft['generation_contract'] ?? null) === \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalDraftProjector::CONTRACT) {
+            if ($this->universal === null) {
+                throw new \DomainException('universal_evaluation_publisher_unavailable');
+            }
+            $this->universal->publish($claim, $draft);
+
+            return;
         }
         $session = EstimateGenerationSession::query()
             ->whereKey($claim->context->sessionId)

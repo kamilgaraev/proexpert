@@ -31,6 +31,15 @@ final readonly class UnderstandObjectStage implements LeaseAwarePipelineStage
             $source['input'],
             $source['documents'],
         );
+        if (isset($source['input']['evaluation_mode'])) {
+            $analysis['evaluation_policy'] = [
+                'mode' => $source['input']['evaluation_mode'],
+                'price_policy' => $source['input']['price_policy'] ?? 'normative',
+                'profile_id' => $source['input']['profile_id'] ?? 'construction',
+                'selected_sections' => $source['input']['selected_sections'] ?? [],
+                'construction_type' => $source['input']['construction_type'] ?? 'new_construction',
+            ];
+        }
         if (is_array($source['document_total_area'] ?? null)) {
             $analysis['document_total_area'] = $source['document_total_area'];
         }

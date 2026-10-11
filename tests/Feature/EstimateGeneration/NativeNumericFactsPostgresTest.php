@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\AtomicDocumentUnitPublicationWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitPublication;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\NativeNumericFactFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
@@ -114,5 +117,100 @@ final class NativeNumericFactsPostgresTest extends EstimateGenerationCanonicalPo
         return new DocumentUnitExecutionContext(1, (int) $organization->id, (int) $project->id, (int) $session->id,
             (int) $document->id, DocumentUnitType::SpreadsheetSheet, 1, $version, [],
             'source.xlsx', 'application/octet-stream', 'source.xlsx', 'claim-token', 1, 0, 'draft', (int) $page->id);
+    }
+
+    public function test_photo_area_guessed_by_agreeing_observers_is_not_a_confirmed_fact_or_accepted_document_takeoff(): void
+    {
+        $context = $this->context();
+        EstimateGenerationDocument::query()->whereKey($context->documentId)->update(['filename' => 'photo.jpg', 'mime_type' => 'image/jpeg']);
+        $claims = [];
+        $decisions = [];
+        foreach (['observer_literal', 'observer_construction', 'observer_risk'] as $role) {
+            $id = str_replace('observer_', '', $role).':1';
+            $ref = str_replace('observer_', '', $role).':source:1';
+            $claims[] = new ObservationClaim($id, $role, 'room.kitchen', 'area', ['type' => 'number', 'data' => '25.97'], 'm2', $ref, true,
+                $context->organizationId, $context->projectId, $context->sessionId, $context->sourceVersion,
+                ['document_id' => $context->documentId, 'page' => 1, 'explicit' => true, 'coordinate_space' => 'raster_image_normalized'], 1);
+            $decisions[] = new ArbitrationDecision($id, 'accepted', [$id], [$ref], 'observers_agree', null);
+        }
+        $publication = new DocumentUnitPublication($claims, $decisions);
+        $writer = app(AtomicDocumentUnitPublicationWriter::class);
+        $writer->transaction($context->organizationId, $context->sessionId, fn () => $writer->write($publication,
+            $context->organizationId, $context->projectId, $context->sessionId, $context->documentId, 1, $context->sourceVersion));
+        $snapshot = app(ProjectModelRepository::class)->snapshot($context->organizationId, $context->projectId, $context->sessionId);
+        self::assertSame([], $snapshot->facts);
+        $assertions = DB::table('estimate_generation_project_model_assertions')->where('session_id', $context->sessionId)->get();
+        self::assertNotEmpty($assertions);
+        self::assertSame(['candidate'], $assertions->pluck('fact_status')->unique()->values()->all());
+        self::assertSame(['ai_inference'], $assertions->pluck('fact_origin')->unique()->values()->all());
+        self::assertSame(0, DB::table('estimate_generation_document_facts')->where('document_id', $context->documentId)->count());
+        $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)
+            ->previewInput($context->organizationId, $context->projectId, $context->sessionId);
+        foreach ($preview['quantities'] as $quantity) {
+            self::assertNotSame('25.97', $quantity->amount);
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $context->sessionId)->count());
+    }
+
+    public function test_same_source_candidate_or_empty_publication_retracts_old_numeric_projection_without_erasing_history(): void
+    {
+        $context = $this->context();
+        $publication = $this->roomArea($context);
+        $this->publish($context, $publication);
+        $repository = app(ProjectModelRepository::class);
+        self::assertCount(1, $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        DB::table('estimate_generation_document_facts')->where('document_id', $context->documentId)->update(['normalized_payload' => '{}']);
+        $this->publish($context, new DocumentUnitPublication($publication->claims, $publication->decisions));
+        self::assertSame([], $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        self::assertSame(0, DB::table('estimate_generation_document_facts')->where('document_id', $context->documentId)->count());
+        self::assertSame(2, DB::table('estimate_generation_project_model_assertions')->where('session_id', $context->sessionId)->count());
+        $this->publish($context, $publication);
+        self::assertCount(1, $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        $this->publish($context, new DocumentUnitPublication([], [], [['role' => 'native', 'index' => null, 'reason_code' => 'source_unreadable']]));
+        self::assertSame([], $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService::class)->previewInput($context->organizationId, $context->projectId, $context->sessionId);
+        self::assertSame([], $preview['quantities']);
+    }
+
+    public function test_replayed_evidence_keeps_epoch_and_new_binding_without_reviving_old_binding(): void
+    {
+        $context = $this->context();
+        $publication = $this->roomArea($context);
+        $this->publish($context, $publication);
+        $repository = app(ProjectModelRepository::class);
+        $id = (int) DB::table('estimate_generation_evidence')->where('session_id', $context->sessionId)->value('id');
+        try {
+            DB::transaction(fn () => DB::table('estimate_generation_evidence')->where('id', $id)->update(['invalidation_version' => 1]));
+            self::fail('An active epoch was changed without invalidation.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('evidence_epoch_not_monotonic', $exception->getMessage());
+        }
+        app(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class)->invalidate($context->organizationId, $context->projectId, $context->sessionId, [$id], 'test_revalidation');
+        self::assertSame([], $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        $this->publish($context, $publication);
+        self::assertSame(1, (int) DB::table('estimate_generation_evidence')->where('id', $id)->value('invalidation_version'));
+        self::assertCount(1, $repository->currentFacts($context->organizationId, $context->projectId, $context->sessionId));
+        self::assertSame([0, 1], DB::table('estimate_generation_project_model_fact_evidence')->where('evidence_id', $id)->orderBy('evidence_invalidation_version')->pluck('evidence_invalidation_version')->map(fn ($version) => (int) $version)->all());
+        try {
+            DB::transaction(fn () => DB::table('estimate_generation_evidence')->where('id', $id)->update(['invalidation_version' => 0]));
+            self::fail('Epoch rollback was accepted.');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            self::assertStringContainsString('evidence_epoch_not_monotonic', $exception->getMessage());
+        }
+    }
+
+    private function roomArea(DocumentUnitExecutionContext $context): DocumentUnitPublication
+    {
+        return (new NativeNumericFactFactory)->spreadsheet($context, ['sheet' => 'Помещения',
+            'header_cells' => [['address' => 'A1', 'value' => 'entity_key'], ['address' => 'B1', 'value' => 'parameter'], ['address' => 'C1', 'value' => 'value'], ['address' => 'D1', 'value' => 'unit']],
+            'cells' => [['address' => 'A2', 'value' => 'room:kitchen'], ['address' => 'B2', 'value' => 'area'], ['address' => 'C2', 'value' => '22.10', 'raw_value' => '22.10', 'formula' => null], ['address' => 'D2', 'value' => 'm2']],
+        ]) ?? throw new \LogicException('Native test fixture is invalid.');
+    }
+
+    private function publish(DocumentUnitExecutionContext $context, DocumentUnitPublication $publication): void
+    {
+        $writer = app(AtomicDocumentUnitPublicationWriter::class);
+        $writer->transaction($context->organizationId, $context->sessionId, fn () => $writer->write($publication,
+            $context->organizationId, $context->projectId, $context->sessionId, $context->documentId, 1, $context->sourceVersion));
     }
 }

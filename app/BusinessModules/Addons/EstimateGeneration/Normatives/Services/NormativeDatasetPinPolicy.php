@@ -23,4 +23,13 @@ final readonly class NormativeDatasetPinPolicy
 
         return ['normative_dataset_version' => $approvedVersion, 'business_date' => $date];
     }
+
+    public function optional(?string $requestedVersion): array
+    {
+        if ($requestedVersion !== null && $requestedVersion !== '') {
+            return $this->resolve($requestedVersion);
+        }
+
+        return $this->lookup->latestApprovedVersion() === null ? [] : $this->resolve(null);
+    }
 }

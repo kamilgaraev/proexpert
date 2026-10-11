@@ -11,6 +11,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSema
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PhysicalMeasurementPublicationPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\VerifiedNativeNumericSources;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantityIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity;
@@ -42,7 +44,7 @@ final readonly class ProjectModelEvidenceWriter
     }
 
     /** @param list<ObservationClaim> $claims @param list<ArbitrationDecision> $decisions */
-    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber): void
+    public function writeArbitration(array $claims, array $decisions, int $documentId, int $pageNumber, ?VerifiedNativeNumericSources $numericSources = null): void
     {
         if ($claims === [] || $decisions === []) {
             throw new InvalidArgumentException('Arbitration projection cannot be empty.');
@@ -57,6 +59,8 @@ final readonly class ProjectModelEvidenceWriter
             $this->assertScope($claim, $scope);
         }
         $conditionalVisualInventory = $this->hasConditionalVisualInventoryNote($claims);
+        $decisions = (new PhysicalMeasurementPublicationPolicy)->admit($claims, $decisions, $numericSources);
+        $decisions = (new CanonicalFactReducer)->reduce($claims, $decisions);
         (new CanonicalFactReducer)->assertReduced($byId, $decisions);
         $decisions = array_values(array_filter(
             $decisions,
@@ -68,7 +72,7 @@ final readonly class ProjectModelEvidenceWriter
         if ($decisions === []) {
             return;
         }
-        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope): void {
+        $this->evidence->transaction($scope->organizationId, $scope->sessionId, function () use ($byId, $decisions, $documentId, $pageNumber, $scope, $numericSources): void {
             $entities = [];
             $facts = [];
             $factsByClaimId = [];
@@ -111,8 +115,8 @@ final readonly class ProjectModelEvidenceWriter
                         $supportingClaim->explicitEvidence
                             ? $supportingClaim->confidence
                             : 0.0,
-                        EvidenceProducer::DrawingAnalyzer->value,
-                        'sha256:'.hash('sha256', 'document-arbitration:v3'),
+                        $numericSources?->certifies($supportingClaim) === true ? EvidenceProducer::NativeNumericParser->value : EvidenceProducer::DrawingAnalyzer->value,
+                        'sha256:'.hash('sha256', $numericSources?->certifies($supportingClaim) === true ? 'native-numeric-source:v1' : 'document-arbitration:v3'),
                     ));
                     $evidenceId = 'evidence:'.$node->id;
                     $evidenceIds[] = $evidenceId;
@@ -188,7 +192,7 @@ final readonly class ProjectModelEvidenceWriter
                     ? 'visual|'.$projection['type'].'|'.$entityIdentity
                     : (new ClaimSemanticMatcher)->key($claim).$entityScope;
                 $factId = 'fact:'.hash('sha256', implode('|', [
-                    $factIdentity,
+                    $projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity,
                     $projectedStatus,
                     $scope->sourceVersion,
                     (string) $documentId,
@@ -205,7 +209,7 @@ final readonly class ProjectModelEvidenceWriter
                     $this->projectModelFactValue($claim),
                     $claim->unit,
                     (new CanonicalFactConfidence)->forDecision($decision, $byId),
-                    $projectedStatus === 'unresolved' ? 'unresolved' : 'document',
+                    $projectedStatus === 'unresolved' ? 'unresolved' : (PhysicalMeasurementPublicationPolicy::requiresNumericProof($claim) && $numericSources?->certifies($claim) !== true ? 'ai_inference' : 'document'),
                     $projectedStatus,
                     $evidenceIds,
                 );
@@ -572,6 +576,8 @@ final readonly class ProjectModelEvidenceWriter
             $page,
             $region,
             is_string($node->locator['native_reference'] ?? null) ? $node->locator['native_reference'] : 'evidence-node:'.$node->id,
+            $node->producerName,
+            $node->sourceRef,
         );
     }
 }
