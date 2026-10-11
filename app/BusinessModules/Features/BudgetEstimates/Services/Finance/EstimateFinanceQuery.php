@@ -118,13 +118,16 @@ final class EstimateFinanceQuery
 
     public function contracts(Estimate $estimate): array
     {
-        return Contract::query()->where('organization_id', $estimate->organization_id)
-            ->where('project_id', $estimate->project_id)->with(['contractor', 'supplier'])->orderBy('number')->get()
-            ->map(fn (Contract $contract): array => [
+        $contracts = Contract::query()->where('organization_id', $estimate->organization_id)
+            ->where('project_id', $estimate->project_id)->with(['contractor', 'supplier'])->orderBy('number')->get();
+        $budgets = app(EstimateFinanceContractBudget::class)->summaries($contracts->all());
+
+        return $contracts->map(fn (Contract $contract): array => [
                 'id' => (int) $contract->id, 'number' => $contract->number, 'date' => $contract->date?->format('Y-m-d'),
                 'name' => $contract->contractor?->name ?? $contract->supplier?->name,
                 'side' => $this->side($contract), 'side_type' => $contract->contract_side_type?->value,
                 'currency' => $contract->currency ?: 'RUB', 'status' => $contract->status?->value,
+                'binding_budget' => $budgets[$contract->id],
             ])->all();
     }
 

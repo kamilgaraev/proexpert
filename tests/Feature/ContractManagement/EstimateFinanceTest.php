@@ -63,6 +63,185 @@ final class EstimateFinanceTest extends TestCase
         $this->finance = app(EstimateFinanceService::class);
     }
 
+    public function test_contract_binding_budget_counts_all_estimates_and_rejects_overflow(): void
+    {
+        $this->contractor->update(['total_amount' => '30000', 'is_fixed_amount' => true]);
+        $first = $this->line($this->contractor, '100', '10000');
+        $this->save($this->command([$first]));
+        $other = Estimate::query()->create(['organization_id' => $this->estimate->organization_id, 'project_id' => $this->estimate->project_id,
+            'number' => 'FIN-2', 'name' => 'Другая смета', 'estimate_date' => '2026-10-11']);
+        $item = EstimateItem::query()->create(['estimate_id' => $other->id, 'position_number' => '1', 'name' => 'Другая работа',
+            'item_type' => 'work', 'quantity' => '100', 'quantity_total' => '100', 'total_amount' => '100000']);
+        $second = $this->line($this->contractor, '100', '5000');
+        $second['target_key'] = 'i:'.$item->id;
+        $command = ['revision' => (int) $other->fresh()->finance_revision, 'mutation_id' => (string) Str::uuid(), 'target_keys' => [$second['target_key']], 'lines' => [$second]];
+        $this->finance->save($this->actor, $other->project_id, $other->id, $command);
+        $contracts = array_column($this->report()['contracts'], null, 'id');
+        self::assertSame('30000.00', $contracts[$this->contractor->id]['binding_budget']['contract_amount']);
+        self::assertSame('15000.00', $contracts[$this->contractor->id]['binding_budget']['allocated_amount']);
+        self::assertSame('15000.00', $contracts[$this->contractor->id]['binding_budget']['remaining_amount']);
+        $changedBasis = array_replace($first, ['price_basis' => 'without_vat', 'vat_mode' => 'none', 'vat_rate' => null, 'amount' => '50000']);
+        try {
+            $this->save($this->command([$changedBasis]));
+            self::fail('Existing key bypassed the budget through VAT basis change');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('lines', $exception->errors());
+        }
+        self::assertSame('10000.00', EstimateFinanceAllocation::query()->where('key', $first['key'])->firstOrFail()->amount_with_vat);
+        $second['amount'] = '21000';
+        $command['revision'] = (int) $other->fresh()->finance_revision;
+        $command['mutation_id'] = (string) Str::uuid();
+        $command['lines'] = [$second];
+        try {
+            $this->finance->save($this->actor, $other->project_id, $other->id, $command);
+            self::fail('Contract-wide budget overflow was allowed');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('lines', $exception->errors());
+        }
+        self::assertSame('5000.00', EstimateFinanceAllocation::query()->where('key', $second['key'])->firstOrFail()->amount_with_vat);
+        $second['amount'] = '3000';
+        $command['mutation_id'] = (string) Str::uuid();
+        $command['lines'] = [$second];
+        $this->finance->save($this->actor, $other->project_id, $other->id, $command);
+        $contracts = array_column($this->report()['contracts'], null, 'id');
+        self::assertSame('17000.00', $contracts[$this->contractor->id]['binding_budget']['remaining_amount']);
+    }
+
+    public function test_contract_binding_budget_preserves_unknown_and_non_fixed_amounts(): void
+    {
+        ContractEstimateItem::query()->create(['contract_id' => $this->contractor->id, 'estimate_id' => $this->estimate->id,
+            'estimate_item_id' => $this->item->id, 'quantity' => '100', 'amount' => '30000', 'finance_managed' => false]);
+        $contracts = array_column($this->report()['contracts'], null, 'id');
+        self::assertNull($contracts[$this->contractor->id]['binding_budget']['allocated_amount']);
+        self::assertNull($contracts[$this->contractor->id]['binding_budget']['remaining_amount']);
+        self::assertSame(1, $contracts[$this->contractor->id]['binding_budget']['unpriced_count']);
+        $this->customer->update(['is_fixed_amount' => false]);
+        $contracts = array_column($this->report()['contracts'], null, 'id');
+        self::assertNull($contracts[$this->customer->id]['binding_budget']['contract_amount']);
+        self::assertNull($contracts[$this->customer->id]['binding_budget']['remaining_amount']);
+    }
+
+    public function test_contract_binding_budget_preserves_ambiguous_notes_but_rejects_price_changes(): void
+    {
+        $this->contractor->update(['total_amount' => '30000', 'is_fixed_amount' => true]);
+        $first = $this->line($this->contractor, '50', '10000');
+        $second = $this->line($this->contractor, '50', '10000');
+        $this->save($this->command([$first, $second]));
+        EstimateFinanceAllocation::query()->where('key', $second['key'])->update(['price_basis' => 'without_vat', 'vat_mode' => 'none', 'vat_rate' => null]);
+        $second = array_replace($second, ['price_basis' => 'without_vat', 'vat_mode' => 'none', 'vat_rate' => null]);
+        $first['notes'] = 'Уточнить состав цены';
+        $this->save($this->command([$first, $second]));
+        self::assertSame($first['notes'], EstimateFinanceAllocation::query()->where('key', $first['key'])->firstOrFail()->notes);
+        $first['amount'] = '50000';
+        $this->expectException(ValidationException::class);
+        $this->save($this->command([$first, $second]));
+    }
+
+    public function test_contract_binding_budget_allows_sequential_side_previews(): void
+    {
+        $this->customer->update(['total_amount' => '100000', 'is_fixed_amount' => true]);
+        $this->contractor->update(['total_amount' => '30000', 'is_fixed_amount' => true]);
+        $customer = $this->line($this->customer, '100', '0');
+        $contractor = $this->line($this->contractor, '100', '0');
+        $customer['amount'] = $contractor['amount'] = null;
+        $command = $this->command([$customer, $contractor]) + ['preview_operation' => 'total', 'expected_total' => '100000', 'total_line_keys' => [$customer['key']]];
+        $first = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        $command['lines'] = $first['lines'];
+        $command['expected_total'] = '30000';
+        $command['total_line_keys'] = [$contractor['key']];
+        $second = $this->finance->preview($this->actor, $this->estimate->project_id, $this->estimate->id, $command);
+        unset($second['expected_total'], $second['total_line_keys'], $second['preview_operation']);
+        $this->save($second);
+        self::assertSame('70000.00', $this->report()['rows'][0]['margin']);
+    }
+
+    public function test_contract_binding_budget_checks_priced_subtotal_with_an_unpriced_line(): void
+    {
+        $this->contractor->update(['total_amount' => '30000', 'is_fixed_amount' => true]);
+        $priced = $this->line($this->contractor, '50', '40000');
+        $unpriced = $this->line($this->contractor, '50', '0');
+        $unpriced['amount'] = null;
+        $this->expectException(ValidationException::class);
+        $this->save($this->command([$priced, $unpriced]));
+    }
+
+    public function test_generated_work_specification_has_only_its_contract_and_exports_documents(): void
+    {
+        $this->item->update(['quantity' => '10', 'quantity_total' => '20', 'quantity_coefficient' => '2']);
+        $this->contractor->update(['total_amount' => '50000', 'is_fixed_amount' => true]);
+        $cost = $this->line($this->contractor, '20', '30000');
+        $cost['vat_mode'] = 'none';
+        $cost['vat_rate'] = null;
+        $cost['price_basis'] = 'without_vat';
+        $revenue = $this->line($this->customer, '20', '100000');
+        $this->save($this->command([$cost, $revenue]));
+        $other = Estimate::query()->create(['organization_id' => $this->estimate->organization_id, 'project_id' => $this->estimate->project_id,
+            'number' => 'FIN-2', 'name' => 'Дополнительная смета', 'estimate_date' => '2026-10-11']);
+        $item = EstimateItem::query()->create(['estimate_id' => $other->id, 'position_number' => '1', 'name' => 'Работа из другой сметы',
+            'item_type' => 'work', 'quantity' => '1', 'quantity_total' => '1', 'total_amount' => '10000']);
+        $extra = array_replace($cost, ['key' => (string) Str::uuid(), 'target_key' => 'i:'.$item->id, 'quantity' => '1', 'amount' => '5000']);
+        $this->finance->save($this->actor, $other->project_id, $other->id, ['revision' => (int) $other->fresh()->finance_revision,
+            'mutation_id' => (string) Str::uuid(), 'target_keys' => [$extra['target_key']], 'lines' => [$extra]]);
+        $service = app(\App\Services\Contract\ContractWorkSpecificationService::class);
+        $data = $service->current($this->actor, $this->estimate->project_id, $this->contractor->id);
+        self::assertCount(2, $data['rows']);
+        self::assertSame('10.00000000', $data['rows'][0]['quantity']);
+        self::assertSame('3000.0000', $data['rows'][0]['unit_price_without_vat']);
+        self::assertSame('35000.00', $data['totals']['amount_without_vat']);
+        self::assertSame('FIN-2', $data['rows'][1]['estimate_number']);
+        self::assertSame('0.00', $data['totals']['vat_amount']);
+        $pdf = $service->export($this->actor, $this->estimate->project_id, $this->contractor->id, 'pdf');
+        self::assertStringStartsWith('%PDF-', $pdf);
+        $text = (new \Smalot\PdfParser\Parser)->parseContent($pdf)->getText();
+        self::assertStringContainsString('Спецификация', $text);
+        self::assertStringContainsString('Бетон', $text);
+        $docx = $service->export($this->actor, $this->estimate->project_id, $this->contractor->id, 'docx');
+        self::assertStringStartsWith('PK', $docx);
+        $docxPath = tempnam(sys_get_temp_dir(), 'most-specification-');
+        self::assertNotFalse($docxPath);
+        try {
+            file_put_contents($docxPath, $docx);
+            $archive = new \ZipArchive;
+            self::assertTrue($archive->open($docxPath));
+            $documentXml = $archive->getFromName('word/document.xml');
+            $archive->close();
+            self::assertIsString($documentXml);
+            $document = new \DOMDocument;
+            self::assertTrue($document->loadXML($documentXml));
+            self::assertStringContainsString('Бетон', $document->textContent);
+            self::assertStringContainsString('FIN-2', $document->textContent);
+            self::assertStringContainsString('35 000,00', $document->textContent);
+        } finally {
+            unlink($docxPath);
+        }
+        $artifactDirectory = getenv('MOST_SPECIFICATION_QA_DIR');
+        if ($artifactDirectory !== false && is_dir($artifactDirectory)) {
+            file_put_contents($artifactDirectory.'/specification.pdf', $pdf);
+            file_put_contents($artifactDirectory.'/specification.docx', $docx);
+        }
+        $cost['amount'] = '25000';
+        $this->save($this->command([$cost, $revenue]));
+        $data = $service->current($this->actor, $this->estimate->project_id, $this->contractor->id);
+        self::assertSame('30000.00', $data['totals']['amount_without_vat']);
+    }
+
+    public function test_generated_work_specification_enforces_financial_permissions(): void
+    {
+        $this->mock(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(static fn ($actor, $permission): bool => $permission !== 'specifications.view');
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\Services\Contract\ContractWorkSpecificationService::class)->current($this->actor, $this->estimate->project_id, $this->contractor->id);
+    }
+
+    public function test_generated_work_specification_cannot_read_a_foreign_organization(): void
+    {
+        $foreign = $this->contractor->replicate();
+        $foreign->organization_id = Organization::factory()->create()->id;
+        $foreign->number = 'FOREIGN';
+        $foreign->save();
+        $this->expectException(\Illuminate\Database\Eloquent\ModelNotFoundException::class);
+        app(\App\Services\Contract\ContractWorkSpecificationService::class)->current($this->actor, $this->estimate->project_id, $foreign->id);
+    }
+
     public function test_report_exposes_base_work_quantity_without_changing_allocation_quantity(): void
     {
         $this->item->update(['quantity' => '10', 'quantity_coefficient' => '2', 'quantity_total' => '20']);
