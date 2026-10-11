@@ -822,8 +822,8 @@ class ConstructionJournalService
         ?ConstructionJournalEntry $entry = null,
         ?User $user = null
     ): void {
-        $estimateId = $data['estimate_id'] ?? $entry?->estimate_id;
-        $scheduleTaskId = $data['schedule_task_id'] ?? $entry?->schedule_task_id;
+        $estimateId = array_key_exists('estimate_id', $data) ? $data['estimate_id'] : $entry?->estimate_id;
+        $scheduleTaskId = array_key_exists('schedule_task_id', $data) ? $data['schedule_task_id'] : $entry?->schedule_task_id;
 
         $this->assertEstimateScope($journal, $estimateId);
         $this->assertScheduleTaskScope($journal, $scheduleTaskId, $estimateId);

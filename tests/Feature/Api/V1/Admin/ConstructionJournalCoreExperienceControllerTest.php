@@ -429,6 +429,80 @@ class ConstructionJournalCoreExperienceControllerTest extends TestCase
         }
     }
 
+    public function test_planned_draft_can_be_replaced_with_manual_work_and_submitted(): void
+    {
+        Event::fake();
+        Notification::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        [, $contract, $estimate, $item] = $this->createCoverageFixture($context->organization, $project);
+        $task = $this->createScheduleTask($context, $project, $item);
+        $journal = $this->createJournal($context->organization, $project, $context->user, ['contract_id' => $contract->id]);
+        $this->allowAdminAccess();
+
+        $created = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/construction-journals/{$journal->id}/entries", [
+                'idempotency_key' => 'journal-manual-replacement',
+                'estimate_id' => $estimate->id,
+                'entry_date' => '2026-06-03',
+                'work_description' => 'Плановая работа',
+                'work_volumes' => [['estimate_item_id' => $item->id, 'quantity' => 1]],
+            ])->assertCreated();
+        $entryId = $created->json('data.id');
+        $this->assertDatabaseHas('construction_journal_entries', ['id' => $entryId, 'schedule_task_id' => $task->id]);
+
+        $this->withHeaders($context->authHeaders())->putJson("/api/v1/admin/journal-entries/{$entryId}", [
+            'estimate_id' => null,
+            'schedule_task_id' => null,
+            'work_description' => 'Внеплановая работа',
+            'work_volumes' => [[
+                'estimate_item_id' => null, 'work_name' => 'Уборка',
+                'measurement_unit_id' => $item->measurement_unit_id, 'quantity' => 3,
+            ]],
+        ])->assertOk()->assertJsonPath('data.schedule_task_id', null)->assertJsonPath('data.estimate_id', null);
+
+        $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/journal-entries/{$entryId}/submit")
+            ->assertOk()->assertJsonPath('data.status', 'submitted');
+        $fact = CompletedWork::query()->where('journal_entry_id', $entryId)->whereNotNull('journal_work_volume_id')->sole();
+        $this->assertNull($fact->schedule_task_id);
+        $this->assertNull($fact->estimate_item_id);
+    }
+
+    public function test_explicit_schedule_task_still_rejects_another_estimate_item(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        [, $contract, $estimate, $first, $second] = $this->createCoverageFixture($context->organization, $project, true);
+        $task = $this->createScheduleTask($context, $project, $first);
+        $journal = $this->createJournal($context->organization, $project, $context->user, ['contract_id' => $contract->id]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/construction-journals/{$journal->id}/entries", [
+                'idempotency_key' => 'journal-explicit-task-mismatch',
+                'estimate_id' => $estimate->id, 'schedule_task_id' => $task->id,
+                'entry_date' => '2026-06-03', 'work_description' => 'Другая работа',
+                'work_volumes' => [['estimate_item_id' => $second->id, 'quantity' => 1]],
+            ])->assertUnprocessable()->assertJsonPath('message', trans_message('construction_journal.errors.schedule_task_volume_mismatch'));
+    }
+
+    private function createScheduleTask(AdminApiTestContext $context, Project $project, EstimateItem $item): ScheduleTask
+    {
+        $schedule = ProjectSchedule::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by_user_id' => $context->user->id, 'name' => 'График работ', 'status' => 'active',
+            'planned_start_date' => '2026-06-01', 'planned_end_date' => '2026-12-31',
+        ]);
+
+        return ScheduleTask::query()->create([
+            'organization_id' => $context->organization->id, 'schedule_id' => $schedule->id,
+            'created_by_user_id' => $context->user->id, 'estimate_item_id' => $item->id,
+            'name' => $item->name, 'task_type' => 'task', 'quantity' => 100, 'status' => 'not_started',
+            'planned_start_date' => '2026-06-01', 'planned_end_date' => '2026-12-31', 'planned_duration_days' => 213,
+        ]);
+    }
+
     private function createCoverageFixture(Organization $organization, Project $project, bool $withTwoResourceParents = false): array
     {
         $contractor = Contractor::query()->create([
