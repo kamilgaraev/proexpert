@@ -113,7 +113,7 @@ final class ProcurementChainService
         [$currentKey, $nextAction, $blockers] = $this->resolveCurrentState($graph, $actor, $organizationId);
         $linkedDocuments = $this->linkedDocuments($graph);
         $currentDocument = $this->documentForStage($currentKey, $linkedDocuments, $graph);
-        $currentStage = $this->stage($currentKey, 'current', $currentDocument, $blockers->first());
+        $currentStage = $this->stage($currentKey, $currentKey === 'closed_without_procurement' ? 'done' : 'current', $currentDocument, $blockers->first());
         $stages = $this->stages(
             $currentKey,
             $linkedDocuments,
@@ -155,6 +155,12 @@ final class ProcurementChainService
         $paymentDocuments = $graph['payment_documents'] ?? collect();
         $receipts = $graph['receipts'] ?? collect();
         $materialDeliveries = $graph['material_deliveries'] ?? collect();
+
+        if ($siteRequest instanceof SiteRequest
+            && $siteRequest->status === SiteRequestStatusEnum::COMPLETED
+            && ($siteRequest->metadata['closure_without_procurement'] ?? null) !== null) {
+            return ['closed_without_procurement', null, collect()];
+        }
 
         if ($siteRequest instanceof SiteRequest && in_array($siteRequest->status, [
             SiteRequestStatusEnum::REJECTED,
@@ -780,6 +786,7 @@ final class ProcurementChainService
         }
 
         $type = match ($stage) {
+            'closed_without_procurement' => 'site_request',
             'site_request_created', 'site_request_approved', 'fulfillment_source_required' => 'site_request',
             'warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted' => 'project_material_delivery',
             'purchase_request_created', 'purchase_request_approved' => 'purchase_request',
@@ -822,6 +829,9 @@ final class ProcurementChainService
                 && ! $warehouseIds->contains($document->id)
         );
         $stageOrder = $this->stageOrder($stageDocuments, $includeFulfillmentStages);
+        if ($currentKey === 'closed_without_procurement') {
+            return collect([$this->stage('closed_without_procurement', 'done', $documents->firstWhere('type', 'site_request'))]);
+        }
         $currentIndex = array_search($currentKey, $stageOrder, true);
         $currentIndex = $currentIndex === false ? count($stageOrder) - 1 : $currentIndex;
 

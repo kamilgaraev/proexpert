@@ -135,6 +135,19 @@ class PurchaseRequestService
         DB::beginTransaction();
 
         try {
+            $siteRequest = $this->resolveSiteRequestForProcurement(
+                (int) $siteRequest->organization_id,
+                (int) $siteRequest->id,
+                $actorId,
+                true
+            );
+            $existingRequest = $this->findExistingBySiteRequest($siteRequest->organization_id, $siteRequest->id);
+            if ($existingRequest) {
+                $this->syncDeliveryFromSiteRequest($siteRequest, $existingRequest, $quantityOverride, $metadata);
+                DB::commit();
+
+                return $existingRequest->fresh(self::RESOURCE_RELATIONS);
+            }
             $occurredAt = now('UTC');
             $requestNumber = $this->numberGenerator->generate(
                 $siteRequest->organization_id,
@@ -226,6 +239,12 @@ class PurchaseRequestService
             $siteRequest,
             $siteRequestId,
         ): PurchaseRequest {
+            if ($siteRequestId !== null) {
+                $siteRequest = $this->resolveSiteRequestForProcurement($organizationId, $siteRequestId, $actorId, true);
+                if ($this->findExistingBySiteRequest($organizationId, $siteRequestId)) {
+                    throw new \DomainException(trans_message('procurement.purchase_requests.duplicate_site_request'));
+                }
+            }
             $occurredAt = $this->ownerWorkflowRuntime->occurredAt();
             $purchaseRequest = $this->persistCreatedPurchaseRequest(
                 $organizationId,
@@ -464,7 +483,8 @@ class PurchaseRequestService
     private function resolveSiteRequestForProcurement(
         int $organizationId,
         int $siteRequestId,
-        int $actorId
+        int $actorId,
+        bool $lockForUpdate = false
     ): SiteRequest {
         if ($actorId <= 0) {
             throw new \InvalidArgumentException('Actor ID must be a positive integer.');
@@ -472,7 +492,13 @@ class PurchaseRequestService
 
         $siteRequest = SiteRequest::forOrganization($organizationId)
             ->visibleToActor($actorId)
-            ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+            ->whereNotIn('status', [
+                SiteRequestStatusEnum::DRAFT->value,
+                SiteRequestStatusEnum::COMPLETED->value,
+                SiteRequestStatusEnum::CANCELLED->value,
+                SiteRequestStatusEnum::REJECTED->value,
+            ])
+            ->when($lockForUpdate, static fn ($query) => $query->lockForUpdate())
             ->find($siteRequestId);
 
         if (! $siteRequest instanceof SiteRequest) {

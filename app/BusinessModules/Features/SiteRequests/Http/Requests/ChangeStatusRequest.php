@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\SiteRequests\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use Illuminate\Validation\Rules\Enum;
+use Illuminate\Validation\Rule;
 
 /**
  * Валидация смены статуса заявки
@@ -26,7 +27,12 @@ class ChangeStatusRequest extends FormRequest
     {
         return [
             'status' => ['required', new Enum(SiteRequestStatusEnum::class)],
-            'notes' => ['nullable', 'string', 'max:1000'],
+            'notes' => [
+                Rule::requiredIf($this->boolean('close_without_procurement')),
+                'nullable', 'string', 'max:1000',
+                ...($this->boolean('close_without_procurement') ? ['min:3'] : []),
+            ],
+            'close_without_procurement' => ['sometimes', 'boolean'],
         ];
     }
 

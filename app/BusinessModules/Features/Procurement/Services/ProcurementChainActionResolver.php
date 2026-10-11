@@ -21,6 +21,7 @@ final class ProcurementChainActionResolver
         'start_work' => 'site_requests.change_status',
         'fulfill_site_request' => 'site_requests.change_status',
         'complete_site_request' => 'site_requests.change_status',
+        'close_site_request_without_procurement' => 'site_requests.change_status',
         'reject_site_request' => 'site_requests.approve',
         'assign_site_request' => 'site_requests.assign',
         'edit_site_request' => 'site_requests.edit',

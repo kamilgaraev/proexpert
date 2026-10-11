@@ -421,7 +421,9 @@ final class PaymentBudgetLimitService
 
         return [
             'controlled' => true,
-            'result' => $this->limitCheckService->check($context, $amounts),
+            'result' => $line instanceof BudgetLine
+                ? $this->limitCheckService->check($context, $amounts)
+                : $this->blockedResult('budgeting.limits.bdds_budget_missing', $context, $amounts),
             'line' => $line,
             'month' => $month,
             'budget_article' => $budgetArticle,
@@ -757,7 +759,7 @@ final class PaymentBudgetLimitService
                     ])
                     ->whereIn('budget_kind', ['bdds', 'consolidated'])
                     ->whereHas('period', function (Builder $periodQuery) use ($month): void {
-                        $periodQuery->whereDate('starts_at', '<=', $month->toDateString())
+                        $periodQuery->whereDate('starts_at', '<=', $month->copy()->endOfMonth()->toDateString())
                             ->whereDate('ends_at', '>=', $month->toDateString());
                     });
             })
