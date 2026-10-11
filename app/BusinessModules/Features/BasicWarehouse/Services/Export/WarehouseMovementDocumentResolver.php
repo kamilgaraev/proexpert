@@ -16,7 +16,7 @@ final class WarehouseMovementDocumentResolver
             return $movement->newCollection([$movement]);
         }
 
-        return WarehouseMovement::query()
+        $query = WarehouseMovement::query()
             ->where('organization_id', $movement->organization_id)
             ->where('warehouse_id', $movement->warehouse_id)
             ->where('movement_type', $movement->movement_type)
@@ -29,7 +29,21 @@ final class WarehouseMovementDocumentResolver
             ->where('operation_category', $movement->operation_category)
             ->where('reason', $movement->reason)
             ->whereDate('movement_date', $movement->movement_date)
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+
+        // Одинаковый пользовательский номер не объединяет документы разных подрядчиков.
+        if ($movement->isContractorTransferOut()) {
+            $query->where('metadata->is_contractor_transfer', true)
+                ->where('metadata->contractor_id', $movement->metadata['contractor_id'] ?? null);
+        } elseif ($movement->isCustomerMaterialReceipt()) {
+            $query->where('metadata->is_customer_transfer', true)
+                ->where('metadata->source_organization_id', $movement->metadata['source_organization_id'] ?? null);
+        } else {
+            foreach (['is_contractor_transfer', 'is_customer_transfer'] as $flag) {
+                $query->where(static fn ($scope) => $scope->whereNull('metadata->'.$flag)->orWhere('metadata->'.$flag, false));
+            }
+        }
+
+        return $query->get();
     }
 }

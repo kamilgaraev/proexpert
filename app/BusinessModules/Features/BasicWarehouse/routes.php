@@ -2,6 +2,7 @@
 
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AdvancedWarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\AssetController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\ContractorMaterialTransferReportController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectMaterialDeliveryController;
@@ -33,6 +34,14 @@ Route::middleware(AdminRouteStack::middleware())
     ->prefix('api/v1/admin')
     ->name('admin.')
     ->group(function () {
+
+        Route::get('/reports/contractor-material-transfers', [ContractorMaterialTransferReportController::class, 'index'])
+            ->middleware('authorize:warehouse.reports')->name('reports.contractor-material-transfers');
+        Route::get('/reports/warehouse-catalog', [ContractorMaterialTransferReportController::class, 'catalog'])
+            ->middleware('authorize:warehouse.reports')->name('reports.warehouse-catalog');
+        Route::get('/reports/contractor-material-transfers/export', [ContractorMaterialTransferReportController::class, 'export'])
+            ->middleware(['authorize:warehouse.reports', 'authorize:warehouse.reports.export'])
+            ->name('reports.contractor-material-transfers.export');
 
         Route::prefix('warehouses')->name('warehouses.')->group(function () {
 
