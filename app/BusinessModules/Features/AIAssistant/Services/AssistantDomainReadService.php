@@ -8,6 +8,8 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
@@ -85,6 +87,8 @@ final class AssistantDomainReadService
             if (mb_strlen($term) > 200) {
                 throw ValidationException::withMessages(['query' => ['query_too_long']]);
             }
+            $cursorScope = $this->searchCursorScope($definition, $entityType, $term, $arguments['project_id'] ?? null, $limit, $fields, $actor, $organizationId);
+            $after = $this->decodeSearchCursor($arguments['cursor'] ?? null, $cursorScope);
             $searchFields = array_filter($definition->fields, function (string $field) use ($definition, $actor, $organizationId): bool {
                 foreach ((array) ($definition->fieldPermissions[$field] ?? []) as $permission) {
                     if (! $this->access->canCurrentPermission($actor, $organizationId, $permission)) { return false; }
@@ -98,7 +102,7 @@ final class AssistantDomainReadService
             if ($term !== '') {
                 if ($columns === []) {
                     return ['results' => [], 'source_refs' => [], 'fetched_at' => now()->toISOString(),
-                        'result_window' => ['limit' => $limit, 'returned' => 0, 'has_more' => null]];
+                        'result_window' => ['limit' => $limit, 'returned' => 0, 'has_more' => null, 'continued' => $after !== null, 'next_cursor' => null, 'total' => null]];
                 }
                 AssistantTextSearch::apply($query, array_map(static fn (string $column): string => $table.'.'.$column, $columns), $term);
             }
@@ -108,12 +112,23 @@ final class AssistantDomainReadService
                 }
                 $query->where($table.'.project_id', (int) $arguments['project_id']);
             }
-            $models = $query->orderBy($query->getModel()->getQualifiedKeyName())->limit($limit + 1)->get();
+            $countQuery = (clone $query)->reorder()->toBase()->select([])->selectRaw('COUNT(*) AS _assistant_result_total');
+            $query->selectSub($countQuery, '_assistant_result_total');
+            if ($after !== null) {
+                $query->where($query->getModel()->getQualifiedKeyName(), '>', $after);
+            }
+            $models = $query->reorder($query->getModel()->getQualifiedKeyName())->limit($limit + 1)->get();
+            $total = $models->isEmpty() ? (int) $countQuery->value('_assistant_result_total') : (int) $models->first()->getAttribute('_assistant_result_total');
+            foreach ($models as $model) {
+                $model->offsetUnset('_assistant_result_total');
+            }
             $hasMore = $models->count() > $limit;
             if ($hasMore) {
                 $models = $models->take($limit);
             }
-            $resultWindow = ['limit' => $limit, 'returned' => $models->count(), 'has_more' => $hasMore];
+            $resultWindow = ['limit' => $limit, 'returned' => $models->count(), 'has_more' => $hasMore,
+                'continued' => $after !== null,
+                'next_cursor' => $hasMore ? $this->encodeSearchCursor($models->last()->getKey(), $cursorScope) : null, 'total' => $total];
         } else {
             $id = $arguments['id'] ?? null;
             $idSchema = $definition->schemas[$operation]['properties']['id'] ?? [];
@@ -184,6 +199,9 @@ final class AssistantDomainReadService
             + AssistantStructuredFactFormatter::payload($factRows, $fetchedAt);
         if ($resultWindow !== null) {
             $payload['result_window'] = $resultWindow;
+            $payload['domain_search_count_evidence'] = AssistantDomainSearchCountEvidence::payload($actor, $organizationId,
+                $definition, $entityType, $arguments, $fields, $resultWindow['total'], $fetchedAt);
+            $payload['source_refs'][] = $payload['domain_search_count_evidence']['source_ref'];
         }
         $retrievalCoverage = AssistantExtendedDomainRegistry::values('retrievalCoverageDefinitions')[$entityType] ?? null;
         if (is_array($retrievalCoverage)) {
@@ -195,6 +213,42 @@ final class AssistantDomainReadService
         }
 
         return $payload;
+    }
+
+    private function searchCursorScope(AssistantDomainDefinition $definition, string $entityType, string $query, mixed $projectId, int $limit, array $fields, User $actor, int $organizationId): string
+    {
+        sort($fields);
+
+        return hash('sha256', json_encode([$definition->domain, $definition->sourceType, $entityType, $query,
+            is_numeric($projectId) ? (int) $projectId : null, $limit, $fields, (string) $actor->getKey(), $organizationId], JSON_THROW_ON_ERROR));
+    }
+
+    private function encodeSearchCursor(int|string $key, string $scope): string
+    {
+        return Crypt::encryptString(json_encode(['version' => 1, 'after' => $key, 'scope' => $scope], JSON_THROW_ON_ERROR));
+    }
+
+    private function decodeSearchCursor(mixed $cursor, string $scope): int|string|null
+    {
+        if ($cursor === null) {
+            return null;
+        }
+        if (! is_string($cursor) || $cursor === '' || strlen($cursor) > 2048) {
+            throw ValidationException::withMessages(['cursor' => ['invalid_search_cursor']]);
+        }
+        try {
+            $payload = json_decode(Crypt::decryptString($cursor), true, 8, JSON_THROW_ON_ERROR);
+        } catch (DecryptException|\JsonException) {
+            throw ValidationException::withMessages(['cursor' => ['invalid_search_cursor']]);
+        }
+        if (! is_array($payload) || ($payload['version'] ?? null) !== 1 || ($payload['scope'] ?? null) !== $scope
+            || (! is_int($payload['after'] ?? null) && ! is_string($payload['after'] ?? null))
+            || (is_int($payload['after']) && $payload['after'] < 1)
+            || (is_string($payload['after']) && ($payload['after'] === '' || strlen($payload['after']) > 128))) {
+            throw ValidationException::withMessages(['cursor' => ['invalid_search_cursor']]);
+        }
+
+        return $payload['after'];
     }
 
     private static function projectedColumns(string $operation, array $fields, array $columns, array $safeColumns, array $versionColumns, string $key): array
@@ -250,7 +304,8 @@ final class AssistantDomainReadService
         $reference = ['organization_id' => $organizationId, 'source_type' => $definition->sourceType, 'entity_type' => $entityType, 'entity_id' => $model->getKey(),
             'project_id' => $model->getAttribute('project_id'), 'navigation' => ['url' => $url], 'content_scope' => 'structured',
             'checked_fields' => array_values(array_unique($fields)), 'required_permissions' => array_values(array_unique($requiredPermissions)),
-            'required_domains' => [$policyDomain], 'source_version' => (string) $version, 'fetched_at' => $fetchedAt];
+            'required_domains' => [$policyDomain], 'source_version' => (string) $version, 'fetched_at' => $fetchedAt,
+            'source_field_identity' => AssistantSourceReferenceIdentity::key(array_intersect_key($model->getAttributes(), array_flip($fields)))];
         $displayLabel = $this->displayLabel($model, $fields);
         if ($displayLabel !== null) {
             $reference['display_label'] = $displayLabel;

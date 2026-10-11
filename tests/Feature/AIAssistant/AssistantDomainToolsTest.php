@@ -68,7 +68,8 @@ final class AssistantDomainToolsTest extends TestCase
 
         $limited = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
             'limit' => 2, 'fields' => ['id', 'name', 'status', 'start_date', 'end_date']], $actor, $organization->id);
-        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true], $limited['result_window']);
+        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true, 'continued' => false, 'total' => 3], array_diff_key($limited['result_window'], ['next_cursor' => true]));
+        self::assertIsString($limited['result_window']['next_cursor']);
         self::assertSame($visible[0]->name, $limited['source_refs'][0]['display_label']);
         self::assertContains('name', $limited['source_refs'][0]['checked_fields']);
         self::assertStringStartsWith('2026-01-01', $limited['results'][0]['fields']['start_date']);
@@ -76,18 +77,144 @@ final class AssistantDomainToolsTest extends TestCase
 
         $complete = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
             'limit' => 3, 'fields' => ['id', 'name', 'status', 'start_date', 'end_date']], $actor, $organization->id);
-        self::assertSame(['limit' => 3, 'returned' => 3, 'has_more' => false], $complete['result_window']);
+        self::assertSame(['limit' => 3, 'returned' => 3, 'has_more' => false, 'continued' => false, 'next_cursor' => null, 'total' => 3], $complete['result_window']);
         self::assertCount(3, $complete['results']);
         self::assertSame(array_key_exists('retrieval_coverage', $limited), array_key_exists('retrieval_coverage', $complete));
 
         $unsupportedSearch = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'QA_WINDOW_',
             'limit' => 2, 'fields' => ['id']], $actor, $organization->id);
-        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true], $unsupportedSearch['result_window']);
+        self::assertSame(['limit' => 2, 'returned' => 2, 'has_more' => true, 'continued' => false, 'total' => 3], array_diff_key($unsupportedSearch['result_window'], ['next_cursor' => true]));
         self::assertSame(['id' => $visible[0]->id], $unsupportedSearch['results'][0]['fields']);
 
         $unlabelled = $this->reader->execute('read', ['domain' => 'projects', 'entity_type' => 'project', 'id' => $visible[0]->id,
             'fields' => ['id']], $actor, $organization->id);
         self::assertArrayNotHasKey('display_label', $unlabelled['source_refs'][0]);
+    }
+
+    public function test_cursor_pages_checked_rows_after_deleted_first_page_and_rechecks_project_access(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $projects = [];
+        for ($index = 0; $index < 4; $index++) {
+            $project = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'CURSOR_'.$index, 'is_archived' => false]);
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+            $projects[] = $project;
+        }
+        $arguments = ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'CURSOR_', 'limit' => 2, 'fields' => ['id', 'name']];
+        $first = $this->reader->execute('search', $arguments, $actor, $organization->id);
+        self::assertSame([$projects[0]->id, $projects[1]->id], array_column($first['results'], 'id'));
+        $projects[0]->delete();
+        $actor->assignedProjects()->detach($projects[2]->id);
+        $next = $this->reader->execute('search', $arguments + ['cursor' => $first['result_window']['next_cursor']], $actor, $organization->id);
+
+        self::assertSame([$projects[3]->id], array_column($next['results'], 'id'));
+        self::assertSame(['limit' => 2, 'returned' => 1, 'has_more' => false, 'continued' => true, 'next_cursor' => null, 'total' => 2], $next['result_window']);
+        self::assertSame([$projects[3]->id], array_column($next['structured_fact_evidence']['rows'], 'entity_id'));
+        self::assertSame([$projects[3]->id], array_column(array_filter($next['source_refs'], static fn (array $reference): bool => $reference['entity_type'] === 'project'), 'entity_id'));
+        self::assertArrayNotHasKey('_assistant_result_total', $next['results'][0]['fields']);
+    }
+
+    public function test_total_counts_all_current_accessible_matches_beyond_page_and_rechecks_revoked_assignment(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $projects = [];
+        for ($index = 0; $index < 24; $index++) {
+            $project = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'FULL_COUNT_'.$index,
+                'address' => 'COUNT_FIXED_ADDRESS', 'description' => 'COUNT_FIXED_DESCRIPTION', 'is_archived' => false]);
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+            $projects[] = $project;
+        }
+        Project::factory()->create(['organization_id' => $organization->id, 'name' => 'FULL_COUNT_PRIVATE', 'is_archived' => false]);
+        Project::factory()->create(['name' => 'FULL_COUNT_FOREIGN', 'is_archived' => false]);
+        $arguments = ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'FULL_COUNT_', 'limit' => 20, 'fields' => ['name']];
+        $first = $this->reader->execute('search', $arguments, $actor, $organization->id);
+
+        self::assertCount(20, $first['results']);
+        self::assertSame(24, $first['result_window']['total']);
+        self::assertTrue($first['result_window']['has_more']);
+        $countReference = $first['domain_search_count_evidence']['source_ref'];
+        $this->app->instance(AssistantDomainReadService::class, $this->reader);
+        $countHelper = new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence;
+        self::assertTrue($countHelper->matchesReference($actor, $organization->id, $countReference));
+        $actor->assignedProjects()->detach($projects[23]->id);
+        $second = $this->reader->execute('search', $arguments + ['cursor' => $first['result_window']['next_cursor']], $actor, $organization->id);
+
+        self::assertCount(3, $second['results']);
+        self::assertSame(23, $second['result_window']['total']);
+        self::assertFalse($countHelper->matchesReference($actor, $organization->id, $countReference));
+        self::assertFalse($second['result_window']['has_more']);
+        self::assertNotContains($projects[23]->id, array_column($second['results'], 'id'));
+        $filtered = $this->reader->execute('search', array_replace($arguments, ['query' => 'FULL_COUNT_22']), $actor, $organization->id);
+        self::assertSame(1, $filtered['result_window']['total'], json_encode($filtered['results'], JSON_THROW_ON_ERROR));
+        self::assertCount(1, $filtered['results']);
+        $privateFilter = $this->reader->execute('search', array_replace($arguments, ['query' => 'FULL_COUNT_23']), $actor, $organization->id);
+        self::assertSame(0, $privateFilter['result_window']['total'], json_encode($privateFilter['results'], JSON_THROW_ON_ERROR));
+        self::assertSame([], $privateFilter['results']);
+
+        foreach ([21, 22, 23] as $index) {
+            Estimate::withoutEvents(fn () => Estimate::query()->create(['organization_id' => $organization->id,
+                'project_id' => $projects[$index]->id, 'number' => 'SCOPED_COUNT_'.$index,
+                'name' => 'SCOPED_COUNT_'.$index, 'estimate_date' => now()->toDateString(), 'total_amount' => 0]));
+        }
+        $estimateArguments = ['domain' => 'estimates', 'entity_type' => 'estimate', 'query' => 'SCOPED_COUNT_', 'limit' => 1, 'fields' => ['name']];
+        $allEstimates = $this->reader->execute('search', $estimateArguments, $actor, $organization->id);
+        self::assertSame(2, $allEstimates['result_window']['total']);
+        $oneProject = $this->reader->execute('search', $estimateArguments + ['project_id' => $projects[22]->id], $actor, $organization->id);
+        self::assertSame(1, $oneProject['result_window']['total']);
+        $privateProject = $this->reader->execute('search', $estimateArguments + ['project_id' => $projects[23]->id], $actor, $organization->id);
+        self::assertSame(0, $privateProject['result_window']['total']);
+        self::assertSame([], $privateProject['results']);
+    }
+
+    public function test_cursor_cannot_change_search_scope_or_bypass_revoked_permissions(): void
+    {
+        [$organization, $actor] = $this->actor();
+        for ($index = 0; $index < 2; $index++) {
+            $project = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'BOUND_'.$index, 'is_archived' => false]);
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+        $arguments = ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'BOUND_', 'limit' => 1, 'fields' => ['name']];
+        $first = $this->reader->execute('search', $arguments, $actor, $organization->id);
+        $arguments['cursor'] = $first['result_window']['next_cursor'];
+        try {
+            $this->reader->execute('search', array_replace($arguments, ['query' => 'other']), $actor, $organization->id);
+            self::fail('Changed search scope must reject the cursor.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            self::assertArrayHasKey('cursor', $exception->errors());
+        }
+        $this->permissions = false;
+        $this->app->instance(AssistantDomainReadService::class, $this->reader);
+        self::assertFalse((new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence)
+            ->canReadReference($actor, $organization->id, $first['domain_search_count_evidence']['source_ref']));
+        $this->expectException(AccessDeniedHttpException::class);
+        $this->reader->execute('search', $arguments, $actor, $organization->id);
+    }
+
+    public function test_search_count_and_page_share_token_matches_from_all_authorized_search_columns(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $byName = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'TOKEN_COUNT_22',
+            'address' => 'FIXED_ADDRESS', 'description' => 'FIXED_DESCRIPTION', 'is_archived' => false]);
+        $byAddress = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'TOKEN_COUNT_OTHER',
+            'address' => 'Building 122', 'description' => 'FIXED_DESCRIPTION', 'is_archived' => false]);
+        $nonMatch = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'TOKEN_COUNT_NO_MATCH',
+            'address' => 'FIXED_ADDRESS', 'description' => 'FIXED_DESCRIPTION', 'is_archived' => false]);
+        Project::factory()->create(['organization_id' => $organization->id, 'name' => 'TOKEN_COUNT_PRIVATE_22',
+            'address' => 'FIXED_ADDRESS', 'description' => 'FIXED_DESCRIPTION', 'is_archived' => false]);
+        foreach ([$byName, $byAddress, $nonMatch] as $project) {
+            $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        }
+        $arguments = ['domain' => 'projects', 'entity_type' => 'project', 'query' => 'TOKEN_COUNT_22', 'limit' => 1, 'fields' => ['name']];
+        $first = $this->reader->execute('search', $arguments, $actor, $organization->id);
+        self::assertSame(2, $first['result_window']['total']);
+        self::assertSame([$byName->id], array_column($first['results'], 'id'));
+        self::assertTrue($first['result_window']['has_more']);
+        $second = $this->reader->execute('search', $arguments + ['cursor' => $first['result_window']['next_cursor']], $actor, $organization->id);
+        self::assertSame(2, $second['result_window']['total']);
+        self::assertSame([$byAddress->id], array_column($second['results'], 'id'));
+        self::assertFalse($second['result_window']['has_more']);
+        self::assertArrayNotHasKey('address', $second['results'][0]['fields']);
+        self::assertSame(2, $second['domain_search_count_evidence']['value']);
     }
 
     public function test_money_fields_are_removed_without_financial_permission(): void

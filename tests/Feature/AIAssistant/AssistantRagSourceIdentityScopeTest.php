@@ -31,13 +31,16 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
     private Project $visible;
     private Project $hidden;
     private array $deniedModules = [];
+    private array $deniedPermissions = [];
     private bool $duplicateProjectRows = false;
 
     protected function setUp(): void
     {
         parent::setUp();
         $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('canCurrent')->andReturn(true);
+        $authorization->shouldReceive('canCurrent')->andReturnUsing(
+            fn (User $actor, string $permission): bool => ! in_array($permission, $this->deniedPermissions, true)
+        );
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $authorization->shouldReceive('getUserRoles')->andReturn(collect());
         $modules = Mockery::mock(OrganizationEntitlementService::class);
@@ -100,6 +103,113 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->expected($this->organization->id, $this->visible->id, 'project', 'unknown_type', $this->visible->id);
         $this->assertSame([$allowed->id], $this->policy->applyToExpectedSources(RagExpectedSource::query(), $this->actor, $this->organization->id)
             ->pluck('id')->all());
+    }
+
+    public function test_legacy_index_aliases_keep_current_entity_organization_project_and_permission_checks(): void
+    {
+        $this->actor->assignedProjects()->attach($this->hidden->id, ['is_active' => true, 'role' => 'member']);
+        $aliases = $this->legacyAliasFixtures();
+        $this->assertEqualsCanonicalizing(['estimate_reference', 'construction_journal'],
+            $this->policy->allowedSourceTypes($this->actor, $this->organization->id, ['estimate_reference', 'construction_journal']));
+        $allowed = [];
+        foreach ($aliases as $type => [$sourceType, $id]) {
+            $source = $this->source($this->organization->id, $this->visible->id, $sourceType, $type, $id);
+            $allowed[$type] = $source->id;
+            $this->assertTrue($this->policy->canReadSource($this->actor, $this->organization->id, $source->toArray()), $type);
+            $unknown = $this->source($this->organization->id, $this->visible->id, 'unknown_legacy_source', $type, $id);
+            $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, $unknown->toArray()), $type);
+        }
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $foreignTemplate = DB::table('estimate_templates')->insertGetId([
+            'organization_id' => $foreign->id, 'name' => 'Foreign private template', 'template_structure' => '{}',
+            'created_by_user_id' => $this->actor->id, 'is_public' => false,
+        ]);
+        $foreignEntity = $this->source($this->organization->id, $this->visible->id, 'estimate_reference', 'estimate_template', $foreignTemplate);
+        $foreignSource = $this->source($foreign->id, $this->visible->id, 'estimate_reference', 'estimate_template', $aliases['estimate_template'][1]);
+        $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, $foreignEntity->toArray()));
+        $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, $foreignSource->toArray()));
+        $read = fn (): array => $this->policy->applyToSources(RagSource::query(), $this->actor, $this->organization->id)->pluck('id')->all();
+        $this->assertEqualsCanonicalizing(array_values($allowed), $read());
+
+        $this->deniedPermissions = ['finance.view'];
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($allowed, ['normative_rate' => true])), $read());
+        $normative = RagSource::findOrFail($allowed['normative_rate']);
+        $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, $normative->toArray()));
+
+        $this->deniedPermissions = ['estimates.view', 'construction-journal.view'];
+        $this->assertSame([], $read());
+        foreach ($allowed as $id) {
+            $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, RagSource::findOrFail($id)->toArray()));
+        }
+        $this->deniedPermissions = [];
+        $this->actor->assignedProjects()->updateExistingPivot($this->hidden->id, ['is_active' => false]);
+        foreach ($aliases as $type => [$sourceType, $id]) {
+            $hidden = $this->source($this->organization->id, $this->hidden->id, $sourceType, $type, $id);
+            $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, $hidden->toArray()), $type);
+            $this->assertSame($type !== 'estimate_template',
+                $this->policy->canReadSource($this->actor, $this->organization->id, RagSource::findOrFail($allowed[$type])->toArray()), $type);
+        }
+        $canonicalTemplate = $this->source($this->organization->id, $this->visible->id, 'core_business', 'estimate_template', $aliases['estimate_template'][1]);
+        $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, $canonicalTemplate->toArray()));
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($allowed, ['estimate_template' => true])), $read());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        $this->assertSame([], $read());
+        foreach ($allowed as $id) {
+            $this->assertFalse($this->policy->canReadSource($this->actor, $this->organization->id, RagSource::findOrFail($id)->toArray()));
+        }
+    }
+
+    public function test_legacy_aliases_remain_visible_in_expected_and_split_aggregate_scopes(): void
+    {
+        $this->actor->assignedProjects()->attach($this->hidden->id, ['is_active' => true, 'role' => 'member']);
+        $aliases = $this->legacyAliasFixtures();
+        $sourceIds = [];
+        $expectedIds = [];
+        foreach ($aliases as $type => [$sourceType, $id]) {
+            $sourceIds[$type] = $this->source($this->organization->id, $this->visible->id, $sourceType, $type, $id)->id;
+            $expectedIds[$type] = $this->expected($this->organization->id, $this->visible->id, $sourceType, $type, $id)->id;
+            $this->expected($this->organization->id, $this->visible->id, 'unknown_legacy_source', $type, $id);
+        }
+        $readSources = function (): array {
+            $batches = $this->policy->aggregateSourceIdentityBatches(RagSource::query(), $this->actor, $this->organization->id,
+                ['ai_rag_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'));
+
+            return array_merge(...array_map(static fn ($batch): array => $batch->pluck('id')->all(), $batches));
+        };
+        $readExpected = function (): array {
+            $batches = $this->policy->aggregateExpectedSourceIdentityBatches(RagExpectedSource::query(), $this->actor, $this->organization->id,
+                ['ai_rag_expected_sources.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'));
+
+            return array_merge(...array_map(static fn ($batch): array => $batch->pluck('id')->all(), $batches));
+        };
+        $this->assertEqualsCanonicalizing(array_values($sourceIds), $readSources());
+        $this->assertEqualsCanonicalizing(array_values($expectedIds), $readExpected());
+        $this->assertEqualsCanonicalizing(array_values($expectedIds),
+            $this->policy->applyToExpectedSources(RagExpectedSource::query(), $this->actor, $this->organization->id)->pluck('id')->all());
+        $this->deniedPermissions = ['estimates.view', 'construction-journal.view'];
+        $this->assertSame([], $readSources());
+        $this->assertSame([], $readExpected());
+        $this->deniedPermissions = [];
+        $this->actor->assignedProjects()->updateExistingPivot($this->hidden->id, ['is_active' => false]);
+        foreach ($aliases as $type => [$sourceType, $id]) {
+            $this->source($this->organization->id, $this->hidden->id, $sourceType, $type, $id);
+            $this->expected($this->organization->id, $this->hidden->id, $sourceType, $type, $id);
+        }
+        $this->source($this->organization->id, $this->visible->id, 'core_business', 'estimate_template', $aliases['estimate_template'][1]);
+        $this->expected($this->organization->id, $this->visible->id, 'core_business', 'estimate_template', $aliases['estimate_template'][1]);
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($sourceIds, ['estimate_template' => true])), $readSources());
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($expectedIds, ['estimate_template' => true])), $readExpected());
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($expectedIds, ['estimate_template' => true])),
+            $this->policy->applyToExpectedSources(RagExpectedSource::query(), $this->actor, $this->organization->id)->pluck('id')->all());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => false]);
+        $this->assertSame([], $readSources());
+        $this->assertSame([], $readExpected());
+        $this->actor->assignedProjects()->updateExistingPivot($this->visible->id, ['is_active' => true]);
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($sourceIds, ['estimate_template' => true])), $readSources());
+        $this->assertEqualsCanonicalizing(array_values(array_diff_key($expectedIds, ['estimate_template' => true])), $readExpected());
+        $this->actor->organizations()->updateExistingPivot($this->organization->id, ['is_active' => false]);
+        $this->assertSame([], $readSources());
+        $this->assertSame([], $readExpected());
     }
 
     public function test_source_id_aggregate_preserves_parts_exact_ids_and_current_scope(): void
@@ -254,10 +364,42 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
         $this->assertSame(0, array_sum($read()));
     }
 
+    private function legacyAliasFixtures(): array
+    {
+        $template = DB::table('estimate_templates')->insertGetId([
+            'organization_id' => $this->organization->id, 'name' => 'Alias template', 'template_structure' => '{}',
+            'created_by_user_id' => $this->actor->id, 'is_public' => false,
+        ]);
+        $library = DB::table('estimate_libraries')->insertGetId([
+            'organization_id' => $this->organization->id, 'created_by_user_id' => $this->actor->id,
+            'name' => 'Alias library', 'access_level' => 'private', 'is_active' => true,
+        ]);
+        $item = DB::table('estimate_library_items')->insertGetId(['library_id' => $library, 'name' => 'Alias item']);
+        $base = DB::table('normative_base_types')->insertGetId(['code' => 'alias-base-'.$this->organization->id, 'name' => 'Alias base', 'is_active' => true]);
+        $collection = DB::table('normative_collections')->insertGetId(['base_type_id' => $base, 'code' => 'alias', 'name' => 'Alias collection', 'is_active' => true]);
+        $rate = DB::table('normative_rates')->insertGetId(['collection_id' => $collection, 'code' => 'alias-rate', 'name' => 'Alias rate']);
+        $estimate = Estimate::withoutEvents(fn () => Estimate::create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->visible->id,
+            'number' => 'alias-estimate-'.$this->organization->id, 'name' => 'Alias estimate', 'estimate_date' => today(),
+        ]));
+        DB::table('estimate_items')->insert(['estimate_id' => $estimate->id, 'position_number' => '1', 'name' => 'Alias rate item', 'normative_rate_id' => $rate]);
+        $journal = DB::table('construction_journals')->insertGetId([
+            'organization_id' => $this->organization->id, 'performing_organization_id' => $this->organization->id,
+            'project_id' => $this->visible->id, 'name' => 'Alias journal', 'start_date' => today(), 'created_by_user_id' => $this->actor->id,
+        ]);
+        $entry = DB::table('construction_journal_entries')->insertGetId([
+            'journal_id' => $journal, 'entry_date' => today(), 'entry_number' => 1,
+            'work_description' => 'Alias journal entry', 'created_by_user_id' => $this->actor->id,
+        ]);
+
+        return ['estimate_template' => ['estimate_reference', $template], 'estimate_library_item' => ['estimate_reference', $item],
+            'normative_rate' => ['estimate_reference', $rate], 'construction_journal_entry' => ['construction_journal', $entry]];
+    }
+
     private function source(int $organizationId, int $projectId, string $sourceType, string $entityType, int $entityId): RagSource
     {
         return RagSource::withoutEvents(fn (): RagSource => RagSource::create([
-            'organization_id' => $organizationId, 'project_id' => $projectId,
+            'organization_id' => $organizationId, 'project_id' => $projectId, 'identity_project_id' => $projectId,
             'source_type' => $sourceType, 'entity_type' => $entityType, 'entity_id' => (string) $entityId,
             'title' => 'ACL source', 'checksum' => hash('sha256', $sourceType.$entityType.$entityId), 'indexed_at' => now(),
         ]));
@@ -266,7 +408,7 @@ final class AssistantRagSourceIdentityScopeTest extends TestCase
     private function expected(int $organizationId, int $projectId, string $sourceType, string $entityType, int $entityId): RagExpectedSource
     {
         return RagExpectedSource::create([
-            'organization_id' => $organizationId, 'project_id' => $projectId, 'generation' => '00000000-0000-4000-8000-000000000001',
+            'organization_id' => $organizationId, 'project_id' => $projectId, 'identity_project_id' => $projectId, 'generation' => '00000000-0000-4000-8000-000000000001',
             'source_type' => $sourceType, 'entity_type' => $entityType, 'entity_id' => (string) $entityId,
             'checksum' => hash('sha256', $sourceType.$entityType.$entityId), 'pending_since' => now(),
         ]);

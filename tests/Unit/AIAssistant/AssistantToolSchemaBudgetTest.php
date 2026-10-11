@@ -56,8 +56,8 @@ final class AssistantToolSchemaBudgetTest extends TestCase
     public function test_registered_and_pending_finite_catalogues_have_bounded_tool_schemas(): void
     {
         config(['ai-assistant-credits.profiles' => [
-            'short' => ['input_tokens' => 12288, 'output_tokens' => 1024, 'max_calls' => 3],
-            'normal' => ['input_tokens' => 24576, 'output_tokens' => 2048, 'max_calls' => 5],
+            'short' => ['input_tokens' => 8192, 'output_tokens' => 1024, 'max_calls' => 2],
+            'normal' => ['input_tokens' => 16384, 'output_tokens' => 2048, 'max_calls' => 4],
             'detailed' => ['input_tokens' => 32768, 'output_tokens' => 4096, 'max_calls' => 6],
         ]]);
         $defaults = AssistantDomainCatalog::defaults();
@@ -77,7 +77,13 @@ final class AssistantToolSchemaBudgetTest extends TestCase
         $measurements = [];
         foreach (['default' => $defaults, 'merged' => array_values($merged)] as $name => $definitions) {
             $registry = $this->registry(new AssistantDomainCatalog($definitions));
-            $tools = $registry->getToolsDefinitions();
+            $tools = $registry->getToolsDefinitions(null, true);
+            foreach ($tools as $toolDefinition) {
+                $this->assertSame('function', $toolDefinition['type']);
+                $this->assertIsString($toolDefinition['name']);
+                $this->assertIsArray($toolDefinition['parameters']);
+                $this->assertArrayNotHasKey('function', $toolDefinition);
+            }
             $original = array_map(static fn (AIToolInterface $tool): array => ['type' => 'function', 'function' => [
                 'name' => $tool->getName(), 'description' => $tool->getDescription(), 'parameters' => $tool->getParametersSchema(),
                 'strict' => str_starts_with($tool->getName(), 'assistant_domain_'),
@@ -116,7 +122,7 @@ final class AssistantToolSchemaBudgetTest extends TestCase
             foreach ($registry->getTools() as $tool) {
                 if (! $tool instanceof AssistantDomainTool) { continue; }
                 $source = $tool->getParametersSchema();
-                $wire = $registry->getToolsDefinitions([$tool->getName()])[0]['function']['parameters'];
+                $wire = $registry->getToolsDefinitions([$tool->getName()], true)[0]['parameters'];
                 $this->assertCount(count($types), $source['properties']['entity_type']['enum']);
                 $this->assertArrayNotHasKey('enum', $wire['properties']['entity_type']);
                 $this->assertSame($source['required'], $wire['required']);

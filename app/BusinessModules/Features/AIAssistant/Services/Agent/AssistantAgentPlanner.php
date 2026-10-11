@@ -44,7 +44,7 @@ final readonly class AssistantAgentPlanner
     /**
      * @param  array<string, mixed>  $context
      */
-    public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null): AssistantAgentDecision
+    public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null, ?callable $resolveEntityScope = null): AssistantAgentDecision
     {
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
         if ($this->blocksReportPlanning($requestUnderstanding, $pendingState)) {
@@ -53,11 +53,11 @@ final readonly class AssistantAgentPlanner
 
         if ($pendingState instanceof AssistantTaskState && $pendingState->status === 'waiting_for_slots') {
             if ($pendingState->id === 'report.unspecified') {
-                return $this->continueUnspecifiedReport($message, $context, $pendingState);
+                return $this->continueUnspecifiedReport($message, $context, $pendingState, $resolveEntityScope);
             }
 
             $task = $this->catalog->findById($pendingState->id);
-            $state = $this->fillState($pendingState, $message, $context);
+            $state = $this->fillState($pendingState, $message, $context, $resolveEntityScope);
 
             return $this->decisionForState($state, $task);
         }
@@ -66,7 +66,7 @@ final readonly class AssistantAgentPlanner
         if (($reportIntent['status'] ?? null) === 'matched' && ($reportIntent['definition'] ?? null) instanceof AssistantReportDefinition) {
             $this->logReportIntent('report_intent_detected', $reportIntent);
             $task = $reportIntent['definition']->toAgentTask();
-            $state = $this->fillState($this->makeState($task, $message), $message, $context);
+            $state = $this->fillState($this->makeState($task, $message), $message, $context, $resolveEntityScope);
 
             return $this->decisionForState($state, $task);
         }
@@ -89,7 +89,7 @@ final readonly class AssistantAgentPlanner
             );
         }
 
-        $state = $this->fillState($this->makeState($task, $message), $message, $context);
+        $state = $this->fillState($this->makeState($task, $message), $message, $context, $resolveEntityScope);
 
         return $this->decisionForState($state, $task);
     }
@@ -100,7 +100,8 @@ final readonly class AssistantAgentPlanner
     private function continueUnspecifiedReport(
         string $message,
         array $context,
-        AssistantTaskState $pendingState
+        AssistantTaskState $pendingState,
+        ?callable $resolveEntityScope
     ): AssistantAgentDecision {
         if ($this->isAnyReportChoice($message)) {
             $definition = $this->reportIntentResolver->defaultReportDefinition();
@@ -110,7 +111,8 @@ final readonly class AssistantAgentPlanner
                 $state = $this->fillState(
                     $this->makeState($task, $pendingState->sourceMessage),
                     $pendingState->sourceMessage.' '.$message,
-                    $context
+                    $context,
+                    $resolveEntityScope
                 );
 
                 return $this->decisionForState($state, $task);
@@ -122,7 +124,7 @@ final readonly class AssistantAgentPlanner
         if (($reportIntent['status'] ?? null) === 'matched' && ($reportIntent['definition'] ?? null) instanceof AssistantReportDefinition) {
             $this->logReportIntent('report_intent_detected', $reportIntent);
             $task = $reportIntent['definition']->toAgentTask();
-            $state = $this->fillState($this->makeState($task, $pendingState->sourceMessage), $message, $context);
+            $state = $this->fillState($this->makeState($task, $pendingState->sourceMessage), $message, $context, $resolveEntityScope);
 
             return $this->decisionForState($state, $task);
         }
@@ -244,7 +246,7 @@ final readonly class AssistantAgentPlanner
     /**
      * @param  array<string, mixed>  $context
      */
-    private function fillState(AssistantTaskState $state, string $message, array $context): AssistantTaskState
+    private function fillState(AssistantTaskState $state, string $message, array $context, ?callable $resolveEntityScope): AssistantTaskState
     {
         if ($this->hasStateSlot($state, 'period') && $state->slotValue('period') === null) {
             $period = $this->resolvePeriod($message);
@@ -258,19 +260,126 @@ final readonly class AssistantAgentPlanner
             'warehouse_id' => 'warehouse',
             'contractor_id' => 'contractor',
             'user_id' => 'user',
+            'contract_id' => 'contract',
         ] as $slotName => $entityType) {
-            if ($this->hasStateSlot($state, $slotName) && $state->slotValue($slotName) === null) {
-                $entity = $this->reportSlotResolver->entityFromContext($context, $entityType);
-                if ($entity !== null) {
-                    $state = $state->withSlotValue($slotName, $entity['id'], $entity['label']);
+            if (! $this->hasStateSlot($state, $slotName)) {
+                if ($this->namedEntityQuery($message, $entityType) !== null
+                    || $this->namedEntityQuery($state->sourceMessage, $entityType) !== null
+                    || $this->refersToCurrentEntity($message, $entityType)
+                    || $this->refersToCurrentEntity($state->sourceMessage, $entityType)) {
+                    $slots = $state->slots;
+                    if (! $this->hasStateSlot($state, '__unsupported_scope')) {
+                        $slots[] = new AssistantTaskSlot('__unsupported_scope', true);
+                    }
+                    $state = new AssistantTaskState($state->id, $state->domain, $state->capability, $state->toolName,
+                        $state->status, $slots, $state->sourceMessage);
                 }
+                continue;
             }
+            $scopeSlot = '__scope_'.$entityType;
+            $namedQuery = $this->namedEntityQuery($message, $entityType);
+            $requestedCurrent = $this->refersToCurrentEntity($message, $entityType);
+            $currentScope = $requestedCurrent || $this->refersToCurrentEntity($state->sourceMessage, $entityType);
+            $query = $namedQuery ?? $state->slotValue($scopeSlot) ?? $this->namedEntityQuery($state->sourceMessage, $entityType);
+            $query = ! $requestedCurrent && is_string($query) ? $query : null;
+            if ($namedQuery === null && ($state->slotValue($scopeSlot) === '__organization' && ! $requestedCurrent
+                || preg_match('/\b(?:всей\s+организации|всем\s+проектам)\b/iu', $message) === 1)) {
+                $slots = array_values(array_filter($state->slots, static fn (AssistantTaskSlot $slot): bool => $slot->name !== $scopeSlot));
+                $slots = array_map(static fn (AssistantTaskSlot $slot): AssistantTaskSlot => $slot->name === $slotName
+                    ? new AssistantTaskSlot($slotName, false) : $slot, $slots);
+                $slots[] = new AssistantTaskSlot($scopeSlot, false, '__organization');
+                $state = new AssistantTaskState($state->id, $state->domain, $state->capability, $state->toolName,
+                    $state->status, $slots, $state->sourceMessage);
+                continue;
+            }
+            $contextEntity = $this->contextEntityScope($context, $entityType);
+            $id = $query === null ? ($requestedCurrent
+                ? ($contextEntity['id'] ?? $state->slotValue($slotName))
+                : ($state->slotValue($slotName) ?? $contextEntity['id'] ?? null)) : null;
+            if ($query === null && $id === null && ! $currentScope) {
+                continue;
+            }
+            $numericId = (is_int($id) || is_string($id)) && preg_match('/^[1-9]\d*$/', (string) $id) === 1 ? (int) $id : null;
+            if ($query !== null && preg_match('/^(?:id\s*|№\s*)?([1-9]\d*)$/iu', $query, $idMatch) === 1) {
+                $numericId = (int) $idMatch[1];
+                $query = null;
+            }
+            $entity = null;
+            try {
+                if ($resolveEntityScope !== null && ($query !== null || $numericId !== null)) {
+                    $entity = $resolveEntityScope($entityType, $query, $numericId);
+                }
+            } catch (Throwable) {
+            }
+            $validId = is_array($entity) && is_int($entity['id'] ?? null) && $entity['id'] > 0
+                ? $entity['id'] : null;
+            $slots = array_map(
+                static fn (AssistantTaskSlot $slot): AssistantTaskSlot => $slot->name === $slotName
+                    ? new AssistantTaskSlot($slotName, true, $validId, is_array($entity) && is_string($entity['label'] ?? null) ? $entity['label'] : null)
+                    : $slot,
+                $state->slots
+            );
+            $scopeQuery = $namedQuery ?? ($numericId !== null && $query === null ? (string) $numericId : $query);
+            if ($scopeQuery !== null) {
+                $slots = array_values(array_filter($slots, static fn (AssistantTaskSlot $slot): bool => $slot->name !== $scopeSlot));
+                $slots[] = new AssistantTaskSlot($scopeSlot, false, $scopeQuery);
+            }
+            $state = new AssistantTaskState($state->id, $state->domain, $state->capability, $state->toolName,
+                $state->status, $slots, $state->sourceMessage);
         }
 
         return $this->stateWithStatus(
             $state,
             $state->missingRequiredSlotNames() === [] ? 'ready_to_execute' : 'waiting_for_slots'
         );
+    }
+
+    private function refersToCurrentEntity(string $message, string $type): bool
+    {
+        $noun = match ($type) {
+            'project' => '(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)',
+            'warehouse' => 'склад(?:а|у|ом|е)?',
+            'contractor' => '(?:подрядчик(?:а|у|ом|е)?|контрагент(?:а|у|ом|е)?)',
+            'user' => '(?:сотрудник(?:а|у|ом|е)?|пользовател(?:ь|я|ю|ем|е))',
+            'contract' => 'договор(?:а|у|ом|е)?',
+            default => '',
+        };
+        return $noun !== '' && preg_match('/\b(?:текущ|выбранн|эт(?:от|ого|ом|ому|им))[а-яё]*\s+'.$noun.'\b|\b'.$noun.'\s+(?:текущ|выбранн)[а-яё]*\b/iu', $message) === 1;
+    }
+
+    private function contextEntityScope(array $context, string $type): ?array
+    {
+        $refs = $context['entity_refs'] ?? null;
+        if (! is_array($refs)) {
+            return null;
+        }
+        foreach ($refs as $ref) {
+            if (is_array($ref) && ($ref['type'] ?? null) === $type && array_key_exists('id', $ref)) {
+                return ['id' => $ref['id']];
+            }
+        }
+        return null;
+    }
+
+    private function namedEntityQuery(string $message, string $type): ?string
+    {
+        $noun = match ($type) {
+            'project' => '(?:проект(?:а|у|ом|е)?|объект(?:а|у|ом|е)?)',
+            'warehouse' => 'склад(?:а|у|ом|е)?',
+            'contract' => 'договор(?:а|у|ом|е)?',
+            'contractor' => '(?:подрядчик(?:а|у|ом|е)?|контрагент(?:а|у|ом|е)?)',
+            'user' => '(?:сотрудник(?:а|у|ом|е)?|пользовател(?:ь|я|ю|ем|е))',
+            default => '',
+        };
+        if ($noun === '' || preg_match('/\b'.$noun.'\s+(.+?)$/iu', $message, $matches) !== 1) {
+            return null;
+        }
+        $parts = preg_split('/\s+(?:за|с|по|для|на|от|проекта|объекта|склада|сотрудника|подрядчика)\b|[,;\n]/iu', $matches[1], 2);
+        $name = trim((string) ($parts[0] ?? ''), " \t\r\n\"'«»“”.:");
+        if ($name === '' || preg_match('/^(?:(?:за|с|по|для|на|от|этот|этого|весь|всем|все|сегодня|проекта|объекта|склада|подрядчика|сотрудника)\b|текущ|выполн)/iu', $name) === 1) {
+            return null;
+        }
+        return $name;
     }
 
     private function hasStateSlot(AssistantTaskState $state, string $name): bool
@@ -337,6 +446,8 @@ final readonly class AssistantAgentPlanner
         return match ($slotName) {
             'period' => 'За какой период сформировать отчет?',
             'report_type' => 'Какой отчет нужно сформировать?',
+            'project_id', 'warehouse_id', 'contractor_id', 'user_id' => trans_message('ai_assistant.report_entity_scope_unresolved'),
+            '__unsupported_scope' => trans_message('ai_assistant.report_entity_scope_unsupported'),
             default => 'Уточните недостающие данные, чтобы я мог продолжить.',
         };
     }

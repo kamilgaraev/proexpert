@@ -10,6 +10,17 @@ use App\Models\User;
 final class AssistantEntityAccessCatalog
 {
     private static ?array $referencedParentColumns = null;
+    private const INDEX_SOURCE_ALIASES = [
+        'estimate_template' => ['estimate_reference'],
+        'estimate_library_item' => ['estimate_reference'],
+        'normative_rate' => ['estimate_reference'],
+        'construction_journal_entry' => ['construction_journal'],
+    ];
+
+    public static function indexedSourceTypes(string $entityType, string $canonicalSource): array
+    {
+        return array_values(array_unique([$canonicalSource, ...(self::INDEX_SOURCE_ALIASES[$entityType] ?? [])]));
+    }
 
     private const DOMAINS = [
         'assistant' => ['ai-assistant', ['ai_assistant.chat']],

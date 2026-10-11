@@ -767,7 +767,7 @@ class AIAssistantService
                         && ($financialEvidence['source_refs'] ?? null) === $sourceRefs
                     ) {
                         $financialProof = $this->financialClaims?->guard($serverAnswer, [$serverResult]);
-                        $structuredProof = $this->structuredFacts->guard($query, $serverAnswer, [$serverResult]);
+                        $structuredProof = $this->structuredFacts->guard($query, $serverAnswer, [$serverResult], $this->countRequestScope($taskPlan));
                         if (
                             is_array($financialProof)
                             && ($financialProof['validation_status'] ?? null) === 'verified'
@@ -908,14 +908,15 @@ class AIAssistantService
             $structuredCheck = ! $imageDiscussion && $proposedActions === []
                 ? ($rejectedFinancialPlan ? ($financialCheck ?? ['text' => trans_message('ai_assistant_financial.unverified_claim'),
                     'validation_status' => 'partial', 'source_refs' => []])
-                    : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $verificationToolResults))
+                    : $this->structuredFacts->guard($query, $rawPresentationPlan ?? $assistantContent, $verificationToolResults, $this->countRequestScope($taskPlan)))
                 : null;
             if (is_array($structuredCheck)) {
                 $assistantContent = $structuredCheck['text'];
             }
             if (! $imageDiscussion && $rawPresentationPlan === null && ! $rejectedFinancialPlan && $proposedActions === []
                 && ($structuredCheck['source_refs'] ?? []) === []) {
-                $emptyProjectSearch = $this->verifyEmptyNamedProjectSearch($query, $verificationToolResults, $user, $organizationId);
+                $emptyProjectSearch = $this->verifyEmptyNamedProjectSearch($query, $verificationToolResults, $user, $organizationId,
+                    $this->resolveRagProjectId($taskPlan['request']['context'] ?? []));
                 if ($emptyProjectSearch !== null) {
                     $assistantContent = $emptyProjectSearch['text'];
                     $structuredCheck = $emptyProjectSearch;
@@ -923,7 +924,7 @@ class AIAssistantService
             }
             if ($terminalToolResponse && ($structuredCheck['source_refs'] ?? []) === [] && $proposedActions === []
                 && ! $rejectedFinancialPlan && ! AssistantFactIntentClassifier::isMoneyOnly($query)) {
-                $terminalProof = $this->structuredFacts->confirmedResults($verificationToolResults, $query);
+                $terminalProof = $this->structuredFacts->confirmedResults($verificationToolResults, $query, $this->countRequestScope($taskPlan));
                 if (($terminalProof['source_refs'] ?? []) !== []) {
                     $terminalProof['needs_clarification'] = (bool) ($structuredCheck['needs_clarification'] ?? false);
                     $assistantContent = $terminalProof['text'];
@@ -970,7 +971,7 @@ class AIAssistantService
                             }
                         }
                         $otherFacts = $this->structuredFacts->confirmedResults(array_values(array_filter($verificationToolResults,
-                            static fn (array $result): bool => !in_array($result['_tool_name'] ?? null, ['get_material_stock', 'get_estimate_answer'], true))), $query);
+                            static fn (array $result): bool => !in_array($result['_tool_name'] ?? null, ['get_material_stock', 'get_estimate_answer'], true))), $query, $this->countRequestScope($taskPlan));
                         if ($otherFacts['source_refs'] !== []) {
                             $assistantContent .= "\n\n".$otherFacts['text'];
                             $compoundParts = true;
@@ -1198,7 +1199,8 @@ class AIAssistantService
     ): ?array {
         $pendingState = $this->agentStateStore->load($conversation);
         $context = is_array($taskPlan['request']['context'] ?? null) ? $taskPlan['request']['context'] : [];
-        $decision = $this->agentPlanner->decide($query, $context, $pendingState);
+        $decision = $this->agentPlanner->decide($query, $context, $pendingState,
+            fn (string $type, ?string $name, ?int $id): ?array => $this->resolveAgentReportEntityScope($type, $name, $id, $user, $organizationId, $taskPlan));
 
         if ($this->isGroundedRequest($taskPlan) && $decision->type === 'answer') {
             return null;
@@ -1226,6 +1228,12 @@ class AIAssistantService
         }
 
         return null;
+    }
+
+    protected function resolveAgentReportEntityScope(string $type, ?string $name, ?int $id, User $actor, int $organizationId, array $taskPlan): ?array
+    {
+        return $this->agentExecutor->resolveReportEntityScope($type, $name, $id, $actor,
+            $this->resolveOrganization($organizationId), $this->requestUnderstandingFromPlan($taskPlan));
     }
 
     private function isGroundedRequest(array $taskPlan): bool
@@ -1782,6 +1790,23 @@ class AIAssistantService
         return array_values($selected);
     }
 
+    private function countRequestScope(array $taskPlan): array
+    {
+        $context = is_array($taskPlan['request']['context'] ?? null) ? $taskPlan['request']['context'] : [];
+        $projects = [];
+        foreach (['entity_refs', 'entity_references'] as $key) {
+            foreach (is_array($context[$key] ?? null) ? $context[$key] : [] as $reference) {
+                if (! is_array($reference) || ($reference['entity_type'] ?? $reference['type'] ?? null) !== 'project') { continue; }
+                $id = $reference['entity_id'] ?? $reference['id'] ?? null;
+                if ((is_int($id) || (is_string($id) && ctype_digit($id))) && (int) $id > 0) {
+                    $projects[(int) $id] = true;
+                }
+            }
+        }
+
+        return count($projects) === 1 ? ['project_id' => (int) array_key_first($projects)] : [];
+    }
+
     private function filterRequestEntityContext(array $request, User $actor, int $organizationId): array
     {
         $context = is_array($request['context'] ?? null) ? $request['context'] : [];
@@ -1922,7 +1947,8 @@ class AIAssistantService
         $refs = [];
         foreach ($ragMetadata['sources'] ?? [] as $source) {
             if (is_array($source) && isset($source['entity_type'], $source['entity_id'])) {
-                $refs[] = array_intersect_key($source, array_flip(['source_id', 'source_type', 'entity_type', 'entity_id', 'organization_id', 'project_id', 'content_scope', 'version', 'checksum', 'source_version', 'updated_at', 'fetched_at', 'navigation', 'title', 'checked_fields', 'required_permissions', 'required_domains', 'projection_name', 'composite_key', 'projection_source_version', 'assistant_public_schema_revision']));
+                $refs[] = array_intersect_key($source, array_flip(['source_id', 'source_type', 'entity_type', 'entity_id', 'organization_id', 'project_id', 'content_scope', 'version', 'checksum', 'source_version', 'source_field_identity', 'updated_at', 'fetched_at', 'navigation', 'title', 'checked_fields', 'required_permissions', 'required_domains', 'projection_name', 'composite_key', 'projection_source_version', 'assistant_public_schema_revision']))
+                    + RagPromptContextBuilder::documentEvidence($source);
             }
         }
         foreach ($toolResults as $result) {
@@ -2007,7 +2033,16 @@ class AIAssistantService
                         $args['project_id'] = $projectId;
                         $args['model_query'] = AssistantBimModelSelector::withoutProjectAlias(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $projectName, $requestQuery);
                     } elseif ($namedProject !== null) {
-                        $bimScopeMissing = true;
+                        $contextProjectId = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
+                        $projectSearch = $this->readFreshProjectSearch($namedProject, $user, $organizationId);
+                        if ($contextProjectId === $projectId && $this->emptyProjectSearchResult($projectSearch)
+                            && $this->scopedBimAliasMatches($user, $organizationId, $projectId, $namedProject)) {
+                            $args['project_id'] = $projectId;
+                            $selector = is_string($args['model_query'] ?? null) ? trim($args['model_query']) : '';
+                            $args['model_query'] = mb_substr(trim($namedProject.' '.$selector), 0, 200);
+                        } else {
+                            $bimScopeMissing = true;
+                        }
                     }
                 }
             }
@@ -3277,6 +3312,11 @@ class AIAssistantService
         if ($this->currentAttachmentIds !== [] || ($taskPlan['image_discussion'] ?? false)) {
             $messages[0]['content'] .= "\n\n".trans_message('ai_assistant.image_instruction_boundary');
         }
+        if (! $conversationNumberRequest && ! ($taskPlan['image_discussion'] ?? false)) {
+            $hints = AssistantToolSurface::compactHints($this->precomputedCapabilityHints ?? $this->buildDomainCapabilityHints($taskPlan));
+            $messages[] = ['role' => 'system', 'content' => json_encode(['kind' => 'backend_capability_schema',
+                'registered_domain_capabilities' => $hints], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)];
+        }
 
         $history = $this->conversationManager->getMessagesForContextWithBudget(
             $conversation,
@@ -3665,21 +3705,67 @@ class AIAssistantService
             : null;
     }
 
-    protected function verifyEmptyNamedProjectSearch(string $question, array $toolResults, User $actor, int $organizationId): ?array
+    private function emptyProjectSearchResult(mixed $value): bool
     {
-        $name = AssistantBimModelSelector::namedProject($question);
-        $result = count($toolResults) === 1 ? reset($toolResults) : null;
-        $empty = static fn (mixed $value): bool => is_array($value) && ($value['status'] ?? null) === 'success'
+        return is_array($value) && ($value['status'] ?? null) === 'success'
             && ($value['results'] ?? null) === [] && ($value['result_window']['returned'] ?? null) === 0
             && ($value['result_window']['has_more'] ?? null) === false && ($value['source_refs'] ?? []) === []
             && ! isset($value['error']);
-        if ($name === null || ($result['_tool_name'] ?? null) !== 'search_projects' || ! $empty($result)
+    }
+
+    protected function scopedBimAliasMatches(User $actor, int $organizationId, int $projectId, string $alias): bool
+    {
+        return app(AssistantBimModelReader::class)->hasCurrentScopedAlias($actor, $organizationId, $projectId, $alias);
+    }
+
+    protected function readBimAliasFallback(string $question, string $alias, User $actor, int $organizationId, int $projectId): ?array
+    {
+        $kind = (new AssistantBimIndexProjection)->queryEquipment($question);
+        if ($kind === null || ! $this->simpleBimEquipmentQuestion($question, $alias)) { return null; }
+        $arguments = ['model_query' => $alias, 'project_id' => $projectId, 'equipment_kind' => $kind,
+            'include_properties' => false, 'include_quantities' => false, 'include_estimate_links' => false];
+        try {
+            if (! $this->permissionChecker->canExecuteTool($actor, 'get_bim_model_elements', $arguments, true)
+                || ! $this->scopedBimAliasMatches($actor, $organizationId, $projectId, $alias)) { return null; }
+            $reader = app(AssistantBimModelReader::class);
+            $result = $reader->read($actor, $organizationId, $arguments);
+            if (($result['source_refs'] ?? []) === []) { return null; }
+
+            return $reader->verifiedAnswer($result, $actor, $organizationId);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function simpleBimEquipmentQuestion(string $question, string $alias): bool
+    {
+        $remaining = preg_replace('/(?<![\pL\pN])'.preg_quote($alias, '/').'(?![\pL\pN])/iu', ' ', $question);
+        $equipmentPattern = '/(?<![\pL\pN])(?:кондиционер[\pL]*|сплит[ -]?систем[\pL]*|вентилятор[\pL]*|насос[\pL]*|кот[её]л[\pL]*|котлы|котлов|чиллер[\pL]*)(?![\pL\pN])/iu';
+        preg_match_all($equipmentPattern, $remaining ?? '', $equipmentTerms);
+        $projection = new AssistantBimIndexProjection;
+        if (count(array_unique(array_map(fn (string $term): string => $projection->queryEquipment($term) ?? mb_strtolower($term), $equipmentTerms[0]))) !== 1) { return false; }
+        $remaining = preg_replace($equipmentPattern, ' ', $remaining ?? '');
+        $remaining = preg_replace('/(?<![\pL\pN])(?:у|нас|в|во|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
+
+        return preg_match('/[\pL\pN]/u', $remaining ?? $question) === 0;
+    }
+
+    protected function verifyEmptyNamedProjectSearch(string $question, array $toolResults, User $actor, int $organizationId, ?int $projectId = null): ?array
+    {
+        $name = AssistantBimModelSelector::namedProject($question);
+        $result = count($toolResults) === 1 ? reset($toolResults) : null;
+        if ($name === null || ($result['_tool_name'] ?? null) !== 'search_projects' || ! $this->emptyProjectSearchResult($result)
             || (int) $actor->current_organization_id !== $organizationId) {
             return null;
         }
         $fresh = $this->readFreshProjectSearch($name, $actor, $organizationId);
-        if (! $empty($fresh)) {
+        if (! $this->emptyProjectSearchResult($fresh)) {
             return null;
+        }
+        if ($projectId !== null) {
+            if (! $this->simpleBimEquipmentQuestion($question, $name)) { return null; }
+            $bimAnswer = $this->readBimAliasFallback($question, $name, $actor, $organizationId, $projectId);
+            if ($bimAnswer !== null) { return $bimAnswer; }
         }
 
         return ['text' => trans_message('ai_assistant.project_search_no_matches'), 'replaced' => true,
@@ -3735,7 +3821,7 @@ class AIAssistantService
 
     protected function resolveRelevantToolNames(array $taskPlan): array
     {
-        return $this->toolRegistry->getToolNames();
+        return AssistantToolSurface::names($this->toolRegistry->getToolNames(), $taskPlan, $this->activeEstimateSelection !== null);
     }
 
     private function isConversationNumberRequest(array $taskPlan, ?string $query = null): bool

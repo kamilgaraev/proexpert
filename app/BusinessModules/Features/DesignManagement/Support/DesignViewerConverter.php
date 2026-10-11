@@ -12,6 +12,8 @@ final class DesignViewerConverter
 {
     private const DEFAULT_VERSION = 4;
 
+    public const IFC_INDEX_SCHEMA_VERSION = 2;
+
     public static function version(): int
     {
         return max(1, (int) config('design_management.viewer_converter_version', self::DEFAULT_VERSION));
@@ -30,6 +32,13 @@ final class DesignViewerConverter
         $metadata = is_array($derivative->metadata) ? $derivative->metadata : [];
 
         return (int) ($metadata['converter_version'] ?? 0) >= self::version();
+    }
+
+    public static function isIndexCurrent(DesignModelDerivative $derivative): bool
+    {
+        $metadata = is_array($derivative->metadata) ? $derivative->metadata : [];
+
+        return (int) ($metadata['ifc_index_schema_version'] ?? 0) >= self::IFC_INDEX_SCHEMA_VERSION;
     }
 
     public static function publicMetadata(array $metadata): array
@@ -57,6 +66,7 @@ final class DesignViewerConverter
         return array_merge($metadata, [
             'is_stale' => true,
             'required_converter_version' => self::version(),
+            'required_ifc_index_schema_version' => self::IFC_INDEX_SCHEMA_VERSION,
         ]);
     }
 }

@@ -26,6 +26,23 @@ final class AssistantToolResultProjection
             return array_intersect_key($result, array_flip(['status', 'server_formatted_answer', 'needs_clarification', 'validation_status', 'error', 'reason']));
         }
         $view = $result;
+        if (is_array($view['rag_context']['sources'] ?? null)) {
+            $view['rag_context']['sources'] = array_map(self::reference(...), $view['rag_context']['sources']);
+        }
+        if (is_string($view['document_context'] ?? null)) {
+            try {
+                $documentContext = json_decode($view['document_context'], true, 512, JSON_THROW_ON_ERROR);
+                if (is_array($documentContext['sources'] ?? null)) {
+                    $documentContext['sources'] = array_map(self::reference(...), $documentContext['sources']);
+                    $view['document_context'] = json_encode($documentContext, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+                }
+            } catch (\JsonException) {
+                unset($view['document_context']);
+            }
+        }
+        if (is_array($view['domain_search_count_evidence']['source_ref'] ?? null)) {
+            $view['domain_search_count_evidence']['source_ref'] = self::reference($view['domain_search_count_evidence']['source_ref']);
+        }
         $primaryRows = self::primaryRows($result);
         foreach (['structured_fact_evidence', 'financial_evidence'] as $key) {
             $evidence = $result[$key] ?? null;
@@ -156,8 +173,9 @@ final class AssistantToolResultProjection
     private static function reference(mixed $reference): mixed
     {
         if (!is_array($reference)) { return $reference; }
-        return array_diff_key($reference, array_flip(['version', 'source_version', 'checksum', 'checked_fields',
-            'required_permissions', 'required_domains', 'projection_source_version', 'assistant_public_schema_revision']));
+        return array_diff_key($reference, array_flip(['version', 'source_version', 'checksum', 'source_field_identity', 'source_link_identity', 'checked_fields',
+            'required_permissions', 'required_domains', 'projection_source_version', 'assistant_public_schema_revision',
+            '_search_count_query', '_search_count_actor', '_search_count_proof', 'unit_checksum', 'document_checksum', 'rag_source_checksum']));
     }
 
     private static function sharedSourceContext(array $view): array

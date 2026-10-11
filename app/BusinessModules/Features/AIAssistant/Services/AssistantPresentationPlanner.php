@@ -317,10 +317,26 @@ final class AssistantPresentationPlanner
                 $rows[$rowRef] = $proofRow;
                 $rows[$rowRef]['_presentation_fields'] = $fields;
             }
-            $sets[$view['result_set']] = ['rows' => $rows, 'truncated' => $evidence['truncated'] ?? false];
+            $sets[$view['result_set']] = ['rows' => $rows, 'truncated' => self::hasIncompleteScope($result)];
         }
 
         return $sets;
+    }
+
+    public static function hasIncompleteScope(array $result): bool
+    {
+        if (($result['structured_fact_evidence']['truncated'] ?? false) === true) {
+            return true;
+        }
+        $window = $result['result_window'] ?? null;
+        if (is_array($window) && (($window['has_more'] ?? null) !== false || ($window['continued'] ?? false) === true)) {
+            return true;
+        }
+        $coverage = $result['retrieval_coverage'] ?? null;
+
+        return is_array($coverage) && (($coverage['search_complete'] ?? true) === false
+            || ($coverage['complete'] ?? true) === false || ($coverage['has_more'] ?? false) === true
+            || in_array($coverage['status'] ?? null, ['partial', 'incomplete', 'unknown'], true));
     }
 
     private function validColumns(array $set, array $columns): bool

@@ -16,10 +16,10 @@ export const createPropertySetReader = (api, modelID) => {
   };
 };
 
-export const getElementPropertySets = async (api, modelID, elementID, readPropertySet, lookup) => {
-  const types = lookup
+export const getElementPropertySets = async (api, modelID, elementID, readPropertySet, lookup, assignedTypes) => {
+  const types = assignedTypes ?? (lookup
     ? lookup.typeIds(elementID).map((id) => api.GetLine(modelID, id, false))
-    : await api.properties.getTypeProperties(modelID, elementID, false);
+    : await api.properties.getTypeProperties(modelID, elementID, false));
   const sets = [];
   const seen = new Set();
   for (const type of types) {

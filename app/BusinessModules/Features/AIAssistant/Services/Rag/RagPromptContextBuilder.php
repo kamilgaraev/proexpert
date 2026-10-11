@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection;
 use DateTimeInterface;
 use Throwable;
 
@@ -56,10 +57,57 @@ final class RagPromptContextBuilder
             'source_version' => $result->metadata['source_version'] ?? null,
             'checksum' => $result->metadata['checksum'] ?? null,
             'assistant_public_schema_revision' => $result->metadata['assistant_public_schema_revision'] ?? null,
+            ...self::referenceProof($result->metadata),
+            ...self::documentEvidence($result->metadata),
             'content_scope' => 'unstructured',
             'navigation_target' => self::navigationTarget($result),
             'navigation' => self::navigationTarget($result) !== null ? ['url' => self::navigationTarget($result)['route']] : null,
         ], $results));
+    }
+
+    public static function documentEvidence(array $metadata): array
+    {
+        $evidence = [];
+        foreach (['document_id', 'file_id', 'unit_id', 'unit_index', 'text_offset', 'text_length'] as $key) {
+            if (is_int($metadata[$key] ?? null) && $metadata[$key] >= 0) { $evidence[$key] = $metadata[$key]; }
+        }
+        foreach (['unit_checksum', 'unit_type', 'coverage_status', 'document_checksum', 'rag_source_checksum'] as $key) {
+            if (is_string($metadata[$key] ?? null) && mb_strlen($metadata[$key]) <= 128) { $evidence[$key] = $metadata[$key]; }
+        }
+        if (is_bool($metadata['document_truncated'] ?? null)) { $evidence['document_truncated'] = $metadata['document_truncated']; }
+        if (is_array($metadata['provenance'] ?? null)) {
+            $provenance = [];
+            foreach (['page', 'row', 'row_start', 'row_end', 'paragraph'] as $key) {
+                if (is_int($metadata['provenance'][$key] ?? null) && $metadata['provenance'][$key] >= 0) { $provenance[$key] = $metadata['provenance'][$key]; }
+            }
+            foreach (['sheet', 'kind', 'path', 'part', 'section', 'column'] as $key) {
+                if (is_string($metadata['provenance'][$key] ?? null) && mb_strlen($metadata['provenance'][$key]) <= 256) { $provenance[$key] = $metadata['provenance'][$key]; }
+            }
+            $cells = $metadata['provenance']['cells'] ?? null;
+            if (is_array($cells) && array_is_list($cells) && count($cells) <= 64
+                && count(array_filter($cells, static fn (mixed $cell): bool => is_string($cell) && preg_match('/^[A-Z]{1,3}$/D', $cell) === 1)) === count($cells)) {
+                $provenance['cells'] = $cells;
+            }
+            $evidence['provenance'] = $provenance;
+        }
+        return $evidence;
+    }
+
+    private static function referenceProof(array $metadata): array
+    {
+        $proof = [];
+        if (is_string($metadata['source_field_identity'] ?? null) && preg_match('/^[a-f0-9]{64}$/D', $metadata['source_field_identity']) === 1) {
+            $proof['source_field_identity'] = $metadata['source_field_identity'];
+        }
+        foreach (['checked_fields', 'required_permissions', 'required_domains'] as $key) {
+            $values = $metadata[$key] ?? null;
+            if (is_array($values) && array_is_list($values) && count($values) <= 64
+                && count(array_filter($values, static fn (mixed $value): bool => is_string($value) && strlen($value) <= 128
+                    && preg_match('/^[a-zA-Z_][a-zA-Z0-9_.:-]*$/D', $value) === 1)) === count($values)) {
+                $proof[$key] = $values;
+            }
+        }
+        return $proof;
     }
 
     /**
@@ -67,7 +115,8 @@ final class RagPromptContextBuilder
      */
     private function prompt(array $sources): string
     {
-        return json_encode(['kind' => 'untrusted_search_results', 'sources' => $sources], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        $public = AssistantToolResultProjection::forProvider('rag_search', ['rag_context' => ['sources' => $sources]]);
+        return json_encode(['kind' => 'untrusted_search_results', 'sources' => $public['rag_context']['sources']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
     /**

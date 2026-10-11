@@ -302,6 +302,63 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('https://storage.example.test/org-15/reports/projects-summary.pdf', $metadata['artifacts'][0]['url']);
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('reportScopeSearchProvider')]
+    public function test_service_callback_resolves_named_project_before_report(array $rows, bool $canReport): void
+    {
+        $conversation = new AgentFlowConversation(808);
+        $manager = new AgentFlowConversationManager($conversation);
+        $registry = new AIToolRegistry;
+        $search = new AgentFlowTool('search_projects', ['status' => 'success', 'results' => $rows]);
+        $report = new AgentFlowTool('generate_project_timelines_report', [
+            'status' => 'success', 'pdf_url' => 'https://storage.example.test/org-15/reports/scope.pdf',
+            'filename' => 'scope.pdf', 'storage_disk' => 's3', 'storage_path' => 'org-15/reports/scope.pdf',
+        ]);
+        $registry->registerTool($search);
+        $registry->registerTool($report);
+        $service = $this->makeService($manager, $registry);
+        $service->useActualReportScopeResolver = true;
+        $service->exposedHandleAgentFlow('Сформируй отчет по графику работ проекта СевГУ за ноябрь 2026',
+            15, $this->makeUser(), $conversation, $this->taskPlan());
+        $this->assertSame([['query' => 'СевГУ']], $search->calls);
+        if ($canReport) {
+            $this->assertCount(1, $report->calls);
+            $this->assertSame(72, $report->calls[0]['project_id']);
+            $this->assertSame('2026-11-01', $report->calls[0]['date_from']);
+            $this->assertSame('completed', $conversation->context['agent_state']['status']);
+        } else {
+            $this->assertSame([], $report->calls);
+            $this->assertSame('waiting_for_slots', $conversation->context['agent_state']['status']);
+            $this->assertSame([], $manager->assistantMessages()[0]->metadata['artifacts']);
+        }
+    }
+
+    public static function reportScopeSearchProvider(): array
+    {
+        return [
+            'unique authorized result' => [[['id' => 72, 'name' => 'СевГУ']], true],
+            'empty search' => [[], false],
+            'ambiguous search' => [[['id' => 72, 'name' => 'СевГУ А'], ['id' => 73, 'name' => 'СевГУ Б']], false],
+        ];
+    }
+
+    public function test_service_organization_report_ignores_selected_ui_project(): void
+    {
+        $conversation = new AgentFlowConversation(909);
+        $manager = new AgentFlowConversationManager($conversation);
+        $registry = new AIToolRegistry;
+        $report = new AgentFlowTool('generate_project_timelines_report', [
+            'status' => 'success', 'pdf_url' => 'https://storage.example.test/org-15/reports/all.pdf',
+            'filename' => 'all.pdf', 'storage_disk' => 's3', 'storage_path' => 'org-15/reports/all.pdf',
+        ]);
+        $registry->registerTool($report);
+        $service = $this->makeService($manager, $registry);
+        $service->useActualReportScopeResolver = true;
+        $service->exposedHandleAgentFlow('Сформируй отчет по графику работ за ноябрь 2026 по всей организации',
+            15, $this->makeUser(), $conversation, $this->taskPlan());
+        $this->assertCount(1, $report->calls);
+        $this->assertArrayNotHasKey('project_id', $report->calls[0]);
+    }
+
     private function makeService(
         AgentFlowConversationManager $conversationManager,
         AIToolRegistry $toolRegistry,
@@ -449,6 +506,7 @@ final class AssistantAgentFlowServiceTest extends TestCase
     {
         $user = new User;
         $user->id = 7;
+        $user->current_organization_id = 15;
 
         return $user;
     }
@@ -457,6 +515,17 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
 final class AgentFlowAIAssistantService extends AIAssistantService
 {
+    public bool $useActualReportScopeResolver = false;
+
+    protected function resolveAgentReportEntityScope(string $type, ?string $name, ?int $id, User $actor, int $organizationId, array $taskPlan): ?array
+    {
+        if ($this->useActualReportScopeResolver) {
+            return parent::resolveAgentReportEntityScope($type, $name, $id, $actor, $organizationId, $taskPlan);
+        }
+        return $type === 'project' && $name === null && $id === 56 && $organizationId === 15
+            ? ['id' => 56, 'label' => 'Строительство склада Литер А'] : null;
+    }
+
     public function exposedHandleAgentFlow(
         string $query,
         int $organizationId,
@@ -577,8 +646,10 @@ final class AgentFlowConversationManager extends ConversationManager
     }
 }
 
-final readonly class AgentFlowTool implements AIToolInterface
+final class AgentFlowTool implements AIToolInterface
 {
+    public array $calls = [];
+
     public function __construct(
         private string $name,
         private array|string $result
@@ -608,6 +679,7 @@ final readonly class AgentFlowTool implements AIToolInterface
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
+        $this->calls[] = $arguments;
         return $this->result;
     }
 }

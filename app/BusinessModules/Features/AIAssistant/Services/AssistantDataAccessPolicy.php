@@ -137,7 +137,9 @@ final class AssistantDataAccessPolicy
             return false;
         }
         $definition = $this->entities()[$entityType] ?? null;
-        if ($definition === null || $definition[0] !== $type || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) {
+        if ($definition === null || ! in_array($type, AssistantEntityAccessCatalog::indexedSourceTypes($entityType, $definition[0]), true)
+            || ! $this->canReadIndexedType($user, $organizationId, $definition[0])
+            || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) {
             return false;
         }
         $projectId = $source['project_id'] ?? $source['projectId'] ?? null;
@@ -230,6 +232,9 @@ final class AssistantDataAccessPolicy
         if ($type === 'published_report_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)
                 ->matchesReference($user, $organizationId, $reference);
+        }
+        if ($type === AssistantDomainSearchCountEvidence::TYPE) {
+            return app(AssistantDomainSearchCountEvidence::class)->canReadReference($user, $organizationId, $reference);
         }
         if (isset($reference['source_id'])) {
             $source = $sourceLookup === null ? RagSource::query()->where('organization_id', $organizationId)->find($reference['source_id'])
@@ -525,13 +530,19 @@ final class AssistantDataAccessPolicy
         }
         $types = $candidates === null || in_array('file_document', $candidates, true) ? ['file_document'] : [];
         $domainDecisions = [];
-        foreach ($this->entities() as $definition) {
+        foreach ($this->entities() as $entityType => $definition) {
             $this->currentCheckpoint?->__invoke();
-            if ($candidates !== null && ! in_array($definition[0], $candidates, true)) { continue; }
+            $sourceTypes = AssistantEntityAccessCatalog::indexedSourceTypes($entityType, $definition[0]);
+            if ($candidates !== null && array_intersect($sourceTypes, $candidates) === []) { continue; }
             $domain = $definition[2];
             $domainDecisions[$domain] ??= $this->canReadDomain($user, $organizationId, $domain);
             if ($domainDecisions[$domain] && $this->canReadIndexedType($user, $organizationId, $definition[0])) {
-                $types[] = $definition[0];
+                foreach ($sourceTypes as $sourceType) {
+                    if (($candidates === null || in_array($sourceType, $candidates, true))
+                        && $this->canReadIndexedType($user, $organizationId, $sourceType)) {
+                        $types[] = $sourceType;
+                    }
+                }
             }
         }
         return array_values(array_unique($types));
@@ -702,6 +713,13 @@ final class AssistantDataAccessPolicy
         if (! $this->belongsToOrganization($user, $organizationId)) {
             return $query->whereRaw('1 = 0');
         }
+        if (! $preparedCandidates) {
+            $projects = $this->entityQuery($user, $organizationId, 'project');
+            $query->where(static function (Builder $scope) use ($projects, $table): void {
+                $scope->where($table.'.source_type', 'file_document')->orWhereNull($table.'.project_id');
+                if ($projects !== null) { $scope->orWhereIn($table.'.project_id', $projects->select('projects.id')); }
+            });
+        }
         if (! $expectedProjection && ! $preparedCandidates) {
             \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::apply($query, $table);
         }
@@ -712,12 +730,15 @@ final class AssistantDataAccessPolicy
         if ($splitIdentities) {
             $union = null;
             foreach ($this->entities() as $entityType => $definition) {
-                if (! isset($sourceIdentities[$entityType][$definition[0]])
-                    || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { continue; }
+                $availableSources = array_values(array_filter(AssistantEntityAccessCatalog::indexedSourceTypes($entityType, $definition[0]),
+                    fn (string $sourceType): bool => isset($sourceIdentities[$entityType][$sourceType]) && $this->canReadIndexedType($user, $organizationId, $sourceType)));
+                if ($availableSources === [] || in_array(AssistantExtendedDomainRegistry::retrievalMode($entityType), ['live_only', 'unavailable'], true)) { continue; }
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $entityType) : null;
                 if ($entities === null) { continue; }
-                $branch = $this->sourceQueries->identityBranch($entities, $definition[0], $entityType, $identitySources, $table, $expectedProjection, $sourceColumns);
-                if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
+                foreach ($availableSources as $sourceType) {
+                    $branch = $this->sourceQueries->identityBranch(clone $entities, $sourceType, $entityType, $identitySources, $table, $expectedProjection, $sourceColumns);
+                    if ($union === null) { $union = $branch; } else { $union->unionAll($branch); }
+                }
             }
             if (isset($sourceIdentities['assistant_document']['file_document'])) {
                 $documentIdentities = $identitySources === null ? clone $query : clone $identitySources;
@@ -742,14 +763,16 @@ final class AssistantDataAccessPolicy
         return $query->where(function (Builder $scope) use ($user, $organizationId, $table, $sourceIdentities, $query): void {
             $matched = false;
             foreach ($this->entities() as $type => $definition) {
-                if (! isset($sourceIdentities[$type][$definition[0]])) { continue; }
+                $availableSources = array_values(array_filter(AssistantEntityAccessCatalog::indexedSourceTypes($type, $definition[0]),
+                    fn (string $sourceType): bool => isset($sourceIdentities[$type][$sourceType]) && $this->canReadIndexedType($user, $organizationId, $sourceType)));
+                if ($availableSources === []) { continue; }
                 if (in_array(AssistantExtendedDomainRegistry::retrievalMode($type), ['live_only', 'unavailable'], true)) { continue; }
                 $entities = $this->canReadIndexedType($user, $organizationId, $definition[0]) ? $this->entityQuery($user, $organizationId, $type) : null;
                 if ($entities !== null) {
                     $matched = true;
                     $entityKey = $entities->getModel()->getQualifiedKeyName();
-                    $scope->orWhere(function (Builder $branch) use ($type, $definition, $entities, $entityKey, $table): void {
-                        $branch->where($table.'.source_type', $definition[0])->where($table.'.entity_type', $type)
+                    $scope->orWhere(function (Builder $branch) use ($type, $availableSources, $entities, $entityKey, $table): void {
+                        $branch->whereIn($table.'.source_type', $availableSources)->where($table.'.entity_type', $type)
                             ->whereIn($table.'.entity_id', $entities->select([])->selectRaw('CAST('.$entityKey.' AS TEXT)'));
                     });
                 }
@@ -1014,6 +1037,26 @@ final class AssistantDataAccessPolicy
     public function prefetchEntitySchemaMetadata(?callable $checkpoint = null, ?callable $checkDeadline = null): void
     {
         $this->schemaMetadata->prefetch(self::entityDefinitions(), $checkpoint, $checkDeadline);
+    }
+
+    public function engineeringEntityQuery(User $user, int $organizationId, string $type): ?Builder
+    {
+        $columns = match ($type) {
+            'design_artifact_version' => ['id', 'project_id', 'artifact_id', 'title', 'version_number', 'source_original_name', 'is_current', 'source_format', 'updated_at'],
+            'design_ifc_model_element' => ['id', 'project_id', 'version_id', 'derivative_id', 'express_id', 'global_id', 'category', 'name', 'properties', 'classifications', 'updated_at'],
+            'design_model_derivative' => ['id', 'project_id', 'version_id', 'status', 'viewer_provider', 'derivative_format', 'metadata', 'updated_at'],
+            default => null,
+        };
+        if ($columns === null) { return null; }
+        $authorized = $this->entityQuery($user, $organizationId, $type);
+        if ($authorized === null) { return null; }
+        $model = $authorized->getModel();
+        $table = $model->getTable();
+        $key = $model->getQualifiedKeyName();
+
+        return $model->newQueryWithoutScopes()->where($table.'.organization_id', $organizationId)
+            ->whereIn($key, (clone $authorized)->select($key))
+            ->select(array_map(static fn (string $column): string => $table.'.'.$column, $columns));
     }
 
     private function buildEntityQuery(User $user, int $organizationId, string $type, bool $skipBusinessReferences = false): ?Builder

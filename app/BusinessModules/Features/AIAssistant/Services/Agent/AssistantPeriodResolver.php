@@ -102,8 +102,11 @@ final class AssistantPeriodResolver
         $normalized = $this->normalize($sourceText);
         $now = ($this->now ?? CarbonImmutable::now('Europe/Moscow'))->startOfDay();
 
-        return $this->resolveExplicitDateRange($normalized, $sourceText)
-            ?? $this->resolveProjectStartPeriod($normalized, $sourceText, $now)
+        if (preg_match('/\bс\s+\d{1,2}[.\/-]\d{1,2}[.\/-]\d{4}\s+по\b/u', $normalized) === 1) {
+            return $this->resolveExplicitDateRange($normalized, $sourceText);
+        }
+
+        return $this->resolveProjectStartPeriod($normalized, $sourceText, $now)
             ?? $this->resolveAllAvailablePeriod($normalized, $sourceText)
             ?? $this->resolveRelativeMonth($normalized, $sourceText, $now)
             ?? $this->resolveRelativeYear($normalized, $sourceText, $now)
@@ -324,12 +327,26 @@ final class AssistantPeriodResolver
     private function resolveNamedMonth(string $normalized, string $sourceText, CarbonImmutable $now): ?AssistantResolvedPeriod
     {
         foreach (self::MONTHS as $monthName => $month) {
-            if (preg_match('/\bза\s+'.preg_quote($monthName, '/').'\b/u', $normalized) !== 1) {
+            if (preg_match('/(?:\bза\s+|^)'.preg_quote($monthName, '/').'\b(?<suffix>.*)$/u', $normalized, $matches) !== 1) {
                 continue;
             }
 
             $year = $month < (int) $now->month ? (int) $now->year : (int) $now->year - 1;
-            $date = CarbonImmutable::create($year, $month, 1, 0, 0, 0, $now->timezone);
+            $suffix = trim($matches['suffix']);
+            if (preg_match('/^([+-]?\d[\p{L}\d+-]*)/u', $suffix, $yearMatch) === 1) {
+                if (preg_match('/^\d{4}$/', $yearMatch[1]) !== 1 || (int) $yearMatch[1] < 1) {
+                    return null;
+                }
+                $year = (int) $yearMatch[1];
+            } elseif (preg_match('/^(?:этого|текущего)\s+года\b/u', $suffix) === 1) {
+                $year = (int) $now->year;
+            } elseif (preg_match('/^прошлого\s+года\b/u', $suffix) === 1) {
+                $year = (int) $now->year - 1;
+            }
+            $date = $this->dateFromParts($year, $month, 1);
+            if ($date === null) {
+                return null;
+            }
 
             return $this->period($date->startOfMonth(), $date->endOfMonth(), self::MONTH_LABELS[$month].' '.$year, $sourceText);
         }

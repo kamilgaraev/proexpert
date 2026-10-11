@@ -47,6 +47,7 @@ class AssistantSourceReferenceGuard
         if (! $this->canReadCurrent($actor, $organizationId, $references)) {
             return false;
         }
+        $currentSourceMatches = [];
         foreach ($references as $reference) {
             $fetchedAt = $reference['fetched_at'] ?? null;
             if (! is_string($fetchedAt)) {
@@ -62,6 +63,12 @@ class AssistantSourceReferenceGuard
             }
             $type = $reference['entity_type'] ?? $reference['entityType'] ?? $reference['type'];
             $id = $reference['entity_id'] ?? $reference['entityId'] ?? $reference['id'];
+            if ($type === AssistantDomainSearchCountEvidence::TYPE) {
+                if (! app(AssistantDomainSearchCountEvidence::class)->matchesReference($actor, $organizationId, $reference)) {
+                    return false;
+                }
+                continue;
+            }
             if ($type === 'live_project_financial_projection') {
                 if (! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class)
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }
@@ -77,8 +84,14 @@ class AssistantSourceReferenceGuard
                     ->fresh($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            $engineeringReference = ($reference['bim_projection'] ?? null) === 'engineering_index';
             $query = $type === 'assistant_document' ? AIAssistantDocument::query()->where('organization_id', $organizationId)
-                : $this->policy->entityQuery($actor, $organizationId, $type);
+                : ($engineeringReference ? $this->policy->engineeringEntityQuery($actor, $organizationId, $type)
+                    : $this->policy->entityQuery($actor, $organizationId, $type));
+            if ($engineeringReference && $query !== null) {
+                $allowed = array_map(static fn (string $column): string => substr($column, strrpos($column, '.') + 1), $query->getQuery()->columns ?? []);
+                if (! is_array($reference['checked_fields'] ?? null) || array_diff($reference['checked_fields'], $allowed) !== []) { return false; }
+            }
             if ($query !== null && ($reference['content_scope'] ?? null) === 'structured') {
                 $table = $query->getModel()->getTable();
                 $columns = $this->columns[$table] ??= \Illuminate\Support\Facades\Schema::getColumnListing($table);
@@ -88,6 +101,47 @@ class AssistantSourceReferenceGuard
             $entity = $query?->whereKey($id)->first();
             if (! $entity) {
                 return false;
+            }
+            $unit = null;
+            if ($type === 'assistant_document') {
+                if (isset($reference['document_id']) && (int) $reference['document_id'] !== (int) $entity->id) {
+                    return false;
+                }
+                $documentChecksum = $reference['document_checksum'] ?? (! isset($reference['source_id']) ? ($reference['checksum'] ?? null) : null);
+                if ($documentChecksum !== null && (! is_string($documentChecksum)
+                    || ! hash_equals((string) $entity->checksum, $documentChecksum))) {
+                    return false;
+                }
+                if (isset($reference['unit_id'])) {
+                    $unitColumns = ['id', 'document_id', 'unit_type', 'unit_index', 'provenance'];
+                    if (isset($reference['source_id'])) { array_push($unitColumns, 'text', 'checksum'); }
+                    $unit = \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit::query()
+                        ->where('document_id', $entity->id)->whereKey($reference['unit_id'])
+                        ->whereRaw('char_length(text) <= ?', [2000000])->select($unitColumns)
+                        ->selectRaw("encode(sha256(convert_to(text, 'UTF8')), 'hex') AS current_text_checksum")->first();
+                    if ($unit === null || ! is_string($reference['unit_checksum'] ?? null)
+                        || ! hash_equals((string) $unit->current_text_checksum, $reference['unit_checksum'])
+                        || (isset($reference['unit_index']) && (int) $reference['unit_index'] !== (int) $unit->unit_index)
+                        || (isset($reference['unit_type']) && $reference['unit_type'] !== $unit->unit_type)) {
+                        return false;
+                    }
+                    if (isset($reference['provenance'])) {
+                        $expected = \App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder::documentEvidence(['provenance' => $unit->provenance]);
+                        if (($expected['provenance'] ?? []) !== $reference['provenance']) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            if (array_key_exists('source_field_identity', $reference)) {
+                $fields = $reference['checked_fields'] ?? null;
+                if (! is_array($fields) || $fields === [] || ! is_string($reference['source_field_identity'])) {
+                    return false;
+                }
+                $identity = AssistantSourceReferenceIdentity::key(array_intersect_key($entity->getAttributes(), array_flip($fields)));
+                if (! hash_equals($identity, $reference['source_field_identity'])) {
+                    return false;
+                }
             }
             if ($type === 'design_source_link' && array_key_exists('source_link_identity', $reference)) {
                 $identity = AssistantSourceReferenceIdentity::key(array_intersect_key($entity->getAttributes(),
@@ -108,23 +162,29 @@ class AssistantSourceReferenceGuard
             }
             if (isset($reference['source_id'])) {
                 $source = RagSource::query()->where('organization_id', $organizationId)->find($reference['source_id']);
-                if (! $source || ! isset($reference['checksum']) || ! hash_equals((string) $source->checksum, (string) $reference['checksum'])) {
+                $sourceChecksum = $reference['rag_source_checksum'] ?? $reference['checksum'] ?? null;
+                if (! $source || ! is_string($sourceChecksum) || ! hash_equals((string) $source->checksum, $sourceChecksum)) {
                     return false;
                 }
-                if (! $entity->updated_at) {
+                $proofKey = $source->id.':'.$source->checksum.':'.$timestamp->toISOString();
+                if (! array_key_exists($proofKey, $currentSourceMatches)) {
                     try {
                         $collector = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry::class)->collector($source->source_type);
                         $current = false;
-                        foreach ($collector?->collectEntity($organizationId, $type, $id) ?? [] as $chunk) {
+                        $chunks = $type === 'assistant_document' && $unit !== null && $source->source_type === 'file_document'
+                            ? [\App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($entity, $unit)]
+                            : ($collector?->collectEntity($organizationId, $type, $id) ?? []);
+                        foreach ($chunks as $chunk) {
                             if ($chunk->entityType === $type && (string) $chunk->entityId === (string) $id
                                 && ($chunk->updatedAt === null || Carbon::parse($chunk->updatedAt)->lte($timestamp))
-                                && app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class)->matchesSource($source, $chunk)) { $current = true; break; }
+                                && app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class)->matchesLexicalSource($source, $chunk)) { $current = true; break; }
                         }
                     } catch (\Throwable) {
                         return false;
                     }
-                    if (! $current) { return false; }
+                    $currentSourceMatches[$proofKey] = $current;
                 }
+                if (! $currentSourceMatches[$proofKey]) { return false; }
             }
         }
 

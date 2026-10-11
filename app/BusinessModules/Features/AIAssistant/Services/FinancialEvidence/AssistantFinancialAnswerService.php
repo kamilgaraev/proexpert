@@ -122,16 +122,17 @@ final class AssistantFinancialAnswerService
                     : trans_message('ai_assistant_financial.unknown'),
             ]);
         }
-        $lines[] = trans_message('ai_assistant_financial.totals', ['amount' => $evidence['totals']['total_amount'] ?? trans_message('ai_assistant_financial.unknown'),
-            'direct' => $evidence['totals']['direct_costs'] ?? trans_message('ai_assistant_financial.unknown'), 'overhead' => $evidence['totals']['overhead_amount'] ?? trans_message('ai_assistant_financial.unknown'),
-            'profit' => $evidence['totals']['profit_amount'] ?? trans_message('ai_assistant_financial.unknown')]);
+        $currency = $evidence['totals']['currency'] ?? null;
+        $lines[] = trans_message('ai_assistant_financial.totals', ['amount' => $this->money($evidence['totals']['total_amount'] ?? null, $currency),
+            'direct' => $this->money($evidence['totals']['direct_costs'] ?? null, $currency), 'overhead' => $this->money($evidence['totals']['overhead_amount'] ?? null, $currency),
+            'profit' => $this->money($evidence['totals']['profit_amount'] ?? null, $currency)]);
         if (($evidence['totals_validation_status'] ?? $evidence['validation_status'] ?? 'unverified') !== 'verified') {
             $lines[] = trans_message('ai_assistant_financial.totals_mismatch');
         }
         if (preg_match('/ндс/iu', $query)) {
             $lines[] = $evidence['stored_totals']['total_amount_with_vat'] === null
                 ? trans_message('ai_assistant_financial.vat_unknown')
-                : trans_message('ai_assistant_financial.vat_stored', ['amount' => $evidence['stored_totals']['total_amount_with_vat']]);
+                : trans_message('ai_assistant_financial.vat_stored', ['amount' => $this->money($evidence['stored_totals']['total_amount_with_vat'], $evidence['stored_totals']['currency'] ?? null)]);
         }
         $filter = $evidence['selection']['position_filter'] ?? [];
         $numbers = $evidence['selection']['position_numbers'] ?? [];
@@ -148,6 +149,7 @@ final class AssistantFinancialAnswerService
                 $allPositions = array_column($evidence['positions'], null, 'id');
                 $selectedTotal = '0.00';
                 $selectedMissing = false;
+                $selectedCurrencies = [];
                 foreach ($positions as $position) {
                     if ($position['excluded']) {
                         continue;
@@ -164,13 +166,20 @@ final class AssistantFinancialAnswerService
                         $parent = $allPositions[$parent]['parent_work_id'];
                     }
                     if (! $covered) {
+                        $selectedCurrencies[] = $this->currency($position['currency'] ?? null);
                         $selectedMissing = $selectedMissing || $position['total_amount'] === null;
                         $selectedTotal = FinanceDecimal::add($selectedTotal, $position['total_amount'] ?? '0');
                     }
                 }
                 if ($positions !== []) {
+                    $knownCurrencies = array_values(array_unique(array_filter($selectedCurrencies)));
+                    $mixedCurrencies = count($knownCurrencies) > 1;
+                    $selectedCurrency = count(array_unique($selectedCurrencies)) === 1 ? ($selectedCurrencies[0] ?? null) : null;
                     $lines[] = trans_message('ai_assistant_financial.selected_total', ['filter' => $this->markdownText(implode(', ', array_merge($filter, $numbers))),
-                        'amount' => $selectedMissing ? trans_message('ai_assistant_financial.unknown') : FinanceDecimal::value($selectedTotal)]);
+                        'amount' => $selectedMissing || $mixedCurrencies ? trans_message('ai_assistant_financial.unknown') : $this->money(FinanceDecimal::value($selectedTotal), $selectedCurrency)]);
+                    if ($mixedCurrencies) {
+                        $lines[] = trans_message('ai_assistant_financial.selected_total_currency_mismatch');
+                    }
                 }
             }
             if ($positions === [] && ! $this->requestsHighestCostPosition($query)) {
@@ -178,8 +187,8 @@ final class AssistantFinancialAnswerService
             }
             foreach (array_slice($positions, 0, 50) as $position) {
                 $lines[] = trans_message('ai_assistant_financial.position', ['number' => $this->markdownText($position['position_number']), 'name' => $this->markdownText($position['name']),
-                    'quantity' => $position['quantity'], 'unit' => $this->markdownText($position['unit'] ?? ''), 'amount' => $position['total_amount'] ?? trans_message('ai_assistant_financial.unknown'),
-                    'direct' => $position['direct_costs'] ?? trans_message('ai_assistant_financial.unknown')])
+                    'quantity' => $position['quantity'], 'unit' => $this->markdownText($position['unit'] ?? ''), 'amount' => $this->money($position['total_amount'] ?? null, $position['currency'] ?? null),
+                    'direct' => $this->money($position['direct_costs'] ?? null, $position['currency'] ?? null)])
                     .' '.trans_message('ai_assistant_financial.'.($position['excluded'] ? 'excluded' : ($position['included_in_total'] ? 'included' : 'child')));
             }
             if (count($positions) > 50) {
@@ -189,6 +198,26 @@ final class AssistantFinancialAnswerService
         $lines[] = trans_message('ai_assistant_financial.fetched_at', ['time' => $this->markdownText($evidence['fetched_at'])]);
 
         return implode("\n", $lines);
+    }
+
+    private function money(mixed $amount, mixed $currency): string
+    {
+        if ($amount === null) {
+            return trans_message('ai_assistant_financial.unknown');
+        }
+        $currency = $this->currency($currency);
+
+        return (string) $amount.' '.($currency ?? trans_message('ai_assistant_financial.currency_unknown'));
+    }
+
+    private function currency(mixed $currency): ?string
+    {
+        if (! is_string($currency)) {
+            return null;
+        }
+        $currency = strtoupper(trim($currency));
+
+        return preg_match('/^[A-Z]{3}$/D', $currency) === 1 ? $currency : null;
     }
 
     private function selectedPositions(string $query, array $evidence): array

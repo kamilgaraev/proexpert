@@ -793,6 +793,140 @@ final class AssistantDocumentIngestionTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_normative_query_keeps_explicit_document_filter_and_lexical_unit_index_is_complete(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('normative.txt', 'Норматив: безопасная высота ограждения.'))->id);
+        $unit = AIAssistantDocumentUnit::query()->where('document_id', $document->id)->firstOrFail();
+        $data = \App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($document, $unit);
+        $metadata = $data->metadata;
+        $identity = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class)->coverageIdentity($data);
+        $source = \App\BusinessModules\Features\AIAssistant\Models\RagSource::query()->create(['organization_id' => $this->organization->id,
+            'project_id' => $this->project->id, 'identity_part_key' => (string) $unit->id, 'source_type' => 'file_document',
+            'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id, 'title' => $document->filename, 'checksum' => $identity['checksum'],
+            'source_version' => $document->processed_at->toAtomString(), 'metadata' => $metadata, 'indexed_at' => now()]);
+        $chunk = $source->chunks()->create(['organization_id' => $this->organization->id, 'project_id' => $this->project->id,
+            'chunk_index' => 0, 'content' => $unit->text, 'content_hash' => hash('sha256', $unit->text), 'metadata' => $metadata + ['chunk_count' => 1, 'chunk_index' => 0]]);
+        AssistantDocumentSettings::query()->updateOrCreate(['organization_id' => $this->organization->id], ['last_file_id' => $document->file_id]);
+        $coverage = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: ['source_types' => ['file_document']]);
+        self::assertTrue(AssistantDocumentCoverageService::isCompleteForAnswer($coverage));
+        foreach ([['file_document'], null] as $filter) {
+            $result = app(RagRetriever::class)->searchWithDiagnostics('норматив', $this->organization->id, $this->owner,
+                ['source_types' => $filter, 'retrieval_mode' => 'lexical']);
+            self::assertSame('available', $result['diagnostics']['status']);
+            self::assertFalse($result['diagnostics']['semantic_available']);
+            self::assertCount(1, $result['results']);
+            self::assertSame('file_document', $result['results'][0]->sourceType);
+            $references = SearchAssistantDocumentsTool::responseForSearch(app(RagPromptContextBuilder::class)->build('', $result['results']), $result['diagnostics'])['source_refs'];
+            self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+                ->fresh($this->owner, $this->organization->id, $references));
+        }
+        $chunk->delete();
+        $incomplete = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: ['source_types' => ['file_document']]);
+        self::assertFalse(AssistantDocumentCoverageService::isCompleteForAnswer($incomplete));
+    }
+
+    public function test_legacy_document_index_is_readable_without_reindex_and_refs_reject_changed_unit_content(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('legacy-normative.txt', 'Норматив: высота ограждения.'))->id);
+        $unit = AIAssistantDocumentUnit::query()->where('document_id', $document->id)->firstOrFail();
+        $unit->update(['provenance' => ['sheet' => 'Смета', 'row' => 17], 'unit_index' => 17, 'unit_type' => 'table_row']);
+        $current = \App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\FileRagSource::chunkForUnit($document, $unit);
+        $legacyMetadata = array_diff_key($current->metadata, array_flip(['unit_checksum', 'unit_index', 'unit_type']));
+        $legacy = new \App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData($current->organizationId, $current->projectId,
+            $current->sourceType, $current->entityType, $current->entityId, $current->title, $current->content, $legacyMetadata, $current->updatedAt);
+        $identity = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer::class)->coverageIdentity($legacy);
+        $source = \App\BusinessModules\Features\AIAssistant\Models\RagSource::query()->create(['organization_id' => $this->organization->id,
+            'project_id' => $this->project->id, 'identity_part_key' => (string) $unit->id, 'source_type' => 'file_document',
+            'entity_type' => 'assistant_document', 'entity_id' => (string) $document->id, 'title' => $document->filename, 'checksum' => $identity['checksum'],
+            'source_version' => $document->processed_at->toAtomString(), 'metadata' => $legacyMetadata, 'indexed_at' => now()]);
+        $source->chunks()->create(['organization_id' => $this->organization->id, 'project_id' => $this->project->id,
+            'chunk_index' => 0, 'content' => $unit->text, 'content_hash' => hash('sha256', $unit->text),
+            'metadata' => $legacyMetadata + ['chunk_count' => 1, 'chunk_index' => 0]]);
+        AssistantDocumentSettings::query()->updateOrCreate(['organization_id' => $this->organization->id], ['last_file_id' => $document->file_id]);
+        $scope = ['source_types' => ['file_document'], 'retrieval_mode' => 'lexical'];
+        $coverage = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: $scope);
+        self::assertTrue(AssistantDocumentCoverageService::isCompleteForAnswer($coverage));
+        $search = app(RagRetriever::class)->searchWithDiagnostics('норматив', $this->organization->id, $this->owner, $scope);
+        self::assertCount(1, $search['results']);
+        $context = app(RagPromptContextBuilder::class)->build('', $search['results']);
+        $response = SearchAssistantDocumentsTool::responseForSearch($context, $search['diagnostics']);
+        $reference = $response['source_refs'][0];
+        self::assertSame($source->id, $reference['source_id']);
+        self::assertSame($source->checksum, $reference['rag_source_checksum']);
+        self::assertSame($document->checksum, $reference['document_checksum']);
+        self::assertSame($unit->checksum, $reference['unit_checksum']);
+        self::assertSame(['row' => 17, 'sheet' => 'Смета'], $reference['provenance']);
+        $guard = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($this->owner, $this->organization->id, $response['source_refs']));
+        $unit->update(['text' => 'Изменённый текст', 'checksum' => hash('sha256', 'Изменённый текст')]);
+        self::assertFalse($guard->fresh($this->owner, $this->organization->id, $response['source_refs']));
+        self::assertFalse(AssistantDocumentCoverageService::isCompleteForAnswer(app(AssistantDocumentCoverageService::class)
+            ->coverage($this->organization->id, $this->owner, scope: $scope)));
+        self::assertArrayNotHasKey('unit_checksum', $source->refresh()->metadata);
+    }
+
+    public function test_exact_document_read_continues_all_characters_beyond_top_k_and_marks_partial_extraction(): void
+    {
+        $text = str_repeat('Фрагмент ', 900).'Последняя строка';
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('continuation.txt', $text))->id);
+        $document->update(['coverage_status' => 'partial']);
+        $reader = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentUnitReader::class);
+        $arguments = $this->searchArguments() + ['document_id' => (int) $document->id];
+        $read = $reader->read($this->owner, $this->organization->id, $arguments);
+        $received = '';
+        $iterations = 0;
+        do {
+            self::assertTrue($read['document_truncated']);
+            self::assertSame('document_units', $read['read_scope']);
+            foreach (json_decode($read['document_context'], true, flags: JSON_THROW_ON_ERROR)['sources'] as $fragment) {
+                self::assertLessThanOrEqual(340, mb_strlen($fragment['excerpt']));
+                $received .= $fragment['excerpt'];
+            }
+            $cursor = $read['next_cursor'];
+            if ($cursor !== null) { $read = $reader->read($this->owner, $this->organization->id, $this->searchArguments() + ['cursor' => $cursor]); }
+            self::assertLessThan(5, ++$iterations);
+        } while ($cursor !== null);
+        self::assertSame($text, $received);
+        self::assertGreaterThan(1, $iterations);
+    }
+
+    public function test_exact_document_read_rejects_a_unit_from_another_document(): void
+    {
+        $first = $this->documents->process((int) $this->documents->registerFile($this->file('first-unit.txt', 'Первый'))->id);
+        $second = $this->documents->process((int) $this->documents->registerFile($this->file('second-unit.txt', 'Второй'))->id);
+        $unit = AIAssistantDocumentUnit::query()->where('document_id', $second->id)->firstOrFail();
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentUnitReader::class)
+            ->read($this->owner, $this->organization->id, $this->searchArguments() + ['document_id' => (int) $first->id, 'unit_id' => (int) $unit->id]);
+    }
+
+    public function test_document_read_cursor_rechecks_parent_access_and_current_version(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('cursor.txt', str_repeat('Текст ', 2000)))->id);
+        $reader = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentUnitReader::class);
+        $result = $reader->read($this->owner, $this->organization->id, $this->searchArguments() + ['document_id' => (int) $document->id]);
+        self::assertIsString($result['next_cursor']);
+        $this->deniedProjects[] = $this->project->id;
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $reader->read($this->owner, $this->organization->id, $this->searchArguments() + ['cursor' => $result['next_cursor']]);
+    }
+
+    public function test_ready_document_without_current_index_is_incomplete_and_other_project_files_do_not_block_scope(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('ready.txt', 'Данные'))->id);
+        AssistantDocumentSettings::query()->updateOrCreate(['organization_id' => $this->organization->id], ['last_file_id' => $document->file_id]);
+        $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id]));
+        $this->file('blocked.wav', 'audio', $other, 'audio/wav');
+        $coverage = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: ['project_id' => (int) $this->project->id]);
+        self::assertSame(1, $coverage['document_coverage']['total']);
+        self::assertSame(1, $coverage['document_coverage']['ready']);
+        self::assertSame(1, $coverage['retrieval_coverage']['expected_units']);
+        self::assertSame(0, $coverage['retrieval_coverage']['current_units']);
+        self::assertFalse(AssistantDocumentCoverageService::isCompleteForAnswer($coverage));
+        $excluded = app(AssistantDocumentCoverageService::class)->coverage($this->organization->id, $this->owner, scope: ['source_types' => ['knowledge_base']]);
+        self::assertTrue(AssistantDocumentCoverageService::isCompleteForAnswer($excluded));
+    }
+
     private function searchArguments(): array
     {
         return ['query' => 'Найди правила.', 'project_id' => null, 'source_types' => null, 'limit' => null];
