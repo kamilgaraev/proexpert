@@ -24,6 +24,10 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
 
     private bool $renamedLegalEpochTable = false;
 
+    private bool $createdEvaluationEpochFixture = false;
+
+    private bool $renamedEvaluationEpochTable = false;
+
     public function beginDatabaseTransaction(): void
     {
         self::assertSame('pgsql', DB::connection()->getDriverName());
@@ -74,6 +78,13 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
             DB::statement('DROP TABLE IF EXISTS public.assistant_snapshot_epoch_unrelated_test');
             DB::statement('DROP TABLE IF EXISTS public.assistant_snapshot_epoch_auth_test');
             DB::statement('DROP TABLE IF EXISTS public.assistant_snapshot_epoch_parent_test');
+            if ($this->createdEvaluationEpochFixture) {
+                DB::statement('DROP TABLE IF EXISTS public.estimate_generation_evaluation_revisions');
+                DB::statement('DROP FUNCTION IF EXISTS public.assistant_snapshot_evaluation_immutable_test()');
+            }
+            if ($this->renamedEvaluationEpochTable) {
+                DB::statement('ALTER TABLE public.assistant_snapshot_evaluation_original_test RENAME TO estimate_generation_evaluation_revisions');
+            }
             if ($this->createdLegalEpochFixture) {
                 DB::statement('DROP TABLE public.legal_acceptance_events');
                 DB::statement('DROP FUNCTION IF EXISTS public.assistant_snapshot_legal_guard_test()');
@@ -273,6 +284,48 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         } finally {
             DB::rollBack();
         }
+    }
+
+    public function test_late_evaluation_revision_table_restores_epoch_without_weakening_immutability(): void
+    {
+        if (DB::selectOne("SELECT to_regclass('public.estimate_generation_evaluation_revisions') AS relation")->relation !== null) {
+            DB::statement('ALTER TABLE public.estimate_generation_evaluation_revisions RENAME TO assistant_snapshot_evaluation_original_test');
+            $this->renamedEvaluationEpochTable = true;
+        }
+        self::assertNull(DB::selectOne("SELECT to_regclass('public.estimate_generation_evaluation_revisions') AS relation")->relation);
+        $repair = require base_path('database/migrations/2026_10_11_001000_track_evaluation_revision_snapshot_mutations.php');
+        $repair->up();
+        DB::statement('CREATE TABLE public.estimate_generation_evaluation_revisions (id bigint PRIMARY KEY, payload text)');
+        $this->createdEvaluationEpochFixture = true;
+        DB::unprepared("CREATE FUNCTION public.assistant_snapshot_evaluation_immutable_test() RETURNS trigger LANGUAGE plpgsql AS \$fn\$ BEGIN RAISE EXCEPTION 'evaluation_revision_immutable'; END; \$fn\$");
+        DB::statement('CREATE TRIGGER eg_evaluation_revision_immutable BEFORE UPDATE OR DELETE ON public.estimate_generation_evaluation_revisions FOR EACH ROW EXECUTE FUNCTION public.assistant_snapshot_evaluation_immutable_test()');
+        self::assertFalse($this->capture()['cacheable']);
+        $generation = DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->value('gc_generation');
+        $moduleRepair = require base_path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_000600_track_evaluation_revision_snapshot_mutations.php');
+        $moduleRepair->up();
+        $repair->up();
+        self::assertSame($generation, DB::table(AssistantStatusSnapshotEpoch::CONTROL_TABLE)->value('gc_generation'));
+        $state = $this->readOnly(fn (): array => $this->epoch->capture(['public.estimate_generation_evaluation_revisions']));
+        self::assertTrue($state['cacheable']);
+        DB::statement("INSERT INTO public.estimate_generation_evaluation_revisions VALUES (1, 'original')");
+        self::assertFalse($this->valid($state));
+        $state = $this->readOnly(fn (): array => $this->epoch->capture(['public.estimate_generation_evaluation_revisions']));
+        foreach (['UPDATE public.estimate_generation_evaluation_revisions SET payload = NULL', 'DELETE FROM public.estimate_generation_evaluation_revisions'] as $statement) {
+            try {
+                DB::transaction(fn () => DB::statement($statement));
+                self::fail('Evaluation history mutation was accepted.');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertStringContainsString('evaluation_revision_immutable', $exception->getMessage());
+            }
+            self::assertTrue($this->valid($state));
+        }
+        DB::statement('TRUNCATE public.estimate_generation_evaluation_revisions');
+        self::assertFalse($this->valid($state));
+        self::assertSame(0, DB::table('estimate_generation_evaluation_revisions')->count());
+        $repair->down();
+        self::assertFalse($this->capture()['cacheable']);
+        $repair->up();
+        self::assertTrue($this->capture()['cacheable']);
     }
 
     public function test_schema_views_trigger_coverage_and_epoch_recreation_fail_closed(): void
