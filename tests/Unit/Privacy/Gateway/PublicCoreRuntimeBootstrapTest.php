@@ -37,21 +37,22 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
         return ['exit' => proc_close($process), 'stdout' => $stdout, 'stderr' => $stderr];
     }
 
-    public function testInputPreparationRoutingNeverDeploysOnPushOrWrongMainIdentity(): void
+    public function testReleaseRoutingAllowsMainPushWithoutAcquiringInputs(): void
     {
         $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
         $source = str_replace(' >> "$GITHUB_OUTPUT"', '', $workflow['jobs']['release_mode']['steps'][0]['run']);
         $sha = str_repeat('a', 40);
         // No file or credentials: redirect only public selection outputs to stdout.
-        foreach (['release', 'input-only', 'input-prepare', 'qualification-only', 'unknown'] as $mode) {
-            foreach (['push', 'workflow_dispatch'] as $event) {
-                foreach (['refs/heads/main', 'refs/heads/task/fixture'] as $ref) {
+        foreach (['', 'release', 'input-only', 'input-prepare', 'namespace-observe', 'qualification-only', 'unknown'] as $mode) {
+            foreach (['push', 'workflow_dispatch', 'pull_request'] as $event) {
+                foreach (['refs/heads/main', 'refs/heads/task/fixture', 'refs/tags/main'] as $ref) {
                     foreach ([$sha, '', str_repeat('b', 40)] as $expected) {
                         $result = $this->inputPreparationProcess($source, ['GITHUB_SHA' => $sha, 'GITHUB_REF' => $ref,
                             'GITHUB_EVENT_NAME' => $event, 'REQUESTED_MODE' => $mode, 'EXPECTED_SOURCE_SHA' => $expected,
                             'GITHUB_OUTPUT' => '/dev/stdout']);
                         $valid = $event === 'workflow_dispatch' && $ref === 'refs/heads/main' && $expected === $sha;
-                        $expectedOutput = 'allowed='.($valid && $mode === 'release' ? 'true' : 'false')."\n"
+                        $automaticRelease = $event === 'push' && $ref === 'refs/heads/main';
+                        $expectedOutput = 'allowed='.($automaticRelease || ($valid && $mode === 'release') ? 'true' : 'false')."\n"
                             .'input_allowed='.($valid && $mode === 'input-only' ? 'true' : 'false')."\n"
                             .'prepare_allowed='.($valid && $mode === 'input-prepare' ? 'true' : 'false')."\n"
                             ."namespace_allowed=false\n";
@@ -60,6 +61,13 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
                     }
                 }
             }
+        }
+        foreach (['', str_repeat('a', 39), strtoupper($sha), $sha."\n"] as $invalidSha) {
+            $result = $this->inputPreparationProcess($source, ['GITHUB_SHA' => $invalidSha,
+                'GITHUB_REF' => 'refs/heads/main', 'GITHUB_EVENT_NAME' => 'push', 'GITHUB_OUTPUT' => '/dev/stdout']);
+            self::assertSame(0, $result['exit']);
+            self::assertSame('', $result['stderr']);
+            self::assertSame("allowed=false\ninput_allowed=false\nprepare_allowed=false\nnamespace_allowed=false\n", $result['stdout']);
         }
     }
 
@@ -77,7 +85,8 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
             $cases = [[], ['GITHUB_EVENT_NAME' => 'push'], ['GITHUB_REF' => 'refs/heads/task/fixture'],
                 ['REQUESTED_MODE' => 'qualification-only'], ['EXPECTED_SOURCE_SHA' => ''],
                 ['EXPECTED_SOURCE_SHA' => strtoupper($sha)], ['EXPECTED_SOURCE_SHA' => $sha."\n"],
-                ['EXPECTED_SOURCE_SHA' => str_repeat('f', 40)]];
+                ['EXPECTED_SOURCE_SHA' => str_repeat('f', 40)], ['GITHUB_EVENT_NAME' => 'pull_request'],
+                ['GITHUB_REF' => 'refs/tags/main']];
             if ($job === 'deploy') {
                 $independenceCases = [];
                 foreach (['', strtoupper($sha), $sha."\n", str_repeat('f', 40)] as $value) { $independenceCases[] = ['ACCEPTED_MAIN_SHA' => $value]; }
@@ -95,8 +104,37 @@ final class PublicCoreRuntimeBootstrapTest extends TestCase
             }
             foreach ($cases as $index => $change) {
                 $result = $this->inputPreparationProcess($code, array_replace($base, ['REQUESTED_MODE' => $mode], $change));
-                self::assertSame($index === 0, $result['exit'] === 0, $job.'/'.$index);
-                self::assertSame($index === 0 ? "CREDENTIAL_SENTINEL\n" : '', $result['stdout'], $job.'/'.$index);
+                $accepted = $index === 0 || ($job === 'deploy' && $index === 1);
+                self::assertSame($accepted, $result['exit'] === 0, $job.'/'.$index);
+                self::assertSame($accepted ? "CREDENTIAL_SENTINEL\n" : '', $result['stdout'], $job.'/'.$index);
+                self::assertSame('', $result['stderr']);
+            }
+        }
+    }
+
+    public function testAutomaticReleaseChecksExactImageAndMainBeforeRemoteOperations(): void
+    {
+        $workflow = \Symfony\Component\Yaml\Yaml::parseFile(dirname(__DIR__, 4).'/.github/workflows/deploy-backend.yml');
+        $deploy = array_values(array_filter($workflow['jobs']['deploy']['steps'],
+            static fn (array $step): bool => ($step['name'] ?? '') === 'Deploy exact image digest'))[0];
+        $script = $deploy['with']['script'];
+        $boundary = strpos($script, 'cd /var/www/prohelper');
+        self::assertNotFalse($boundary);
+        $code = substr($script, 0, $boundary)."\nprintf 'REMOTE_SENTINEL\\n'\n";
+        $sha = str_repeat('a', 40);
+        $base = ['MANAGED_MODE' => 'release', 'MANAGED_REF' => 'refs/heads/main',
+            'MANAGED_EVENT' => 'push', 'MANAGED_EXPECTED_SHA' => $sha, 'RELEASE_SHA' => $sha,
+            'BACKEND_HELPER_SHA256' => str_repeat('b', 64), 'IMAGE_REPO' => 'ghcr.io/kamilgaraev/proexpert/prohelper',
+            'IMAGE_DIGEST' => 'sha256:'.str_repeat('c', 64), 'REVERB_APP_KEY' => str_repeat('d', 64)];
+        $cases = [[], ['MANAGED_EVENT' => 'workflow_dispatch'], ['MANAGED_EVENT' => 'pull_request'],
+            ['MANAGED_REF' => 'refs/heads/task/fixture'], ['MANAGED_REF' => 'refs/tags/main'],
+            ['MANAGED_MODE' => 'input-only'], ['MANAGED_EXPECTED_SHA' => str_repeat('f', 40)],
+            ['RELEASE_SHA' => ''], ['IMAGE_REPO' => 'ghcr.io/foreign/image'], ['IMAGE_DIGEST' => 'latest']];
+        foreach ($cases as $index => $change) {
+            $result = $this->inputPreparationProcess($code, array_replace($base, $change));
+            self::assertSame($index < 2, $result['exit'] === 0, 'remote/'.$index);
+            self::assertSame($index < 2 ? "REMOTE_SENTINEL\n" : '', $result['stdout'], 'remote/'.$index);
+            if ($index < 2) {
                 self::assertSame('', $result['stderr']);
             }
         }

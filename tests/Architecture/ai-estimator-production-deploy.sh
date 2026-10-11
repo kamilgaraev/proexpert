@@ -16,7 +16,7 @@ grep -Fq 'IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"' "$WORKFLOW"
 grep -Fq 'git reset --hard "${RELEASE_SHA}"' "$WORKFLOW"
 grep -Fq 'test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"' "$WORKFLOW"
 grep -Fq 'MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force' "$WORKFLOW"
-grep -Fq 'MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans' "$WORKFLOW"
+grep -Fq 'MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --no-deps --force-recreate ${BACKEND_SERVICES}' "$WORKFLOW"
 grep -Fq 'curl -fsS http://localhost:8000/up' "$WORKFLOW"
 
 grep -Fq 'ARG MOST_RELEASE_SHA' "$DOCKERFILE"

@@ -73,8 +73,10 @@ jobs:
           input_allowed=false
           prepare_allowed=false
           namespace_allowed=false
-          # A source-only main push must NEVER release or acquire inputs.
-          if [ "${GITHUB_REF:-}" = refs/heads/main ] && [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] \
+          if [ "${GITHUB_REF:-}" = refs/heads/main ] && [ "${GITHUB_EVENT_NAME:-}" = push ] \
+            && [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            allowed=true
+          elif [ "${GITHUB_REF:-}" = refs/heads/main ] && [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ] \
             && [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}" ]; then
             case "${REQUESTED_MODE:-}" in
               release) allowed=true ;;
@@ -307,7 +309,7 @@ jobs:
 
   deploy:
     needs: release_mode
-    if: needs.release_mode.outputs.allowed == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.mode == 'release' && inputs.expected_source_sha == github.sha
+    if: needs.release_mode.outputs.allowed == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'release' && inputs.expected_source_sha == github.sha))
     permissions:
       contents: read
       packages: write
@@ -319,14 +321,14 @@ jobs:
     steps:
       - name: Enforce exact main release mode before credentials
         env:
-          REQUESTED_MODE: ${{ inputs.mode }}
-          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          REQUESTED_MODE: ${{ github.event_name == 'push' && 'release' || inputs.mode }}
+          EXPECTED_SOURCE_SHA: ${{ github.event_name == 'push' && github.sha || inputs.expected_source_sha }}
         shell: bash
         run: |
           set -euo pipefail
           test "${GITHUB_REF:-}" = refs/heads/main
           test "${REQUESTED_MODE:-}" = release
-          test "${GITHUB_EVENT_NAME:-}" = workflow_dispatch
+          case "${GITHUB_EVENT_NAME:-}" in push|workflow_dispatch) ;; *) exit 1 ;; esac
           [[ "${EXPECTED_SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
           test "${EXPECTED_SOURCE_SHA:-}" = "${GITHUB_SHA:-}"
 
@@ -378,10 +380,10 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           BACKEND_HELPER_SHA256: ${{ steps.release_helpers.outputs.helper_sha256 }}
-          MANAGED_MODE: ${{ inputs.mode }}
+          MANAGED_MODE: ${{ github.event_name == 'push' && 'release' || inputs.mode }}
           MANAGED_REF: ${{ github.ref }}
           MANAGED_EVENT: ${{ github.event_name }}
-          MANAGED_EXPECTED_SHA: ${{ inputs.expected_source_sha }}
+          MANAGED_EXPECTED_SHA: ${{ github.event_name == 'push' && github.sha || inputs.expected_source_sha }}
           RELEASE_SHA: ${{ steps.meta.outputs.release_sha }}
           IMAGE_REPO: ${{ steps.meta.outputs.image_repo }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -405,7 +407,7 @@ jobs:
 
             test "${MANAGED_MODE}" = release
             test "${MANAGED_REF}" = refs/heads/main
-            test "${MANAGED_EVENT}" = workflow_dispatch
+            case "${MANAGED_EVENT}" in push|workflow_dispatch) ;; *) exit 1 ;; esac
             test "${MANAGED_EXPECTED_SHA}" = "${RELEASE_SHA}"
             [[ "${BACKEND_HELPER_SHA256}" =~ ^[0-9a-f]{64}$ ]]
             test "${IMAGE_REPO}" = ghcr.io/kamilgaraev/proexpert/prohelper
