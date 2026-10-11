@@ -77,5 +77,17 @@ final class UniversalEvaluationBuilderTest extends TestCase
         self::assertNull($result['scenarios'][0]['positions'][0]['unit_price']);
         self::assertNull($result['scenarios'][0]['positions'][0]['total_cost']);
         self::assertSame([], $result['scenarios'][0]['known_subtotals']);
+        $item['pricing_status'] = 'calculated';
+        unset($item['pricing_blocker']);
+        $item['price_snapshot']['final_amount'] = '20.00';
+        $item['price_snapshot']['coefficients']['resource_evidence'][0] = ['source_type' => 'normative_rate_base',
+            'final_amount' => '20.00', 'source_reference' => 'normative_rates:1', 'version_id' => 1, 'coefficients' => ['base_year' => 2001]];
+        $draft['local_estimates'][0]['sections'][0]['work_items'] = [$item];
+        $result = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+        $snapshot = $result['scenarios'][0]['positions'][0]['price_snapshot'];
+        self::assertNull($snapshot['price_version_id']);
+        self::assertNull($snapshot['price_period_id']);
+        self::assertNull($snapshot['level']);
+        self::assertSame(2001, $snapshot['resource_sources'][0]['coefficients']['base_year']);
     }
 }

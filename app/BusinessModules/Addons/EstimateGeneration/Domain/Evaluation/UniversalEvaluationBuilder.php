@@ -123,13 +123,17 @@ final readonly class UniversalEvaluationBuilder
         $basis = ['kind' => 'normative_resource_sum', 'quantity' => $quantity,
             'work_cost' => $price['coefficients']['work_cost'] ?? '0.00', 'resources' => $price['coefficients']['resource_evidence'],
             'source_hash' => hash('sha256', CanonicalPipelineJson::encode($price))];
+        $regionalOnly = array_filter($basis['resources'], static fn ($resource): bool => ! is_array($resource)
+            || ($resource['source_type'] ?? null) !== 'regional_catalog'
+            || str_starts_with((string) ($resource['coefficients']['price_kind'] ?? ''), 'base_catalog')) === [];
 
         return ['source_type' => 'normative', 'source_reference' => $price['source_reference'], 'verified' => true,
             'unit' => $item['unit'], 'currency' => $price['currency'],
             'unit_price' => (string) BigDecimal::of($price['final_amount'])->dividedBy($quantity, 18, RoundingMode::HalfUp),
             'as_of_date' => $draft['regional_context']['price_as_of_date'] ?? null,
-            'level' => $draft['regional_context']['price_level'] ?? null, 'region_id' => $price['region_id'],
-            'price_period_id' => $price['period_id'], 'price_version_id' => $price['version_id'],
+            'level' => $regionalOnly ? 'current' : null, 'region_id' => $price['region_id'],
+            'price_period_id' => $regionalOnly ? $price['period_id'] : null, 'price_version_id' => $regionalOnly ? $price['version_id'] : null,
+            'resource_sources' => $basis['resources'],
             'calculation_basis' => $basis, 'conditions_missing' => ['price_level', 'vat_mode', 'delivery_included']];
     }
 
