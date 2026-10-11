@@ -54,6 +54,7 @@ Route::middleware([
         Route::post('/{session}/evaluation/quantity', [EstimateGenerationEvaluationController::class, 'quantity'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.quantity');
         Route::post('/{session}/evaluation/scope', [EstimateGenerationEvaluationController::class, 'scope'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.scope');
         Route::post('/{session}/evaluation/scenarios', [EstimateGenerationEvaluationController::class, 'scenarios'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.scenarios');
+        Route::post('/{session}/evaluation/confirm-scenario', [EstimateGenerationEvaluationController::class, 'confirmScenario'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.confirm-scenario');
         Route::get('/{session}/evaluation/price-sources', [EstimateGenerationEvaluationController::class, 'sources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.price-sources');
         Route::get('/{session}/evaluation/quantity-sources', [EstimateGenerationEvaluationController::class, 'quantitySources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.quantity-sources');
         Route::post('/{session}/evaluation/pricing-source', [EstimateGenerationEvaluationController::class, 'pricingSource'])->middleware('authorize:estimate_generation.generate,project,project')->name('evaluation.pricing-source');

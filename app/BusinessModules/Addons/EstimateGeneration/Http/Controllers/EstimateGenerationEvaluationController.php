@@ -21,6 +21,17 @@ use Illuminate\Http\Request;
 
 final class EstimateGenerationEvaluationController extends Controller
 {
+    public function confirmScenario(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmEvaluationScenario $confirmation): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'revision_id' => ['required', 'uuid'], 'content_hash' => ['required', 'string', 'regex:/\A[a-f0-9]{64}\z/'],
+            'scenario_id' => ['required', 'in:minimum,base,maximum'], 'assumptions_accepted' => ['required', 'boolean']]);
+
+        return AdminResponse::success($confirmation->handle($request->user(), (int) $project->id, (int) $session->id, $input))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function scenarios(Request $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationScenarioSet $scenarios): JsonResponse
     {

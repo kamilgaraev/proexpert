@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\ConfirmedEvaluationSelection;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Models\User;
 use Illuminate\Database\Connection;
@@ -26,15 +28,29 @@ final readonly class GetCurrentEvaluation
             $row = $this->database->table('estimate_generation_evaluation_revisions')->where('organization_id', $session->organization_id)
                 ->where('project_id', $projectId)->where('session_id', $sessionId)->orderByDesc('revision')->first();
             if ($row === null) {
-                return [...$policy, 'revision' => null, 'state_version' => (int) $session->state_version, 'result' => null];
+                return [...$policy, 'revision' => null, 'state_version' => (int) $session->state_version, 'result' => null, 'confirmed_scenario' => null];
             }
             $recalculationPending = in_array($session->status->value, ['generating', 'processing_documents'], true);
+            $inputHash = $this->inputs->fromSession($session);
+            $result = json_decode($row->result, true, 64, JSON_THROW_ON_ERROR);
+            $confirmation = null;
+            if (! $recalculationPending && isset($session->input_payload['confirmed_evaluation'])) {
+                $models = app(ProjectModelRepository::class);
+                $scope = [(int) $session->organization_id, $projectId, $sessionId];
+                $snapshot = $models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+                if (count($snapshot->facts) <= 10000) {
+                    $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+                    $confirmation = (new ConfirmedEvaluationSelection)->accepted($snapshot, $decisions,
+                        $session->input_payload['confirmed_evaluation'], ['revision_id' => $row->public_id,
+                            'content_hash' => $row->content_hash, 'input_hash' => $row->input_hash, 'result' => $result], $inputHash);
+                }
+            }
 
             return [...$policy, 'revision_id' => $row->public_id, 'revision' => (int) $row->revision, 'content_hash' => $row->content_hash,
                 'operation_id' => $row->operation_id, 'input_hash' => $row->input_hash, 'state_version' => (int) $session->state_version,
-                'result_stale' => $recalculationPending || ! hash_equals($row->input_hash, $this->inputs->fromSession($session)),
+                'result_stale' => $recalculationPending || ! hash_equals($row->input_hash, $inputHash),
                 'recalculation_pending' => $recalculationPending,
-                'result' => json_decode($row->result, true, 64, JSON_THROW_ON_ERROR)];
+                'confirmed_scenario' => $confirmation, 'result' => $result];
         });
     }
 }
