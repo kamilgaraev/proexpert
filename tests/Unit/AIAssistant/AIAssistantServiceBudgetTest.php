@@ -1211,6 +1211,78 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertFalse($metadata['model_invoked']);
     }
 
+    public function test_summary_cache_access_rejection_does_not_fail_current_answer_publication(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects(self::once())->method('saveSummary')->willThrowException(new \RuntimeException('conversation_summary_access_denied'));
+        $this->invokePendingSummary($service);
+        self::assertNull((new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->getValue($service));
+    }
+
+    public function test_summary_cache_version_conflict_does_not_fail_current_answer_publication(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects(self::once())->method('saveSummary')->willThrowException(new \RuntimeException('conversation_context_version_conflict'));
+        $this->invokePendingSummary($service);
+        self::assertNull((new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->getValue($service));
+    }
+
+    public function test_summary_conversation_access_denial_still_aborts_publication(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects(self::once())->method('saveSummary')->willThrowException(new \RuntimeException('conversation_access_denied'));
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('conversation_access_denied');
+        $this->invokePendingSummary($service);
+    }
+
+    public function test_summary_rejection_with_stale_current_answer_references_still_aborts_publication(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects(self::never())->method('saveSummary');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('assistant_response_sources_stale');
+        $this->invokePendingSummary($service, false);
+    }
+
+    public function test_partial_answer_with_stale_references_still_aborts_publication(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects(self::never())->method('saveSummary');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('assistant_response_sources_stale');
+        $this->invokePendingSummary($service, false, 'partial');
+    }
+
+    public function test_partial_answer_with_fresh_references_does_not_create_verified_summary(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+        $manager = (new \ReflectionProperty(AIAssistantService::class, 'conversationManager'))->getValue($service);
+        $manager->expects(self::never())->method('saveSummary');
+        $this->invokePendingSummary($service, true, 'partial');
+        self::assertNull((new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->getValue($service));
+    }
+
+    private function invokePendingSummary(TestableAIAssistantService $service, bool $fresh = true, string $status = 'verified'): void
+    {
+        $guard = $this->createMock(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class);
+        $guard->method('fresh')->willReturn($fresh);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class, $guard);
+        $conversation = $this->getMockBuilder(\App\BusinessModules\Features\AIAssistant\Models\Conversation::class)->onlyMethods(['refresh'])->getMock();
+        $conversation->method('refresh')->willReturnSelf();
+        $conversation->setRawAttributes(['id' => 207, 'organization_id' => 15, 'context_version' => 4]);
+        (new \ReflectionProperty(AIAssistantService::class, 'pendingSummary'))->setValue($service, [
+            'conversation' => $conversation, 'summary' => 'Verified current request', 'selected_entities' => [], 'validation_status' => $status,
+            'user_decisions' => [], 'source_refs' => [['entity_type' => 'contract', 'entity_id' => 8, 'fetched_at' => '2026-10-11T18:55:00Z']],
+        ]);
+        (new \ReflectionMethod(AIAssistantService::class, 'savePendingSummary'))->invoke($service, new User(['id' => 9, 'current_organization_id' => 15]));
+    }
+
     private function makeService(AIToolRegistry $toolRegistry, bool $canExecute = false, ?LLMProviderInterface $provider = null, array $history = []): TestableAIAssistantService
     {
         $llmProvider = $provider ?? $this->createMock(NativeResponsesTestProvider::class);

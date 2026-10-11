@@ -1122,6 +1122,7 @@ class AIAssistantService
 
             $this->pendingSummary = [
                 'conversation' => $conversation,
+                'validation_status' => $assistantPayload['validation_status'] ?? 'unverified',
                 'summary' => json_encode(['user_request' => $query, 'request_id' => $assistantPayload['request_id']], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
                 'selected_entities' => $this->selectedSummaryEntities($requestPayload, $organizationId),
                 'source_refs' => $assistantPayload['source_refs'],
@@ -1754,14 +1755,31 @@ class AIAssistantService
         if ($pending === null || !($pending['conversation'] ?? null) instanceof Conversation) {
             return;
         }
+        if ($pending['source_refs'] !== [] && ! app(AssistantSourceReferenceGuard::class)->fresh($actor, (int) $pending['conversation']->organization_id, $pending['source_refs'])) {
+            throw new \RuntimeException('assistant_response_sources_stale');
+        }
+        if (($pending['validation_status'] ?? 'verified') !== 'verified') {
+            $this->pendingSummary = null;
+            return;
+        }
         $this->measurePhase('summary_publish', function () use ($pending, $actor): void {
             $conversation = $pending['conversation'];
             $conversation->refresh();
-            $this->conversationManager->saveSummary($conversation, $actor, [
-                'validation_status' => 'verified', 'summary' => $pending['summary'],
-                'selected_entities' => $pending['selected_entities'], 'user_decisions' => $pending['user_decisions'],
-            ], $pending['source_refs'], (int) $conversation->context_version);
+            try {
+                $this->conversationManager->saveSummary($conversation, $actor, [
+                    'validation_status' => 'verified', 'summary' => $pending['summary'],
+                    'selected_entities' => $pending['selected_entities'], 'user_decisions' => $pending['user_decisions'],
+                ], $pending['source_refs'], (int) $conversation->context_version);
+            } catch (\RuntimeException $exception) {
+                if (! in_array($exception->getMessage(), ['conversation_summary_access_denied', 'conversation_context_version_conflict'], true)) { throw $exception; }
+                if (! app(AssistantSourceReferenceGuard::class)->fresh($actor, (int) $conversation->organization_id, $pending['source_refs'])) { throw $exception; }
+                $this->logging->technical('ai.assistant.summary_cache_skipped', [
+                    'conversation_id' => $conversation->id, 'actor_user_id' => $actor->id,
+                    'reason' => $exception->getMessage(),
+                ]);
+            }
         });
+        $this->pendingSummary = null;
     }
 
     private function selectedSummaryEntities(array $filteredRequest, int $organizationId): array
