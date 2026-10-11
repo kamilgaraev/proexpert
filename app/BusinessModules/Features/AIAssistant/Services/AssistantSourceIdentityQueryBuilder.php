@@ -70,7 +70,7 @@ final class AssistantSourceIdentityQueryBuilder
         $sources = (clone $identitySources)->where($table.'.source_type', $sourceType)->where($table.'.entity_type', $entityType);
         $columns = array_map(static fn (string $column): string => 'eligible_identity_source.'.$column,
             ['id', 'organization_id', 'project_id', 'generation', 'identity_project_id', 'identity_part_key', 'source_type', 'entity_type', 'entity_id', 'checksum', 'pending_since', 'created_at', 'updated_at']);
-        if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'core_normative_resource', 'estimate_template', 'estimate_library_item', 'normative_rate', 'estimate_catalog_item', 'estimate_item', 'estimate_item_resource'], true)) {
+        if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource', 'design_ifc_model_element', 'core_normative_resource', 'estimate_template', 'estimate_library_item', 'normative_rate', 'estimate_catalog_item', 'estimate_item', 'estimate_item_resource'], true)) {
             $entityId = $grammar->wrap($table.'.entity_id');
             $sources->selectRaw($grammar->wrap($table).'.*, CASE WHEN pg_input_is_valid('.$entityId.", 'bigint') THEN CASE WHEN CAST(".$entityId.'::bigint AS text) COLLATE "C" = '.$entityId.' COLLATE "C" THEN '.$entityId.'::bigint END END AS admitted_entity_key');
             if (in_array($entityType, ['approved_estimate_resource_price', 'approved_estimate_norm_resource'], true)) {

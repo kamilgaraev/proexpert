@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Models\RagExpectedSource;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
@@ -14,13 +15,23 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Support\AssistantRealAuthorizationFixture;
 use Tests\TestCase;
 
 final class AssistantIfcSourceIdentityPlanTest extends TestCase
 {
-    public function test_sparse_ifc_sources_use_native_keys_and_keep_current_parent_access(): void
+    public static function identityProjectionCases(): array
     {
+        return ['stored' => [false], 'expected' => [true]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('identityProjectionCases')]
+    public function test_sparse_ifc_sources_use_native_keys_and_keep_current_parent_access(bool $expectedProjection): void
+    {
+        $sourceClass = $expectedProjection ? RagExpectedSource::class : RagSource::class;
+        $table = $expectedProjection ? 'ai_rag_expected_sources' : 'ai_rag_sources';
+        $generation = (string) Str::uuid();
         $fixture = AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug'));
         $organizationId = $fixture->organization->id;
         $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $organizationId, 'is_archived' => false]));
@@ -56,11 +67,15 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         $firstSource = null;
         $firstParts = [];
         foreach ($keys as $key) {
-            $source = RagSource::withoutEvents(fn () => RagSource::query()->create([
+            $attributes = [
                 'organization_id' => $organizationId, 'project_id' => $project->id, 'source_type' => 'design_additional',
-                'entity_type' => 'design_ifc_model_element', 'entity_id' => (string) $key, 'title' => 'IFC',
+                'entity_type' => 'design_ifc_model_element', 'entity_id' => (string) $key,
                 'checksum' => hash('sha256', 'ifc-'.$key),
-            ]));
+            ];
+            $attributes += $expectedProjection
+                ? ['generation' => $generation, 'identity_project_id' => $project->id, 'pending_since' => now()]
+                : ['title' => 'IFC'];
+            $source = $sourceClass::withoutEvents(fn () => $sourceClass::query()->create($attributes));
             $allowed[] = $source->id;
             if ($key === $firstId) {
                 $firstSource = $source;
@@ -70,18 +85,25 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
                 $firstParts = [$source->id, $part->id];
             }
         }
-        self::assertInstanceOf(RagSource::class, $firstSource);
+        self::assertInstanceOf($sourceClass, $firstSource);
         foreach (['0'.$firstId, '+'.$firstId, ' '.$firstId, $firstId.' ', $firstId.'.0', 'invalid', '9223372036854775808', '-9223372036854775809', '٠'] as $invalid) {
             $firstSource->replicate()->forceFill(['entity_id' => $invalid])->saveQuietly();
         }
         $foreignOrganization = Organization::withoutEvents(fn () => Organization::factory()->create());
         $firstSource->replicate()->forceFill(['organization_id' => $foreignOrganization->id])->saveQuietly();
-        foreach (['design_ifc_model_elements', 'ai_rag_sources', 'ai_rag_status_sources'] as $table) {
-            DB::statement('ANALYZE '.$table);
+        foreach (['design_ifc_model_elements', $table, 'ai_rag_status_sources'] as $analyzeTable) {
+            DB::statement('ANALYZE '.$analyzeTable);
         }
         $policy = app(AssistantDataAccessPolicy::class);
-        $build = function () use ($policy, $fixture, $organizationId): array {
+        $build = function () use ($policy, $fixture, $organizationId, $expectedProjection, $table, $generation): array {
             $policy->prefetchEntitySchemaMetadata();
+
+            if ($expectedProjection) {
+                return $policy->aggregateExpectedSourceIdentityBatches(
+                    RagExpectedSource::query()->where('generation', $generation), $fixture->owner, $organizationId,
+                    [$table.'.id'], static fn ($visible) => DB::query()->fromSub($visible, 'visible')->select('visible.id'),
+                );
+            }
 
             return $policy->aggregateSourceIdentityBatches(
                 RagSource::query()->from('ai_rag_status_sources as ai_rag_sources'), $fixture->owner, $organizationId,
@@ -129,8 +151,11 @@ final class AssistantIfcSourceIdentityPlanTest extends TestCase
         $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => false]);
         self::assertSame([], $read());
         $fixture->owner->organizations()->updateExistingPivot($organizationId, ['is_active' => true]);
-        DB::statement("INSERT INTO ai_rag_sources (organization_id, project_id, source_type, entity_type, entity_id, title, checksum) SELECT e.organization_id, e.project_id, 'design_additional', 'design_ifc_model_element', e.id::text, 'IFC', md5(e.id::text) FROM design_ifc_model_elements e WHERE e.organization_id = ? AND e.project_id = ? AND NOT EXISTS (SELECT 1 FROM ai_rag_sources s WHERE s.organization_id = e.organization_id AND s.project_id = e.project_id AND s.source_type = 'design_additional' AND s.entity_type = 'design_ifc_model_element' AND s.entity_id = e.id::text)", [$organizationId, $project->id]);
-        DB::statement('ANALYZE ai_rag_status_sources');
+        $extraColumns = $expectedProjection ? 'generation, identity_project_id, pending_since' : 'title';
+        $extraValues = $expectedProjection ? 'CAST(? AS uuid), e.project_id, CURRENT_TIMESTAMP' : "'IFC'";
+        $bindings = $expectedProjection ? [$generation, $organizationId, $project->id] : [$organizationId, $project->id];
+        DB::statement('INSERT INTO '.$table.' (organization_id, project_id, source_type, entity_type, entity_id, checksum, '.$extraColumns.") SELECT e.organization_id, e.project_id, 'design_additional', 'design_ifc_model_element', e.id::text, md5(e.id::text), ".$extraValues.' FROM design_ifc_model_elements e WHERE e.organization_id = ? AND e.project_id = ? AND NOT EXISTS (SELECT 1 FROM '.$table." s WHERE s.organization_id = e.organization_id AND s.project_id = e.project_id AND s.source_type = 'design_additional' AND s.entity_type = 'design_ifc_model_element' AND s.entity_id = e.id::text)", $bindings);
+        DB::statement('ANALYZE '.($expectedProjection ? $table : 'ai_rag_status_sources'));
         self::assertCount(20005, $read());
         $policy->withCurrentChecks($fixture->owner, $organizationId, function () use ($build): void {
             foreach ($build() as $batch) {
