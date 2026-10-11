@@ -184,6 +184,13 @@ class SiteRequestPaymentService
         DB::beginTransaction();
 
         try {
+            $requests = SiteRequest::whereIn('id', $requestIds)
+                ->forOrganization($organizationId)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            $this->validateRequestsForPayment($requestIds, $organizationId);
+
             // Создаем платежный документ
             $paymentDocument = $this->paymentDocumentService->create($documentData);
 

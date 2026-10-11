@@ -432,13 +432,16 @@ class SiteRequestController extends Controller
                 $siteRequest,
                 $userId,
                 $request->input('status'),
-                $request->input('notes')
+                $request->input('notes'),
+                $request->boolean('close_without_procurement')
             );
 
             return AdminResponse::success(
                 new SiteRequestResource($updated),
                 trans_message('site_requests.change_status_success')
             );
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            return AdminResponse::error(trans_message('errors.unauthorized'), 403);
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {

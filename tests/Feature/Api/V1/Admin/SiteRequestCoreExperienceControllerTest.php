@@ -458,6 +458,60 @@ class SiteRequestCoreExperienceControllerTest extends TestCase
         $this->assertCount(1, $queries->filter(fn (string $sql): bool => str_contains($sql, 'from "payment_documents"')));
     }
 
+    public function test_operator_can_close_material_request_without_procurement_with_audited_reason(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createSiteRequest($context, $project);
+        $request->update(['status' => SiteRequestStatusEnum::APPROVED]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $reason = 'Материалы уже есть на объекте';
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$request->id}/status", [
+                'status' => 'completed', 'close_without_procurement' => true, 'notes' => $reason,
+            ])->assertOk()->assertJsonPath('data.status', 'completed');
+
+        $request->refresh();
+        $this->assertSame($reason, $request->metadata['closure_without_procurement']['reason']);
+        $this->assertSame($context->user->id, $request->metadata['closure_without_procurement']['closed_by']);
+        $this->assertDatabaseHas('site_request_history', [
+            'site_request_id' => $request->id, 'user_id' => $context->user->id,
+            'action' => 'status_changed', 'notes' => $reason,
+        ]);
+        $this->assertDatabaseMissing('purchase_requests', ['site_request_id' => $request->id]);
+    }
+
+    public function test_closing_without_procurement_requires_reason_and_rejects_linked_procurement(): void
+    {
+        Event::fake();
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $request = $this->createSiteRequest($context, $project);
+        $request->update(['status' => SiteRequestStatusEnum::APPROVED]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$request->id}/status", [
+                'status' => 'completed', 'close_without_procurement' => true,
+            ])->assertUnprocessable();
+
+        PurchaseRequest::query()->create([
+            'organization_id' => $context->organization->id, 'site_request_id' => $request->id,
+            'request_number' => 'PR-CLOSURE-TEST', 'status' => 'pending',
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$request->id}/status", [
+                'status' => 'completed', 'close_without_procurement' => true, 'notes' => 'Не требуется',
+            ])->assertUnprocessable();
+        $this->assertSame(SiteRequestStatusEnum::APPROVED, $request->fresh()->status);
+        $this->assertDatabaseMissing('site_request_history', ['site_request_id' => $request->id, 'action' => 'status_changed']);
+    }
+
     private function createSiteRequest(AdminApiTestContext $context, Project $project): SiteRequest
     {
         return SiteRequest::query()->create([

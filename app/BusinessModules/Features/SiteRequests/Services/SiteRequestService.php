@@ -57,6 +57,7 @@ class SiteRequestService
         private readonly AuthorizationService $authorizationService,
         private readonly FileService $fileService,
         private readonly MobileProjectAccessResolver $mobileProjectAccess,
+        private readonly SiteRequestClosureService $closureService,
     ) {}
 
     public function mobileMeta(int $organizationId): array
@@ -592,19 +593,39 @@ class SiteRequestService
         SiteRequest $request,
         int $userId,
         string $newStatus,
-        ?string $notes = null
+        ?string $notes = null,
+        bool $closeWithoutProcurement = false
     ): SiteRequest {
         $oldStatus = $request->status->value;
 
         // Проверяем возможность перехода
-        if (! $this->workflowService->canTransition($request, $newStatus)) {
+        if (! $closeWithoutProcurement && ! $this->workflowService->canTransition($request, $newStatus)) {
             throw new \DomainException(trans_message('site_requests.errors.invalid_status_transition'));
         }
 
-        $this->ensureCompletionAllowed($request, $newStatus);
+        if (! $closeWithoutProcurement) {
+            $this->ensureCompletionAllowed($request, $newStatus);
+        }
 
-        DB::transaction(function () use ($request, $userId, $oldStatus, $newStatus, $notes) {
-            $request->update(['status' => $newStatus]);
+        DB::transaction(function () use ($request, $userId, &$oldStatus, $newStatus, $notes, $closeWithoutProcurement) {
+            $attributes = ['status' => $newStatus];
+            if ($closeWithoutProcurement) {
+                $request = SiteRequest::query()
+                    ->where('organization_id', $request->organization_id)
+                    ->lockForUpdate()
+                    ->findOrFail($request->id);
+                $actor = User::findOrFail($userId);
+                $this->closureService->assertAllowed($request, $actor, $newStatus, $notes);
+                $oldStatus = $request->status->value;
+                $attributes['metadata'] = array_merge($request->metadata ?? [], [
+                    'closure_without_procurement' => [
+                        'reason' => trim((string) $notes),
+                        'closed_by' => $userId,
+                        'closed_at' => now()->toIso8601String(),
+                    ],
+                ]);
+            }
+            $request->update($attributes);
 
             // Записываем в историю
             SiteRequestHistory::logStatusChanged($request, $userId, $oldStatus, $newStatus, $notes);
@@ -622,6 +643,9 @@ class SiteRequestService
         $this->invalidateCache($request->organization_id);
 
         // Отправляем событие
+        if ($closeWithoutProcurement) {
+            $request->refresh();
+        }
         event(new SiteRequestStatusChanged($request, $oldStatus, $newStatus, $userId));
 
         // Если статус изменился на approved, отправляем специальное событие

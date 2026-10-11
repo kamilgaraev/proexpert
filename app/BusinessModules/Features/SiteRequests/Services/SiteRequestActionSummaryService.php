@@ -18,7 +18,8 @@ class SiteRequestActionSummaryService
 {
     public function __construct(
         private readonly ProcurementChainService $chainService,
-        private readonly ProcurementChainActionResolver $actionResolver
+        private readonly ProcurementChainActionResolver $actionResolver,
+        private readonly SiteRequestClosureService $closureService
     ) {
     }
 
@@ -110,6 +111,17 @@ class SiteRequestActionSummaryService
      */
     private function secondaryActions(SiteRequest $siteRequest, ?User $actor, int $organizationId): Collection
     {
+        if ($this->closureService->isAvailable($siteRequest)) {
+            return collect([$this->action(
+                'close_site_request_without_procurement',
+                "/api/v1/admin/site-requests/{$siteRequest->id}/status",
+                $actor,
+                $organizationId,
+                'POST',
+                20
+            )]);
+        }
+
         if (!in_array($siteRequest->status, [SiteRequestStatusEnum::PENDING, SiteRequestStatusEnum::IN_REVIEW], true)) {
             return collect();
         }
