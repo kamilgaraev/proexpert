@@ -81,7 +81,7 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame(1, $status['indexed_source_count']);
         self::assertTrue($status['ready']);
         self::assertSame('fresh_read', $metrics->summary()['assistant_snapshot']['phase']);
-        foreach (['rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_source_counts', 'rag_finalize'] as $phase) {
+        foreach (['rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_acl_discovery', 'rag_acl_batch_compile', 'rag_acl_finish', 'rag_source_counts', 'rag_finalize'] as $phase) {
             self::assertArrayHasKey($phase, $metrics->summary()['processing_phases']);
             self::assertGreaterThanOrEqual(0, $metrics->summary()['processing_phases'][$phase]['sql_count']);
         }

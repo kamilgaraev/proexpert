@@ -652,7 +652,14 @@ final class AssistantDataAccessPolicy
                         splitIdentities: true, identitySources: $batchIdentitySources, sourceIdentities: $batchIdentities)->select($columns)->toBase();
                     $checkpoint?->__invoke();
                     $result = $query->getModel()->newQueryWithoutScopes()->fromSub($aggregate($visible, $types, array_keys(array_filter($batchIdentities))), $table)->select($table.'.*');
-                    $compiled[] = $this->aclCompiler->finish($result)->toBase();
+                    $finishCheckpoint = $metricsRequest instanceof Request ? ApiQueryMetrics::processingCheckpoint($metricsRequest) : null;
+                    try {
+                        $compiled[] = $this->aclCompiler->finish($result)->toBase();
+                    } finally {
+                        if ($metricsRequest instanceof Request && $finishCheckpoint !== null) {
+                            ApiQueryMetrics::recordProcessingPhase($metricsRequest, 'rag_acl_finish', $finishCheckpoint['started_at'], $finishCheckpoint);
+                        }
+                    }
                 }
 
                 return null;
