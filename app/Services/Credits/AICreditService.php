@@ -28,13 +28,14 @@ final class AICreditService
             ->where('request_key', $request->requestKey())->where('request_hash', $hash)->where('profile', EstimatorCreditRequest::PROFILE)
             ->where('expires_at', '>', now())->latest('id')->first();
         if ($existing !== null) {
-            return $this->quotePayload($existing);
+            return [...$this->quotePayload($existing), 'min_units_minor' => in_array($request->kind, ['documents', 'dialogue'], true) ? 0 : (int) $existing->min_units_minor];
         }
         $pricing = [...$this->currentPricing(), 'supplier_tariff' => $request->supplierTariff,
             'estimator_identity' => $request->identity()];
         $quote = $this->createQuote($organization, $user, $request->requestKey(), $hash, EstimatorCreditRequest::PROFILE,
             ['max_calls' => $request->maximumCalls, 'maximum_provider_cost_micro_rub' => $request->maximumProviderCostMicroRub],
-            $pricing, $pricing['minimum_minor'], $this->chargeMinor($request->maximumProviderCostMicroRub, $pricing));
+            $pricing, in_array($request->kind, ['documents', 'dialogue'], true) ? 0 : $pricing['minimum_minor'],
+            $this->chargeMinor($request->maximumProviderCostMicroRub, $pricing));
 
         return $this->quotePayload($quote);
     }

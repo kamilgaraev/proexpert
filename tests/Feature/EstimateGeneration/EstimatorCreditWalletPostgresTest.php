@@ -573,6 +573,12 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $id = (string) Str::uuid();
         $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
             ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'documents');
+        self::assertSame(0, $quote['min_units_minor']);
+        self::assertGreaterThan(0, $quote['max_units_minor']);
+        $cached = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $id, 'documents');
+        self::assertSame($quote['quote_id'], $cached['quote_id']);
+        self::assertSame(0, $cached['min_units_minor']);
         $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => 0];
         $started = $starter->handle($actor, (int) $session->project_id, (int) $session->id, $approval);
         self::assertSame('processing_documents', $started->status->value);
