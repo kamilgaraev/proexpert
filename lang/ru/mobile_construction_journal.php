@@ -5,6 +5,7 @@ return [
         'work_volume_unnamed' => 'Работа без наименования',
     ],
     'actions' => [
+        'upload_attachment' => 'Добавить фото',
         'view' => 'Открыть',
         'create' => 'Создать журнал',
         'update' => 'Редактировать',

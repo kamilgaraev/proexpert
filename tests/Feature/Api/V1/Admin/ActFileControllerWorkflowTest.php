@@ -10,6 +10,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
+use App\Models\Module;
 use App\Models\Organization;
 use App\Models\PersonalFile;
 use App\Models\Project;
@@ -27,9 +28,25 @@ class ActFileControllerWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Module::query()->create([
+            'name' => 'Управление актами',
+            'slug' => 'act-reporting',
+            'version' => '1.0.0',
+            'type' => 'core',
+            'billing_model' => 'free',
+            'class_name' => \App\BusinessModules\Addons\ActReporting\ActReportingModule::class,
+            'is_active' => true,
+            'is_system_module' => true,
+            'can_deactivate' => false,
+        ]);
+    }
+
     public function test_personal_act_files_are_listed_downloaded_and_deleted_from_user_act_folder(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $path = 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/act-scan.pdf';
         $foreignFolderPath = 'org-'.$context->organization->id.'/personal-files/user-'.$context->user->id.'/report.pdf';
 
@@ -110,7 +127,7 @@ class ActFileControllerWorkflowTest extends TestCase
     {
         Storage::fake('s3');
 
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         [$organization, $user, $act] = $this->createActFixture($context->organization, $context->user);
         $path = "org-{$organization->id}/acts/{$act->id}/documents/act-scan.pdf";
         Storage::disk('s3')->put($path, 'act binary content');
@@ -153,7 +170,7 @@ class ActFileControllerWorkflowTest extends TestCase
     {
         Storage::fake('s3');
 
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         [$organization, $user, $firstAct] = $this->createActFixture($context->organization, $context->user);
         [, , $secondAct] = $this->createActFixture($context->organization, $context->user);
 
@@ -183,8 +200,9 @@ class ActFileControllerWorkflowTest extends TestCase
     public function test_act_report_file_upload_requires_edit_permission(): void
     {
         Storage::fake('s3');
+        $this->useActHttpBindings();
 
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         [, , $act] = $this->createActFixture($context->organization, $context->user);
 
         $this->mock(AuthorizationService::class, function ($mock): void {
@@ -192,7 +210,7 @@ class ActFileControllerWorkflowTest extends TestCase
                 ->andReturnUsing(static fn (User $user, string $permission): bool => $permission !== 'act_reports.edit');
         });
 
-        $response = $this->withHeaders($context->authHeaders())
+        $response = $this->actingAs($context->user, 'api_admin')->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/act-reports/{$act->id}/files", [
                 'file' => UploadedFile::fake()->create('act-scan.pdf', 10, 'application/pdf'),
             ]);
@@ -205,7 +223,7 @@ class ActFileControllerWorkflowTest extends TestCase
     {
         Storage::fake('s3');
 
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         [$organization, , $act] = $this->createActFixture($context->organization, $context->user);
         $act->forceFill([
             'status' => ContractPerformanceAct::STATUS_APPROVED,
@@ -216,7 +234,7 @@ class ActFileControllerWorkflowTest extends TestCase
 
         $first = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/act-reports/{$act->id}/signed-file", [
-                'file' => UploadedFile::fake()->create('signed-first.pdf', 10, 'application/pdf'),
+                'file' => UploadedFile::fake()->createWithContent('signed-first.pdf', "%PDF-1.4\nsigned-first\n%%EOF"),
             ]);
         $first->assertOk();
         $first->assertJsonPath('success', true);
@@ -225,7 +243,7 @@ class ActFileControllerWorkflowTest extends TestCase
 
         $second = $this->withHeaders($context->authHeaders())
             ->post("/api/v1/admin/act-reports/{$act->id}/signed-file", [
-                'file' => UploadedFile::fake()->create('signed-second.pdf', 10, 'application/pdf'),
+                'file' => UploadedFile::fake()->createWithContent('signed-second.pdf', "%PDF-1.4\nsigned-second\n%%EOF"),
             ]);
         $second->assertStatus(409);
         $second->assertJsonPath('success', false);
@@ -249,7 +267,7 @@ class ActFileControllerWorkflowTest extends TestCase
 
     public function test_contractor_organization_can_list_files_for_owner_contract_act(): void
     {
-        $contractorContext = AdminApiTestContext::create();
+        $contractorContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
         $ownerOrganization = Organization::factory()->verified()->create();
         $ownerUser = User::factory()->create(['current_organization_id' => $ownerOrganization->id]);
         [$organization, $user, $act] = $this->createActFixture(
@@ -282,7 +300,7 @@ class ActFileControllerWorkflowTest extends TestCase
 
     public function test_act_file_copy_to_personal_storage_does_not_create_record_when_storage_copy_fails(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
         [$organization, $user, $act] = $this->createActFixture($context->organization, $context->user);
         $path = "org-{$organization->id}/acts/{$act->id}/documents/act-scan.pdf";
         $file = File::query()->create([
@@ -316,6 +334,22 @@ class ActFileControllerWorkflowTest extends TestCase
             ->where('organization_id', $context->organization->id)
             ->where('user_id', $context->user->id)
             ->count());
+    }
+
+    private function useActHttpBindings(): void
+    {
+        $router = app('router');
+        $middleware = app(\Illuminate\Contracts\Http\Kernel::class)->getGlobalMiddleware();
+        foreach ($router->getRoutes() as $route) {
+            if (str_contains($route->uri(), 'act-reports/')) {
+                $middleware = [...$middleware, ...$router->gatherRouteMiddleware($route)];
+            }
+        }
+        $middleware = array_unique(array_map(static fn (string $class): string => explode(':', $class, 2)[0], $middleware));
+        $this->withoutMiddleware(array_values(array_filter(
+            $middleware,
+            static fn (string $class): bool => $class !== \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        )));
     }
 
     private function createActFixture(

@@ -55,6 +55,7 @@ trait ActingTestSchema
             'journal_workers',
             'journal_work_volumes',
             'journal_entry_approval_events',
+            'journal_entry_attachments',
             'construction_journal_entries',
             'construction_journals',
             'schedule_tasks',
@@ -555,6 +556,19 @@ trait ActingTestSchema
             $table->softDeletes();
         });
 
+        Schema::create('journal_entry_attachments', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->foreignId('journal_entry_id')->constrained('construction_journal_entries')->restrictOnDelete();
+            $table->string('storage_key', 1024)->unique();
+            $table->string('file_name');
+            $table->string('mime_type', 64);
+            $table->unsignedBigInteger('size');
+            $table->string('sha256', 64);
+            $table->jsonb('uploaded_by');
+            $table->timestampTz('created_at');
+            $table->index(['journal_entry_id', 'created_at']);
+        });
+
         Schema::create('journal_entry_approval_events', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('journal_entry_id');
@@ -751,6 +765,8 @@ trait ActingTestSchema
             $table->string('direction')->default('outgoing');
             $table->string('invoice_type')->nullable();
             $table->nullableMorphs('invoiceable');
+            $table->string('origin_key', 191)->nullable();
+            $table->unique(['organization_id', 'origin_key'], 'payment_documents_org_origin_unique');
             $table->foreignId('contractor_id')->nullable();
             $table->decimal('amount', 15, 2)->default(0);
             $table->decimal('vat_rate', 5, 2)->default(20);
@@ -771,6 +787,12 @@ trait ActingTestSchema
             $table->decimal('amount', 15, 2);
             $table->string('currency')->default('RUB');
             $table->string('status')->default('completed');
+            $table->unsignedBigInteger('project_id')->nullable();
+            $table->string('payment_method')->default('bank_transfer');
+            $table->date('transaction_date')->nullable();
+            $table->unsignedBigInteger('created_by_user_id')->nullable();
+            $table->unsignedBigInteger('reverses_transaction_id')->nullable();
+            $table->timestamps();
         });
 
         Schema::create('performance_act_completed_works', function (Blueprint $table): void {

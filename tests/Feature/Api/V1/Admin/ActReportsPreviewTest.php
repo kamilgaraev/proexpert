@@ -11,8 +11,8 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
-use App\Models\ContractOrganizationView;
 use App\Models\Contractor;
+use App\Models\ContractOrganizationView;
 use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -1368,10 +1368,10 @@ class ActReportsPreviewTest extends TestCase
         self::assertSame(ContractPerformanceAct::STATUS_DRAFT, $act->fresh()->status);
     }
 
-    public function test_create_from_wizard_rejects_non_active_contract(): void
+    public function test_create_from_wizard_rejects_draft_contract(): void
     {
         [$organization, $user, $contract, $project] = $this->createContractFixture('CLOSED-CONTRACT-ACT');
-        $contract->forceFill(['status' => 'completed'])->save();
+        $contract->forceFill(['status' => 'draft'])->save();
         $work = $this->createJournalWork($organization->id, $project->id, $contract->id, 9901, 1);
         $this->withoutMiddleware();
         $this->allowPermissions();
@@ -1449,13 +1449,13 @@ class ActReportsPreviewTest extends TestCase
             ->postJson("/api/v1/admin/act-reports/{$act->id}/submit")
             ->assertForbidden();
 
+        $this->allowPermissionsExcept('act_reports.approve');
+
         $this->actingAs($user, 'api_admin')
             ->postJson("/api/v1/admin/act-reports/{$act->id}/reject", [
                 'reason' => 'Недостаточно прав',
             ])
             ->assertForbidden();
-
-        $this->allowPermissionsExcept('act_reports.approve');
 
         $this->actingAs($user, 'api_admin')
             ->postJson("/api/v1/admin/act-reports/{$act->id}/approve")
@@ -1491,6 +1491,121 @@ class ActReportsPreviewTest extends TestCase
         $this->mock(AuthorizationService::class, function ($mock) use ($allowed): void {
             $mock->shouldReceive('can')->andReturn($allowed);
         });
+    }
+
+    public function test_approve_without_edit_can_reject_and_gets_decision_actions(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('APPROVE-ONLY');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'APPROVE-ONLY-ACT', 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_PENDING_APPROVAL]);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+        $this->allowPermissionsExcept('act_reports.edit');
+
+        $detail = $this->actingAs($user, 'api_admin')
+            ->getJson("/api/v1/admin/act-reports/{$act->id}")
+            ->assertOk();
+        $this->assertContains('approve', $detail->json('data.available_actions'));
+        $this->assertContains('reject', $detail->json('data.available_actions'));
+        $this->assertNotContains('edit', $detail->json('data.available_actions'));
+        $this->assertNotContains('submit', $detail->json('data.available_actions'));
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/reject", ['reason' => 'Уточните приложенные объёмы'])
+            ->assertOk()
+            ->assertJsonPath('data.status', ContractPerformanceAct::STATUS_REJECTED);
+    }
+
+    public function test_edit_without_approve_has_no_decision_actions_and_cannot_reject(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('EDIT-ONLY');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'EDIT-ONLY-ACT', 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_PENDING_APPROVAL]);
+        $this->withMiddleware();
+        $this->useActHttpBindings();
+        $this->allowPermissionsExcept('act_reports.approve');
+
+        $detail = $this->actingAs($user, 'api_admin')
+            ->getJson("/api/v1/admin/act-reports/{$act->id}")
+            ->assertOk();
+        $this->assertNotContains('approve', $detail->json('data.available_actions'));
+        $this->assertNotContains('reject', $detail->json('data.available_actions'));
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/reject", ['reason' => 'Не разрешено'])
+            ->assertForbidden();
+        $this->assertSame(ContractPerformanceAct::STATUS_PENDING_APPROVAL, $act->fresh()->status);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('paymentActionBlockers')]
+    public function test_paid_or_processing_act_does_not_offer_annulment(string $blocker): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('ACTION-PAYMENT-'.$blocker);
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'ACTION-PAID-'.$blocker, 1);
+        $act->update(['status' => ContractPerformanceAct::STATUS_APPROVED, 'is_approved' => true]);
+        $request = \Illuminate\Http\Request::create('/act-reports/'.$act->id);
+        $request->setUserResolver(fn (): User => $user);
+        $request->attributes->set('current_organization_id', $organization->id);
+        $access = app(\App\Services\ActReport\ActReportActionAccessService::class);
+        $this->assertContains('annul', $access->availableActions($request, $act));
+
+        $invoice = \App\BusinessModules\Core\Payments\Models\PaymentDocument::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'document_type' => 'invoice',
+            'document_number' => 'ACTION-PAYMENT-'.$act->id,
+            'document_date' => '2026-10-11',
+            'direction' => 'outgoing',
+            'invoiceable_type' => ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+            'amount' => 350,
+            'paid_amount' => $blocker === 'paid' ? 350 : 0,
+            'remaining_amount' => $blocker === 'paid' ? 0 : 350,
+            'currency' => 'RUB',
+            'status' => $blocker === 'paid' ? 'paid' : 'approved',
+        ]);
+        if ($blocker !== 'paid') {
+            \App\BusinessModules\Core\Payments\Models\PaymentTransaction::query()->create([
+                'payment_document_id' => $invoice->id,
+                'organization_id' => $organization->id,
+                'project_id' => $project->id,
+                'amount' => 350,
+                'currency' => 'RUB',
+                'payment_method' => 'bank_transfer',
+                'transaction_date' => '2026-10-11',
+                'status' => $blocker,
+                'created_by_user_id' => $user->id,
+            ]);
+        }
+
+        $this->assertNotContains('annul', $access->availableActions($request, $act));
+    }
+
+    public static function paymentActionBlockers(): array
+    {
+        return [['paid'], ['pending'], ['processing'], ['completed']];
+    }
+
+    private function useActHttpBindings(): void
+    {
+        $router = app('router');
+        $middleware = app(\Illuminate\Contracts\Http\Kernel::class)->getGlobalMiddleware();
+        foreach ($router->getRoutes() as $route) {
+            if (str_contains($route->uri(), 'act-reports/')) {
+                $middleware = [...$middleware, ...$router->gatherRouteMiddleware($route)];
+            }
+        }
+        $middleware = array_unique(array_map(static fn (string $class): string => explode(':', $class, 2)[0], $middleware));
+        $this->withoutMiddleware(array_values(array_filter(
+            $middleware,
+            static fn (string $class): bool => $class !== \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        )));
     }
 
     private function allowPermissionsExcept(string $deniedPermission): void

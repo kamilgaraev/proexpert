@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Mobile\ConstructionJournalController;
 use App\Http\Controllers\Api\V1\Mobile\ConstructionJournalEntryController;
+use App\Http\Controllers\Api\V1\Mobile\JournalEntryAttachmentController;
 use App\Http\Controllers\Api\V1\Mobile\JournalExportController;
 use Illuminate\Support\Facades\Route;
 
@@ -30,6 +31,9 @@ Route::middleware([
         ->name('construction-journals.entries.store');
 
     Route::get('/journal-entries/{entry}', [ConstructionJournalEntryController::class, 'show'])->name('journal-entries.show');
+    Route::get('/journal-entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'index']);
+    Route::post('/journal-entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'store']);
+    Route::get('/journal-entries/{entry}/attachments/{attachment}/download', [JournalEntryAttachmentController::class, 'download'])->whereUuid('attachment');
     Route::put('/journal-entries/{entry}', [ConstructionJournalEntryController::class, 'update'])->name('journal-entries.update');
     Route::delete('/journal-entries/{entry}', [ConstructionJournalEntryController::class, 'destroy'])->name('journal-entries.destroy');
     Route::post('/journal-entries/{entry}/submit', [ConstructionJournalEntryController::class, 'submit'])->name('journal-entries.submit');

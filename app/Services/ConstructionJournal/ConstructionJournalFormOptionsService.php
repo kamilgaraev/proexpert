@@ -13,11 +13,10 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
 use App\Models\Contract;
-use App\Models\Project;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
-use App\Models\EstimateItemResource;
 use App\Models\MeasurementUnit;
+use App\Models\Project;
 use App\Models\User;
 use App\Models\WorkType;
 use DomainException;
@@ -29,6 +28,7 @@ class ConstructionJournalFormOptionsService
         private readonly ConstructionJournalAccessService $access,
         private readonly JournalContractCoverageService $coverage,
         private readonly AuthorizationService $authorizationService,
+        private readonly JournalEstimateResourceMapper $resources,
     ) {}
 
     public function buildJournalOptions(User $user, int $projectId, ?int $journalId = null): array
@@ -137,7 +137,7 @@ class ConstructionJournalFormOptionsService
 
     public static function estimateItemRelations(): array
     {
-        return ['workType.measurementUnit', 'measurementUnit', 'contractLinks.contract.contractor', 'resources.material.measurementUnit', 'resources.measurementUnit'];
+        return ['workType.measurementUnit', 'measurementUnit', 'contractLinks.contract.contractor', 'resources.material.measurementUnit', 'resources.measurementUnit', 'childItems.measurementUnit', 'childItems.material'];
     }
 
     public function mapEstimateItem(EstimateItem $item, ConstructionJournal $journal): array
@@ -169,17 +169,7 @@ class ConstructionJournalFormOptionsService
                 'contractor_name' => $link->contract?->contractor?->name,
             ])->values()->all(),
             'contract_coverage' => $this->coverage->resolve($journal, $item),
-            'resources' => $item->resources->map(fn (EstimateItemResource $resource): array => [
-                'id' => $resource->id,
-                'resource_type' => $resource->resource_type,
-                'name' => $resource->name ?: $resource->material?->name,
-                'measurement_unit_id' => $resource->measurement_unit_id,
-                'measurementUnit' => $this->mapMeasurementUnit($resource->measurementUnit),
-                'quantity_per_unit' => (float) $resource->quantity_per_unit,
-                'total_quantity' => (float) $resource->total_quantity,
-                'estimate_item_id' => $resource->represented_by_item_id,
-                'material_id' => $resource->material_id,
-            ])->values()->all(),
+            'resources' => $this->resources->map($item, (int) $journal->organization_id),
         ];
     }
 
@@ -313,5 +303,4 @@ class ConstructionJournalFormOptionsService
             ->where('material_id', $materialId)
             ->sum('available_quantity');
     }
-
 }

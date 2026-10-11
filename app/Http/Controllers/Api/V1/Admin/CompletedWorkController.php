@@ -4,15 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\DTOs\CompletedWork\CompletedWorkDTO;
-use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ProjectOrganizationRole;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Middleware\ProjectContextMiddleware;
-use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkBulkRequest;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
@@ -26,14 +24,10 @@ use App\Services\CompletedWork\CompletedWorkFormOptionsService;
 use App\Services\CompletedWork\CompletedWorkService;
 use App\Services\CompletedWork\CompletedWorkWorkflowService;
 use App\Services\Schedule\ScheduleTaskCompletedWorkService;
-use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -178,7 +172,13 @@ class CompletedWorkController extends Controller
             return AdminResponse::error(trans_message('completed_work.not_found'), 404);
         }
 
-        return AdminResponse::success(new CompletedWorkResource($this->loadWorkRelations($completed_work)));
+        try {
+            app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class)->assertRead($completed_work, request()->user());
+
+            return AdminResponse::success(new CompletedWorkResource($this->loadWorkRelations($completed_work)));
+        } catch (BusinessLogicException $exception) {
+            return AdminResponse::error($exception->getMessage(), $exception->getCode() ?: 403);
+        }
     }
 
     public function confirmProjectWork(int $project, CompletedWork $completed_work): JsonResponse

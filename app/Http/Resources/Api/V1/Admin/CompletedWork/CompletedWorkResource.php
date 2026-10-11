@@ -102,6 +102,10 @@ class CompletedWorkResource extends JsonResource
             'notes' => $this->notes,
             'description' => $this->description,
             'status' => $this->status,
+            'available_actions' => $request->user() instanceof \App\Models\User
+                ? app(\App\Services\CompletedWork\CompletedWorkWorkflowService::class)->availableActions($request->user(), $this->resource) : [],
+            'status_history' => app(\App\Services\CompletedWork\CompletedWorkWorkflowService::class)->workflowData($this->resource)['status_history'],
+            'comments' => app(\App\Services\CompletedWork\CompletedWorkWorkflowService::class)->workflowData($this->resource)['comments'],
             'additional_info' => $this->additional_info,
             'materials' => CompletedWorkMaterialResource::collection($this->whenLoaded('materials')),
             'created_at' => $this->created_at->format('Y-m-d H:i:s'),

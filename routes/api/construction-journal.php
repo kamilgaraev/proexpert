@@ -3,8 +3,9 @@
 use App\Http\Controllers\Api\ConstructionJournalController;
 use App\Http\Controllers\Api\ConstructionJournalEntryController;
 use App\Http\Controllers\Api\ConstructionJournalFormOptionsController;
-use App\Http\Controllers\Api\JournalExportController;
 use App\Http\Controllers\Api\GeneralJournalDocumentController;
+use App\Http\Controllers\Api\JournalEntryAttachmentController;
+use App\Http\Controllers\Api\JournalExportController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -30,6 +31,9 @@ Route::middleware(['auth:api_admin'])->group(function () {
     });
 
     Route::prefix('construction-journals/{journal}')->group(function () {
+        Route::get('entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'index']);
+        Route::post('entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'store']);
+        Route::get('entries/{entry}/attachments/{attachment}/download', [JournalEntryAttachmentController::class, 'download'])->whereUuid('attachment');
         Route::get('entry-form-options', [ConstructionJournalFormOptionsController::class, 'show'])
             ->name('construction-journals.entry-form-options');
         Route::get('general-document', [GeneralJournalDocumentController::class, 'show']);

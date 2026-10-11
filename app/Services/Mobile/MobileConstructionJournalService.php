@@ -25,6 +25,7 @@ class MobileConstructionJournalService
         'delete',
         'export',
         'create_entry',
+        'upload_attachment',
         'submit',
         'approve',
         'reject',

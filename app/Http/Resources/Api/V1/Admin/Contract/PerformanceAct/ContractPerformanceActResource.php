@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct;
 
 use App\Models\ContractPerformanceAct;
+use App\Services\ActReport\ActReportActionAccessService;
 use App\Services\ActReport\ActReportWorkflowService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -17,6 +20,14 @@ class ContractPerformanceActResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $access = app(ActReportActionAccessService::class);
+        $actorOrganizationId = (int) ($request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id
+            ?? 0);
+        $this->resource->loadMissing('contract');
+        $isAccountingOrganization = $actorOrganizationId > 0
+            && (int) $this->resource->contract?->organization_id === $actorOrganizationId;
+
         return [
             'id' => $this->id,
             'contract_id' => $this->contract_id,
@@ -49,7 +60,10 @@ class ContractPerformanceActResource extends JsonResource
             'locked_by_user_id' => $this->locked_by_user_id,
             'locked_at' => $this->locked_at?->toIso8601String(),
             'is_locked' => $this->isLocked(),
-            'financial_summary' => app(ActReportWorkflowService::class)->financialSummary($this->resource),
+            'available_actions' => $access->availableActions($request, $this->resource),
+            'financial_summary' => $isAccountingOrganization
+                ? app(ActReportWorkflowService::class)->financialSummary($this->resource)
+                : null,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
 

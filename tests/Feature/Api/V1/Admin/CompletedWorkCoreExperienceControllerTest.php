@@ -308,6 +308,8 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'contract_id' => $ownContract->id,
             'work_type_id' => $workType->id,
             'notes' => 'Own participant work',
+            'user_id' => $participantContext->user->id,
+            'status' => CompletedWork::STATUS_PENDING,
         ]);
         $otherWork = $this->createCompletedWork($ownerOrganization, $project, $otherContractor, [
             'contract_id' => $otherContract->id,
@@ -367,6 +369,11 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertSame($ownerOrganization->id, $createdWork->organization_id);
         $this->assertSame($ownContractor->id, $createdWork->contractor_id);
         $this->assertSame($ownContract->id, $createdWork->contract_id);
+        $ownWork->update(['status' => CompletedWork::STATUS_CONFIRMED]);
+        $this->withHeaders($participantContext->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}/works/{$ownWork->id}", ['notes' => 'Direct confirmed edit'])
+            ->assertUnprocessable();
+        $this->assertSame('Own participant work updated', $ownWork->fresh()->notes);
 
         $forbiddenCreateResponse = $this->withHeaders($participantContext->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/works", [
@@ -406,6 +413,11 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'notes' => 'Observer cannot mutate this',
         ]);
         $this->allowAdminAccess();
+        $originalWork = $work->fresh()->getRawOriginal();
+        $initialWorkCount = CompletedWork::query()->where('project_id', $project->id)->count();
+        $this->withHeaders($observerContext->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/works/{$work->id}")
+            ->assertOk()->assertJsonPath('data.available_actions', []);
 
         $createResponse = $this->withHeaders($observerContext->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/works", [
@@ -433,6 +445,8 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
 
         $deleteResponse->assertForbidden();
         $this->assertNotSoftDeleted('completed_works', ['id' => $work->id]);
+        $this->assertSame($initialWorkCount, CompletedWork::query()->where('project_id', $project->id)->count());
+        $this->assertSame($originalWork, $work->fresh()->getRawOriginal());
     }
 
     public function test_bulk_completed_work_create_rejects_foreign_contract_and_contractor_ids(): void
@@ -446,6 +460,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'number' => 'FOREIGN-BULK-CON',
         ]);
         $this->allowAdminAccess();
+        $initialWorkCount = CompletedWork::query()->count();
 
         $contractResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/works/bulk", [
@@ -458,8 +473,10 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             ]);
 
         $contractResponse->assertStatus(422);
-        $contractResponse->assertJsonPath('errors.index', 0);
-        $this->assertArrayHasKey('contract_id', $contractResponse->json('errors.errors'));
+        $contractResponse->assertJsonPath('success', false)->assertJsonPath('data', null);
+        $contractResponse->assertJsonValidationErrors(['works.0.contract_id']);
+        $this->assertSame($initialWorkCount, CompletedWork::query()->count());
+        $this->assertDatabaseMissing('completed_works', ['contract_id' => $foreignContract->id]);
 
         $contractorResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/projects/{$project->id}/works/bulk", [
@@ -472,8 +489,10 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             ]);
 
         $contractorResponse->assertStatus(422);
-        $contractorResponse->assertJsonPath('errors.index', 0);
-        $this->assertArrayHasKey('contractor_id', $contractorResponse->json('errors.errors'));
+        $contractorResponse->assertJsonPath('success', false)->assertJsonPath('data', null);
+        $contractorResponse->assertJsonValidationErrors(['works.0.contractor_id']);
+        $this->assertSame($initialWorkCount, CompletedWork::query()->count());
+        $this->assertDatabaseMissing('completed_works', ['contractor_id' => $foreignContractor->id]);
     }
 
     public function test_completed_work_create_rejects_foreign_user_schedule_task_and_estimate_item(): void
@@ -618,6 +637,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
             'quantity' => 4,
             'completed_quantity' => 4,
             'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+            'status' => CompletedWork::STATUS_PENDING,
         ]);
         $this->allowAdminAccess();
 
@@ -670,11 +690,12 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $anotherSchedule = $this->createSchedule($context->organization, $anotherProject, $context->user);
         $work = $this->createCompletedWork($context->organization, $project, $contractor, [
             'work_type_id' => $workType->id,
-            'quantity' => 5,
+            'quantity' => 2,
             'completed_quantity' => 2,
             'completion_date' => '2026-06-21',
             'notes' => 'Task created from actual work',
             'planning_status' => CompletedWork::PLANNING_REQUIRES_SCHEDULE,
+            'status' => CompletedWork::STATUS_PENDING,
         ]);
         $this->allowAdminAccess();
 
@@ -687,7 +708,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $createTaskResponse->assertJsonPath('data.work.id', $work->id);
         $createTaskResponse->assertJsonPath('data.work.planning_status', CompletedWork::PLANNING_PLANNED);
         $createTaskResponse->assertJsonPath('data.task.schedule_id', $schedule->id);
-        $createTaskResponse->assertJsonPath('data.task.progress_percent', 40);
+        $createTaskResponse->assertJsonPath('data.task.progress_percent', 100);
         $createTaskResponse->assertJsonPath('data.task.completed_quantity', 2);
 
         $task = ScheduleTask::query()->findOrFail($createTaskResponse->json('data.task.id'));
@@ -696,7 +717,7 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         $this->assertSame($context->organization->id, $task->organization_id);
         $this->assertSame($workType->id, $task->work_type_id);
         $this->assertSame('2026-06-21', $task->planned_start_date?->toDateString());
-        $this->assertSame('in_progress', $task->status->value);
+        $this->assertSame('completed', $task->status->value);
 
         $anotherWork = $this->createCompletedWork($context->organization, $project, $contractor, [
             'work_type_id' => $workType->id,
@@ -778,9 +799,12 @@ class CompletedWorkCoreExperienceControllerTest extends TestCase
         array $overrides = []
     ): CompletedWork {
         $workType = $overrides['work_type_id'] ?? $this->createWorkType($organization, 'Test work type')->id;
-        $userId = $overrides['user_id'] ?? User::factory()->create([
-            'current_organization_id' => $organization->id,
-        ])->id;
+        $userId = $overrides['user_id'] ?? null;
+        if ($userId === null) {
+            $responsibleUser = User::factory()->create(['current_organization_id' => $organization->id]);
+            $responsibleUser->organizations()->attach($organization->id, ['is_active' => true]);
+            $userId = $responsibleUser->id;
+        }
 
         return CompletedWork::query()->create(array_merge([
             'organization_id' => $organization->id,

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ProjectOrganizationRole;
-use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Contract;
@@ -15,8 +15,8 @@ use App\Models\Contractor;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
-use App\Models\Material;
 use App\Models\JournalWorkVolume;
+use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
@@ -82,10 +82,12 @@ final class ConstructionJournalFormOptionsTest extends TestCase
         self::assertCount(1, $mapped['resources']);
         self::assertSame([
             'id' => $resource->id,
+            'source_key' => 'estimate_item_resource:'.$resource->id,
             'resource_type' => 'material',
             'name' => 'Арматура нормативная',
             'measurement_unit_id' => $resourceUnit->id,
             'measurementUnit' => ['id' => $resourceUnit->id, 'name' => $resourceUnit->name, 'short_name' => $resourceUnit->short_name],
+            'unit_name' => $resourceUnit->short_name,
             'quantity_per_unit' => 0.3,
             'total_quantity' => 30.0,
             'estimate_item_id' => $child->id,

@@ -8,6 +8,21 @@
          stopOnFailure="true"
 >
     <testsuites>
+        <testsuite name="CollaborationAuditRemainder">
+            <file>tests/Feature/ConstructionJournalEstimateResourcesTest.php</file>
+            <file>tests/Feature/ConstructionJournalFormOptionsTest.php</file>
+            <file>tests/Feature/CompletedWork/CompletedWorkWorkflowActionsTest.php</file>
+            <file>tests/Feature/ConstructionJournalAttachmentsTest.php</file>
+            <file>tests/Feature/Api/V1/Mobile/MobileActFieldConfirmationTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ActReportsPreviewTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ActReportsIndexContractTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ActFileControllerWorkflowTest.php</file>
+            <file>tests/Feature/Api/V1/Mobile/WorkflowManagementMobileTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/CompletedWorkCoreExperienceControllerTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ConstructionJournalCoreExperienceControllerTest.php</file>
+            <file>tests/Unit/Reporting/Waves23/AcceptedProductionPublishedContractTest.php</file>
+            <file>tests/Unit/Reporting/Catalog/BuiltinPublishedReportDefinitionRegistryTest.php</file>
+        </testsuite>
         <testsuite name="ConstructionJournalCollaboration">
             <file>tests/Feature/ConstructionJournalCollaborationTest.php</file>
             <file>tests/Feature/ConstructionJournalFormOptionsTest.php</file>

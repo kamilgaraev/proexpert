@@ -24,8 +24,7 @@ final class WorkflowTaskController extends Controller
     public function __construct(
         private readonly MobileWorkflowTaskService $service,
         private readonly AuthorizationService $authorizationService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -152,6 +151,11 @@ final class WorkflowTaskController extends Controller
         }
     }
 
+    public function submit(Request $request, int $task): JsonResponse
+    {
+        return $this->action($request, $task, 'submit');
+    }
+
     private function action(Request $request, int $task, string $action): JsonResponse
     {
         if ($denied = $this->ensurePermission($request, 'completed_works.edit')) {
@@ -160,6 +164,7 @@ final class WorkflowTaskController extends Controller
 
         try {
             $rules = match ($action) {
+                'submit' => [],
                 'approve' => ['comment' => ['nullable', 'string', 'max:2000']],
                 'reject' => ['reason' => ['required', 'string', 'max:2000']],
                 'request_changes' => ['comment' => ['required', 'string', 'max:2000']],
@@ -172,6 +177,7 @@ final class WorkflowTaskController extends Controller
             );
 
             $updated = match ($action) {
+                'submit' => $this->service->submit($model, $this->actor($request)),
                 'approve' => $this->service->approve($model, $this->actor($request), $validated['comment'] ?? null),
                 'reject' => $this->service->reject($model, $this->actor($request), $validated['reason']),
                 'request_changes' => $this->service->requestChanges($model, $this->actor($request), $validated['comment']),
@@ -205,7 +211,7 @@ final class WorkflowTaskController extends Controller
     private function ensurePermission(Request $request, string $permission): ?JsonResponse
     {
         $user = $request->user();
-        if (!$user || !$this->authorizationService->can($user, $permission, [
+        if (! $user || ! $this->authorizationService->can($user, $permission, [
             'organization_id' => (int) $request->attributes->get('current_organization_id'),
         ])) {
             return MobileResponse::error(

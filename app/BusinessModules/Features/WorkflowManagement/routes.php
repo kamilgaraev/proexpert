@@ -14,5 +14,6 @@ Route::prefix('api/v1/mobile/workflow-management')
         Route::post('/tasks/{task}/approve', [WorkflowTaskController::class, 'approve'])->name('tasks.approve');
         Route::post('/tasks/{task}/reject', [WorkflowTaskController::class, 'reject'])->name('tasks.reject');
         Route::post('/tasks/{task}/request-changes', [WorkflowTaskController::class, 'requestChanges'])->name('tasks.request_changes');
+        Route::post('/tasks/{task}/submit', [WorkflowTaskController::class, 'submit'])->name('tasks.submit');
         Route::post('/tasks/{task}/comments', [WorkflowTaskController::class, 'comment'])->name('tasks.comment');
     });
