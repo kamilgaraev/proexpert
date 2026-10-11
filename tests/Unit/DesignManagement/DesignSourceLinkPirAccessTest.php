@@ -19,6 +19,26 @@ use Tests\TestCase;
 
 final class DesignSourceLinkPirAccessTest extends TestCase
 {
+    public function test_foreign_journal_snapshot_does_not_expose_nested_ifc_identifiers(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldNotReceive('can');
+        $access = Mockery::mock(AccessController::class);
+        $access->shouldNotReceive('hasModuleAccess');
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $link = new DesignSourceLink([
+            'organization_id' => 7, 'project_id' => 12, 'source_version_id' => 18,
+            'source_snapshot' => ['title' => 'АР. План', 'revision' => 'R01',
+                'element' => ['express_id' => 17, 'global_id' => 'private-ifc-id', 'name' => 'Скрытый элемент', 'category' => 'IfcWall'],
+            ],
+            'target_snapshot' => ['type' => 'construction_journal_entry', 'label' => 'Бетонирование'],
+        ]);
+        $payload = $this->invoke($service, 'presentLink', [new User(), $link, false]);
+        self::assertSame(['title' => 'АР. План', 'revision' => 'R01', 'available' => false], $payload['source']);
+        self::assertNull($payload['source_version_id']);
+        self::assertNull($payload['source_element_id']);
+    }
+
     public function test_target_card_keeps_safe_snapshot_when_pir_is_off(): void
     {
         $authorization = Mockery::mock(AuthorizationService::class);

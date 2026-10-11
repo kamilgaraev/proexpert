@@ -514,13 +514,19 @@ final class DesignSourceLinkService
     private function presentLink(User $actor, DesignSourceLink $link, bool $allowSourceRead = true): array
     {
         $source = $link->sourceVersion;
+        $sourceSnapshot = $link->source_snapshot;
+        if (! $allowSourceRead) {
+            $sourceSnapshot = is_array($sourceSnapshot)
+                ? array_intersect_key($sourceSnapshot, array_flip(['title', 'revision']))
+                : null;
+        }
         $sourceReadable = $allowSourceRead
             && $this->access->hasModuleAccess((int) $link->organization_id, 'design-management')
             && $source instanceof DesignArtifactVersion
             && $this->sourceInScope($source, (int) $link->organization_id, (int) $link->project_id)
             && $this->authorization->can($actor, 'design-management.view', ['organization_id' => $link->organization_id, 'project_id' => $link->project_id]);
 
-        return ['id' => $link->id, 'revision' => (int) $link->row_version, 'status' => $link->status, 'ended_reason' => $link->ended_reason, 'ended_at' => $link->ended_at?->toIso8601String(), 'replacement_link_id' => $link->replacement_link_id, 'source_version_id' => $sourceReadable ? $link->source_version_id : null, 'source_sheet_id' => $sourceReadable ? $link->source_sheet_id : null, 'source_element_id' => $sourceReadable ? $link->source_element_id : null, 'target' => ['id' => (int) $link->target_id, 'type' => $link->target_type] + ($link->target_snapshot ?? []), 'created_at' => $link->created_at?->toIso8601String(), 'source' => $sourceReadable ? $this->sourceSnapshot($source) + ['id' => $source->id, 'available' => true, 'element' => $link->source_snapshot['element'] ?? null] : ($link->source_snapshot ? $link->source_snapshot + ['available' => false] : null)];
+        return ['id' => $link->id, 'revision' => (int) $link->row_version, 'status' => $link->status, 'ended_reason' => $link->ended_reason, 'ended_at' => $link->ended_at?->toIso8601String(), 'replacement_link_id' => $link->replacement_link_id, 'source_version_id' => $sourceReadable ? $link->source_version_id : null, 'source_sheet_id' => $sourceReadable ? $link->source_sheet_id : null, 'source_element_id' => $sourceReadable ? $link->source_element_id : null, 'target' => ['id' => (int) $link->target_id, 'type' => $link->target_type] + ($link->target_snapshot ?? []), 'created_at' => $link->created_at?->toIso8601String(), 'source' => $sourceReadable ? $this->sourceSnapshot($source) + ['id' => $source->id, 'available' => true, 'element' => $link->source_snapshot['element'] ?? null] : ($sourceSnapshot ? $sourceSnapshot + ['available' => false] : null)];
     }
 
     private function sourceInScope(DesignArtifactVersion $source, int $organizationId, int $projectId): bool

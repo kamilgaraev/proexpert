@@ -65,6 +65,7 @@ final class JournalDesignSourceLinksAccessTest extends TestCase
                 self::assertNull($links[0]['source_element_id']);
                 self::assertArrayNotHasKey('download_url', $links[0]['source']);
                 self::assertArrayNotHasKey('filename', $links[0]['source']);
+                self::assertArrayNotHasKey('element', $links[0]['source']);
             }
         }
         self::assertSame($before, $link->fresh()->getAttributes());
@@ -204,7 +205,9 @@ final class JournalDesignSourceLinksAccessTest extends TestCase
         $link = DesignSourceLink::query()->create([
             'organization_id' => $project->organization_id, 'project_id' => $project->id,
             'source_version_id' => $version->id, 'target_type' => 'construction_journal_entry', 'target_id' => $entry->id,
-            'target_snapshot' => ['label' => 'Бетонирование'], 'source_snapshot' => ['title' => 'АР. План', 'revision' => 'R01'],
+            'target_snapshot' => ['label' => 'Бетонирование'], 'source_snapshot' => ['title' => 'АР. План', 'revision' => 'R01',
+                'element' => ['express_id' => 17, 'global_id' => 'private-ifc-id', 'name' => 'Скрытый элемент', 'category' => 'IfcWall'],
+            ],
             'created_by' => $users[1]->id,
         ]);
 
