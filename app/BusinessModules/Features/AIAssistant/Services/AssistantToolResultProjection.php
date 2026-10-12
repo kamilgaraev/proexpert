@@ -26,14 +26,26 @@ final class AssistantToolResultProjection
             $view = array_intersect_key($result, array_flip(['status', 'needs_clarification', 'validation_status', 'error', 'reason']));
             $view['server_formatted_answer'] = $result['server_summary_answer'] ?? null;
             $filters = $result['bim_evidence']['filters'] ?? [];
-            $view['filters'] = array_intersect_key($filters, array_flip(['equipment_kind', 'element_query', 'material_query',
+            if (($filters['answer_kind'] ?? null) === 'materials') {
+                $view['server_formatted_answer'] = trans_message('ai_assistant_bim.provider_material_summary');
+            }
+            $view['filters'] = array_intersect_key($filters, array_flip(['answer_kind', 'equipment_kind', 'element_query', 'material_query',
                 'classification_query', 'storey_query', 'property_name', 'property_value', 'quantity_name', 'offset', 'limit']));
             $view['models'] = [];
             foreach (array_slice($result['models'] ?? [], 0, 5) as $model) {
                 $projected = array_intersect_key($model, array_flip(['source_scope', 'index_coverage', 'semantic_coverage',
-                    'semantic_matching_count', 'total', 'has_more', 'next_offset', 'scan_complete', 'estimate_link_coverage']));
+                    'semantic_matching_count', 'total', 'has_more', 'next_offset', 'scan_complete', 'estimate_link_coverage', 'material_summary']));
                 $projected['version'] = array_intersect_key($model['version'] ?? [], array_flip(['id', 'project_id', 'artifact_id',
                     'title', 'version_number', 'source_original_name', 'is_current']));
+                if (($filters['answer_kind'] ?? null) === 'materials') {
+                    if (is_array($projected['material_summary'] ?? null)) {
+                        $names = $projected['material_summary']['names'] ?? [];
+                        $projected['material_summary']['names'] = array_slice($names, 0, 10);
+                        $projected['material_summary']['provider_names_truncated'] = count($names) > 10;
+                    }
+                    $view['models'][] = $projected;
+                    continue;
+                }
                 $projected['categories'] = array_slice($model['categories'] ?? [], 0, 20);
                 $projected['categories_truncated'] = count($model['categories'] ?? []) > 20;
                 $projected['quantity_totals'] = array_slice($model['quantity_totals'] ?? [], 0, 20);

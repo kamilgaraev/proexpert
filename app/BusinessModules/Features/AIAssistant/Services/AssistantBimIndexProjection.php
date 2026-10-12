@@ -195,6 +195,13 @@ final class AssistantBimIndexProjection
         return array_values(array_unique($result));
     }
 
+    public function materialLabel(string $value): ?string
+    {
+        $safe = $this->scalar($value);
+
+        return is_string($safe) ? $safe : null;
+    }
+
     private function scalar(mixed $value): string|int|float|bool|null
     {
         if (is_string($value)) {
