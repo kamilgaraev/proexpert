@@ -44,7 +44,7 @@ final class AssistantDomainCatalog
             $type = ['type' => 'string', 'enum' => $entities];
             $schema = static fn (array $properties): array => ['type' => 'object', 'properties' => $properties, 'required' => array_keys($properties), 'additionalProperties' => false];
             $schemas = [
-                'search' => $schema(['entity_type' => $type, 'query' => ['type' => 'string', 'maxLength' => 200], 'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20], 'fields' => $fieldList]),
+                'search' => $schema(['predicate' => ['type' => ['string', 'null'], 'enum' => ['overdue', null]], 'entity_type' => $type, 'query' => ['type' => 'string', 'maxLength' => 200], 'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20], 'fields' => $fieldList]),
                 'read' => $schema(['entity_type' => $type, 'id' => $id, 'fields' => $fieldList]),
                 'navigation' => $schema(['entity_type' => $type, 'id' => $id]),
             ];

@@ -36,6 +36,11 @@ final class AssistantDomainReadService
         if (! in_array($entityType, $definition->entityTypes, true)) {
             throw ValidationException::withMessages(['entity_type' => ['unsupported_entity']]);
         }
+        $predicate = $arguments['predicate'] ?? null;
+        if ($predicate !== null && ($operation !== 'search' || $predicate !== 'overdue'
+            || $definition->domain !== 'schedule' || $entityType !== 'schedule_task')) {
+            throw ValidationException::withMessages(['predicate' => ['unsupported_predicate']]);
+        }
         $projection = $arguments['projection'] ?? null;
         if ($projection !== null && ($operation !== 'read' || ! is_string($projection)
             || ! isset(AssistantExtendedDomainRegistry::values('parentProjectionDefinitions')[$entityType][$projection]))) {
@@ -87,7 +92,7 @@ final class AssistantDomainReadService
             if (mb_strlen($term) > 200) {
                 throw ValidationException::withMessages(['query' => ['query_too_long']]);
             }
-            $cursorScope = $this->searchCursorScope($definition, $entityType, $term, $arguments['project_id'] ?? null, $limit, $fields, $actor, $organizationId);
+            $cursorScope = $this->searchCursorScope($definition, $entityType, $term, $arguments['project_id'] ?? null, $limit, $fields, $actor, $organizationId, $arguments['predicate'] ?? null);
             $after = $this->decodeSearchCursor($arguments['cursor'] ?? null, $cursorScope);
             $searchFields = array_filter($definition->fields, function (string $field) use ($definition, $actor, $organizationId): bool {
                 foreach ((array) ($definition->fieldPermissions[$field] ?? []) as $permission) {
@@ -107,10 +112,25 @@ final class AssistantDomainReadService
                 AssistantTextSearch::apply($query, array_map(static fn (string $column): string => $table.'.'.$column, $columns), $term);
             }
             if (is_numeric($arguments['project_id'] ?? null)) {
-                if (! \Illuminate\Support\Facades\Schema::hasColumn($table, 'project_id')) {
-                    throw ValidationException::withMessages(['project_id' => ['unsupported_project_filter']]);
+                $projectId = (int) $arguments['project_id'];
+                if ($entityType === 'schedule_task') {
+                    if (! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)) {
+                        throw new AccessDeniedHttpException();
+                    }
+                    $schedules = $this->access->entityQuery($actor, $organizationId, 'schedule');
+                    if ($schedules === null) {
+                        throw new AccessDeniedHttpException();
+                    }
+                    $query->whereIn($table.'.schedule_id', $schedules->where('project_schedules.project_id', $projectId)->select('project_schedules.id'));
+                } else {
+                    if (! \Illuminate\Support\Facades\Schema::hasColumn($table, 'project_id')) {
+                        throw ValidationException::withMessages(['project_id' => ['unsupported_project_filter']]);
+                    }
+                    $query->where($table.'.project_id', $projectId);
                 }
-                $query->where($table.'.project_id', (int) $arguments['project_id']);
+            }
+            if (($arguments['predicate'] ?? null) === 'overdue') {
+                $query->overdue();
             }
             $countQuery = (clone $query)->reorder()->toBase()->select([])->selectRaw('COUNT(*) AS _assistant_result_total');
             $query->selectSub($countQuery, '_assistant_result_total');
@@ -211,12 +231,13 @@ final class AssistantDomainReadService
         return $payload;
     }
 
-    private function searchCursorScope(AssistantDomainDefinition $definition, string $entityType, string $query, mixed $projectId, int $limit, array $fields, User $actor, int $organizationId): string
+    private function searchCursorScope(AssistantDomainDefinition $definition, string $entityType, string $query, mixed $projectId, int $limit, array $fields, User $actor, int $organizationId, ?string $predicate = null): string
     {
         sort($fields);
 
         return hash('sha256', json_encode([$definition->domain, $definition->sourceType, $entityType, $query,
-            is_numeric($projectId) ? (int) $projectId : null, $limit, $fields, (string) $actor->getKey(), $organizationId], JSON_THROW_ON_ERROR));
+            is_numeric($projectId) ? (int) $projectId : null, $limit, $fields, (string) $actor->getKey(), $organizationId, $predicate,
+            $predicate === 'overdue' ? AssistantDomainSearchCountEvidence::predicateClock() : null], JSON_THROW_ON_ERROR));
     }
 
     private function encodeSearchCursor(int|string $key, string $scope): string

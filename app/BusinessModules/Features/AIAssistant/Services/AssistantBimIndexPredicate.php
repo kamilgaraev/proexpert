@@ -23,19 +23,7 @@ final class AssistantBimIndexPredicate
         $attributes = "concat_ws(' ', ".implode(', ', $attributeValues).')';
         $classifications = $this->labels('classifications');
         $equipmentQuery = (new AssistantBimIndexProjection)->queryEquipment(trim($filters['element_query'] ?? ''));
-        if (! empty($filters['equipment_kind']) || $equipmentQuery !== null) {
-            $genericCategories = implode(', ', array_map(static fn (string $category): string => "'{$category}'", AssistantBimIndexProjection::genericEquipmentCategories()));
-            $kind = ! empty($filters['equipment_kind']) ? $filters['equipment_kind'] : $equipmentQuery;
-            if ($kind !== null && $kind !== 'unknown') {
-                $directCategory = ['fan' => 'IFCFAN', 'pump' => 'IFCPUMP', 'boiler' => 'IFCBOILER', 'chiller' => 'IFCCHILLER'][$kind] ?? null;
-                $eligibleCategories = $genericCategories.($directCategory === null ? '' : ", '{$directCategory}'");
-                $scope->whereRaw("upper({$table}.category) IN ({$eligibleCategories})");
-            }
-            $input = (clone $scope)->toBase()->reorder()->select($table.'.*')
-                ->selectRaw("CASE WHEN upper({$table}.category) IN ({$genericCategories}) THEN ".$this->equipmentIdentity($attributes, $classifications)." ELSE jsonb_build_object('text', '', 'air_conditioning_enum', false) END AS assistant_equipment_identity")->offset(0);
-            $scope->setQuery($scope->getQuery()->newQuery()->fromSub($input, $table));
-        }
-        $classifier = $this->classifier($table.'.assistant_equipment_identity');
+        $classifier = $table.'.source_equipment_kind';
         foreach (['material_query' => $this->labels("properties -> 'materials'"),
             'classification_query' => $classifications, 'storey_query' => "{$table}.properties #>> '{_ifc,storey,name}'"] as $filter => $expression) {
             if (! empty($filters[$filter])) {
@@ -43,7 +31,7 @@ final class AssistantBimIndexPredicate
             }
         }
         if (! empty($filters['equipment_kind'])) {
-            $scope->whereRaw("({$classifier}) = ?", [$filters['equipment_kind']]);
+            $scope->where($classifier, $filters['equipment_kind']);
         }
         if (! empty($filters['property_name'])) {
             $scope->whereRaw('EXISTS ('.$this->leaves()." AND lower(p.key) LIKE ?".
@@ -55,13 +43,11 @@ final class AssistantBimIndexPredicate
         if ($term !== '') {
             $kind = $equipmentQuery;
             if ($kind !== null) {
-                $scope->whereRaw("({$classifier}) = ?", [$kind]);
+                $scope->where($classifier, $kind);
             } else {
                 $scope->where(function (Builder $search) use ($categories, $table, $term, $properties, $attributes, $classifications): void {
                     if ($categories !== []) {
-                        $search->whereIn($table.'.category', $categories)->orWhere(function (Builder $names) use ($table, $term): void {
-                            AssistantTextSearch::apply($names, [$table.'.name'], $term, false);
-                        });
+                        $search->whereIn($table.'.category', $categories);
                     } else {
                         $this->text($search, "concat_ws(' ', {$table}.name, {$table}.global_id, {$table}.category, {$properties}, {$attributes}, {$classifications}, ".$this->labels("properties -> 'materials'").')', $term);
                     }
@@ -78,18 +64,10 @@ final class AssistantBimIndexPredicate
         return "SELECT 1 FROM jsonb_path_query(COALESCE({$table}.properties, '{}'::jsonb), '$.**') AS node(value) CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(node.value) = 'object' THEN node.value ELSE '{}'::jsonb END) AS p(key, value) WHERE p.key ~* '{$pattern}' AND jsonb_typeof(p.value) IN ('string', 'number', 'boolean') AND (p.value #>> '{}') !~* '{$unsafe}'";
     }
 
-    private function engineering(bool $identityOnly = false): string
+    private function engineering(): string
     {
-        $leaves = $this->leaves().($identityOnly ? " AND p.key ~* '^(PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|GP_Наименование|ADSK_Наименование|Наименование|Марка|Модель)$'" : '');
+        $leaves = $this->leaves();
         return '(COALESCE(('.str_replace('SELECT 1', "SELECT string_agg(left(p.value #>> '{}', 255), ' ')", $leaves)."), ''))";
-    }
-
-    private function equipmentIdentity(string $attributes, string $classifications): string
-    {
-        $leaves = $this->leaves()." AND p.key ~* '^(PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|GP_Наименование|ADSK_Наименование|Наименование|Марка|Модель)$'";
-        $aggregate = "SELECT jsonb_build_object('text', concat_ws(' ', COALESCE(string_agg(left(p.value #>> '{}', 255), ' '), ''), {$attributes}, {$classifications}), 'air_conditioning_enum', COALESCE(bool_or(p.key ~* '^PredefinedType$' AND upper(trim(p.value #>> '{}')) = 'AIRCONDITIONINGUNIT'), false))";
-
-        return '('.str_replace('SELECT 1', $aggregate, $leaves).')';
     }
 
     private function labels(string $column): string
@@ -97,28 +75,6 @@ final class AssistantBimIndexPredicate
         $source = self::TABLE.'.'.$column;
         $unsafe = str_replace("'", "''", self::UNSAFE_VALUE);
         return "COALESCE((SELECT string_agg(left(label.value #>> '{}', 255), ' ') FROM jsonb_array_elements(CASE WHEN jsonb_typeof({$source}) = 'array' THEN {$source} ELSE '[]'::jsonb END) label(value) WHERE jsonb_typeof(label.value) IN ('string','number','boolean') AND (label.value #>> '{}') !~* '{$unsafe}'), '')";
-    }
-
-    private function classifier(string $text): string
-    {
-        $table = self::TABLE;
-        $generic = implode(', ', array_map(static fn (string $category): string => "'{$category}'", AssistantBimIndexProjection::genericEquipmentCategories()));
-        $case = "CASE WHEN upper({$table}.category) = 'IFCFAN' THEN 'fan' WHEN upper({$table}.category) = 'IFCPUMP' THEN 'pump' WHEN upper({$table}.category) = 'IFCBOILER' THEN 'boiler' WHEN upper({$table}.category) = 'IFCCHILLER' THEN 'chiller' WHEN COALESCE(upper({$table}.category), '') NOT IN ({$generic}) THEN 'unknown'";
-        $room = str_replace("'", "''", AssistantBimIndexProjection::roomCategoryPattern());
-        $case .= " WHEN trim(COALESCE({$table}.properties #>> '{Прочее,Категория}', '')) ~* '{$room}' THEN 'unknown'";
-        $enum = "upper(trim(COALESCE({$table}.properties #>> '{_ifc,predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR upper(trim(COALESCE({$table}.properties #>> '{_ifc,type_predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR ({$text} ->> 'air_conditioning_enum')::boolean";
-        $case .= " WHEN ({$enum}) THEN 'air_conditioner'";
-        foreach (["({$text} ->> 'text')", "COALESCE({$table}.name, '')"] as $source) {
-            $unit = str_replace("'", "''", AssistantBimIndexProjection::airConditionerUnitPattern());
-            $unitReference = str_replace("'", "''", AssistantBimIndexProjection::airConditionerUnitReferencePattern());
-            $case .= " WHEN {$source} ~* '{$unit}' AND {$source} !~* '{$unitReference}' THEN 'air_conditioner'";
-            foreach (['air_conditioner', 'fan', 'pump', 'boiler', 'chiller'] as $kind) {
-                $pattern = str_replace("'", "''", AssistantBimIndexProjection::equipmentPattern($kind));
-                $reference = str_replace("'", "''", AssistantBimIndexProjection::equipmentReferencePattern($kind));
-                $case .= " WHEN {$source} ~* '{$pattern}' AND {$source} !~* '{$reference}' THEN '{$kind}'";
-            }
-        }
-        return $case." ELSE 'unknown' END";
     }
 
     private function text(Builder $scope, string $expression, string $term): void

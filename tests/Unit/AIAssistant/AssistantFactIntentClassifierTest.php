@@ -21,6 +21,19 @@ final class AssistantFactIntentClassifierTest extends TestCase
         $this->assertFalse(AssistantFactIntentClassifier::isFactual('Почему платежи задерживаются?'));
     }
 
+    public function test_natural_project_expenses_are_financial_but_physical_consumption_is_not(): void
+    {
+        foreach (['Покажи расходы нашего объекта за сентябрь 2025 года.', 'Сколько потратили на нашем объекте?', 'Затраты проекта за месяц',
+            'Покажи расходы нашего объекта за последние 7 дней.', 'Покажи расходы нашего объекта за последний месяц.'] as $query) {
+            self::assertTrue(AssistantFactIntentClassifier::isMoneyOnly($query), $query);
+            self::assertTrue(AssistantFactIntentClassifier::isFactual($query), $query);
+        }
+        foreach (['Расход бетона на объекте', 'Сколько воды израсходовали на объекте?', 'Затраты труда на проекте', 'Расход топлива на объекте', 'Сколько часов потратили на объекте?', 'Сколько дней потратили на объекте?', 'Потратили 10 тонн бетона на объекте',
+            'Затраты рабочего времени на объекте за сентябрь 2025 года.', 'Потратили 10 часов на объекте'] as $query) {
+            self::assertFalse(AssistantFactIntentClassifier::isMoneyOnly($query), $query);
+        }
+    }
+
     public function test_required_input_questions_are_clarifications_not_actual_financial_claims(): void
     {
         self::assertTrue(AssistantFactIntentClassifier::isClarificationRequest('Что нужно уточнить для расчёта доставки?'));

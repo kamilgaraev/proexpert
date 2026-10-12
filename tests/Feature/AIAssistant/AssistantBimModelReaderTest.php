@@ -64,7 +64,7 @@ final class AssistantBimModelReaderTest extends TestCase
         }
     }
 
-    public function test_category_absence_is_not_reported_as_physical_absence_and_name_matches_other_ifc_classes(): void
+    public function test_category_absence_is_not_physical_absence_and_named_proxies_never_become_typed_slabs(): void
     {
         $version = $this->model('Гаражная', 'гаражная.ifc');
         $this->element($version, 'IFCPLATE', 'Пластина');
@@ -73,7 +73,8 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertStringContainsString('не доказывает отсутствие', $result['server_formatted_answer']);
         self::assertStringContainsString('Пластины: 1', $result['server_formatted_answer']);
         $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'Перекрытие сборное');
-        self::assertSame(1, $this->read(['element_query' => 'перекрытия'])['models'][0]['total']);
+        self::assertSame(0, $this->read(['element_query' => 'перекрытия'])['models'][0]['total']);
+        self::assertSame(1, $this->read(['element_query' => 'сборное'])['models'][0]['total']);
     }
 
     public function test_project_name_is_not_a_model_filename_and_count_remains_a_text_match(): void
@@ -92,6 +93,43 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertStringContainsString('названию', $result['server_formatted_answer']);
         self::assertStringNotContainsString('IFC-модель с таким названием не нашёл', $result['server_formatted_answer']);
         self::assertSame('verified', $this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id)['validation_status']);
+    }
+
+    public function test_structural_counts_follow_ifc_types_per_model_and_exclude_openings_and_wall_mounted_equipment(): void
+    {
+        $first = $this->model('Гаражная конструкции', 'structures.ifc');
+        $second = $this->model('Гаражная вентиляция', 'ventilation.ifc');
+        $firstIndex = $this->readyIndex($first, 7);
+        $secondIndex = $this->readyIndex($second, 2);
+        $rows = [
+            ['IFCWALL', 'Несущая', 300],
+            ['IFCWALLSTANDARDCASE', 'Перегородка', 200],
+            ['IFCOPENINGELEMENT', 'Отверстие в стене', 300],
+            ['IFCBUILDINGELEMENTPROXY', 'ZPX стеновой вентилятор', 300],
+            ['IFCSLAB', 'Плита перекрытия', 300],
+            ['IFCOPENINGELEMENT', 'Отверстие в перекрытии', 300],
+            ['IFCBUILDINGELEMENTPROXY', 'Перекрытие сборное', 300],
+        ];
+        foreach ($rows as [$category, $name, $width]) {
+            $this->element($first, $category, $name)->updateQuietly(['derivative_id' => $firstIndex->id,
+                'properties' => ['_ifc' => ['schema_version' => 2], 'Pset_Common' => ['Width' => $width], 'materials' => ['Бетон']]]);
+        }
+        $this->element($second, 'IFCWALLSTANDARDCASE', 'Перегородка')->updateQuietly(['derivative_id' => $secondIndex->id]);
+        $this->element($second, 'IFCBUILDINGELEMENTPROXY', 'Стена декоративная')->updateQuietly(['derivative_id' => $secondIndex->id]);
+        $result = $this->read(['element_query' => 'стены', 'limit' => 1]);
+        self::assertCount(2, $result['models']);
+        self::assertSame([2, 1], array_column($result['models'], 'total'));
+        self::assertSame([2, 1], array_column($result['models'], 'semantic_matching_count'));
+        self::assertSame([7, 2], array_column($result['models'], 'scanned_count'));
+        self::assertTrue($result['models'][0]['has_more']);
+        self::assertSame(1, $this->read(['version_id' => $first->id, 'element_query' => 'IFCWALL'])['models'][0]['total']);
+        self::assertSame(1, $this->read(['version_id' => $first->id, 'element_query' => 'стены', 'material_query' => 'бетон',
+            'property_name' => 'Width', 'property_value' => '300'])['models'][0]['total']);
+        foreach (['перекрытия', 'плиты', 'IFCSLAB'] as $alias) {
+            self::assertSame(1, $this->read(['version_id' => $first->id, 'element_query' => $alias])['models'][0]['total']);
+        }
+        self::assertSame(1, $this->read(['version_id' => $first->id, 'element_query' => 'ZPX'])['models'][0]['total']);
+        self::assertSame(2, $this->read(['version_id' => $first->id, 'element_query' => 'IFCOPENINGELEMENT'])['models'][0]['total']);
     }
 
     public function test_current_version_and_explicit_historical_version_have_bounded_pages(): void
@@ -690,6 +728,68 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertSame(6, $unknown['models'][0]['scanned_count']);
         self::assertSame(1, $this->read(['version_id' => $version->id, 'equipment_kind' => 'pump'])['models'][0]['total']);
         $element->updateQuietly(['properties' => ['_ifc' => ['schema_version' => 2], 'Pset_Device' => ['Width' => 42]]]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+    }
+
+    public function test_stored_equipment_kind_matches_private_bounded_projection_and_all_raw_mutations(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $wide = [];
+        for ($index = 0; $index < 110; $index++) {
+            $wide['Pset_'.$index] = ['Width' => $index];
+        }
+        $rows = [
+            ['IFCPUMP', 'Кондиционер', ['Прочее' => ['Категория' => 'Помещения']], [], 'pump'],
+            [null, 'Кондиционер', [], [], 'unknown'],
+            ['IFCWALL', 'Кондиционер', [], [], 'unknown'],
+            ['IFCBUILDINGELEMENTPROXY', 'Кондиционер KX02', [], [], 'air_conditioner'],
+            ['IFCBUILDINGELEMENTPROXY', 'Кронштейн кондиционера', [], [], 'unknown'],
+            ['IFCBUILDINGELEMENTPROXY', 'TYPE-OUTDOOR', $wide + ['Идентификация' => ['GP_Наименование' => 'Наружный блок мультизональной системы']], [], 'air_conditioner'],
+            ['IFCBUILDINGELEMENTPROXY', 'Кондиционер', $wide + ['Прочее' => ['Категория' => 'Помещения']], [], 'unknown'],
+            ['IFCBUILDINGELEMENTPROXY', 'Блок', ['Идентификация' => ['GP_Наименование' => 'Кондиционер https://private.example']], [], 'unknown'],
+            ['IFCBUILDINGELEMENTPROXY', 'Блок', [], ['Кондиционер'], 'air_conditioner'],
+            ['IFCUNITARYEQUIPMENT', 'Блок', ['_ifc' => ['type_predefined_type' => 'AIRCONDITIONINGUNIT']], [], 'air_conditioner'],
+            ['IFCUNITARYEQUIPMENT', 'Блок', ['Pset_Device' => ['PredefinedType' => ' AIRCONDITIONINGUNIT ']], [], 'air_conditioner'],
+        ];
+        $derivative = $this->readyIndex($version, count($rows));
+        $projection = new \App\BusinessModules\Features\AIAssistant\Services\AssistantBimIndexProjection;
+        foreach ($rows as [$category, $name, $properties, $classifications, $expected]) {
+            $properties['_ifc'] = ($properties['_ifc'] ?? []) + ['schema_version' => 2];
+            $element = $this->element($version, $category ?? 'IFCBUILDINGELEMENTPROXY', $name);
+            $element->updateQuietly(['category' => $category, 'derivative_id' => $derivative->id,
+                'properties' => $properties, 'classifications' => $classifications]);
+            $element->refresh();
+            self::assertSame($expected, $element->getRawOriginal('source_equipment_kind'));
+            self::assertSame($expected, $projection->element($element->attributesToArray())['equipment_kind']);
+            self::assertArrayNotHasKey('source_equipment_kind', $element->toArray());
+        }
+        $result = $this->read(['version_id' => $version->id, 'equipment_kind' => 'air_conditioner', 'limit' => 1]);
+        self::assertSame(5, $result['models'][0]['total']);
+        self::assertSame(count($rows), $result['models'][0]['scanned_count']);
+        $updatedAt = $element->getRawOriginal('updated_at');
+        $hash = $element->getRawOriginal('source_content_hash');
+        $mutations = [
+            [['name' => 'Кронштейн кондиционера', 'properties' => ['_ifc' => ['schema_version' => 2]]], 'unknown'],
+            [['properties' => ['_ifc' => ['schema_version' => 2], 'Идентификация' => ['GP_Наименование' => 'Внутренний блок VRF системы']]], 'air_conditioner'],
+            [['properties' => ['_ifc' => ['schema_version' => 2], 'Прочее' => ['Категория' => 'Помещения']]], 'unknown'],
+            [['category' => 'IFCPUMP'], 'pump'],
+            [['category' => 'IFCBUILDINGELEMENTPROXY', 'properties' => ['_ifc' => ['schema_version' => 2]], 'classifications' => ['Кондиционер']], 'air_conditioner'],
+            [['classifications' => ['Кондиционер private@example.test']], 'unknown'],
+        ];
+        foreach ($mutations as [$changes, $expected]) {
+            foreach (['properties', 'classifications'] as $field) {
+                if (array_key_exists($field, $changes)) {
+                    $changes[$field] = json_encode($changes[$field], JSON_THROW_ON_ERROR);
+                }
+            }
+            DB::table('design_ifc_model_elements')->where('id', $element->id)->update($changes);
+            $element->refresh();
+            self::assertSame($expected, $element->getRawOriginal('source_equipment_kind'));
+            self::assertSame($expected, $projection->element($element->attributesToArray())['equipment_kind']);
+            self::assertNotSame($hash, $element->getRawOriginal('source_content_hash'));
+            self::assertSame($updatedAt, $element->getRawOriginal('updated_at'));
+            $hash = $element->getRawOriginal('source_content_hash');
+        }
         self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
     }
 

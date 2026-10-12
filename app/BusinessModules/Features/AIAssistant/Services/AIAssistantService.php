@@ -861,6 +861,8 @@ class AIAssistantService
                 $toolFailures,
                 static fn (mixed $value): bool => is_string($value) && trim($value) !== ''
             )));
+            $requestProjectScope = AssistantRequestProjectScope::fromPlan($taskPlan);
+            $this->activeToolResults = $requestProjectScope->filterResults($this->activeToolResults);
             $hasCurrentChatImages = $this->currentAttachmentIds !== [];
             $documentCorpusIncomplete = ! $hasCurrentChatImages && $this->documentContextBlocked;
             $documentSearchPartial = false;
@@ -1070,6 +1072,13 @@ class AIAssistantService
                 }
             }
 
+            $publicationReferences = $structuredCheck['source_refs'] ?? $financialCheck['source_refs']
+                ?? $this->collectSourceRefs($ragMetadata, $verificationToolResults);
+            if (! $requestProjectScope->allowsReferences($publicationReferences, $verificationToolResults)) {
+                $assistantContent = trans_message('ai_assistant_facts.live_proof_required');
+                $structuredCheck = ['text' => $assistantContent, 'replaced' => true, 'validation_status' => 'partial',
+                    'source_refs' => [], 'needs_clarification' => true];
+            }
             $assistantPayload = $this->taskOrchestrator->buildPayload($taskPlan, $assistantContent, [
                 'degraded_mode' => $degradedMode,
                 'tool_failures' => $toolFailures,
@@ -1083,6 +1092,7 @@ class AIAssistantService
             $assistantPayload['source_refs'] = is_array($structuredCheck) && ($structuredCheck['replaced'] || $structuredCheck['source_refs'] !== [])
                 ? $structuredCheck['source_refs']
                 : ($terminalToolResponse ? [] : $this->collectSourceRefs($ragMetadata, $this->activeToolResults));
+            $assistantPayload['source_refs'] = $requestProjectScope->withAnchorReferences($assistantPayload['source_refs'], $verificationToolResults);
             $validationStatus = $structuredCheck['validation_status'] ?? $financialCheck['validation_status'] ?? 'unverified';
             $assistantPayload['validation_status'] = $validationStatus === 'unverified' && $assistantPayload['source_refs'] !== []
                 ? 'partial' : $validationStatus;
@@ -1817,19 +1827,9 @@ class AIAssistantService
 
     private function countRequestScope(array $taskPlan): array
     {
-        $context = is_array($taskPlan['request']['context'] ?? null) ? $taskPlan['request']['context'] : [];
-        $projects = [];
-        foreach (['entity_refs', 'entity_references'] as $key) {
-            foreach (is_array($context[$key] ?? null) ? $context[$key] : [] as $reference) {
-                if (! is_array($reference) || ($reference['entity_type'] ?? $reference['type'] ?? null) !== 'project') { continue; }
-                $id = $reference['entity_id'] ?? $reference['id'] ?? null;
-                if ((is_int($id) || (is_string($id) && ctype_digit($id))) && (int) $id > 0) {
-                    $projects[(int) $id] = true;
-                }
-            }
-        }
+        $scope = AssistantRequestProjectScope::fromPlan($taskPlan);
 
-        return count($projects) === 1 ? ['project_id' => (int) array_key_first($projects)] : [];
+        return $scope->projectId !== null ? ['project_id' => $scope->projectId] : [];
     }
 
     private function filterRequestEntityContext(array $request, User $actor, int $organizationId): array
@@ -2079,7 +2079,9 @@ class AIAssistantService
             $bimScopeMissing = $bimScopeMissing || AssistantEstimateResolver::requiresCurrentProject($requestQuery)
                 || AssistantBimModelSelector::isProjectQuestion(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $requestQuery);
         }
-        if ($toolName === 'assistant_domain_search' && ! array_key_exists('project_id', $args)) {
+        $requestProjectScope = AssistantRequestProjectScope::fromPlan($taskPlan);
+        if ($toolName === 'assistant_domain_search' && ! array_key_exists('project_id', $args)
+            && ! AssistantRequestProjectScope::organizationWide($requestQuery)) {
             $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
             if ($definition !== null && in_array('project_id', $definition->fields, true)) {
                 $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
@@ -2098,7 +2100,23 @@ class AIAssistantService
 
         $toolFailureStage = 'argument_validation';
         try {
-            $this->toolArguments->validate($args, $tool->getParametersSchema());
+            $schema = $tool->getParametersSchema();
+            if ($requestProjectScope->requested && ! $this->permissionChecker->isMutationTool($toolName)) {
+                if ($requestProjectScope->projectId === null) {
+                    return $this->currentProjectScopeUnavailable('current_project_required');
+                }
+                if ($toolName === 'assistant_domain_search' && ($args['entity_type'] ?? null) === 'project') {
+                    return $this->currentProjectScopeUnavailable('current_project_requires_read');
+                }
+                if (isset($schema['properties']['project_id'])) {
+                    $args['project_id'] = $requestProjectScope->projectId;
+                }
+                if (in_array($toolName, ['assistant_domain_read', 'assistant_domain_navigation'], true)
+                    && ($args['entity_type'] ?? null) === 'project') {
+                    $args['id'] = $requestProjectScope->projectId;
+                }
+            }
+            $this->toolArguments->validate($args, $schema);
             $toolFailureStage = 'request_policy';
             $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
             if ($isMutationTool && (! $allowActions || ! $requestUnderstanding instanceof AssistantRequestUnderstanding)) {
@@ -2226,17 +2244,24 @@ class AIAssistantService
                 || !empty($toolResult['error']))) {
                 $this->recordRequestOutcome('service_error');
             }
+            $liveReads = [];
             if (is_array($toolResult) && $this->legacyLiveEvidence !== null) {
                 $toolFailureStage = 'legacy_enrichment';
                 $liveReads = $this->legacyLiveEvidence->read($toolName, $toolResult, $user, $organizationId);
-                foreach ($liveReads as $liveRead) {
-                    $this->activeToolResults[] = $liveRead;
-                }
                 if ($liveReads !== []) {
                     $toolResult['live_entity_reads'] = $liveReads;
                 }
             }
             $toolFailureStage = 'evidence_processing';
+            if (is_array($toolResult) && ! $requestProjectScope->allowsReferences(AssistantRequestProjectScope::references($toolResult),
+                [...$this->activeToolResults, $toolResult])) {
+                $this->recordRequestOutcome('insufficient_data');
+
+                return $this->currentProjectScopeUnavailable('current_project_scope_mismatch');
+            }
+            foreach ($liveReads as $liveRead) {
+                $this->activeToolResults[] = $liveRead;
+            }
             if (AssistantRequestProgress::toolCompleted($toolResult)
                 || ($toolName === 'search_assistant_documents' && is_array($toolResult)
                     && ($toolResult['status'] ?? null) === 'partial' && ($toolResult['source_refs'] ?? []) !== [])) {
@@ -2307,6 +2332,12 @@ class AIAssistantService
             }
             return ['error' => $message];
         }
+    }
+
+    private function currentProjectScopeUnavailable(string $reason): array
+    {
+        return ['status' => 'insufficient_data', 'reason' => $reason, 'needs_clarification' => true,
+            'source_refs' => [], 'server_formatted_answer' => trans_message('ai_assistant_facts.live_proof_required')];
     }
 
     private function queryExceptionDiagnosticMetadata(QueryException $exception): array
