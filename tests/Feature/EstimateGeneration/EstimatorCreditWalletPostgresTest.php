@@ -74,7 +74,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('auditPartitionApprovals')]
-    public function test_real_audit_parts_use_the_original_reserve_and_reject_an_unapproved_expansion(bool $enoughParts): void
+    public function test_real_audit_parts_use_the_original_reserve_and_reject_an_unapproved_expansion(bool $enoughParts, bool $largeContext = false): void
     {
         $this->seedGlobalSettings();
         [$organization, $actor, $scope] = $this->fixture();
@@ -107,13 +107,35 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             httpClient: new \GuzzleHttp\Client(['handler' => $handler]));
         $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class, $wire);
         $items = array_map(static fn (int $index): array => ['key' => 'work:'.$index, 'name' => 'Работа '.$index, 'quantity' => '1', 'unit' => 'm2'], range(1, 65));
+        $facts = $evidence = [];
+        if ($largeContext) {
+            for ($bucket = 0; $bucket < 3; $bucket++) {
+                for ($suffix = 0; ; $suffix++) {
+                    $id = 'fact:context:'.$bucket.':'.$suffix;
+                    if ((int) hexdec(substr(hash('sha256', $id), 0, 7)) % 3 === $bucket) {
+                        break;
+                    }
+                }
+                $facts[] = ['id' => $id, 'value' => str_repeat('x', 200000)];
+                $evidence[] = ['fact_id' => $id, 'locator' => ['page' => $bucket + 1, 'evidence_id' => 'evidence:'.$bucket]];
+            }
+        }
         $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput(
-            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), 0, [], [],
-            ['local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]], [],
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), 0, $facts, [],
+            ['local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]], $evidence,
             \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit::PROMPT_CONTRACT,
             new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $operationId));
         $cycles = app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::class);
-        if (! $enoughParts) {
+        if ($largeContext) {
+            try {
+                $cycles->apply($input);
+                self::fail('An indivisible pathological source reached tokenization or wire.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_audit_context_requires_source_split', $exception->getMessage());
+                self::assertCount(0, $httpHistory);
+                self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+            }
+        } elseif (! $enoughParts) {
             try {
                 $cycles->apply($input);
                 self::fail('The auditor expanded the approved part plan.');
@@ -138,11 +160,11 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
 
     public static function auditPartitionApprovals(): array
     {
-        return [[true], [false]];
+        return [[true], [false], [true, true]];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('engineerPartitionApprovals')]
-    public function test_real_engineer_candidate_identity_matches_the_paid_physical_attempt_and_replays_once(int $linkCount, bool $enoughParts, bool $complex = true): void
+    public function test_real_engineer_candidate_identity_matches_the_paid_physical_attempt_and_replays_once(int $linkCount, bool $enoughParts, bool $complex = true, bool $largeContext = false): void
     {
         $this->seedGlobalSettings();
         [$organization, $actor, $scope] = $this->fixture();
@@ -165,6 +187,12 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 $facts[] = ['id' => 'fact:'.$index.':'.$suffix, 'source_version' => $version, 'current' => true];
             }
             $links[] = ['id' => 'link:room-'.$index, 'fact_ids' => ['fact:'.$index.':a', 'fact:'.$index.':b']];
+        }
+        if ($largeContext) {
+            for ($index = 0; $index < 140; $index++) {
+                $facts[] = ['id' => 'fact:unrelated:'.$index, 'source_version' => $version, 'current' => true,
+                    'entity_id' => 'room:unrelated:'.$index, 'value' => str_repeat('x', 4500)];
+            }
         }
         $parts = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisBatchPlanner)->plan($links, []);
         $responses = [];
@@ -208,6 +236,13 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             self::assertCount(count($parts), $history);
             self::assertSame(count($parts), DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
             self::assertSame(count($parts), DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+            if ($largeContext) {
+                $sent = json_decode((string) $history[0]['request']->getBody(), true, 512, JSON_THROW_ON_ERROR);
+                $sentInput = json_decode($sent['messages'][1]['content'], true, 512, JSON_THROW_ON_ERROR)['project'];
+                self::assertSame(142, $sentInput['context_manifest']['total_facts']);
+                self::assertSame($input->fingerprint(), $sentInput['context_manifest']['parent_fingerprint']);
+                self::assertSame(['fact:0:a', 'fact:0:b'], array_column($sentInput['facts'], 'id'));
+            }
         }
         DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
             ->abort($session->fresh(), $operationId, 'fixture_finished'));
@@ -215,7 +250,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
 
     public static function engineerPartitionApprovals(): array
     {
-        return [[1, true], [65, true], [65, false], [1, false, false]];
+        return [[1, true], [65, true], [65, false], [1, false, false], [1, true, true, true]];
     }
 
     public function test_an_unknown_legacy_paid_balance_keeps_legacy_billing_without_a_new_shared_reserve(): void

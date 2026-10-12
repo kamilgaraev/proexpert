@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditIn
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\TimewebEstimateAuditModel;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
@@ -755,13 +756,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiRoleRunRepository::class),
             $app->make(EstimateAuditModel::class),
             (string) config('estimate-generation.estimate_auditor.model'),
+            (int) config('estimate-generation.estimate_auditor.max_input_bytes'),
         ));
         $this->app->singleton(EstimateAuditInputFactory::class, static fn ($app): EstimateAuditInputFactory => new EstimateAuditInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class),
             (int) config('estimate-generation.estimate_auditor.max_facts'),
         ));
-        $this->app->singleton(ApplyComposerCorrectionCycle::class);
+        $this->app->singleton(ApplyComposerCorrectionCycle::class, static fn ($app): ApplyComposerCorrectionCycle => new ApplyComposerCorrectionCycle(
+            $app->make(RunEstimateAudit::class),
+            $app->make(RunEstimateComposerCorrection::class),
+            max(1, min((int) config('estimate-generation.estimate_auditor.max_input_bytes'),
+                (int) config('estimate-generation.estimate_composer.max_input_bytes')) - 65536),
+        ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore(

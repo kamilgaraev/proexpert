@@ -138,6 +138,7 @@ final readonly class ProjectUnderstandingCoordinator
                 'status' => $quantity->status,
                 'source_version' => $quantity->sourceVersion,
                 'exact_identity' => $quantity->exactIdentity,
+                'operand_fact_ids' => array_column($quantity->operands, 'fact_id'),
             ], $quantities),
             array_map(static fn ($decision): array => [
                 'id' => $decision->id,

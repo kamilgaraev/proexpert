@@ -12,30 +12,39 @@ final readonly class ApplyComposerCorrectionCycle
     public function __construct(
         private RunEstimateAudit $auditor,
         private RunEstimateComposerCorrection $corrector,
+        private int $maximumPartBytes = 458752,
     ) {}
 
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
     public function apply(EstimateAuditInput $root): array
     {
-        $parts = (new EstimateAuditBatchPlanner)->plan($root->draft);
-        if (count($parts) === 1) {
-            return $this->applyPart($root);
-        }
+        $parts = (new EstimateAuditContextPlanner)->prepare($root, $this->maximumPartBytes);
         if ($root->wireScope?->creditOperationId !== null) {
             $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
                 ->where('organization_id', $root->organizationId)->where('project_id', $root->projectId)
                 ->where('session_id', $root->sessionId)->where('operation_id', $root->wireScope->creditOperationId)->first(['processing_plan']);
-            $plan = $operation === null ? [] : json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
-            if (count($parts) > (int) ($plan['audit_part_limit'] ?? 1)) {
+            if ($operation === null) {
+                throw new \InvalidArgumentException('estimate_audit_approved_plan_missing');
+            }
+            $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+            $limit = $plan['audit_part_limit'] ?? (isset($plan['roles']['estimate_audit']) ? 1 : 0);
+            if (! is_int($limit) || $limit < 0 || $limit > EstimateAuditBatchPlanner::MAX_PARTS
+                || ($limit > 0 && ! isset($plan['roles']['estimate_audit']))) {
+                throw new \InvalidArgumentException('estimate_audit_approved_plan_invalid');
+            }
+            if (count($parts) > $limit) {
                 throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
             }
+        }
+        if (count($parts) === 1) {
+            return $this->applyPart($parts[0]['input']);
         }
         $draft = $root->draft;
         $findings = $reviews = $history = [];
         $allAccepted = true;
         $maximumCycles = 0;
         // Validate every serialized part before the first physical audit request.
-        $inputs = array_map(static fn (array $part): EstimateAuditInput => $root->withPart($part['draft'], $part['id']), $parts);
+        $inputs = array_column($parts, 'input');
         foreach ($parts as $partIndex => $part) {
             $outcome = $this->applyPart($inputs[$partIndex]);
             $originalKeys = array_fill_keys($part['work_keys'], true);

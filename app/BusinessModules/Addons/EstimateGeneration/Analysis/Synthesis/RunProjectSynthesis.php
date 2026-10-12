@@ -39,27 +39,17 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         array $candidateQuestions,
     ): ProjectSynthesisSelection {
         $validated = $this->validator->validate(['links' => $candidateLinks, 'questions' => $candidateQuestions], $input);
-        $parts = (new ProjectSynthesisBatchPlanner)->plan($validated['links'], $validated['questions']);
+        $parts = (new ProjectSynthesisContextPlanner)->prepare($input, $validated['links'], $validated['questions'], $this->maxInputBytes);
         $limit = $this->allowance->partLimit($input);
         if ($limit !== null && count($parts) > $limit) {
             throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
         }
         if (count($parts) === 1) {
-            return $this->runPart($input, $validated['links'], $validated['questions']);
-        }
-        $prepared = [];
-        foreach ($parts as $part) {
-            $partInput = $input->withPart($part['id']);
-            $bytes = strlen(json_encode(['project' => $partInput->canonicalPayload(), 'candidate_links' => $part['links'],
-                'candidate_questions' => $part['questions']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-            if ($bytes > $this->maxInputBytes) {
-                throw new InvalidArgumentException('project_synthesis_input_limit_exceeded');
-            }
-            $prepared[] = $partInput;
+            return $this->runPart($parts[0]['input'], $parts[0]['links'], $parts[0]['questions']);
         }
         $links = $questions = [];
-        foreach ($parts as $index => $part) {
-            $selected = $this->runPart($prepared[$index], $part['links'], $part['questions']);
+        foreach ($parts as $part) {
+            $selected = $this->runPart($part['input'], $part['links'], $part['questions']);
             array_push($links, ...$selected->acceptedLinkIds);
             array_push($questions, ...$selected->questionConflictIds);
         }

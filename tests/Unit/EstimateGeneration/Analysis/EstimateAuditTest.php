@@ -34,6 +34,21 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateAuditTest extends TestCase
 {
+    public function test_direct_oversized_audit_is_rejected_before_claim_or_model_attempt(): void
+    {
+        $runs = new InMemoryAiRoleRunRepository;
+        $model = new RecordedEstimateAuditModel([['accepted' => true, 'findings' => []]]);
+        $auditor = new RunEstimateAudit($runs, $model, 'openai/gpt-6-luna', 100);
+        try {
+            $auditor->run($this->input($this->draft([$this->item('work:foundation')])));
+            self::fail('An oversized direct audit was admitted.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('estimate_auditor_input_limit_exceeded', $exception->getMessage());
+            self::assertCount(0, $runs->inputs);
+            self::assertSame(0, $model->calls);
+        }
+    }
+
     public function test_large_audit_really_runs_distinct_parts_preserves_all_context_and_replays_them(): void
     {
         $items = [];

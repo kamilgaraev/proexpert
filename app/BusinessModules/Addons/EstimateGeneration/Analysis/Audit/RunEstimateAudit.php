@@ -24,11 +24,15 @@ final readonly class RunEstimateAudit
         private AiRoleRunRepository $runs,
         private EstimateAuditModel $model,
         private string $modelName,
+        private int $maximumInputBytes = 2097152,
     ) {}
 
     /** @return array{accepted:bool,findings:list<array<string,mixed>>,quarantined_findings:list<array{index:int,reason:string}>} */
     public function run(EstimateAuditInput $input): array
     {
+        if ($input->wireBytes() > $this->maximumInputBytes) {
+            throw new InvalidArgumentException('estimate_auditor_input_limit_exceeded');
+        }
         $runInput = new AiRoleRunInput(
             $input->organizationId,
             $input->projectId,

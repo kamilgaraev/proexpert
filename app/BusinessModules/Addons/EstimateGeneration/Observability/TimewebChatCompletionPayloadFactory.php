@@ -17,7 +17,15 @@ final class TimewebChatCompletionPayloadFactory
     public function make(string $model, array $messages, array $options): array
     {
         $model = LunaModelPolicy::assert($model, 'timeweb');
+        foreach ($messages as $message) {
+            if (is_string($message['content'] ?? null)) {
+                EstimatorTextPayloadBudget::guard($message['content']);
+            }
+        }
         $prepared = (new TokenBudgetService())->prepare($messages, (array) ($options['tools'] ?? []), (string) ($options['profile'] ?? 'detailed'));
+        if ($prepared['messages'] !== array_values($messages)) {
+            throw new \DomainException('estimate_text_context_cannot_be_trimmed');
+        }
         return [
             'model' => $model,
             'messages' => $prepared['messages'],

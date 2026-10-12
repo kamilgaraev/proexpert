@@ -14,8 +14,11 @@ final class ProjectSynthesisBatchPlanner
 
     public const MAX_PARTS = 64;
 
-    public function plan(array $links, array $questions): array
+    public function plan(array $links, array $questions, int $candidatesPerPart = self::CANDIDATES_PER_PART): array
     {
+        if ($candidatesPerPart < 1 || $candidatesPerPart > self::CANDIDATES_PER_PART) {
+            throw new InvalidArgumentException('project_synthesis_partition_size_invalid');
+        }
         $records = [];
         $seen = [];
         foreach (['links' => $links, 'questions' => $questions] as $kind => $items) {
@@ -32,18 +35,21 @@ final class ProjectSynthesisBatchPlanner
         if (count($records) > self::CANDIDATES_PER_PART * self::MAX_PARTS) {
             throw new InvalidArgumentException('project_synthesis_parts_exceed_limit');
         }
-        if (count($records) <= self::CANDIDATES_PER_PART) {
+        if (count($records) <= $candidatesPerPart) {
             return [['id' => 'whole', 'links' => $links, 'questions' => $questions]];
         }
         usort($records, static fn (array $left, array $right): int => $left['key'] <=> $right['key']);
         $parts = [];
-        foreach (array_chunk($records, self::CANDIDATES_PER_PART) as $chunk) {
+        foreach (array_chunk($records, $candidatesPerPart) as $chunk) {
             $part = ['id' => 'part:'.substr(hash('sha256', CanonicalPipelineJson::encode(array_column($chunk, 'key'))), 0, 40),
                 'links' => [], 'questions' => []];
             foreach ($chunk as $record) {
                 $part[$record['kind']][] = $record['value'];
             }
             $parts[] = $part;
+        }
+        if (count($parts) > self::MAX_PARTS) {
+            throw new InvalidArgumentException('project_synthesis_parts_exceed_limit');
         }
 
         return $parts;

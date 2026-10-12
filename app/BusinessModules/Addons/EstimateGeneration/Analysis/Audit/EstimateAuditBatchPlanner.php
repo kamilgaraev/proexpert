@@ -24,8 +24,11 @@ final class EstimateAuditBatchPlanner
     }
 
     /** @return list<array{id:string,work_keys:list<string>,draft:array<string,mixed>}> */
-    public function plan(array $draft): array
+    public function plan(array $draft, int $worksPerPart = self::WORKS_PER_PART): array
     {
+        if ($worksPerPart < 1 || $worksPerPart > self::WORKS_PER_PART) {
+            throw new InvalidArgumentException('estimate_audit_partition_size_invalid');
+        }
         $locations = [];
         $seen = [];
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $local) {
@@ -44,12 +47,12 @@ final class EstimateAuditBatchPlanner
         if ($locations === [] || count($locations) > self::WORKS_PER_PART * self::MAX_PARTS) {
             throw new InvalidArgumentException('estimate_audit_partition_limit');
         }
-        if (count($locations) <= self::WORKS_PER_PART) {
+        if (count($locations) <= $worksPerPart) {
             return [['id' => 'whole', 'work_keys' => array_column($locations, 'key'), 'draft' => $draft]];
         }
         usort($locations, static fn (array $left, array $right): int => $left['order'] <=> $right['order']);
         $parts = [];
-        foreach (array_chunk($locations, self::WORKS_PER_PART) as $chunk) {
+        foreach (array_chunk($locations, $worksPerPart) as $chunk) {
             $projection = $draft;
             $projection['local_estimates'] = [];
             foreach ($chunk as $location) {
@@ -72,6 +75,9 @@ final class EstimateAuditBatchPlanner
             $keys = array_column($chunk, 'key');
             $parts[] = ['id' => 'part:'.substr(hash('sha256', CanonicalPipelineJson::encode(array_column($chunk, 'order'))), 0, 40),
                 'work_keys' => $keys, 'draft' => $projection];
+        }
+        if (count($parts) > self::MAX_PARTS) {
+            throw new InvalidArgumentException('estimate_audit_partition_limit');
         }
 
         return $parts;
