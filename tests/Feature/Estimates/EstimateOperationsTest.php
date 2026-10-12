@@ -466,9 +466,9 @@ final class EstimateOperationsTest extends TestCase
 
     public function test_parent_coefficient_is_applied_once_to_repriced_resource_children(): void
     {
-        [$source, $item] = $this->source('10');
-        $item->update(['is_manual' => false, 'coefficient_total' => '1.5']);
-        $child = EstimateItem::query()->create(['estimate_id' => $source->id, 'parent_work_id' => $item->id, 'position_number' => '1.1', 'name' => 'Материал', 'item_type' => 'material', 'measurement_unit_id' => $this->unit->id, 'quantity' => '20', 'quantity_total' => '20', 'quantity_coefficient' => '1', 'unit_price' => '1', 'total_amount' => '20', 'is_manual' => true]);
+        [$source, $item] = $this->source('10', '2');
+        $item->update(['is_manual' => false, 'coefficient_total' => '1.5', 'direct_costs' => '30', 'total_amount' => '30']);
+        $child = EstimateItem::query()->create(['estimate_id' => $source->id, 'parent_work_id' => $item->id, 'position_number' => '1.1', 'name' => 'Материал', 'item_type' => 'material', 'measurement_unit_id' => $this->unit->id, 'quantity' => '20', 'quantity_total' => '20', 'quantity_coefficient' => '1', 'unit_price' => '1', 'direct_costs' => '20', 'total_amount' => '20', 'is_manual' => true]);
         $operation = $this->operations->create($this->actor, $this->project->id, ['mode' => 'reprice', 'source_ids' => [$source->id], 'target_date' => '2026-10-13', 'region_code' => '77', 'overhead_rate' => '10']);
         $this->preview($operation);
         $this->operations->resolve($this->actor, $this->project->id, $operation->id, ['price:'.$source->id.':'.$child->id => ['unit_price' => '10', 'source' => 'Цена материала']]);
@@ -520,6 +520,118 @@ final class EstimateOperationsTest extends TestCase
         self::assertSame(2, $result->items()->count());
         self::assertSame('150.00', $result->total_base_direct_costs);
         self::assertSame('600.00', $result->total_amount);
+    }
+
+    public function test_unit_prefix_does_not_multiply_the_execution_remainder(): void
+    {
+        [$base, $item] = $this->source('5');
+        [$add, $addItem] = $this->source('1');
+        [$subtract, $subItem] = $this->source('2');
+        $unit = MeasurementUnit::query()->firstOrCreate(['organization_id' => $this->actor->current_organization_id, 'short_name' => '100 м3'], ['name' => 'Сто кубометров', 'type' => 'volume']);
+        foreach ([$item, $addItem, $subItem] as $sourceItem) {
+            $sourceItem->update(['quantity_total' => null, 'quantity_coefficient' => '100', 'measurement_unit_id' => $unit->id]);
+        }
+        $this->act($item, '4');
+        $operation = $this->adjust($base, $add, $subtract);
+        $this->preview($operation);
+        self::assertSame('needs_resolution', $operation->fresh()->status);
+        self::assertContains('execution_exceeded', $this->conflictCodes($operation));
+        $subItem->update(['quantity' => '1', 'direct_costs' => '5', 'total_amount' => '5']);
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, [], true);
+        $this->operations->process($operation->id, 2, false);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('25.00', $operation->fresh()->summary['total_amount']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'unit-prefix');
+        $this->operations->process($operation->id, 2, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0])->items()->firstOrFail();
+        self::assertSame('5.00000000', $result->quantity);
+        self::assertSame('5.00000000', $result->quantity_total);
+        self::assertSame('100.00000000', $result->quantity_coefficient);
+        self::assertNull($item->fresh()->quantity_total);
+    }
+
+    public function test_stored_total_quantity_preserves_its_relationship_with_raw_quantity(): void
+    {
+        [$base, $item] = $this->source('100');
+        [$add, $addItem] = $this->source('10');
+        [$subtract, $subItem] = $this->source('5');
+        foreach ([[$item, '200', '1000'], [$addItem, '20', '100'], [$subItem, '10', '50']] as [$sourceItem, $quantity, $amount]) {
+            $sourceItem->update(['quantity_total' => $quantity, 'quantity_coefficient' => '2', 'direct_costs' => $amount, 'total_amount' => $amount]);
+        }
+        $this->act($item, '190');
+        $operation = $this->adjust($base, $add, $subtract);
+        $this->preview($operation);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('1050.00', $operation->fresh()->summary['total_amount']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'stored-total');
+        $this->operations->process($operation->id, 1, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0])->items()->firstOrFail();
+        self::assertSame('105.00000000', $result->quantity);
+        self::assertSame('210.00000000', $result->quantity_total);
+    }
+
+    public function test_repriced_equipment_in_manual_work_is_separate_from_direct_costs_and_fees(): void
+    {
+        [$source, $item] = $this->source('10', '90');
+        $item->update(['direct_costs' => '1000', 'equipment_cost' => '100', 'labor_cost' => '300', 'materials_cost' => '500', 'machinery_cost' => '100', 'overhead_amount' => '90', 'profit_amount' => '60', 'total_amount' => '1150']);
+        $child = EstimateItem::query()->create(['estimate_id' => $source->id, 'parent_work_id' => $item->id, 'position_number' => '1.1', 'name' => 'Оборудование', 'item_type' => 'equipment', 'measurement_unit_id' => $this->unit->id, 'quantity' => '1', 'quantity_total' => '1', 'unit_price' => '100', 'total_amount' => '100', 'is_manual' => true]);
+        $before = $item->fresh()->attributesToArray();
+        $operation = $this->operations->create($this->actor, $this->project->id, ['mode' => 'reprice', 'source_ids' => [$source->id], 'target_date' => '2026-10-13', 'region_code' => '77', 'vat_rate' => '20']);
+        $this->preview($operation);
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, [
+            'price:'.$source->id.':'.$item->id => ['unit_price' => '90', 'source' => 'Прямые затраты работы'],
+            'price:'.$source->id.':'.$child->id => ['unit_price' => '200', 'source' => 'Прайс оборудования'],
+        ]);
+        $this->operations->process($operation->id, 2, false);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('1250.00', $operation->fresh()->summary['total_amount']);
+        self::assertSame('1500.00', $operation->fresh()->summary['total_amount_with_vat']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'equipment-in-work');
+        $this->operations->process($operation->id, 2, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0]);
+        self::assertSame('900.00', $result->total_direct_costs);
+        self::assertSame('200.00', $result->total_equipment_costs);
+        self::assertSame('90.00', $result->total_overhead_costs);
+        self::assertSame('60.00', $result->total_estimated_profit);
+        self::assertSame($before, $item->fresh()->attributesToArray());
+    }
+
+    public function test_partial_resource_breakdown_cannot_replace_the_full_work_price(): void
+    {
+        [$source, $item] = $this->source('10');
+        $item->update(['is_manual' => false]);
+        $child = EstimateItem::query()->create(['estimate_id' => $source->id, 'parent_work_id' => $item->id, 'position_number' => '1.1', 'name' => 'Материал', 'item_type' => 'material', 'measurement_unit_id' => $this->unit->id, 'quantity' => '20', 'quantity_total' => '20', 'unit_price' => '1', 'direct_costs' => '20', 'total_amount' => '20', 'is_manual' => true]);
+        $operation = $this->operations->create($this->actor, $this->project->id, ['mode' => 'reprice', 'source_ids' => [$source->id], 'target_date' => '2026-10-13', 'region_code' => '77']);
+        $this->preview($operation);
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, ['price:'.$source->id.':'.$child->id => ['unit_price' => '10', 'source' => 'Цена материала']]);
+        $this->operations->process($operation->id, 2, false);
+        self::assertSame('needs_resolution', $operation->fresh()->status);
+        self::assertContains('basis_missing', $this->conflictCodes($operation));
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, ['price:'.$source->id.':'.$item->id => ['unit_price' => '30', 'source' => 'Подтверждённая полная цена работы']]);
+        $this->operations->process($operation->id, 3, false);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('300.00', $operation->fresh()->summary['total_amount']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'partial-resources');
+        $this->operations->process($operation->id, 3, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0]);
+        self::assertSame('300.00', $result->total_amount);
+        self::assertSame(2, $result->items()->count());
+    }
+
+    public function test_equipment_without_breakdown_requires_its_own_confirmed_price(): void
+    {
+        [$source, $item] = $this->source('10', '90');
+        $item->update(['equipment_cost' => '100', 'total_amount' => '1000']);
+        $operation = $this->operations->create($this->actor, $this->project->id, ['mode' => 'reprice', 'source_ids' => [$source->id], 'target_date' => '2026-10-13', 'region_code' => '77']);
+        $this->preview($operation);
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, ['price:'.$source->id.':'.$item->id => ['unit_price' => '100', 'source' => 'Прямые затраты работы']]);
+        $this->operations->process($operation->id, 2, false);
+        self::assertSame('needs_resolution', $operation->fresh()->status);
+        self::assertContains('price_missing', $this->conflictCodes($operation));
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, ['price:'.$source->id.':'.$item->id.':equipment' => ['unit_price' => '20', 'source' => 'Оборудование на единицу работы']]);
+        $this->operations->process($operation->id, 3, false);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('1200.00', $operation->fresh()->summary['total_amount']);
     }
 
     private function source(string $quantity, string $price = '5'): array

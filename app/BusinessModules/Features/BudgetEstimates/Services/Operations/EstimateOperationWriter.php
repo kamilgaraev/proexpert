@@ -138,7 +138,7 @@ final class EstimateOperationWriter
         $attributes = array_merge($attributes, [
             'estimate_id' => $estimate->id, 'estimate_section_id' => $sectionId, 'parent_work_id' => $parentId, 'stable_key' => (string) Str::uuid(),
             'actual_quantity' => null, 'actual_unit_price' => null, 'procurement_status' => 'pending',
-            'metadata' => array_merge($attributes['metadata'] ?? [], ['operation' => ['id' => $operation->id, 'sources' => $sources, 'source_node' => $node['key'], 'price_source' => $node['price_source'] ?? null]]),
+            'metadata' => array_merge($attributes['metadata'] ?? [], ['operation' => ['id' => $operation->id, 'sources' => $sources, 'source_node' => $node['key'], 'price_source' => $node['price_source'] ?? null, 'equipment_price_source' => $node['equipment_price_source'] ?? null]]),
         ]);
         $item = new EstimateItem($attributes);
         $item->forceFill(array_intersect_key($node['attributes'], array_flip(['code', 'machinery_id', 'labor_resource_id', 'base_overhead_amount', 'base_profit_amount', 'overhead_rate', 'profit_rate', 'base_machinery_labor_cost'])));
