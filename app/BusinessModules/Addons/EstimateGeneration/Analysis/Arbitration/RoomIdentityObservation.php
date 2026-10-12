@@ -10,10 +10,14 @@ final class RoomIdentityObservation
 {
     public function name(ObservationClaim $claim): ?string
     {
-        $name = $claim->value['data'] ?? null;
-        if ($claim->factType !== 'room_name' || $claim->unit !== null
-            || ($claim->value['type'] ?? null) !== 'string'
-            || FactVocabulary::entityType($claim->entityKey) !== 'room'
+        return $claim->factType === 'room_name' ? self::label($claim->entityKey, $claim->value, $claim->unit) : null;
+    }
+
+    public static function label(string $entityKey, array $value, ?string $unit): ?string
+    {
+        $name = $value['data'] ?? null;
+        if ($unit !== null || ($value['type'] ?? null) !== 'string'
+            || FactVocabulary::entityType($entityKey) !== 'room'
             || ! is_string($name) || ! mb_check_encoding($name, 'UTF-8')) {
             return null;
         }

@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationQuestionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationReviewController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationRoomIdentityController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Http\Controllers\EstimateNormativeStatusController;
 use Illuminate\Support\Facades\Route;
@@ -57,6 +58,8 @@ Route::middleware([
         Route::post('/{session}/evaluation/confirm-scenario', [EstimateGenerationEvaluationController::class, 'confirmScenario'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.confirm-scenario');
         Route::get('/{session}/evaluation/price-sources', [EstimateGenerationEvaluationController::class, 'sources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.price-sources');
         Route::get('/{session}/evaluation/quantity-sources', [EstimateGenerationEvaluationController::class, 'quantitySources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.quantity-sources');
+        Route::get('/{session}/evaluation/room-identities', [EstimateGenerationRoomIdentityController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.room-identities');
+        Route::post('/{session}/evaluation/room-identity', [EstimateGenerationRoomIdentityController::class, 'confirm'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.room-identity');
         Route::post('/{session}/evaluation/pricing-source', [EstimateGenerationEvaluationController::class, 'pricingSource'])->middleware('authorize:estimate_generation.generate,project,project')->name('evaluation.pricing-source');
         Route::get('/{session}/analysis-basis', [EstimateGenerationAnalysisBasisController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('analysis-basis.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');

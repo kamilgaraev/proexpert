@@ -87,7 +87,7 @@ final readonly class ProjectModelEvidenceWriter
                     $supportingClaim = $byId[$supportingClaimId]
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
-                    if ($decision->status === 'accepted' && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
+                    if (($decision->status === 'accepted' || $claim->factType === 'room_name') && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
                         continue;
                     }
                     if ($supportingClaim->evidenceRef === null
@@ -133,6 +133,11 @@ final readonly class ProjectModelEvidenceWriter
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
+                $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
+                if ($roomIdentityFact) {
+                    // A repeated room label is not proof that separate photographs show the same room.
+                    $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
+                }
                 $entityScope = (new ClaimSemanticMatcher)->entityScope($claim);
                 $entityIdentity .= $entityScope;
                 foreach (['floor_id' => 'floor_id', 'zone_id' => 'zone_id'] as $locatorField => $attribute) {
@@ -143,7 +148,6 @@ final readonly class ProjectModelEvidenceWriter
                 $visualInventoryFact = in_array($claim->factType, [
                     'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
                 ], true) || ($claim->factType === 'equipment' && $this->isPlanObservation($claim));
-                $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
                 $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted' || $visualInventoryFact || $roomIdentityFact
                     ? [$projection['type'], $entityIdentity]
                     : [
@@ -177,7 +181,7 @@ final readonly class ProjectModelEvidenceWriter
                         $scope->sourceVersion,
                         $projection['type'],
                         $entityId,
-                        $entityScope === '' ? $legacyEntityIds : [],
+                        $entityScope === '' && ! $roomIdentityFact ? $legacyEntityIds : [],
                     );
                 }
                 $entities[$entityId] = new Entity(

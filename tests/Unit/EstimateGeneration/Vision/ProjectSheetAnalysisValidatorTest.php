@@ -18,6 +18,29 @@ use Tests\Support\DatabaseLessTestCase;
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
     #[Test]
+    public function identity_labels_pass_the_real_sheet_contract_without_accepting_dimensions(): void
+    {
+        foreach (['plan', 'explication', 'unknown'] as $role) {
+            $payload = $this->payload($role, 'room_name');
+            $payload['facts'][0]['value'] = ['type' => 'string', 'data' => 'Помещение на фото'];
+            $payload['facts'][0]['unit'] = null;
+            $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+            self::assertCount(1, $analysis->facts);
+            self::assertSame([], $analysis->quarantinedItems);
+            self::assertSame('room_name', $analysis->facts[0]['factType']);
+            self::assertNull($analysis->facts[0]['unit']);
+            foreach ([['unit' => 'm2'], ['value' => ['type' => 'number', 'data' => '20']],
+                ['entityKey' => 'wall-1'], ['value' => ['type' => 'string', 'data' => str_repeat('а', 241)]]] as $invalid) {
+                $malformed = $payload;
+                $malformed['facts'][0] = [...$malformed['facts'][0], ...$invalid];
+                $rejected = ProjectSheetAnalysisData::fromProviderArray($malformed, ['page-1']);
+                self::assertSame([], $rejected->facts);
+                self::assertSame('invalid_room_identity_observation', $rejected->quarantinedItems[0]['reason']);
+            }
+        }
+    }
+
+    #[Test]
     public function plan_preserves_typed_visual_inventory_objects_for_server_side_scope_classification(): void
     {
         foreach (['sanitary_fixture', 'kitchen_fixture', 'equipment', 'furniture', 'unknown_fixture'] as $index => $factType) {
