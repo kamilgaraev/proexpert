@@ -115,4 +115,11 @@ class ConstructionJournalEntryPolicy
         return $entry->journal?->status === JournalStatusEnum::ACTIVE
             && app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canApprove($user, $entry);
     }
+
+    public function assignContract(User $user, ConstructionJournalEntry $entry): bool
+    {
+        return ! $entry->isReportingEntry()
+            && $entry->status === \App\Enums\ConstructionJournal\JournalEntryStatusEnum::APPROVED
+            && app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canApprove($user, $entry);
+    }
 }

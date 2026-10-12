@@ -5,6 +5,7 @@ return [
         'work_volume_unnamed' => 'Работа без наименования',
     ],
     'actions' => [
+        'assign_contract' => 'Назначить договор строке',
         'update_report' => 'Комментарий к отчёту',
         'include_in_journal' => 'Включить в свой журнал',
         'upload_attachment' => 'Добавить фото',

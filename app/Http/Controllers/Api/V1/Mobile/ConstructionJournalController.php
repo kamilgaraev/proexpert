@@ -227,6 +227,8 @@ class ConstructionJournalController extends Controller
 
             return MobileResponse::success(
                 $this->mobileJournalService->buildEntriesList($user, $journal, $request->only([
+                    'contract_id',
+                    'unassigned_only',
                     'status',
                     'date',
                     'date_from',

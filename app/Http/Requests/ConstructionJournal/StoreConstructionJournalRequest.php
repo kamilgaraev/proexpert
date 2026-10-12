@@ -11,7 +11,7 @@ class StoreConstructionJournalRequest extends ConstructionJournalFormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
             'journal_number' => ['nullable', 'string', 'max:50'],
-            'contract_id' => ['required', 'integer', 'exists:contracts,id'],
+            'contract_id' => ['nullable', 'integer', 'exists:contracts,id'],
             'start_date' => ['required', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'status' => ['prohibited'],

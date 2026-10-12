@@ -18,7 +18,7 @@ class UpdateConstructionJournalRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:255'],
             'journal_number' => ['sometimes', 'nullable', 'string', 'max:50'],
-            'contract_id' => ['sometimes', 'required', 'integer', 'exists:contracts,id'],
+            'contract_id' => ['sometimes', 'nullable', 'integer', 'exists:contracts,id'],
             'start_date' => ['sometimes', 'date'],
             'end_date' => ['sometimes', 'nullable', 'date'],
             'status' => ['prohibited'],

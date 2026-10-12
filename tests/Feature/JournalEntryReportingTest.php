@@ -105,7 +105,6 @@ final class JournalEntryReportingTest extends TestCase
             'no_permission' => $this->deniedUser = $actor->id,
             'foreign_target' => $target->update(['project_id' => Project::factory()->create(['organization_id' => $project->organization_id])->id]),
             'wrong_performer' => $target = $journals[0],
-            'no_contract' => $target->update(['contract_id' => null]),
             'closed_target' => $target->update(['status' => 'closed']),
         };
         $count = ConstructionJournalEntry::query()->count();
@@ -119,7 +118,20 @@ final class JournalEntryReportingTest extends TestCase
 
     public static function deniedCases(): array
     {
-        return array_map(static fn (string $case): array => [$case], ['draft_source', 'distant_parent', 'sibling', 'own_source', 'inactive_participant', 'inactive_membership', 'unassigned', 'no_permission', 'foreign_target', 'wrong_performer', 'no_contract', 'closed_target']);
+        return array_map(static fn (string $case): array => [$case], ['draft_source', 'distant_parent', 'sibling', 'own_source', 'inactive_participant', 'inactive_membership', 'unassigned', 'no_permission', 'foreign_target', 'wrong_performer', 'closed_target']);
+    }
+
+    public function test_report_can_be_included_in_project_journal_without_default_contract(): void
+    {
+        [$source, $journals, $users] = $this->fixture();
+        $journals[1]->update(['contract_id' => null]);
+        $factsBefore = CompletedWork::query()->get()->map->getAttributes()->all();
+        $service = app(JournalEntryReportingService::class);
+        self::assertSame([$journals[1]->id], array_column($service->targets($users[1], $source), 'id'));
+        $report = $service->include($users[1], $source, $journals[1]->id);
+        $service->assertReady($report);
+        self::assertSame($source->id, $report->source_entry_snapshot['origin']['id']);
+        self::assertSame($factsBefore, CompletedWork::query()->get()->map->getAttributes()->all());
     }
 
     public function test_report_facts_cannot_be_changed_and_export_uses_snapshot_without_persisting_rows(): void

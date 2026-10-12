@@ -21,6 +21,8 @@ Route::middleware([
         ->name('construction-journals.form-options');
     Route::post('/construction-journals', [ConstructionJournalController::class, 'store'])->name('construction-journals.store');
     Route::get('/construction-journals/{journal}', [ConstructionJournalController::class, 'show'])->name('construction-journals.show');
+    Route::patch('/construction-journals/{journal}/entries/{entry}/rows/{rowType}/{rowId}/contract', [\App\Http\Controllers\Api\V1\Mobile\JournalRowContractController::class, 'update'])
+        ->whereIn('rowType', ['work-volumes', 'materials', 'equipment', 'workers'])->whereNumber('rowId');
     Route::put('/construction-journals/{journal}', [ConstructionJournalController::class, 'update'])->name('construction-journals.update');
     Route::post('/construction-journals/{journal}/close', [ConstructionJournalController::class, 'close'])->name('construction-journals.close');
     Route::post('/construction-journals/{journal}/archive', [ConstructionJournalController::class, 'archive'])->name('construction-journals.archive');

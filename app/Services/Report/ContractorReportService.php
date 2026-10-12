@@ -678,6 +678,7 @@ class ContractorReportService
 
         // Получаем выполненные работы
         $completedWorksQuery = CompletedWork::where('contract_id', $contract->id)
+            ->physicalFacts()
             ->where('status', 'confirmed');
         
         if ($projectId !== null) {

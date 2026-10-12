@@ -12,6 +12,7 @@ class JournalWorker extends Model
 
     protected $fillable = [
         'journal_entry_id',
+        'contract_id',
         'estimate_item_id',
         'specialty',
         'workers_count',
@@ -19,6 +20,7 @@ class JournalWorker extends Model
     ];
 
     protected $casts = [
+        'contract_id' => 'integer',
         'workers_count' => 'integer',
         'hours_worked' => 'decimal:8',
     ];
@@ -33,5 +35,10 @@ class JournalWorker extends Model
     public function estimateItem(): BelongsTo
     {
         return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
+    }
+
+    public function contract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class);
     }
 }

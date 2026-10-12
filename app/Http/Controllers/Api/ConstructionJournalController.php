@@ -245,7 +245,9 @@ class ConstructionJournalController extends Controller
 
             $journal->loadCount(ConstructionJournalPayloadService::journalCountRelations());
 
-            $query = $journal->entries()
+            $filters = $request->only(['status', 'date', 'date_from', 'date_to', 'contract_id', 'unassigned_only']);
+            $entryQueries = app(\App\Services\ConstructionJournal\JournalEntryQueryService::class);
+            $query = $entryQueries->query($journal, $filters)
                 ->with(ConstructionJournalPayloadService::ENTRY_RELATIONS)
                 ->with(['journal' => fn ($query) => $query->withCount(ConstructionJournalPayloadService::journalCountRelations())])
                 ->withCount('completedWorks');
@@ -274,7 +276,7 @@ class ConstructionJournalController extends Controller
             $this->payloadService->prepareEntryPage($pageEntries);
 
             $data = $pageEntries
-                ->map(fn (ConstructionJournalEntry $entry): array => $this->payloadService->mapEntry($entry, $request->user()))
+                ->map(fn (ConstructionJournalEntry $entry): array => $entryQueries->filterPayload($this->payloadService->mapEntry($entry, $request->user()), $filters))
                 ->values()
                 ->all();
 
@@ -284,7 +286,7 @@ class ConstructionJournalController extends Controller
                 null,
                 200,
                 array_merge(
-                    $this->payloadService->buildEntrySummary($journal),
+                    $entryQueries->summary($journal, $filters),
                     ['available_actions' => $this->payloadService->buildJournalActions($journal, $request->user())]
                 )
             );

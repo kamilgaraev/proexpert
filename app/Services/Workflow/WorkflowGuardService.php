@@ -81,11 +81,14 @@ class WorkflowGuardService
                 continue;
             }
 
-            if (! $includeOverridable) {
+            if (! $includeOverridable || $volume->contract_id === null) {
                 continue;
             }
 
-            $coverage = $this->coverageService->resolve($entry->journal, $volume->estimateItem);
+            $coverageJournal = clone $entry->journal;
+            $coverageJournal->contract_id = $volume->contract_id;
+            $coverageJournal->unsetRelation('contract');
+            $coverage = $this->coverageService->resolve($coverageJournal, $volume->estimateItem);
             $status = $coverage['contract_coverage_status'] ?? null;
 
             if ($status === JournalContractCoverageService::STATUS_COVERED) {

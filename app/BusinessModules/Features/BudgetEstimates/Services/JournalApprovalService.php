@@ -186,60 +186,58 @@ class JournalApprovalService
         ];
     }
 
-    private function assertEntryQuantitiesAvailable(ConstructionJournalEntry $entry): void
+    public function assertEntryQuantitiesAvailable(ConstructionJournalEntry $entry): void
     {
-        $entry->loadMissing('journal.contract', 'workVolumes');
+        $entry->loadMissing('journal', 'workVolumes', 'materials', 'equipment', 'workers');
+        $assignments = app(\App\Services\ConstructionJournal\JournalRowContractService::class);
+        foreach (['workVolumes', 'materials', 'equipment', 'workers'] as $relation) {
+            foreach ($entry->{$relation} as $row) {
+                $assignments->assertAssignment($entry->journal, $row->contract_id, $row->estimate_item_id);
+            }
+        }
         $requestedByItem = $entry->workVolumes
             ->filter(static fn (JournalWorkVolume $volume): bool => $volume->estimate_item_id !== null)
             ->groupBy('estimate_item_id')
-            ->map(static fn ($volumes): float => (float) $volumes->sum('quantity'))
             ->sortKeys();
 
-        foreach ($requestedByItem as $estimateItemId => $requested) {
+        $reservations = app(\App\Services\ConstructionJournal\JournalQuantityReservationService::class)
+            ->forJournal($entry->journal, $entry->id, $requestedByItem->keys()->all());
+
+        foreach ($requestedByItem as $estimateItemId => $volumes) {
             $item = EstimateItem::query()
                 ->with('contractLinks')
                 ->whereKey((int) $estimateItemId)
                 ->lockForUpdate()
                 ->firstOrFail();
             $planned = (float) ($item->quantity_total ?? $item->quantity ?? 0);
-            $contractId = $entry->journal?->contract_id;
-            $contractPlanned = $planned;
-            if ($contractId) {
-                $contractLinks = $item->contractLinks->where('contract_id', (int) $contractId);
-                if ($contractLinks->isEmpty()) {
+            $itemReservations = $reservations[$estimateItemId] ?? ['total' => 0.0, 'contracts' => []];
+            $totalReserved = $itemReservations['total'];
+            $this->assertQuantityAvailable(
+                (float) $volumes->sum('quantity'),
+                $planned,
+                $totalReserved,
+                $planned,
+                $totalReserved,
+            );
+
+            foreach ($volumes->whereNotNull('contract_id')->groupBy('contract_id')->sortKeys() as $contractId => $contractVolumes) {
+                $links = $item->contractLinks->where('contract_id', (int) $contractId);
+                if ($links->isEmpty()) {
                     throw new DomainException(trans_message('construction_journal.errors.volume_not_covered_by_contract'));
                 }
-                $contractPlanned = (float) $contractLinks->sum('quantity');
+                $contractPlanned = (float) $links->sum('quantity');
                 if ($contractPlanned <= 0) {
                     throw new DomainException(trans_message('construction_journal.errors.contract_quantity_not_agreed'));
                 }
+                $contractReserved = $itemReservations['contracts'][(int) $contractId] ?? 0.0;
+                $this->assertQuantityAvailable(
+                    (float) $contractVolumes->sum('quantity'),
+                    $planned,
+                    $totalReserved,
+                    $contractPlanned,
+                    $contractReserved,
+                );
             }
-
-            $reservedQuery = JournalWorkVolume::query()
-                ->where('estimate_item_id', (int) $estimateItemId)
-                ->where('journal_entry_id', '!=', $entry->id)
-                ->whereHas('journalEntry', static function ($query): void {
-                    $query->whereIn('status', [
-                        JournalEntryStatusEnum::SUBMITTED,
-                        JournalEntryStatusEnum::APPROVED,
-                    ]);
-                });
-            $totalReserved = (float) (clone $reservedQuery)->sum('quantity');
-            $contractReserved = $contractId
-                ? (float) (clone $reservedQuery)
-                    ->whereHas('journalEntry.journal', static function ($query) use ($contractId): void {
-                        $query->where('contract_id', (int) $contractId);
-                    })
-                    ->sum('quantity')
-                : $totalReserved;
-
-            $this->assertQuantityAvailable(
-                (float) $requested,
-                $planned,
-                $totalReserved,
-                $contractPlanned,
-                $contractReserved,
-            );
         }
     }
 
