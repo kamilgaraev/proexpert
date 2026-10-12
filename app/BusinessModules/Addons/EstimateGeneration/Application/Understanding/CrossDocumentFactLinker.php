@@ -114,6 +114,11 @@ final readonly class CrossDocumentFactLinker
                     continue;
                 }
                 if ($this->arbitrator === null) {
+                    $operationIdentity = $this->operationIdentity($subject, $right, $strategy, $matchKey);
+                    $links[$operationIdentity] = $this->unresolvedLinkData([$subject, ...$right], $strategy, $matchKey,
+                        $operationIdentity, 'source_confirmation_required');
+                    $questions['confirmation:'.$operationIdentity] = $this->conflictResolver->unresolvedQuestion(
+                        'confirmation:'.$operationIdentity, [$subject, ...$right], $evidenceById);
                     $limitations[] = $this->conflictResolver->insufficientEvidence();
 
                     continue;

@@ -40,27 +40,38 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         continue;
                     }
                     $quantityKey = $item['metadata']['quantity_key'] ?? $item['quantity_basis_details']['key'] ?? null;
+                    $explicitQuantity = $session !== null && isset($session->input_payload['quantity_selections'][$item['key']]);
+                    if ($explicitQuantity) {
+                        $quantityKey = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding::key($item['key']);
+                        $item['metadata']['quantity_key'] = $quantityKey;
+                    }
                     $quantity = is_string($quantityKey) ? $this->mapper->map($quantityKey, $quantities) : null;
+                    if (! $explicitQuantity && ($item['metadata']['quantity_reset_required'] ?? false) === true) {
+                        $quantity = null;
+                    }
                     $expectedEntity = $item['quantity_basis_details']['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
-                    if ($quantity !== null && is_string($expectedEntity) && ($quantity->formulaInputs['entity_id'] ?? null) !== $expectedEntity) {
+                    if (! $explicitQuantity && $quantity !== null && is_string($expectedEntity) && ($quantity->formulaInputs['entity_id'] ?? null) !== $expectedEntity) {
                         $quantity = null;
                     }
                     $oldUnit = $item['unit'] ?? null;
                     $oldAmount = $item['quantity'] ?? null;
-                    unset($item['quantity_evidence_id'], $item['quantity_evidence_fingerprint'], $item['quantity_evidence_source_version']);
+                    unset($item['quantity_evidence_id'], $item['quantity_evidence_fingerprint'], $item['quantity_evidence_source_version'], $item['quantity_evidence']);
                     $item['quantity'] = null;
                     $item['quantity_status'] = 'unknown';
                     $item['quantity_basis_details'] = null;
                     if ($quantity !== null && $quantity->reviewBlockers === [] && is_string($oldUnit)) {
                         $factor = NormativeUnitNormalizer::safeQuantityFactorDecimal($quantity->unit, $oldUnit);
                         if ($factor !== null) {
-                            $amount = (string) BigDecimal::of($quantity->amount)->multipliedBy($factor);
+                            $amount = (string) BigDecimal::of($quantity->amount)->multipliedBy($factor)->strippedOfTrailingZeros();
                             $quantity = new QuantityData($quantity->key, $oldUnit, $amount, $quantity->formulaKey, $quantity->formulaVersion,
                                 $quantity->formulaInputs, $quantity->source, $quantity->evidenceIds, $quantity->modelVersion, $quantity->assumptions);
                             $item['quantity'] = $amount;
                             $item['quantity_status'] = $quantity->assumptions === [] ? 'supported' : 'assumed';
                             $item['quantity_evidence'] = $quantity->toArray();
                             $item['quantity_basis_details'] = $quantity->toArray();
+                            $item['validation_flags'] = array_values(array_diff($item['validation_flags'] ?? [], ['quantity_review_required']));
+                            $item['flags'] = array_values(array_diff($item['flags'] ?? [], ['quantity_review_required']));
+                            unset($item['metadata']['requires_quantity_confirmation']);
                             $node = $this->evidence->materialize($context, $quantity, $item);
                             $item['quantity_evidence_id'] = $node->id;
                             $item['quantity_evidence_fingerprint'] = $node->fingerprint;

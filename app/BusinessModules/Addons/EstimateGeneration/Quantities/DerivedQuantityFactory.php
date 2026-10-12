@@ -23,6 +23,7 @@ final class DerivedQuantityFactory
         'sloped_roof_area' => ['plan_areas', 'slope_rises', 'slope_runs'],
         'earthwork_volume' => ['area', 'depth'],
         'direct_floor_area' => ['measurement'],
+        'direct_quantity' => ['measurement'],
         'technology_work_package' => ['base_quantity', 'coefficient'],
     ];
 
@@ -89,6 +90,18 @@ final class DerivedQuantityFactory
         $target = $entities[$entityId] ?? null;
         if (! $target instanceof Entity) {
             return $this->unresolved('entity_missing', 'entity', $entityId);
+        }
+        $quantityBinding = null;
+        $quantityBindingDecision = null;
+        if ($formula === 'direct_quantity') {
+            $quantityBinding = $facts[$request['quantity_binding_fact_id'] ?? ''] ?? null;
+            $quantityBindingDecision = $decisionIndex[$request['quantity_binding_decision_id'] ?? ''] ?? null;
+            $source = $quantityBinding instanceof Fact && $quantityBindingDecision instanceof Decision
+                ? (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding)->source($snapshot, $quantityBinding, $quantityBindingDecision) : null;
+            if ($source === null || ($requestedOperands['measurement'] ?? null) !== $source->id || $source->entityId !== $target->id
+                || ($request['quantity_id'] ?? null) !== $quantityBinding->value['quantity_key']) {
+                return $this->unresolved('quantity_binding_missing_or_stale', 'measurement');
+            }
         }
         $geometryIssues = $this->validateGeometryInputs(
             $formula,
@@ -213,6 +226,9 @@ final class DerivedQuantityFactory
             $evidenceIds = [...$evidenceIds, ...$operand['evidence_ids']];
         }
         $evidenceIds = array_values(array_unique($evidenceIds));
+        if ($quantityBinding instanceof Fact) {
+            $evidenceIds = array_values(array_unique([...$evidenceIds, ...$quantityBinding->evidenceIds]));
+        }
         $coverages = is_array($request['geometry_coverages'] ?? null) ? $request['geometry_coverages'] : [];
         foreach ($coverages as $coverage) {
             foreach (is_array($coverage) ? ($coverage['evidence_ids'] ?? []) : [] as $coverageEvidenceId) {
@@ -235,6 +251,11 @@ final class DerivedQuantityFactory
             ];
             $operand['snapshot_identity'] = $snapshotIdentity;
             $operand['technology_decision_id'] = $technologyDecisionId;
+            if ($quantityBinding instanceof Fact && $quantityBindingDecision instanceof Decision) {
+                $operand['quantity_binding'] = ['fact_id' => $quantityBinding->id, 'fact_version' => $quantityBinding->version,
+                    'decision_id' => $quantityBindingDecision->id, 'work_item_key' => $quantityBinding->value['work_item_key'],
+                    'evidence_ids' => $quantityBinding->evidenceIds];
+            }
         }
         unset($operand);
         $metadataBytes = strlen(json_encode([$flatOperands, $snapshotIdentity], JSON_THROW_ON_ERROR));
@@ -409,7 +430,8 @@ final class DerivedQuantityFactory
             }
         }
         $evidencePayload = [];
-        $documentNumber = $verifiedDocumentNumber = false;
+        $documentNumber = $fact->origin === 'document';
+        $verifiedDocumentNumber = false;
         foreach ($fact->evidenceIds as $evidenceId) {
             $item = $evidence[$evidenceId] ?? null;
             if (! $item instanceof Evidence
@@ -427,7 +449,7 @@ final class DerivedQuantityFactory
                 'native_reference' => $item->nativeReference,
             ];
             $documentNumber = $documentNumber || ($fact->origin === 'document' && $item->sourceType === 'document');
-            $verifiedDocumentNumber = $verifiedDocumentNumber || ($item->sourceType === 'document' && in_array($item->producerName, ['native_numeric_parser', 'pdf_geometry'], true));
+            $verifiedDocumentNumber = $verifiedDocumentNumber || (new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof)->matches($fact, $item);
         }
         if ($documentNumber && ! $verifiedDocumentNumber) {
             return ['issue' => $this->issue('document_number_requires_confirmation', $role, $fact->id)];
@@ -563,6 +585,9 @@ final class DerivedQuantityFactory
         if ($fact->status !== 'confirmed') {
             return 'operand_not_confirmed';
         }
+        if (! in_array($fact->origin, ['document', 'user_input', 'user_assumption'], true)) {
+            return 'operand_origin_requires_confirmation';
+        }
         if (! is_string($fact->value) && ! is_int($fact->value)) {
             return 'decimal_value_required';
         }
@@ -581,7 +606,8 @@ final class DerivedQuantityFactory
         if ($fact->evidenceIds === []) {
             return 'evidence_missing_or_replaced';
         }
-        $documentNumber = $verifiedDocumentNumber = false;
+        $documentNumber = $fact->origin === 'document';
+        $verifiedDocumentNumber = false;
         foreach ($fact->evidenceIds as $evidenceId) {
             $item = $evidence[$evidenceId] ?? null;
             if (! $item instanceof Evidence
@@ -590,7 +616,7 @@ final class DerivedQuantityFactory
                 return 'evidence_missing_or_replaced';
             }
             $documentNumber = $documentNumber || ($fact->origin === 'document' && $item->sourceType === 'document');
-            $verifiedDocumentNumber = $verifiedDocumentNumber || ($item->sourceType === 'document' && in_array($item->producerName, ['native_numeric_parser', 'pdf_geometry'], true));
+            $verifiedDocumentNumber = $verifiedDocumentNumber || (new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\NativeNumericFactProof)->matches($fact, $item);
         }
         if ($documentNumber && ! $verifiedDocumentNumber) {
             return 'document_number_requires_confirmation';
@@ -858,7 +884,7 @@ final class DerivedQuantityFactory
         return match ($formula) {
             'floor_area' => $this->decimal($resolved['length'][0])->multipliedBy($this->decimal($resolved['width'][0])),
             'earthwork_volume' => $this->decimal($resolved['area'][0])->multipliedBy($this->decimal($resolved['depth'][0])),
-            'direct_floor_area' => $this->decimal($resolved['measurement'][0]),
+            'direct_floor_area', 'direct_quantity' => $this->decimal($resolved['measurement'][0]),
             'technology_work_package' => $technologyOperation === 'identity'
                 ? $this->decimal($resolved['base_quantity'][0])
                 : $this->decimal($resolved['base_quantity'][0])->multipliedBy($this->decimal($resolved['coefficient'][0])),
@@ -900,6 +926,7 @@ final class DerivedQuantityFactory
         return match ($formula) {
             'earthwork_volume' => 'm3',
             'technology_work_package' => $resolved['base_quantity'][0]['unit'],
+            'direct_quantity' => $resolved['measurement'][0]['unit'],
             default => 'm2',
         };
     }
@@ -909,12 +936,13 @@ final class DerivedQuantityFactory
         if ($role === 'coefficient') {
             return 'count';
         }
-        if ($formula === 'technology_work_package' && $role === 'base_quantity') {
+        if (($formula === 'technology_work_package' && $role === 'base_quantity') || $formula === 'direct_quantity') {
             return match ($outputUnit) {
                 'm' => 'length',
                 'm2' => 'area',
                 'm3' => 'volume',
                 'item', 'count' => 'count',
+                'kg' => 'mass', 'h' => 'time',
                 default => 'unknown',
             };
         }
@@ -927,17 +955,18 @@ final class DerivedQuantityFactory
 
     private function outputUnitIsCompatible(string $formula, array $resolved, string $requested): bool
     {
-        if ($formula !== 'technology_work_package') {
+        if (! in_array($formula, ['technology_work_package', 'direct_quantity'], true)) {
             return $requested === $this->outputUnit($formula, $resolved);
         }
 
-        $actual = $resolved['base_quantity'][0]['compatibility_group'] ?? null;
+        $actual = $resolved[$formula === 'direct_quantity' ? 'measurement' : 'base_quantity'][0]['compatibility_group'] ?? null;
 
         return $actual === match ($requested) {
             'm' => 'length',
             'm2' => 'area',
             'm3' => 'volume',
             'item', 'count' => 'count',
+            'kg' => 'mass', 'h' => 'time',
             default => null,
         };
     }
@@ -945,7 +974,7 @@ final class DerivedQuantityFactory
     private function canonicalUnit(string $group): string
     {
         return match ($group) {
-            'length' => 'm', 'area' => 'm2', 'volume' => 'm3', 'count' => 'count',
+            'length' => 'm', 'area' => 'm2', 'volume' => 'm3', 'count' => 'count', 'mass' => 'kg', 'time' => 'h',
         };
     }
 

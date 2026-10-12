@@ -56,6 +56,20 @@ final readonly class ApplyProjectModelDecision
         return $decision;
     }
 
+    public function applyTechnologyReselectionChoice(int $organizationId, int $projectId, int $sessionId, string $sourceVersion,
+        string $originalFactId, mixed $value, string $actorId, string $reason, string $decisionId,
+        string $expectedFactId, string $expectedDecisionId, string $inputFingerprint): Decision
+    {
+        [$decision, $selected] = $this->build($organizationId, $projectId, $sessionId, $sourceVersion, $originalFactId,
+            $value, null, $actorId, $reason, $decisionId);
+        if (! $this->models instanceof TechnologyReselectionRepository
+            || ! $this->models->applyTechnologyReselection($decision, $selected, $expectedFactId, $expectedDecisionId, $inputFingerprint)) {
+            throw new InvalidArgumentException('Technology selection changed before reselection persistence.');
+        }
+
+        return $decision;
+    }
+
     public function applyClarificationChoice(
         int $organizationId,
         int $projectId,

@@ -52,6 +52,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
                 'logical_attempt' => $context->logicalAttempt,
                 'state_version' => $context->stateVersion,
                 'generation_attempt_id' => $context->generationAttemptId,
+                'credit_operation_id' => $context->creditOperationId,
                 'candidate_set_hash' => $candidateSet->hash(), 'prompt_version' => $context->promptVersion,
                 'schema_version' => $context->schemaVersion, 'model_version' => $context->modelVersion,
                 'dataset_versions' => [$candidateSet->datasetVersion],

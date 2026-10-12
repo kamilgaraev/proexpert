@@ -87,8 +87,14 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             'problem_flags' => $draft['problem_flags'] ?? [],
             'last_error' => null,
         ]);
-        $this->quota->confirmUsableDraft($published);
-        if ($publishable) {
+        if ($claim->context->creditOperationId !== null) {
+            $creditReceipt = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                ->publish($published, $claim->context->creditOperationId, $draft);
+            $published->update(['analysis_payload' => [...($published->analysis_payload ?? []), 'credit_operation_receipt' => $creditReceipt]]);
+        } else {
+            $this->quota->confirmUsableDraft($published);
+        }
+        if ($publishable && $claim->context->creditOperationId === null) {
             $this->targetedRebuilds->scheduleAfterPublishedDraft($published, $draft);
         }
         $artifactHash = $result->output?->artifact->contentVersion ?? $result->outputVersion;

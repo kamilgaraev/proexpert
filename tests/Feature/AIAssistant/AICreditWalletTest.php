@@ -22,16 +22,21 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Mockery;
-use Tests\TestCase;
 use Tests\Support\IsolatedPostgresTestDatabase;
+use Tests\TestCase;
 
 final class AICreditWalletTest extends TestCase
 {
     private AICreditService $credits;
+
     private Organization $organization;
+
     private User $user;
+
     private ?string $approvalPath = null;
+
     private ?string $connectionName = null;
+
     private ?array $originalConnectionConfiguration = null;
 
     public function refreshDatabase(): void {}
@@ -44,14 +49,77 @@ final class AICreditWalletTest extends TestCase
         config()->set('database.connections.'.$this->connectionName, IsolatedPostgresTestDatabase::configuration());
         DB::purge($this->connectionName);
         DB::connection($this->connectionName);
-        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'organization_resource_allocations', 'commercial_orders', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) { Schema::dropIfExists($table); }
-        Schema::create('organizations', function (Blueprint $table): void { $table->id(); $table->string('name'); $table->boolean('is_active')->default(true); $table->boolean('is_verified')->default(true); $table->timestamps(); $table->softDeletes(); });
-        Schema::create('users', function (Blueprint $table): void { $table->id(); $table->string('name'); $table->string('email'); $table->string('password'); $table->boolean('is_active')->default(true); $table->unsignedBigInteger('current_organization_id')->nullable(); $table->timestamps(); $table->softDeletes(); });
-        Schema::create('organization_user', function (Blueprint $table): void { $table->id(); $table->foreignId('organization_id'); $table->foreignId('user_id'); $table->boolean('is_active')->default(true); $table->boolean('is_owner')->default(true); $table->timestamps(); });
-        Schema::create('commercial_orders', function (Blueprint $table): void { $table->id(); $table->uuid('public_id'); $table->foreignId('organization_id'); $table->foreignId('commercial_account_id')->nullable(); $table->foreignId('user_id'); $table->string('kind'); $table->string('status'); $table->bigInteger('amount_minor'); $table->string('currency')->default('RUB'); $table->jsonb('selected_resource_addons')->nullable(); $table->timestampTz('period_start_at')->nullable(); $table->timestampTz('period_end_at')->nullable(); $table->timestamps(); });
-        Schema::create('organization_commercial_accounts', function (Blueprint $table): void { $table->id(); $table->foreignId('organization_id'); $table->string('status'); $table->timestampTz('current_period_start_at')->nullable(); $table->timestampTz('current_period_end_at')->nullable(); $table->timestamps(); });
-        Schema::create('modules', function (Blueprint $table): void { $table->id(); $table->string('slug'); $table->jsonb('limits')->nullable(); $table->timestamps(); });
-        Schema::create('organization_resource_allocations', function (Blueprint $table): void { $table->id(); $table->foreignId('organization_id'); $table->string('resource_slug'); $table->string('limit_key'); $table->string('source'); $table->string('status'); $table->decimal('quantity'); $table->timestampTz('period_start_at')->nullable(); $table->timestampTz('period_end_at')->nullable(); $table->jsonb('metadata')->nullable(); $table->timestamps(); });
+        foreach (['ai_credit_provider_usages', 'ai_credit_ledger_entries', 'ai_credit_reservation_allocations', 'ai_credit_reservations', 'ai_credit_quotes', 'ai_credit_lots', 'ai_credit_wallets', 'organization_user', 'organization_resource_allocations', 'commercial_orders', 'organization_commercial_accounts', 'modules', 'users', 'organizations'] as $table) {
+            Schema::dropIfExists($table);
+        }
+        Schema::create('organizations', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->boolean('is_active')->default(true);
+            $table->boolean('is_verified')->default(true);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        Schema::create('users', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('email');
+            $table->string('password');
+            $table->boolean('is_active')->default(true);
+            $table->unsignedBigInteger('current_organization_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        Schema::create('organization_user', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('user_id');
+            $table->boolean('is_active')->default(true);
+            $table->boolean('is_owner')->default(true);
+            $table->timestamps();
+        });
+        Schema::create('commercial_orders', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('public_id');
+            $table->foreignId('organization_id');
+            $table->foreignId('commercial_account_id')->nullable();
+            $table->foreignId('user_id');
+            $table->string('kind');
+            $table->string('status');
+            $table->bigInteger('amount_minor');
+            $table->string('currency')->default('RUB');
+            $table->jsonb('selected_resource_addons')->nullable();
+            $table->timestampTz('period_start_at')->nullable();
+            $table->timestampTz('period_end_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->string('status');
+            $table->timestampTz('current_period_start_at')->nullable();
+            $table->timestampTz('current_period_end_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('modules', function (Blueprint $table): void {
+            $table->id();
+            $table->string('slug');
+            $table->jsonb('limits')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('organization_resource_allocations', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->string('resource_slug');
+            $table->string('limit_key');
+            $table->string('source');
+            $table->string('status');
+            $table->decimal('quantity');
+            $table->timestampTz('period_start_at')->nullable();
+            $table->timestampTz('period_end_at')->nullable();
+            $table->jsonb('metadata')->nullable();
+            $table->timestamps();
+        });
         (require database_path('migrations/2026_09_29_000006_create_ai_credit_tables.php'))->up();
         $this->organization = Organization::withoutEvents(fn () => Organization::query()->create(['name' => 'Кредиты']));
         $this->user = User::withoutEvents(fn () => User::query()->create(['name' => 'Владелец', 'email' => 'credits@example.test', 'password' => 'password', 'is_active' => true, 'current_organization_id' => $this->organization->id]));
@@ -190,7 +258,11 @@ final class AICreditWalletTest extends TestCase
     {
         $this->credits->grant($this->organization, 300, 'purchase', null, 'pack');
         $this->reserve();
-        try { $this->reserve(); $this->fail('Expected insufficient balance.'); } catch (DomainException) {}
+        try {
+            $this->reserve();
+            $this->fail('Expected insufficient balance.');
+        } catch (DomainException) {
+        }
         $this->assertSame(1, AICreditReservation::query()->count());
         $this->assertSame(100, $this->credits->balance($this->organization)['available_minor']);
         $request = $this->request();
@@ -211,8 +283,18 @@ final class AICreditWalletTest extends TestCase
         try {
             DB::setDefaultConnection('credit_competitor');
             DB::statement("SET lock_timeout = '100ms'");
-            try { $this->credits->grant($this->organization, 1000, 'purchase', null, 'competing-pack'); $this->fail('Expected wallet lock contention.'); } catch (QueryException $exception) { $this->assertSame('55P03', $exception->errorInfo[0]); }
-            try { $this->reserve(); $this->fail('Expected reserve lock contention.'); } catch (QueryException $exception) { $this->assertSame('55P03', $exception->errorInfo[0]); }
+            try {
+                $this->credits->grant($this->organization, 1000, 'purchase', null, 'competing-pack');
+                $this->fail('Expected wallet lock contention.');
+            } catch (QueryException $exception) {
+                $this->assertSame('55P03', $exception->errorInfo[0]);
+            }
+            try {
+                $this->reserve();
+                $this->fail('Expected reserve lock contention.');
+            } catch (QueryException $exception) {
+                $this->assertSame('55P03', $exception->errorInfo[0]);
+            }
         } finally {
             DB::setDefaultConnection($connectionName);
             $original->rollBack();
@@ -244,13 +326,69 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(2, AICreditLedgerEntry::query()->where('type', 'refund')->count());
     }
 
+    public function test_estimator_only_paid_period_uses_the_same_included_grant_after_assistant_activation(): void
+    {
+        $assistantEnabled = false;
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->with($this->organization->id, 'ai-assistant')->andReturnUsing(function () use (&$assistantEnabled): bool {
+            return $assistantEnabled;
+        });
+        $entitlements->shouldReceive('hasModuleAccess')->with($this->organization->id, 'ai-estimates')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $period = $this->order('purchase', 100000, [], now()->startOfMonth(), now()->addMonth()->startOfMonth());
+        $commercial->settlePaidOrder($period);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $assistantEnabled = true;
+        $commercial->settlePaidOrder($period);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(1, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_future_paid_period_does_not_grant_before_its_start(): void
+    {
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldNotReceive('hasModuleAccess');
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $commercial->settlePaidOrder($this->order('purchase', 100000, [], now()->addMonth()->startOfMonth(), now()->addMonths(2)->startOfMonth()));
+        $this->assertSame(0, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(0, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+    }
+
+    public function test_new_product_reconciles_only_a_proven_current_paid_period_once(): void
+    {
+        $entitlements = Mockery::mock(OrganizationEntitlementService::class);
+        $entitlements->shouldReceive('hasModuleAccess')->with($this->organization->id, 'ai-assistant')->andReturn(false);
+        $entitlements->shouldReceive('hasModuleAccess')->with($this->organization->id, 'ai-estimates')->andReturn(true);
+        $commercial = new AICreditCommercialService($this->credits, $entitlements);
+        $start = now()->startOfMonth();
+        $end = now()->addMonth()->startOfMonth();
+        $account = \App\Models\OrganizationCommercialAccount::query()->create(['organization_id' => $this->organization->id,
+            'status' => 'active', 'current_period_start_at' => $start, 'current_period_end_at' => $end]);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(0, $this->credits->balance($this->organization)['included_minor']);
+        $order = $this->order('purchase', 100000, [], $start, $end);
+        $order->forceFill(['commercial_account_id' => $account->id, 'status' => 'pending_payment'])->save();
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(0, $this->credits->balance($this->organization)['included_minor']);
+        $order->forceFill(['status' => 'paid'])->save();
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $commercial->reconcileCurrentPaidPeriod($this->organization);
+        $this->assertSame(500000, $this->credits->balance($this->organization)['included_minor']);
+        $this->assertSame(1, AICreditLedgerEntry::query()->where('type', 'grant')->count());
+        $this->assertEquals($end, \App\Models\Credits\AICreditLot::query()->firstOrFail()->expires_at);
+    }
+
     public function test_foreign_actor_cannot_use_quote_and_paid_grant_requires_paid_event(): void
     {
         $other = User::withoutEvents(fn () => User::query()->create(['name' => 'Чужой', 'email' => 'foreign@example.test', 'password' => 'password']));
         DB::table('organization_user')->insert(['organization_id' => $this->organization->id, 'user_id' => $other->id, 'is_active' => true, 'is_owner' => false]);
         $request = $this->request();
         $quote = $this->credits->quote($this->organization, $this->user, $request);
-        try { $this->credits->begin($this->organization, $other, $quote['quote_id'], $request['request_id'], null, $request); $this->fail('Expected actor isolation.'); } catch (DomainException) {}
+        try {
+            $this->credits->begin($this->organization, $other, $quote['quote_id'], $request['request_id'], null, $request);
+            $this->fail('Expected actor isolation.');
+        } catch (DomainException) {
+        }
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
         $commercial = new AICreditCommercialService($this->credits, $entitlements);
         $order = $this->order('ai_credits', 100000, [['slug' => 'ai-credits-1000', 'units_minor' => 100000, 'amount_minor' => 100000]]);
@@ -262,7 +400,11 @@ final class AICreditWalletTest extends TestCase
     public function test_grant_key_rejects_conflicting_amount_and_provider_cost_cannot_mutate_closed_task(): void
     {
         $this->credits->grant($this->organization, 1000, 'purchase', null, 'immutable-pack');
-        try { $this->credits->grant($this->organization, 2000, 'purchase', null, 'immutable-pack'); $this->fail('Expected grant conflict.'); } catch (DomainException) {}
+        try {
+            $this->credits->grant($this->organization, 2000, 'purchase', null, 'immutable-pack');
+            $this->fail('Expected grant conflict.');
+        } catch (DomainException) {
+        }
         $reservation = $this->reserve();
         $this->credits->cancel($reservation);
         $this->expectException(DomainException::class);
@@ -362,12 +504,18 @@ final class AICreditWalletTest extends TestCase
         $this->assertSame(0, $this->credits->finalize($reservation));
         $this->assertSame(100, $this->credits->calculatedChargeMinor($reservation));
         $this->assertSame(0, $this->credits->balance($this->organization)['total_minor']);
-        try { $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, array_replace($request, ['page_count' => 8])); $this->fail('Expected immutable page count.'); } catch (DomainException) {}
+        try {
+            $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, array_replace($request, ['page_count' => 8]));
+            $this->fail('Expected immutable page count.');
+        } catch (DomainException) {
+        }
     }
 
     protected function tearDown(): void
     {
-        if ($this->approvalPath !== null && is_file($this->approvalPath)) { unlink($this->approvalPath); }
+        if ($this->approvalPath !== null && is_file($this->approvalPath)) {
+            unlink($this->approvalPath);
+        }
         if ($this->connectionName !== null && $this->originalConnectionConfiguration !== null) {
             DB::purge($this->connectionName);
             config()->set('database.connections.'.$this->connectionName, $this->originalConnectionConfiguration);
@@ -453,7 +601,21 @@ final class AICreditWalletTest extends TestCase
         $this->assertNotEmpty($this->credits->quote($this->organization, $this->user, $this->request())['quote_id']);
     }
 
-    private function request(): array { return ['request_id' => (string) Str::uuid(), 'message' => 'Покажи баланс', 'profile' => 'short']; }
-    private function reserve(): AICreditReservation { $request = $this->request(); $quote = $this->credits->quote($this->organization, $this->user, $request); return $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request); }
-    private function order(string $kind, int $amount, array $packs, ?\DateTimeInterface $start = null, ?\DateTimeInterface $end = null): CommercialOrder { return CommercialOrder::query()->create(['public_id' => (string) Str::uuid(), 'organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'commercial_account_id' => 1, 'status' => 'paid', 'kind' => $kind, 'amount_minor' => $amount, 'selected_resource_addons' => $packs, 'period_start_at' => $start ?? now(), 'period_end_at' => $end ?? now()]); }
+    private function request(): array
+    {
+        return ['request_id' => (string) Str::uuid(), 'message' => 'Покажи баланс', 'profile' => 'short'];
+    }
+
+    private function reserve(): AICreditReservation
+    {
+        $request = $this->request();
+        $quote = $this->credits->quote($this->organization, $this->user, $request);
+
+        return $this->credits->begin($this->organization, $this->user, $quote['quote_id'], $request['request_id'], null, $request);
+    }
+
+    private function order(string $kind, int $amount, array $packs, ?\DateTimeInterface $start = null, ?\DateTimeInterface $end = null): CommercialOrder
+    {
+        return CommercialOrder::query()->create(['public_id' => (string) Str::uuid(), 'organization_id' => $this->organization->id, 'user_id' => $this->user->id, 'commercial_account_id' => 1, 'status' => 'paid', 'kind' => $kind, 'amount_minor' => $amount, 'selected_resource_addons' => $packs, 'period_start_at' => $start ?? now(), 'period_end_at' => $end ?? now()]);
+    }
 }

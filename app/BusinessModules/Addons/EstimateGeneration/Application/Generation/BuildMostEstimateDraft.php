@@ -13,7 +13,7 @@ use JsonException;
 
 final class BuildMostEstimateDraft
 {
-    private const CONTRACT = 'most_ordinary_estimate:v1';
+    public const CONTRACT = 'most_ordinary_estimate:v1';
 
     private const MAX_CANDIDATE_ROWS = 1000;
 
@@ -245,11 +245,16 @@ final class BuildMostEstimateDraft
             if (! is_array($operand)) {
                 return false;
             }
-            foreach (['organization_id', 'project_id', 'session_id', 'source_version'] as $key) {
+            foreach (['organization_id', 'project_id', 'session_id'] as $key) {
                 if (! array_key_exists($key, $scope) || ! array_key_exists($key, $operand)
                     || $operand[$key] !== $scope[$key]) {
                     return false;
                 }
+            }
+            $versions = $scope['source_versions'] ?? [$scope['source_version'] ?? null];
+            if (! is_array($versions) || $versions === [] || count($versions) > 10001
+                || ! is_string($operand['source_version'] ?? null) || ! in_array($operand['source_version'], $versions, true)) {
+                return false;
             }
         }
 
@@ -299,7 +304,22 @@ final class BuildMostEstimateDraft
             && ($price['version_id'] ?? null) === ($region['estimate_regional_price_version_id'] ?? null)
             && is_string($price['source_reference'] ?? null)
             && is_string($price['captured_at'] ?? null)
-            && ($workItem['pricing_finalized_at'] ?? null) === $price['captured_at'];
+            && ($price['currency'] ?? null) === 'RUB'
+            && $this->sameTimestamp($workItem['pricing_finalized_at'] ?? null, $price['captured_at']);
+    }
+
+    private function sameTimestamp(mixed $left, mixed $right): bool
+    {
+        if (! is_string($left) || ! is_string($right) || strlen($left) > 80 || strlen($right) > 80
+            || preg_match('/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T/', $left) !== 1
+            || preg_match('/\A[0-9]{4}-[0-9]{2}-[0-9]{2}T/', $right) !== 1) {
+            return false;
+        }
+        try {
+            return (new \DateTimeImmutable($left))->format('U.u') === (new \DateTimeImmutable($right))->format('U.u');
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /** @param mixed $price @param array<string, mixed> $workItem */

@@ -34,6 +34,7 @@ final readonly class EstimateComposerInputFactory
         array $derivedQuantities,
         array $missingDocuments,
         ?AiSessionWireScope $wireScope = null,
+        array $allowedWorkSections = [],
     ): EstimateComposerInput {
         $capture = $this->models->snapshotForPlanning(
             $organizationId,
@@ -82,10 +83,11 @@ final readonly class EstimateComposerInputFactory
             missingDocuments: $missingDocuments,
             contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
             wireScope: $wireScope,
+            allowedWorkSections: $allowedWorkSections,
         );
     }
 
-    /** @param array<string, mixed> $quantity @return array{id:string,value:string,unit:string} */
+    /** @param array<string, mixed> $quantity @return array<string, mixed> */
     private function derivedQuantity(array $quantity): array
     {
         $id = $quantity['id'] ?? $quantity['key'] ?? null;
@@ -98,7 +100,20 @@ final readonly class EstimateComposerInputFactory
             throw new InvalidArgumentException('estimate_composer_derived_quantity_invalid');
         }
 
-        return ['id' => $id, 'value' => (string) $value, 'unit' => $unit];
+        $formula = is_array($quantity['formula_inputs'] ?? null) ? $quantity['formula_inputs'] : [];
+        $entityId = $formula['entity_id'] ?? null;
+        $factIds = [];
+        foreach (is_array($formula['operands'] ?? null) ? $formula['operands'] : [] as $operand) {
+            if (is_array($operand) && is_string($operand['fact_id'] ?? null)) {
+                $factIds[] = $operand['fact_id'];
+            }
+        }
+        $factIds = array_values(array_unique($factIds));
+        sort($factIds, SORT_STRING);
+
+        return ['id' => $id, 'value' => (string) $value, 'unit' => $unit,
+            ...(is_string($entityId) ? ['entity_id' => $entityId] : []),
+            ...($factIds === [] ? [] : ['operand_fact_ids' => $factIds])];
     }
 
     /** @return array<string, mixed> */

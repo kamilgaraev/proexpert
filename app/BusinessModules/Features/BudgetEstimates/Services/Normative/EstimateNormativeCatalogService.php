@@ -130,6 +130,8 @@ class EstimateNormativeCatalogService
                     'materials_cost' => $totals['materials'],
                     'machinery_cost' => $totals['machinery'],
                     'labor_cost' => $totals['labor'],
+                    'other_cost' => $totals['other'],
+                    'equipment_cost' => $totals['equipment'],
                     'labor_hours' => $totals['labor_hours'],
                     'machinery_hours' => $totals['machinery_hours'],
                     'direct_costs' => $totals['total'],
@@ -302,6 +304,8 @@ class EstimateNormativeCatalogService
                 'materials_cost' => $itemType === EstimatePositionItemType::MATERIAL->value ? $total : 0,
                 'machinery_cost' => $itemType === EstimatePositionItemType::MACHINERY->value ? $total : 0,
                 'labor_cost' => $itemType === EstimatePositionItemType::LABOR->value ? $total : 0,
+                'other_cost' => $itemType === EstimatePositionItemType::OTHER->value ? $total : 0,
+                'equipment_cost' => $itemType === EstimatePositionItemType::EQUIPMENT->value ? $total : 0,
                 'total_amount' => $total,
                 'current_total_amount' => $total,
                 'is_manual' => false,
@@ -318,7 +322,7 @@ class EstimateNormativeCatalogService
                 'finance_representation' => 'child',
                 'represented_by_item_id' => $child->id,
                 'estimate_item_id' => $work->id,
-                'resource_type' => $itemType === EstimatePositionItemType::MACHINERY->value ? 'equipment' : $itemType,
+                'resource_type' => $itemType,
                 'name' => $resource['name'] ?? $resource['resource_code'],
                 'description' => $resource['resource_code'],
                 'measurement_unit_id' => $this->resolveMeasurementUnitId($organizationId, (string) $resource['unit']),
@@ -350,6 +354,8 @@ class EstimateNormativeCatalogService
             'materials' => 0.0,
             'machinery' => 0.0,
             'labor' => 0.0,
+            'other' => 0.0,
+            'equipment' => 0.0,
             'total' => 0.0,
             'labor_hours' => 0.0,
             'machinery_hours' => 0.0,
@@ -366,6 +372,10 @@ class EstimateNormativeCatalogService
             } elseif ($itemType === EstimatePositionItemType::LABOR->value) {
                 $totals['labor'] += $total;
                 $totals['labor_hours'] += $quantity;
+            } elseif ($itemType === EstimatePositionItemType::OTHER->value) {
+                $totals['other'] += $total;
+            } elseif ($itemType === EstimatePositionItemType::EQUIPMENT->value) {
+                $totals['equipment'] += $total;
             } else {
                 $totals['materials'] += $total;
             }
@@ -379,6 +389,8 @@ class EstimateNormativeCatalogService
     private function estimateItemType(string $resourceType): string
     {
         return match ($resourceType) {
+            'other' => EstimatePositionItemType::OTHER->value,
+            'equipment' => EstimatePositionItemType::EQUIPMENT->value,
             EstimateResourceType::MACHINE->value => EstimatePositionItemType::MACHINERY->value,
             EstimateResourceType::LABOR->value, EstimateResourceType::MACHINE_LABOR->value => EstimatePositionItemType::LABOR->value,
             default => EstimatePositionItemType::MATERIAL->value,

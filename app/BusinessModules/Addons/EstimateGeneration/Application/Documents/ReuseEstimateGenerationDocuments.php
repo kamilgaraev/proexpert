@@ -34,9 +34,13 @@ final class ReuseEstimateGenerationDocuments
         int $sourceSessionId,
         User $user,
     ): UploadDocumentsResult {
+        if (DB::transactionLevel() !== 0) {
+            throw new \LogicException('document_reuse_requires_operation_transaction_boundary');
+        }
+        $batch = new UnpublishedDocumentObjectBatch((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
         $created = collect();
         try {
-            return DB::transaction(function () use ($session, $expectedVersion, $sourceSessionId, $user, &$created): UploadDocumentsResult {
+            return DB::transaction(function () use ($session, $expectedVersion, $sourceSessionId, $user, &$created, $batch): UploadDocumentsResult {
                 $session = EstimateGenerationSession::query()->whereKey($session->getKey())
                     ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
                     ->lockForUpdate()->firstOrFail();
@@ -82,14 +86,10 @@ final class ReuseEstimateGenerationDocuments
                     throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_file_limit_exceeded']);
                 }
                 foreach ($missingDocuments as $document) {
-                    $meta = is_array($document->meta) ? $document->meta : [];
-                    $extension = strtolower((string) ($meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
-                    if (! $settings->allowsFormat($extension)) {
-                        throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_format_disabled']);
-                    }
+                    (new DocumentFileAdmission)->stored($document, $settings);
                 }
 
-                $documents = $this->parsing->reuseDocuments($session, $missingDocuments, $user);
+                $documents = $this->parsing->reuseDocuments($session, $missingDocuments, $user, $batch);
                 $created = $documents;
                 $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
                 $session = $session->fresh(['documents']) ?? $session->load('documents');
@@ -102,6 +102,7 @@ final class ReuseEstimateGenerationDocuments
             }, 1);
         } catch (Throwable $exception) {
             $this->parsing->rollbackStoredDocuments($session, $created);
+            app(UnpublishedDocumentCleanupJournal::class)->recordBatch($batch);
             throw $exception;
         }
     }

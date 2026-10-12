@@ -316,6 +316,7 @@ class EstimateConstructorService
 
     private function assertMutable(Estimate $estimate): void
     {
+        (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($estimate);
         if ($estimate->isApproved()) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'estimate' => trans_message('estimate.structure_locked'),

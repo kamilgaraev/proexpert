@@ -89,6 +89,10 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
             if ($unit === null || (int) $unit->dispatch_attempt_count >= DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS) {
                 return false;
             }
+            if ((\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $unit->organization_id) || isset($unit->metadata['credit_operation_id']))
+                && ! app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorDocumentCreditBinding::class)->canDispatch($unit)) {
+                return false;
+            }
 
             $dispatch();
             $unit->forceFill([
@@ -105,6 +109,21 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
     private function due(DateTimeImmutable $now): Builder
     {
         return $this->query()
+            ->when(config('estimate-generation.credits.enabled', false), static fn (Builder $query): Builder => $query->where(static function (Builder $eligible): void {
+                $eligible->where(static fn (Builder $free) => DocumentUnitPaidWirePolicy::freeEligibility($free))
+                    ->orWhere('status', DocumentProcessingUnitStatus::Completed->value)
+                    ->orWhereExists(static fn ($operations) => $operations->selectRaw('1')->from('estimate_generation_credit_operations as credit_operations')
+                        ->whereRaw("credit_operations.operation_id::text = estimate_generation_processing_units.metadata->>'credit_operation_id'")
+                        ->whereColumn('credit_operations.organization_id', 'estimate_generation_processing_units.organization_id')
+                        ->whereColumn('credit_operations.project_id', 'estimate_generation_processing_units.project_id')
+                        ->whereColumn('credit_operations.session_id', 'estimate_generation_processing_units.session_id')
+                        ->whereIn('credit_operations.status', ['reserved', 'running']))
+                    ->orWhereExists(static fn ($allocations) => $allocations->selectRaw('1')->from('organization_resource_allocations as legacy_allocations')
+                        ->whereColumn('legacy_allocations.organization_id', 'estimate_generation_processing_units.organization_id')
+                        ->where('legacy_allocations.limit_key', 'ai_estimates_month')->where('legacy_allocations.status', 'active')->where('legacy_allocations.quantity', '>', 0)
+                        ->where(static fn ($period) => $period->whereNull('legacy_allocations.period_start_at')->orWhere('legacy_allocations.period_start_at', '<=', now()))
+                        ->where(static fn ($period) => $period->whereNull('legacy_allocations.period_end_at')->orWhere('legacy_allocations.period_end_at', '>', now())));
+            }))
             ->where('dispatch_attempt_count', '<', DispatchDocumentProcessingUnits::MAX_DISPATCH_ATTEMPTS)
             ->whereHas('document.session', static fn (Builder $query): Builder => $query
                 ->whereNotIn('status', ['cancelled', 'archived', 'applied', 'applying'])

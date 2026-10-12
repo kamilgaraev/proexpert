@@ -27,6 +27,8 @@ final readonly class ProjectSynthesisInput
         public array $roleFingerprints,
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
+        public string $partId = 'whole',
+        public array $contextManifest = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || $sourceVersions === [] || ! array_is_list($sourceVersions)
@@ -39,6 +41,14 @@ final readonly class ProjectSynthesisInput
             if (! is_string($sourceVersion) || preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1) {
                 throw new InvalidArgumentException('project_synthesis_source_version_invalid');
             }
+        }
+        if ($partId !== 'whole' && preg_match('/\Apart:[a-f0-9]{40}\z/', $partId) !== 1) {
+            throw new InvalidArgumentException('project_synthesis_part_identity_invalid');
+        }
+        if ($contextManifest !== [] && (($contextManifest['contract'] ?? null) !== 'project-context-slice:v1'
+            || preg_match('/^[a-f0-9]{64}$/D', (string) ($contextManifest['parent_fingerprint'] ?? '')) !== 1
+            || ! is_int($contextManifest['total_facts'] ?? null) || $contextManifest['total_facts'] < count($facts))) {
+            throw new InvalidArgumentException('project_synthesis_context_manifest_invalid');
         }
         foreach ($roleFingerprints as $fingerprints) {
             if (! array_is_list($fingerprints)) {
@@ -54,7 +64,12 @@ final readonly class ProjectSynthesisInput
 
     public function fingerprint(): string
     {
-        return hash('sha256', json_encode($this->canonicalPayload(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        $payload = $this->canonicalPayload();
+        if ($this->wireScope?->creditOperationId !== null) {
+            $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
+        }
+
+        return hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
     }
 
     public function aggregateSourceVersion(): string
@@ -91,7 +106,26 @@ final readonly class ProjectSynthesisInput
             'decisions' => $this->sorted($this->decisions),
             'role_fingerprints' => $roles,
             'contract_version' => $this->contractVersion,
+            ...($this->partId === 'whole' ? [] : ['part_id' => $this->partId]),
+            ...($this->contextManifest === [] ? [] : ['context_manifest' => $this->contextManifest]),
         ];
+    }
+
+    public function withPart(string $partId): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->sourceVersions, $this->facts,
+            $this->derivedQuantities, $this->decisions, $this->roleFingerprints, $this->contractVersion, $this->wireScope, $partId, $this->contextManifest);
+    }
+
+    public function withContextPart(string $partId, array $facts, array $quantities, array $decisions): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->sourceVersions, $facts,
+            $quantities, $decisions, $this->roleFingerprints, $this->contractVersion, $this->wireScope, $partId, [
+                'contract' => 'project-context-slice:v1', 'parent_fingerprint' => $this->fingerprint(),
+                'total_facts' => count($this->facts), 'total_derived_quantities' => count($this->derivedQuantities),
+                'total_decisions' => count($this->decisions),
+                'scope' => 'candidate_dependencies',
+            ]);
     }
 
     /** @param list<array<string, mixed>> $records @return list<array<string, mixed>> */

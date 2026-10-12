@@ -17,6 +17,10 @@ final class EvaluationInputFingerprint
             'generation_mode', 'evaluation_mode', 'price_policy', 'profile_id', 'selected_sections', 'regional_context',
             'manual_input_revision', 'price_selection_revision', 'technology_selection_revision', 'scope_selection_revision',
             'price_selections', 'technology_selections', 'scenario_selections', 'scope_selection', 'currency_selections',
+            'quantity_selections', 'quantity_selection_revision',
+            'work_entity_selections', 'work_entity_selection_revision', 'room_identity_revision',
+            'contingency_selection',
+            'region', 'region_id', 'estimate_regional_price_version_id',
         ]));
         $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->orderBy('id')->get(['id', 'checksum_sha256', 'status'])->map(static fn ($document): array => [

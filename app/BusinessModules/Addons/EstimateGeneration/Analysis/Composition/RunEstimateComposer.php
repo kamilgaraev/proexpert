@@ -26,12 +26,25 @@ final readonly class RunEstimateComposer
         private EstimateComposerModel $model,
         private string $modelName,
         private EstimateComposerBatchPlanner $batches = new EstimateComposerBatchPlanner,
+        private ?EstimateComposerAllowance $allowance = null,
     ) {}
 
     /** @return list<array<string, mixed>> */
     public function run(EstimateComposerInput $input): array
     {
-        $plan = $this->batches->plan($input);
+        $limit = $this->allowance?->partLimit($input);
+        if ($input->wireScope?->creditOperationId !== null && $this->allowance === null) {
+            throw new InvalidArgumentException('estimate_composer_allowance_unavailable');
+        }
+        if ($limit === 0) {
+            throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
+        }
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId, 'estimate_composition');
+        $plan = $this->batches->withWirePolicy($policy)->plan($input);
+        if ($limit !== null && count($plan) > $limit) {
+            throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
+        }
         if (count($plan) === 1) {
             return $this->runBatch($plan[0]);
         }
@@ -98,8 +111,9 @@ final readonly class RunEstimateComposer
         try {
             $raw = $this->model->compose(
                 $input,
-                function (string $attemptId) use ($claim, &$physicalAttemptId): void {
-                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId);
+                function (string $attemptId) use ($input, $claim, &$physicalAttemptId): void {
+                    $creditId = $input->wireScope?->creditOperationId;
+                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId, $creditId, $creditId === null ? null : 'estimate_composition');
                     $physicalAttemptId = $attemptId;
                 },
             );
@@ -201,6 +215,10 @@ final readonly class RunEstimateComposer
                     'exclusions' => $record['exclusions'] ?? null,
                     'missing_document_recommendations' => $record['missing_document_recommendations'] ?? null,
                 ];
+                if ($kind === 'supplementary' && (array_key_exists('unit', $record) || array_key_exists('work_section', $record))) {
+                    $projected['unit'] = $record['unit'] ?? null;
+                    $projected['work_section'] = $record['work_section'] ?? null;
+                }
                 $intent = EstimateWorkIntent::fromArray($projected);
                 if (isset($seenCandidateIds[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {
                     throw new InvalidArgumentException('estimate_composer_candidate_duplicate');
@@ -211,6 +229,9 @@ final readonly class RunEstimateComposer
                     }
                 }
                 if ($intent->kind === 'supplementary') {
+                    if ($intent->workSection !== null && ! in_array($intent->workSection, $input->allowedWorkSections, true)) {
+                        throw new InvalidArgumentException('estimate_composer_work_section_not_selected');
+                    }
                     if ($intent->workKey === null
                         || isset($candidateWorkKeys[$intent->workKey])
                         || isset($supplementaryWorkKeys[$intent->workKey])) {

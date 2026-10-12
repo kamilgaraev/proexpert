@@ -250,6 +250,7 @@ class EstimateValidationService
         }
 
         $contingency = $this->contingency($draft, $totalCost);
+        $draft['contingency_amount'] = $contingency['amount'];
         $draft['totals'] = [
             'total_cost' => round($totalCost + $contingency['amount'], 2),
             'base_total_cost' => round($totalCost, 2),
@@ -257,6 +258,7 @@ class EstimateValidationService
             'local_estimates_count' => count($draft['local_estimates']),
             'work_items_count' => $workItemsCount,
         ];
+        $draft = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\CanonicalDraftMoneyTotals)->project($draft);
         $draft['confidence'] = [
             'average' => $confidenceCount > 0 ? round($confidenceSum / $confidenceCount, 4) : 0,
         ];
@@ -301,13 +303,12 @@ class EstimateValidationService
     private function contingency(array $draft, float $totalCost): array
     {
         $percent = (float) ($draft['contingency_percent'] ?? 0);
-        if ($percent <= 0) {
-            return ['percent' => 0.0, 'amount' => 0.0];
-        }
 
         return [
             'percent' => $percent,
-            'amount' => round($totalCost * $percent / 100, 2),
+            'amount' => ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
+                ? (new \App\BusinessModules\Addons\EstimateGeneration\Domain\EstimateContingencyCalculator)->amount($draft, (string) $totalCost)
+                : (float) (new \App\BusinessModules\Addons\EstimateGeneration\Domain\EstimateContingencyCalculator)->amount($draft, (string) $totalCost),
         ];
     }
 

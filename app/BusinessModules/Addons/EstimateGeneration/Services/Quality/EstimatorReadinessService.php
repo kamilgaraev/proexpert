@@ -23,6 +23,14 @@ class EstimatorReadinessService
 
     public function evaluate(EstimateGenerationSession $session)
     {
+        if (($session->input_payload['evaluation_mode'] ?? null) === 'universal') {
+            $documents = $this->documents($session);
+
+            return app(UniversalEvaluationReadinessService::class)->evaluate($session, [
+                'pending' => $documents->whereIn('status', ['uploaded', 'queued', 'processing'])->count(),
+                'action_required' => $documents->filter(fn ($document): bool => ($this->documentClassifier ?? new DocumentReadinessClassifier)->requiresAction($document))->count(),
+            ]);
+        }
         $documents = $this->documents($session);
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $quality = is_array($draft['quality_summary'] ?? null) ? $draft['quality_summary'] : [];

@@ -26,15 +26,22 @@ final readonly class GetCurrentEvaluation
             $row = $this->database->table('estimate_generation_evaluation_revisions')->where('organization_id', $session->organization_id)
                 ->where('project_id', $projectId)->where('session_id', $sessionId)->orderByDesc('revision')->first();
             if ($row === null) {
-                return [...$policy, 'revision' => null, 'state_version' => (int) $session->state_version, 'result' => null];
+                return [...$policy, 'revision' => null, 'state_version' => (int) $session->state_version, 'result' => null, 'confirmed_scenario' => null];
             }
             $recalculationPending = in_array($session->status->value, ['generating', 'processing_documents'], true);
+            $inputHash = $this->inputs->fromSession($session);
+            $result = json_decode($row->result, true, 64, JSON_THROW_ON_ERROR);
+            $confirmation = null;
+            if (! $recalculationPending && isset($session->input_payload['confirmed_evaluation'])) {
+                $confirmation = app(ReadConfirmedUniversalEvaluation::class)->read($session, $actor, $row)['confirmation'] ?? null;
+            }
 
             return [...$policy, 'revision_id' => $row->public_id, 'revision' => (int) $row->revision, 'content_hash' => $row->content_hash,
                 'operation_id' => $row->operation_id, 'input_hash' => $row->input_hash, 'state_version' => (int) $session->state_version,
-                'result_stale' => $recalculationPending || ! hash_equals($row->input_hash, $this->inputs->fromSession($session)),
+                'result_stale' => $recalculationPending || ! hash_equals($row->input_hash, $inputHash)
+                    || (isset($session->input_payload['confirmed_evaluation']) && $confirmation === null),
                 'recalculation_pending' => $recalculationPending,
-                'result' => json_decode($row->result, true, 64, JSON_THROW_ON_ERROR)];
+                'confirmed_scenario' => $confirmation, 'result' => $result];
         });
     }
 }

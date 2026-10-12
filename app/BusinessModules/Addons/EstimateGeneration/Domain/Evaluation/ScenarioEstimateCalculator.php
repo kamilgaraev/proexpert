@@ -33,6 +33,8 @@ final class ScenarioEstimateCalculator
             $ids[$id] = true;
             $assumed = $assumed || $scenario['assumptions'] !== [];
             $totals = [];
+            $netTotals = $vatTotals = $grossTotals = [];
+            $taxUnknown = [];
             $positions = [];
             $unknown = [];
             $priceConditions = [];
@@ -54,6 +56,16 @@ final class ScenarioEstimateCalculator
                 }
                 $quantity = $this->number($position['quantity'] ?? null);
                 $price = is_array($position['price_snapshot'] ?? null) ? $position['price_snapshot'] : null;
+                if ($quantity !== null && is_array($price['currency_conversion'] ?? null)) {
+                    // Scenario volumes are evaluated from the original source, not from a previously rounded tuple.
+                    $basis = $price['currency_conversion'];
+                    (new EvaluationCurrencyConversion)->sourceMoney($basis);
+                    $price = (new EvaluationCurrencyConversion)->snapshot($basis['source_snapshot'], (string) $quantity, $basis['rate']);
+                }
+                if ($quantity !== null && ($price['source_type'] ?? null) === 'supplier'
+                    && (! is_string($price['price_quantity'] ?? null) || ! $quantity->isEqualTo($price['price_quantity']))) {
+                    $price['applicable'] = false;
+                }
                 $unitPrice = $this->number($price['unit_price'] ?? null);
                 $currency = $price['currency'] ?? null;
                 $hasSourcePrice = $price !== null && $unitPrice !== null && ($price['verified'] ?? false) === true
@@ -66,6 +78,7 @@ final class ScenarioEstimateCalculator
                     && $this->validDate($price['as_of_date'] ?? null)
                     && (($price['stale'] ?? false) !== true || ($price['stale_accepted'] ?? false) === true);
                 $amount = null;
+                $money = null;
                 $status = $quantity === null ? 'quantity_unknown' : (! $hasPrice ? ($hasSourcePrice ? 'price_conditions_unknown' : 'price_unknown') : 'calculated');
                 if ($quantity !== null && $hasPrice) {
                     $amount = (new EvaluationLineAmount)->calculate($quantity, $unitPrice, $price);
@@ -73,28 +86,54 @@ final class ScenarioEstimateCalculator
                     if (($price['conditions_missing'] ?? []) !== []) {
                         $priceConditions[] = ['key' => $key, 'conditions' => $price['conditions_missing']];
                     }
+                    try {
+                        $money = (new EvaluationVatProjection)->amount($amount, $price);
+                        $netTotals[$currency] = (string) BigDecimal::of($netTotals[$currency] ?? '0')->plus($money['net_amount'])->toScale(2);
+                        $vatTotals[$currency] = (string) BigDecimal::of($vatTotals[$currency] ?? '0')->plus($money['vat_amount'])->toScale(2);
+                        $grossTotals[$currency] = (string) BigDecimal::of($grossTotals[$currency] ?? '0')->plus($money['gross_amount'])->toScale(2);
+                    } catch (InvalidArgumentException) {
+                        $taxUnknown[] = $key;
+                    }
                 } else {
                     $unknown[] = ['key' => $key, 'reason' => $status];
                 }
                 $positions[] = [...$position, 'quantity' => $quantity === null ? null : (string) $quantity,
-                    'unit_price' => $hasSourcePrice ? (string) $unitPrice : null, 'total_cost' => $amount, 'pricing_status' => $status];
+                    'price_snapshot' => $price,
+                    'unit_price' => $hasSourcePrice ? (string) $unitPrice : null, 'total_cost' => $amount, 'pricing_status' => $status,
+                    'money_breakdown' => $money];
+            }
+            $contingency = null;
+            if (isset($scenario['contingency'])) {
+                if (! is_array($scenario['contingency'])) {
+                    throw new InvalidArgumentException('scenario_contingency_invalid');
+                }
+                $contingency = (new EvaluationContingency)->component($scenario['contingency']);
+                $totals['RUB'] = (string) BigDecimal::of($totals['RUB'] ?? '0')->plus($contingency['money']['quoted_amount'])->toScale(2);
+                $netTotals['RUB'] = (string) BigDecimal::of($netTotals['RUB'] ?? '0')->plus($contingency['money']['net_amount'])->toScale(2);
+                $vatTotals['RUB'] = (string) BigDecimal::of($vatTotals['RUB'] ?? '0')->plus($contingency['money']['vat_amount'])->toScale(2);
+                $grossTotals['RUB'] = (string) BigDecimal::of($grossTotals['RUB'] ?? '0')->plus($contingency['money']['gross_amount'])->toScale(2);
             }
             ksort($totals);
             $currencyConversionRequired = $currencyConversionRequired || array_diff(array_keys($totals), ['RUB']) !== [];
             $costsComplete = $unknown === [] && $priceConditions === [] && $positions !== [];
-            $scenarioCostsComplete = $scenarioCostsComplete && $costsComplete;
-            $complete = $complete && $costsComplete;
+            $scenarioCostsComplete = $scenarioCostsComplete && $costsComplete && $taxUnknown === [];
+            $complete = $complete && $costsComplete && $taxUnknown === [];
             $results[] = ['id' => $id, 'technology' => $scenario['technology'] ?? null, 'assumptions' => $scenario['assumptions'],
                 'positions' => $positions, 'known_subtotals' => $totals, 'unpriced_positions' => $unknown,
+                'net_subtotals' => $netTotals, 'vat_subtotals' => $vatTotals, 'gross_subtotals' => $grossTotals,
+                'tax_breakdown_unknown_positions' => $taxUnknown,
+                'payable_total_by_currency' => $costsComplete && $taxUnknown === [] ? $grossTotals : null,
                 'price_conditions_unresolved' => $priceConditions,
-                'total_by_currency' => $unknown === [] && $priceConditions === [] && $positions !== [] ? $totals : null];
+                'quoted_total_by_currency' => $costsComplete ? $totals : null,
+                'total_by_currency' => $costsComplete && $taxUnknown === [] ? $grossTotals : null,
+                ...($contingency === null ? [] : ['contingency' => $contingency])];
         }
         $range = null;
         if (count($results) > 1 && $scenarioCostsComplete) {
             $currencies = array_values(array_unique(array_merge(...array_map(static fn (array $scenario): array => array_keys($scenario['known_subtotals']), $results))));
             $range = [];
             foreach ($currencies as $currency) {
-                $values = array_map(static fn (array $scenario): ?string => $scenario['known_subtotals'][$currency] ?? null, $results);
+                $values = array_map(static fn (array $scenario): ?string => $scenario['total_by_currency'][$currency] ?? null, $results);
                 if (in_array(null, $values, true)) {
                     $range = null;
                     break;

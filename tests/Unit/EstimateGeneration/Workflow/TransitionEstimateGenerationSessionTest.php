@@ -21,6 +21,20 @@ use PHPUnit\Framework\TestCase;
 
 final class TransitionEstimateGenerationSessionTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('config', new \Illuminate\Config\Repository(['estimate-generation' => ['credits' => ['enabled' => false]]]));
+        \Illuminate\Container\Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        \Illuminate\Container\Container::setInstance(null);
+        parent::tearDown();
+    }
+
     #[Test]
     public function confirmed_input_cancel_and_archive_use_the_canonical_workflow(): void
     {

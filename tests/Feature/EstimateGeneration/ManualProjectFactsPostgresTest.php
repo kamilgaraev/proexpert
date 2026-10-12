@@ -114,6 +114,44 @@ final class ManualProjectFactsPostgresTest extends EstimateGenerationCanonicalPo
         return ['key' => $key, 'type' => $type, 'parameters' => array_map(static fn (string $value): array => ['value' => $value, 'unit' => $unit, 'basis' => 'measurement'], $parameters)];
     }
 
+    public function test_named_rooms_without_dimensions_are_current_confirmed_context_and_can_be_renamed_without_geometry(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $input = ['entities' => [
+            ['key' => 'room-a', 'type' => 'room', 'name' => 'Кухня', 'floor' => '1'],
+            ['key' => 'room-b', 'type' => 'room', 'name' => 'Кухня', 'floor' => '2'],
+        ]];
+        $save = app(SaveManualProjectFacts::class);
+        $requestId = (string) Str::uuid();
+        $result = $save->handle($actor, (int) $session->project_id, (int) $session->id, 0, $requestId, $input);
+        self::assertEquals($result, $save->handle($actor, (int) $session->project_id, (int) $session->id, 0, $requestId, $input));
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshot(...$scope);
+        self::assertCount(2, $snapshot->entities);
+        self::assertCount(2, $snapshot->facts);
+        foreach ($snapshot->entities as $entity) {
+            self::assertArrayNotHasKey('area_m2', $entity->attributes);
+            self::assertArrayNotHasKey('polygon', $entity->attributes);
+        }
+        $decisions = $models->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        foreach ($snapshot->facts as $fact) {
+            self::assertSame('entity_identity', $fact->type);
+            self::assertNull($fact->unit);
+            self::assertSame('Кухня', $fact->value['name']);
+            self::assertTrue((new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationChoiceProof)
+                ->accepted($snapshot, $fact, array_column($decisions, null, 'selectedFactId')[$fact->id]));
+        }
+        $input['entities'][0]['name'] = 'Кухня после ремонта';
+        $save->handle($actor, $scope[1], $scope[2], 1, (string) Str::uuid(), $input);
+        $renamed = $models->snapshot(...$scope);
+        self::assertCount(2, $renamed->entities);
+        self::assertContains('Кухня после ремонта', array_map(static fn ($fact): string => $fact->value['name'], $renamed->facts));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame('0', $result['cost_units']);
+        self::assertArrayNotHasKey('floor_area', $result['quantities']);
+    }
+
     private function fixture(): array
     {
         $organization = Organization::factory()->create();

@@ -24,7 +24,8 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    public const QUERY_BUDGET = 13;
+    // Ten aggregate reads, three quota reads and two current clarification reads.
+    public const QUERY_BUDGET = 15;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,
@@ -111,6 +112,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
 
         if ($connection->getDriverName() === 'pgsql') {
             $query->selectRaw("md5(COALESCE(input_payload::text, '')) AS input_revision")
+                ->selectRaw("CASE WHEN input_payload->>'evaluation_mode' = 'universal' THEN draft_payload ELSE NULL END AS universal_draft")
                 ->selectRaw("md5(COALESCE(analysis_payload::text, '')) AS analysis_revision")
                 ->selectRaw("md5(COALESCE(draft_payload::text, '')) AS draft_revision")
                 ->selectRaw("md5(COALESCE(problem_flags::text, '')) AS problem_revision")
@@ -336,19 +338,33 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         $model->forceFill([
             ...$session,
             'updated_at' => isset($session['updated_at']) ? CarbonImmutable::parse((string) $session['updated_at']) : null,
-            'draft_payload' => ['quality_summary' => []],
+            'draft_payload' => $this->json($session['universal_draft'] ?? null) ?: ['quality_summary' => []],
             'input_payload' => $this->json($session['input_payload'] ?? []),
         ]);
         $model->exists = true;
 
-        $readiness = $this->withPersistedBlockingIssues($this->readinessEvaluator->evaluate(
-            $this->readinessInputFactory->fromAggregates($session, $documents, $estimate, $sources),
-        ), $session);
+        $universal = ($model->input_payload['evaluation_mode'] ?? null) === 'universal';
+        $manualInputAvailable = \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::manualInputAvailable(
+            $model->input_payload ?? [], $universal && (bool) config('estimate-generation.universal_enabled', false));
+        $documentSummary = $this->documentSummary($documents, $sources);
+        if ($universal) {
+            $documentSummary['manual_input_available'] = $manualInputAvailable;
+        }
+        $readiness = $universal
+            ? app(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\UniversalEvaluationReadinessService::class)->evaluate($model, $documents)
+            : $this->withPersistedBlockingIssues($this->readinessEvaluator->evaluate(
+                $this->readinessInputFactory->fromAggregates($session, $documents, $estimate, $sources),
+            ), $session);
+        if ($readiness->confirmedEvaluation !== null) {
+            $estimate = [...$estimate, 'total_cost' => $readiness->confirmedEvaluation['total_by_currency']['RUB'],
+                'packages' => $readiness->confirmedEvaluation['package_count'],
+                'items' => $readiness->confirmedEvaluation['position_count']];
+        }
         $base = $this->workflowSnapshot->handle(
             $model,
             $permissions,
             $readiness,
-            $this->documentSummary($documents, $sources),
+            $documentSummary,
         );
         $processingProgress = $base->status === \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus::ProcessingDocuments
             ? DocumentProcessingProgress::fromSummary($documents, $base->processingProgress)
@@ -368,7 +384,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             warnings: $readiness['warnings'],
             nextAction: $base->nextAction ?? (string) ($readiness['next_action']['code'] ?? ''),
             readinessEvaluated: true,
-            documentsSummary: $this->documentSummary($documents, $sources),
+            documentsSummary: $documentSummary,
             estimateSummary: [
                 'packages' => $this->number($estimate, 'packages'),
                 'items' => $this->number($estimate, 'items'),
@@ -423,6 +439,8 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             aiEstimateQuota: $base->aiEstimateQuota,
             recommendedStep: $base->recommendedStep,
             workflowSteps: $base->workflowSteps,
+            creditPolicy: $base->creditPolicy,
+            evaluationConfirmation: $readiness->confirmedEvaluation,
         );
     }
 

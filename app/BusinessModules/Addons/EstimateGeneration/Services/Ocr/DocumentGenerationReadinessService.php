@@ -45,6 +45,7 @@ class DocumentGenerationReadinessService
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
         ?EstimateGenerationQualityReviewPolicy $qualityReview = null,
         ?DocumentSystemFailureDetector $systemFailures = null,
+        private readonly ?bool $universalEnabled = null,
     ) {
         $this->qualityReview = $qualityReview ?? new EstimateGenerationQualityReviewPolicy;
         $this->systemFailures = $systemFailures ?? new DocumentSystemFailureDetector;
@@ -80,13 +81,20 @@ class DocumentGenerationReadinessService
                 (int) $session->getKey(),
             );
         $summary = $this->summary($documents, $effective);
+        $input = $session->input_payload ?? [];
+        $manualInputAvailable = self::manualInputAvailable($input,
+            ($input['evaluation_mode'] ?? null) === 'universal'
+                && ($this->universalEnabled ?? (bool) config('estimate-generation.universal_enabled', false)));
         $reviewAcknowledged = in_array($session->status, [
             EstimateGenerationStatus::ReadyToGenerate,
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
             EstimateGenerationStatus::Applied,
         ], true) || $this->cancelledAfterGeneration($session);
-        $canGenerate = $summary['can_generate'] || ($reviewAcknowledged
+        $canGenerate = $summary['can_generate'] || ($manualInputAvailable
+            && ! $summary['has_pending']
+            && (int) $summary['system_failure_count'] === 0
+            && (int) $summary['action_required_count'] === 0) || ($reviewAcknowledged
             && ! $summary['has_pending']
             && (int) $summary['system_failure_count'] === 0
             && collect($summary['items'])->where('status', '!=', 'ignored')->every(
@@ -98,6 +106,7 @@ class DocumentGenerationReadinessService
                         && ($item['has_low_quality'] ?? false) !== true),
             ));
         $summary['review_acknowledged'] = $reviewAcknowledged;
+        $summary['manual_input_available'] = $manualInputAvailable;
         $summary['can_generate'] = $canGenerate;
 
         return [
@@ -106,6 +115,13 @@ class DocumentGenerationReadinessService
             'blocking_message_key' => $canGenerate ? null : $this->blockingMessageKey($summary),
             'summary' => $summary,
         ];
+    }
+
+    public static function manualInputAvailable(array $input, bool $enabled): bool
+    {
+        return $enabled && ($input['evaluation_mode'] ?? null) === 'universal'
+            && ((is_string($input['description'] ?? null) && trim($input['description']) !== '')
+                || (is_int($input['manual_input_revision'] ?? null) && $input['manual_input_revision'] > 0));
     }
 
     /**

@@ -17,7 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use Closure;
 use InvalidArgumentException;
 
-final class InMemoryProjectModelRepository implements ProjectModelRepository
+final class InMemoryProjectModelRepository implements \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\TechnologyReselectionRepository, ProjectModelRepository
 {
     public ?int $lastSnapshotFactLimit = null;
 
@@ -151,7 +151,20 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 throw new InvalidArgumentException('Fact expected.');
             }
             $this->facts[$this->recordKey($fact)] = $fact;
-            if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)) {
+            $identityCandidate = false;
+            if ($fact->status === 'candidate' && $fact->type === 'room_name' && $fact->unit === null
+                && $fact->evidenceIds !== [] && is_string($fact->value) && trim($fact->value) !== '' && mb_strlen($fact->value) <= 240) {
+                foreach ($this->entities as $entity) {
+                    if ($this->scope($entity) === $this->scope($fact) && $entity->sourceVersion === $fact->sourceVersion
+                        && $entity->id === $fact->entityId && $entity->type === 'room'
+                        && ($entity->attributes['semantic_type'] ?? null) === 'room'
+                        && ($entity->attributes['identity_only'] ?? null) === true
+                        && ($entity->attributes['requires_confirmation'] ?? null) === true) {
+                        $identityCandidate = true;
+                    }
+                }
+            }
+            if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true) || $identityCandidate) {
                 $this->projection[$this->logicalKey($fact)] = $fact->id;
             }
         }
@@ -210,6 +223,23 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 $decision->projectId,
                 $decision->sessionId,
             ))) {
+            return false;
+        }
+        $this->applyDecision($decision, $selectedFact);
+
+        return true;
+    }
+
+    public function applyTechnologyReselection(Decision $decision, Fact $selectedFact, string $expectedFactId,
+        string $expectedDecisionId, string $inputFingerprint): bool
+    {
+        if ($this->beforeTechnologyDecisionLock !== null) {
+            $hook = $this->beforeTechnologyDecisionLock;
+            $this->beforeTechnologyDecisionLock = null;
+            $hook();
+        }
+        if (! (new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\TechnologyReselectionInvariant)->matches($this,
+            $decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint)) {
             return false;
         }
         $this->applyDecision($decision, $selectedFact);

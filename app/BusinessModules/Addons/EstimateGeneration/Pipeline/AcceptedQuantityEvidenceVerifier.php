@@ -88,12 +88,14 @@ final readonly class AcceptedQuantityEvidenceVerifier
             || ($node->locator['item_key'] ?? null) !== 'item:'.hash('sha256', $logicalKey)) {
             return 'item_identity_mismatch';
         }
-        if (($node->value['unit'] ?? null) !== ($workItem['unit'] ?? null)) {
+        $factor = \App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer::safeQuantityFactorDecimal(
+            (string) ($node->value['unit'] ?? ''), (string) ($workItem['unit'] ?? ''));
+        if ($factor === null) {
             return 'unit_mismatch';
         }
 
         try {
-            return BigDecimal::of((string) ($node->value['quantity'] ?? ''))->compareTo(
+            return BigDecimal::of((string) ($node->value['quantity'] ?? ''))->multipliedBy($factor)->compareTo(
                 BigDecimal::of((string) ($workItem['quantity'] ?? '')),
             ) === 0 ? null : 'quantity_mismatch';
         } catch (Throwable) {

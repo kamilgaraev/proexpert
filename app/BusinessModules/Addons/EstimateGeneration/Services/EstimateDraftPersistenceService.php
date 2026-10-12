@@ -37,7 +37,8 @@ final class EstimateDraftPersistenceService
     /** @param array<string, mixed> $workItem */
     public function isPersistableWorkItem(array $workItem): bool
     {
-        return $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem);
+        return $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)
+            || \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::isPersistableCommercialItem($workItem);
     }
 
     /** @param array<string, mixed> $workItem */
@@ -49,7 +50,8 @@ final class EstimateDraftPersistenceService
     /** @param array<string, mixed> $draft */
     public function persistableDraftTotal(array $draft): float|string
     {
-        $exact = ($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1';
+        $exact = in_array($draft['generation_contract'] ?? null, ['most_ordinary_estimate:v1',
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::CONTRACT], true);
         if (! $exact) {
             $total = 0.0;
 
@@ -184,6 +186,12 @@ final class EstimateDraftPersistenceService
      */
     public function findApplyBlocker(array $draft): ?array
     {
+        if (($draft['generation_contract'] ?? null) === \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::CONTRACT) {
+            return ($draft['stage6_status'] ?? null) === 'ready' && ($draft['is_complete'] ?? null) === true
+                && is_array($draft['confirmed_evaluation'] ?? null) && ! $this->hasNonPersistablePricedWorkItems($draft)
+                && BigDecimal::of($this->persistableDraftTotal($draft))->isGreaterThan(0)
+                ? null : ['type' => 'confirmed_evaluation_incomplete'];
+        }
         if (($draft['generation_contract'] ?? null) === 'most_ordinary_estimate:v1'
             && (($draft['stage6_status'] ?? null) !== 'ready' || ($draft['is_complete'] ?? null) !== true)) {
             return ['type' => 'incomplete_stage6_draft'];

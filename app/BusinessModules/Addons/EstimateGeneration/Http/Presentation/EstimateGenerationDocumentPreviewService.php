@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -24,6 +26,7 @@ final readonly class EstimateGenerationDocumentPreviewService
     public function __construct(
         private AuthorizationService $authorization,
         private FileService $files,
+        private ?EstimateGenerationActionAuthorization $freshAuthorization = null,
     ) {}
 
     public function forDocument(EstimateGenerationDocument $document, User $user): ?string
@@ -41,10 +44,10 @@ final readonly class EstimateGenerationDocumentPreviewService
             return null;
         }
 
-        if (! $this->authorization->can($user, 'estimate_generation.view', [
-            'organization_id' => (int) $document->organization_id,
-            'project_id' => (int) $document->project_id,
-        ])) {
+        try {
+            ($this->freshAuthorization ?? new EstimateGenerationActionAuthorizer($this->authorization))
+                ->authorize($user, $session, 'estimate_generation.view');
+        } catch (\Illuminate\Auth\Access\AuthorizationException) {
             return null;
         }
 

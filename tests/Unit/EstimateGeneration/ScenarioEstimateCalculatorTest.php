@@ -89,7 +89,35 @@ final class ScenarioEstimateCalculatorTest extends TestCase
     {
         return ['key' => $key, 'section' => 'finishing', 'unit' => 'm2', 'quantity' => $quantity,
             'price_snapshot' => $price === null ? null : ['unit_price' => $price, 'unit' => 'm2', 'currency' => 'RUB',
-                'verified' => true, 'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10']];
+                'verified' => true, 'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10', 'vat_mode' => 'not_applicable']];
+    }
+
+    public function test_mixed_included_and_excluded_prices_have_one_payable_total_without_a_second_global_vat(): void
+    {
+        $included = $this->position('included', '1', '120');
+        $included['price_snapshot'] = [...$included['price_snapshot'], 'vat_mode' => 'included', 'vat_rate' => '20'];
+        $excluded = $this->position('excluded', '1', '100');
+        $excluded['price_snapshot'] = [...$excluded['price_snapshot'], 'vat_mode' => 'excluded', 'vat_rate' => '20'];
+        $noTax = $this->position('without', '1', '100');
+        $result = (new ScenarioEstimateCalculator)->calculate([['id' => 'base', 'positions' => [$included, $excluded, $noTax], 'assumptions' => []]], ['finishing'], [], true);
+        $scenario = $result['scenarios'][0];
+        self::assertSame(['RUB' => '320.00'], $scenario['known_subtotals']);
+        self::assertSame(['RUB' => '300.00'], $scenario['net_subtotals']);
+        self::assertSame(['RUB' => '40.00'], $scenario['vat_subtotals']);
+        self::assertSame(['RUB' => '340.00'], $scenario['total_by_currency']);
+        self::assertTrue($result['can_confirm_for_apply']);
+    }
+
+    public function test_unknown_vat_keeps_the_source_subtotal_and_blocks_a_confirmed_payable_total(): void
+    {
+        $position = $this->position('floor', '20', '100');
+        unset($position['price_snapshot']['vat_mode']);
+        $result = (new ScenarioEstimateCalculator)->calculate([['id' => 'base', 'positions' => [$position], 'assumptions' => []]], ['finishing'], [], true);
+        self::assertSame(['RUB' => '2000.00'], $result['scenarios'][0]['known_subtotals']);
+        self::assertNull($result['scenarios'][0]['total_by_currency']);
+        self::assertSame(['floor'], $result['scenarios'][0]['tax_breakdown_unknown_positions']);
+        self::assertFalse($result['can_confirm_for_apply']);
+        self::assertSame('refined_estimate', $result['result_class']);
     }
 
     public function test_normative_amount_preserves_separate_resource_rounding_and_rejects_a_stale_volume(): void

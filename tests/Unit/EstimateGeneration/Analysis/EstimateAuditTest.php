@@ -34,6 +34,47 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateAuditTest extends TestCase
 {
+    public function test_direct_oversized_audit_is_rejected_before_claim_or_model_attempt(): void
+    {
+        $runs = new InMemoryAiRoleRunRepository;
+        $model = new RecordedEstimateAuditModel([['accepted' => true, 'findings' => []]]);
+        $auditor = new RunEstimateAudit($runs, $model, 'openai/gpt-6-luna', 100);
+        try {
+            $auditor->run($this->input($this->draft([$this->item('work:foundation')])));
+            self::fail('An oversized direct audit was admitted.');
+        } catch (\InvalidArgumentException $exception) {
+            self::assertSame('estimate_auditor_input_limit_exceeded', $exception->getMessage());
+            self::assertCount(0, $runs->inputs);
+            self::assertSame(0, $model->calls);
+        }
+    }
+
+    public function test_large_audit_really_runs_distinct_parts_preserves_all_context_and_replays_them(): void
+    {
+        $items = [];
+        for ($index = 0; $index < 65; $index++) {
+            $items[] = [...$this->item('work:'.$index), 'name' => 'Участок '.$index];
+        }
+        $runs = new InMemoryAiRoleRunRepository;
+        $model = new RecordedEstimateAuditModel(array_fill(0, 3, ['accepted' => true, 'findings' => []]));
+        $cycles = new ApplyComposerCorrectionCycle(new RunEstimateAudit($runs, $model, 'openai/gpt-6-luna'), $this->corrector());
+        $root = $this->input($this->draft($items));
+        $result = $cycles->apply($root);
+        self::assertSame('accepted', $result['audit']['status']);
+        self::assertSame(3, $model->calls);
+        self::assertCount(3, array_unique(array_column($runs->inputs, 'subjectId')));
+        self::assertCount(3, $result['audit']['parts']);
+        self::assertCount(65, $result['draft']['local_estimates'][0]['sections'][0]['work_items']);
+        foreach ($model->inputs as $part) {
+            self::assertSame($root->facts, $part->facts);
+            self::assertSame($root->evidence, $part->evidence);
+            self::assertSame($root->derivedQuantities, $part->derivedQuantities);
+            self::assertNotSame('whole', $part->partId);
+        }
+        self::assertSame($result, $cycles->apply($root));
+        self::assertSame(3, $model->calls);
+    }
+
     public function test_accepted_audit_replays_without_second_model_call(): void
     {
         $runs = new InMemoryAiRoleRunRepository;
@@ -304,6 +345,20 @@ final class EstimateAuditTest extends TestCase
         self::assertSame($models->snapshotForPlanning(10, 20, 30, 10001)['token'], $input->snapshotToken);
         self::assertSame('10.2500', $input->facts[0]['value']);
         self::assertSame(['document_id' => 7, 'page' => 2], $input->evidence[0]['locator']);
+    }
+
+    public function test_factory_rejects_evidence_overflow_instead_of_silently_hiding_source_references(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = 'sha256:'.str_repeat('c', 64);
+        $entity = new Entity('entity:foundation', 10, 20, 30, $source, 'quantity', 'foundation');
+        $fact = new Fact('fact:foundation', 10, 20, 30, $source, $entity->id, 'foundation_volume', '10.25', 'm3', 0.0, 'user_assumption', 'confirmed', []);
+        $models->saveSourceModel([$entity], [$fact], []);
+        $draft = $this->draft([$this->item('work:foundation')]);
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['source_refs'] = array_map(
+            static fn (int $page): array => ['fact_id' => $fact->id, 'document_id' => 7, 'page' => $page], range(1, 20001));
+        $this->expectExceptionMessage('estimate_audit_evidence_requires_section_split');
+        (new EstimateAuditInputFactory($models, new InMemoryEvidenceRepository, 10000))->capture(10, 20, 30, $draft);
     }
 
     public function test_factory_exposes_canonical_evidence_for_an_omitted_fact_without_a_draft_row(): void
@@ -592,10 +647,13 @@ final class RecordedEstimateAuditModel implements EstimateAuditModel
 {
     public int $calls = 0;
 
+    public array $inputs = [];
+
     public function __construct(private readonly array $results) {}
 
     public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
     {
+        $this->inputs[] = $input;
         $onAttemptStarted('00000000-0000-4000-8000-00000000000'.($this->calls + 1));
 
         return $this->results[$this->calls++];

@@ -17,7 +17,27 @@ final class TimewebChatCompletionPayloadFactory
     public function make(string $model, array $messages, array $options): array
     {
         $model = LunaModelPolicy::assert($model, 'timeweb');
-        $prepared = (new TokenBudgetService())->prepare($messages, (array) ($options['tools'] ?? []), (string) ($options['profile'] ?? 'detailed'));
+        foreach ($messages as $message) {
+            if (is_string($message['content'] ?? null)) {
+                EstimatorTextPayloadBudget::guard($message['content']);
+            }
+        }
+        $policy = $options['estimate_generation_frozen_text_policy'] ?? null;
+        if ($policy !== null && ! is_array($policy)) {
+            throw new \DomainException('estimator_text_wire_policy_invalid');
+        }
+        if ($policy !== null) {
+            $policy = EstimatorTextWirePolicy::validate($policy);
+        }
+        $prepared = (new TokenBudgetService)->prepare($messages, (array) ($options['tools'] ?? []),
+            $policy['profile'] ?? (string) ($options['profile'] ?? 'detailed'), $policy['token_limits'] ?? null);
+        if ($prepared['messages'] !== array_values($messages)) {
+            throw new \DomainException('estimate_text_context_cannot_be_trimmed');
+        }
+        if ($policy !== null && EstimatorTextWirePolicy::serializedInputUpper($prepared['messages']) > $policy['maximum_serialized_input_bytes']) {
+            throw new \DomainException('estimate_text_serialized_input_requires_source_split');
+        }
+
         return [
             'model' => $model,
             'messages' => $prepared['messages'],

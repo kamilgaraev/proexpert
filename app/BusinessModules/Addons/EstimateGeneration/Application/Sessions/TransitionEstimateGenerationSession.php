@@ -41,6 +41,10 @@ final class TransitionEstimateGenerationSession
                 $updated = $this->workflow->transition($locked, $event);
                 if (in_array($event, [EstimateGenerationEvent::Cancelled, EstimateGenerationEvent::Archived], true)) {
                     $this->documents->haltForSession($updated, $actor);
+                    if (config('estimate-generation.credits.enabled', false) || isset($updated->input_payload['generation_credit_operation_id'])
+                        || isset($updated->input_payload['documents_credit_operation_id'])) {
+                        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)->abortForSession($updated);
+                    }
                 }
 
                 return $updated;

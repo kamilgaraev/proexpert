@@ -46,6 +46,10 @@ final class CataloguePriceSnapshotReader
             'delivery_included' => is_bool($metadata['delivery_included'] ?? null) ? $metadata['delivery_included'] : null,
             'updated_at' => $record->updated_at?->toISOString(),
             'item_type' => $catalog ? (string) $record->item_type : 'work'];
+        if (is_string($metadata['technology_package_id'] ?? null) && trim($metadata['technology_package_id']) !== '') {
+            // Optional source semantics participate in its immutable business hash.
+            $source['technology_package_id'] = $metadata['technology_package_id'];
+        }
 
         $missing = array_keys(array_filter(array_intersect_key($source, array_flip(['currency', 'as_of_date', 'region', 'vat_mode', 'delivery_included'])), static fn ($value): bool => $value === null));
         if ($source['delivery_included'] === false) {
@@ -61,7 +65,7 @@ final class CataloguePriceSnapshotReader
         $businessSource = $source;
         unset($businessSource['updated_at']);
 
-        return [...$source, 'source_type' => 'catalog', 'source_reference' => $reference, 'verified' => true,
+        return [...$businessSource, 'source_type' => 'catalog', 'source_reference' => $reference, 'verified' => true,
             'applicable' => $source['as_of_date'] !== null && $source['as_of_date'] <= $businessDate->format('Y-m-d')
                 && ($source['valid_until'] === null || $source['as_of_date'] <= $source['valid_until']),
             'stale' => $source['valid_until'] !== null && $source['valid_until'] < $businessDate->format('Y-m-d'), 'stale_accepted' => false,

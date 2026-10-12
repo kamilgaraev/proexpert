@@ -94,7 +94,10 @@ final class AiUsagePageScopeContractTest extends TestCase
         $source = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentProcessingUnitStore.php');
         $policy = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/DocumentUnitPageReservationPolicy.php');
 
-        self::assertStringContainsString('return $this->database->transaction(function () use ($claim): DocumentUnitExecutionContext', (string) $source);
+        $returnType = (new \ReflectionMethod(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore::class, 'executionContext'))->getReturnType();
+        self::assertInstanceOf(\ReflectionNamedType::class, $returnType);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext::class, $returnType->getName());
+        self::assertTrue($returnType->allowsNull(), 'A lost or stopped unit returns no execution context.');
         self::assertStringContainsString("->with('document.session')->lockForUpdate()->find(\$claim->unitId)", (string) $source);
         self::assertStringContainsString('DocumentProcessingUnitStatus::Running', (string) $source);
         self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_claim_lost')", (string) $source);

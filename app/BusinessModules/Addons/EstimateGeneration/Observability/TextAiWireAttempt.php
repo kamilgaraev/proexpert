@@ -21,6 +21,8 @@ final readonly class TextAiWireAttempt
         public User|SystemAdmin|null $trustedActor = null,
         public string $permission = 'estimate_generation.generate',
         public ?Closure $beforeSend = null,
+        public ?string $creditOperationId = null,
+        public ?string $operation = null,
     ) {
         if (preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D', $attemptId) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', $requestFingerprint) !== 1
@@ -32,6 +34,11 @@ final readonly class TextAiWireAttempt
             || ! in_array($permission, ['estimate_generation.generate', 'estimate_generation.review'], true)
             || ($permission === 'estimate_generation.review' && ($trustedActor === null || $stateVersion === null))) {
             throw new InvalidArgumentException('text_ai_wire_attempt_invalid');
+        }
+        if ($creditOperationId !== null && (! \Illuminate\Support\Str::isUuid($creditOperationId)
+            || ! in_array($operation, ['estimate_composition', 'estimate_audit', 'estimate_composer_correction',
+                'project_synthesis', 'rerank', 'estimate_dialogue_interpretation', 'completeness_review', 'ocr'], true))) {
+            throw new InvalidArgumentException('text_ai_credit_operation_invalid');
         }
     }
 }

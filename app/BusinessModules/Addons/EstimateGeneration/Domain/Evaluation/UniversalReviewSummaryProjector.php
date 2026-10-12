@@ -14,12 +14,14 @@ final readonly class UniversalReviewSummaryProjector
 
     public function project(array $draft): array
     {
-        $positions = array_column($draft['evaluation_result']['scenarios'][0]['positions'] ?? [], null, 'key');
+        $scenarios = $draft['evaluation_result']['scenarios'] ?? [];
+        $base = array_values(array_filter($scenarios, static fn (array $scenario): bool => ($scenario['id'] ?? null) === 'base'))[0] ?? null;
+        $positions = array_column($base['positions'] ?? [], null, 'key');
         foreach ($draft['local_estimates'] ?? [] as $estimateIndex => $estimate) {
             foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
                 foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
                     $position = $positions[$item['key']] ?? null;
-                    if ($position === null) {
+                    if ($position === null || ($position['quantity_basis']['kind'] ?? null) === 'scenario_assumption') {
                         continue;
                     }
                     foreach (['quantity', 'unit_price', 'total_cost', 'pricing_status'] as $field) {

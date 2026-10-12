@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Analysis;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\AiRoleRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
@@ -22,7 +23,7 @@ final class EstimateComposerBatchPlannerTest extends TestCase
         $facts = [];
         $candidates = [];
         for ($index = 0; $index < 700; $index++) {
-            $facts[] = ['id' => 'fact:'.$index, 'entity_id' => 'room:'.$index, 'value' => str_repeat('x', 1000), 'status' => 'confirmed'];
+            $facts[] = ['id' => 'fact:'.$index, 'entity_id' => 'room:'.$index, 'value' => str_repeat('word ', 200), 'status' => 'confirmed'];
             if ($index < 600) {
                 $candidates[] = ['candidate_id' => 'candidate:'.$index, 'work_key' => 'work:'.$index, 'name' => 'Работа '.$index,
                     'unit' => null, 'quantity' => null, 'quantity_formula' => null, 'source_fact_ids' => ['fact:'.$index], 'technology_package_candidate' => null];
@@ -78,6 +79,68 @@ final class EstimateComposerBatchPlannerTest extends TestCase
         $this->expectExceptionMessage('estimate_composer_entity_context_too_large');
         (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna', new EstimateComposerBatchPlanner))->run($input);
     }
+
+    public function test_all_logical_parts_are_approved_before_the_first_role_claim(): void
+    {
+        $candidates = [];
+        foreach ([1, 2] as $id) {
+            $candidates[] = ['candidate_id' => 'candidate:'.$id, 'work_key' => 'work:'.$id, 'name' => 'Работа '.$id,
+                'unit' => null, 'quantity' => null, 'quantity_formula' => null, 'source_fact_ids' => [], 'technology_package_candidate' => null];
+        }
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), [], [], [], $candidates, [], RunEstimateComposer::PROMPT_CONTRACT);
+        $model = $this->createMock(EstimateComposerModel::class);
+        $model->expects(self::never())->method('compose');
+        $runs = $this->createMock(AiRoleRunRepository::class);
+        $runs->expects(self::never())->method('claim');
+        $allowance = $this->createMock(EstimateComposerAllowance::class);
+        $allowance->method('partLimit')->willReturn(1);
+        $this->expectExceptionMessage('estimate_composer_parts_exceed_approved_plan');
+        (new RunEstimateComposer($runs, $model, 'openai/gpt-6-luna', new EstimateComposerBatchPlanner(candidatesPerBatch: 1), $allowance))->run($input);
+    }
+
+    public function test_dependency_context_preserves_every_fact_quantity_and_parent_identity(): void
+    {
+        $facts = $quantities = $candidates = [];
+        foreach (range(1, 80) as $id) {
+            $facts[] = ['id' => 'fact:'.$id, 'entity_id' => 'room:'.$id, 'value' => str_repeat('word ', 250), 'status' => 'confirmed'];
+            $quantities[] = ['id' => 'quantity:'.$id, 'value' => '10', 'unit' => 'm2', 'entity_id' => 'room:'.$id,
+                'operand_fact_ids' => ['fact:'.$id]];
+            if ($id <= 40) {
+                $candidates[] = ['candidate_id' => 'candidate:'.$id, 'work_key' => 'work:'.$id, 'name' => 'Работа '.$id,
+                    'unit' => 'm2', 'quantity' => '10', 'quantity_formula' => 'quantity:'.$id,
+                    'source_fact_ids' => [], 'technology_package_candidate' => null];
+            }
+        }
+        $root = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, $quantities, [], $candidates, [], RunEstimateComposer::PROMPT_CONTRACT);
+        $parts = (new EstimateComposerBatchPlanner(maxInputBytes: 12000))->plan($root);
+        $seenFacts = $seenQuantities = [];
+        foreach ($parts as $part) {
+            self::assertSame($root->fingerprint(), $part->contextManifest['parent_input_fingerprint']);
+            foreach ($part->facts as $fact) {
+                $seenFacts[$fact['id']] = true;
+            }
+            foreach ($part->derivedQuantities as $quantity) {
+                $seenQuantities[$quantity['id']] = true;
+                self::assertContains($quantity['operand_fact_ids'][0], array_column($part->facts, 'id'));
+            }
+            foreach ($part->candidates as $candidate) {
+                self::assertContains($candidate['quantity_formula'], array_column($part->derivedQuantities, 'id'));
+            }
+        }
+        self::assertCount(80, $seenFacts);
+        self::assertCount(80, $seenQuantities);
+        $facts[79]['value'] = 'Changed outside the first part';
+        $changed = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), $facts, $quantities, [], $candidates, [], RunEstimateComposer::PROMPT_CONTRACT);
+        self::assertNotSame($parts[0]->fingerprint(), (new EstimateComposerBatchPlanner(maxInputBytes: 12000))->plan($changed)[0]->fingerprint());
+    }
+
+    public function test_missing_quantity_operand_is_rejected_even_when_the_whole_input_is_small(): void
+    {
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), [],
+            [['id' => 'quantity:1', 'value' => '10', 'unit' => 'm2', 'operand_fact_ids' => ['fact:missing']]], [], [], [], RunEstimateComposer::PROMPT_CONTRACT);
+        $this->expectExceptionMessage('estimate_composer_quantity_operand_missing');
+        (new EstimateComposerBatchPlanner)->plan($input);
+    }
 }
 
 final class BatchComposerMemoryRepository implements AiRoleRunRepository
@@ -101,7 +164,7 @@ final class BatchComposerMemoryRepository implements AiRoleRunRepository
         return new AiRoleRunClaim($id, 'owned', $ownerUuid);
     }
 
-    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {

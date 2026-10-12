@@ -54,6 +54,7 @@ final class EstimateGenerationStatusTest extends TestCase
             'generation_ready',
             'review_updated',
             'review_reopened',
+            'evaluation_recalculated',
             'apply_started',
             'apply_completed',
             'failed',

@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\Canonical
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\CanonicalFactReducer;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ClaimSemanticMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\RoomIdentityObservation;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\VisualObjectScopePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PhysicalMeasurementPublicationPolicy;
@@ -81,11 +82,12 @@ final readonly class ProjectModelEvidenceWriter
                 $claim = $byId[$decision->claimId] ?? throw new InvalidArgumentException('Arbitration claim is absent.');
                 $this->assertScope($claim, $scope);
                 $evidenceIds = [];
+                $numericProofs = [];
                 foreach ($decision->supportingClaimIds as $supportingClaimId) {
                     $supportingClaim = $byId[$supportingClaimId]
                         ?? throw new InvalidArgumentException('Supporting arbitration claim is absent.');
                     $this->assertScope($supportingClaim, $scope);
-                    if ($decision->status === 'accepted' && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
+                    if (($decision->status === 'accepted' || $claim->factType === 'room_name') && ! (new ClaimSemanticMatcher)->equivalent($claim, $supportingClaim)) {
                         continue;
                     }
                     if ($supportingClaim->evidenceRef === null
@@ -120,11 +122,22 @@ final readonly class ProjectModelEvidenceWriter
                     ));
                     $evidenceId = 'evidence:'.$node->id;
                     $evidenceIds[] = $evidenceId;
+                    if ($numericSources?->certifies($supportingClaim) === true && ($supportingClaim->value['type'] ?? null) === 'number') {
+                        $numericProofs[$evidenceId] = ['source_version' => $node->sourceVersion,
+                            'parameter' => FactVocabulary::parameter($supportingClaim->factType),
+                            'measurement' => FactVocabulary::measurementSignature((string) $supportingClaim->value['data'], $supportingClaim->unit),
+                            'evidence_fingerprint' => $node->fingerprint];
+                    }
                     $domainEvidence[$evidenceId] = $this->domainEvidence($node);
                 }
                 $projection = $this->projectModelEntity($claim)
                     ?? throw new InvalidArgumentException('Project model claim is not projectable.');
                 $entityIdentity = (string) ($projection['identity_key'] ?? $claim->entityKey);
+                $roomIdentityFact = (new RoomIdentityObservation)->name($claim) !== null;
+                if ($roomIdentityFact) {
+                    // A repeated room label is not proof that separate photographs show the same room.
+                    $entityIdentity .= '|document:'.$documentId.'|page:'.$pageNumber;
+                }
                 $entityScope = (new ClaimSemanticMatcher)->entityScope($claim);
                 $entityIdentity .= $entityScope;
                 foreach (['floor_id' => 'floor_id', 'zone_id' => 'zone_id'] as $locatorField => $attribute) {
@@ -135,7 +148,7 @@ final readonly class ProjectModelEvidenceWriter
                 $visualInventoryFact = in_array($claim->factType, [
                     'sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture',
                 ], true) || ($claim->factType === 'equipment' && $this->isPlanObservation($claim));
-                $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted' || $visualInventoryFact
+                $entityId = 'entity:'.hash('sha256', implode('|', $decision->status === 'accepted' || $visualInventoryFact || $roomIdentityFact
                     ? [$projection['type'], $entityIdentity]
                     : [
                         $projection['type'],
@@ -145,7 +158,7 @@ final readonly class ProjectModelEvidenceWriter
                         (string) $documentId,
                         (string) $pageNumber,
                     ]));
-                if ($decision->status === 'accepted' || $visualInventoryFact) {
+                if ($decision->status === 'accepted' || $visualInventoryFact || $roomIdentityFact) {
                     $legacyIdentities = [$claim->entityKey];
                     if (! $visualInventoryFact) {
                         $normalizedIdentity = (new VisualObjectIdentity)->normalizeEntityKey($entityIdentity);
@@ -168,7 +181,7 @@ final readonly class ProjectModelEvidenceWriter
                         $scope->sourceVersion,
                         $projection['type'],
                         $entityId,
-                        $entityScope === '' ? $legacyEntityIds : [],
+                        $entityScope === '' && ! $roomIdentityFact ? $legacyEntityIds : [],
                     );
                 }
                 $entities[$entityId] = new Entity(
@@ -181,18 +194,21 @@ final readonly class ProjectModelEvidenceWriter
                     $entityId,
                     $projection['attributes'],
                 );
-                $projectedStatus = $visualInventoryFact
-                    ? (in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved')
-                    : match ($decision->status) {
+                $projectedStatus = match (true) {
+                    $roomIdentityFact => $evidenceIds !== [] && in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved',
+                    $visualInventoryFact => in_array($decision->status, ['accepted', 'candidate'], true) ? 'candidate' : 'unresolved',
+                    default => match ($decision->status) {
                         'accepted' => 'confirmed',
                         'candidate' => 'candidate',
                         default => 'unresolved',
-                    };
+                    },
+                };
                 $factIdentity = $visualInventoryFact
                     ? 'visual|'.$projection['type'].'|'.$entityIdentity
                     : (new ClaimSemanticMatcher)->key($claim).$entityScope;
                 $factId = 'fact:'.hash('sha256', implode('|', [
-                    $projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity,
+                    ($projectedStatus === 'candidate' && ! $visualInventoryFact ? $factIdentity.'|'.$entityId : $factIdentity)
+                        .($numericProofs === [] ? '' : '|native-numeric-proof:v3:'.hash('sha256', DerivedQuantityIdentity::canonicalJson($numericProofs))),
                     $projectedStatus,
                     $scope->sourceVersion,
                     (string) $documentId,
@@ -212,6 +228,7 @@ final readonly class ProjectModelEvidenceWriter
                     $projectedStatus === 'unresolved' ? 'unresolved' : (PhysicalMeasurementPublicationPolicy::requiresNumericProof($claim) && $numericSources?->certifies($claim) !== true ? 'ai_inference' : 'document'),
                     $projectedStatus,
                     $evidenceIds,
+                    nativeNumericProofs: array_map(static fn (array $proof): array => [...$proof, 'entity_id' => $entityId], $numericProofs),
                 );
                 if (isset($facts[$factId])) {
                     if (! hash_equals($this->canonicalFactPayload($facts[$factId]), $this->canonicalFactPayload($fact))) {
@@ -306,6 +323,10 @@ final readonly class ProjectModelEvidenceWriter
 
     private function evidenceScalar(ObservationClaim $claim): string|int|float|bool
     {
+        $roomIdentity = (new RoomIdentityObservation)->fingerprint($claim);
+        if ($roomIdentity !== null) {
+            return $roomIdentity;
+        }
         $value = $claim->value['data'];
         if (($claim->value['type'] ?? null) === 'number' && CanonicalSourceDecimal::isValid($value)) {
             return $value;
@@ -319,6 +340,10 @@ final readonly class ProjectModelEvidenceWriter
 
     private function projectModelFactValue(ObservationClaim $claim): mixed
     {
+        $roomName = (new RoomIdentityObservation)->name($claim);
+        if ($roomName !== null) {
+            return $roomName;
+        }
         $value = $claim->value['data'];
         if (is_int($value)) {
             return (string) $value;
@@ -366,6 +391,7 @@ final readonly class ProjectModelEvidenceWriter
             $evidenceIds,
             $left->version,
             $left->supersedesFactId,
+            [...$right->nativeNumericProofs, ...$left->nativeNumericProofs],
         );
     }
 
@@ -419,6 +445,12 @@ final readonly class ProjectModelEvidenceWriter
     {
         $type = mb_strtolower($claim->factType);
         $value = $claim->value['data'];
+        $roomName = (new RoomIdentityObservation)->name($claim);
+        if ($roomName !== null) {
+            return ['type' => 'room', 'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => ['semantic_type' => 'room', 'name' => $roomName,
+                    'properties' => ['identity_only' => true, 'requires_confirmation' => true]]];
+        }
 
         if (in_array($type, ['sanitary_fixture', 'kitchen_fixture', 'furniture', 'unknown_fixture'], true)
             && is_string($value) && trim($value) !== '') {
@@ -578,6 +610,7 @@ final readonly class ProjectModelEvidenceWriter
             is_string($node->locator['native_reference'] ?? null) ? $node->locator['native_reference'] : 'evidence-node:'.$node->id,
             $node->producerName,
             $node->sourceRef,
+            fingerprint: $node->fingerprint,
         );
     }
 }

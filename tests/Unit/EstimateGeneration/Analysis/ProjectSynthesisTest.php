@@ -17,6 +17,57 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectSynthesisTest extends TestCase
 {
+    public function test_engineer_runs_two_real_parts_with_complete_source_context_and_cached_replay(): void
+    {
+        $facts = $links = [];
+        $source = $this->version('a');
+        for ($index = 0; $index < 65; $index++) {
+            foreach (['a', 'b'] as $suffix) {
+                $facts[] = ['id' => 'fact:'.$index.':'.$suffix, 'source_version' => $source, 'current' => true];
+            }
+            $links[] = ['id' => 'link:'.$index, 'fact_ids' => ['fact:'.$index.':a', 'fact:'.$index.':b']];
+        }
+        $input = new ProjectSynthesisInput(10, 20, 30, [$source], $facts, [], [], ['arbiter' => [], 'geometry_expert' => []], RunProjectSynthesis::PROMPT_CONTRACT);
+        $model = new class implements ProjectSynthesisModel
+        {
+            public int $calls = 0;
+
+            public array $inputs = [];
+
+            public function synthesize(ProjectSynthesisInput $input, array $candidateLinks, array $candidateQuestions, callable $onPhysicalAttemptReserved): array
+            {
+                $this->inputs[] = $input;
+                $onPhysicalAttemptReserved('00000000-0000-4000-8000-00000000000'.++$this->calls);
+
+                return ['accepted_link_ids' => array_column($candidateLinks, 'id'), 'question_conflict_ids' => []];
+            }
+        };
+        $runs = new SynthesisRoleRunMemoryRepository;
+        $engineer = new RunProjectSynthesis($runs, $model, 'openai/gpt-6-luna');
+        $first = $engineer->run($input, $links, []);
+        self::assertCount(65, $first->acceptedLinkIds);
+        self::assertSame(2, $model->calls);
+        self::assertCount(2, array_unique(array_column($runs->inputs, 'subjectId')));
+        foreach ($model->inputs as $part) {
+            self::assertSame($input->facts, $part->facts);
+            self::assertSame($input->sourceVersions, $part->sourceVersions);
+            self::assertNotSame('whole', $part->partId);
+        }
+        self::assertSame($first->toArray(), $engineer->run($input, array_reverse($links), [])->toArray());
+        self::assertSame(2, $model->calls);
+    }
+
+    public function test_physical_engineer_identity_includes_the_exact_candidate_set_and_canonical_business_input(): void
+    {
+        $input = $this->input();
+        $identity = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAttemptIdentity::class;
+        $links = [['id' => 'link:roof', 'fact_ids' => ['fact:roof-material', 'fact:roof-area']]];
+        $first = $identity::fingerprint($input, $links, []);
+        self::assertNotSame($input->fingerprint(), $first);
+        self::assertNotSame($first, $identity::fingerprint($input, [], []));
+        self::assertSame($first, $identity::fingerprint($input, [['fact_ids' => ['fact:roof-material', 'fact:roof-area'], 'id' => 'link:roof']], []));
+    }
+
     public function test_input_fingerprint_covers_every_source_role_decision_and_contract_version(): void
     {
         $base = $this->input();
@@ -97,7 +148,19 @@ final class ProjectSynthesisTest extends TestCase
         self::assertSame($first->toArray(), $second->toArray());
         self::assertSame(1, $model->calls);
         self::assertSame('project_engineer', $runs->inputs[0]->role->value);
-        self::assertSame($this->input()->fingerprint(), $runs->inputs[0]->inputFingerprint);
+        self::assertNotSame($this->input()->fingerprint(), $runs->inputs[0]->inputFingerprint);
+        self::assertSame($runs->inputs[0]->inputFingerprint, $runs->inputs[1]->inputFingerprint);
+    }
+
+    public function test_distinct_candidate_sets_cannot_replay_a_previous_engineer_selection(): void
+    {
+        $runs = new SynthesisRoleRunMemoryRepository;
+        $model = new RecordedProjectSynthesisModel(['accepted_link_ids' => ['link:roof'], 'question_conflict_ids' => []]);
+        $runner = new RunProjectSynthesis($runs, $model, 'openai/gpt-6-luna');
+        $runner->run($this->input(), [['id' => 'link:roof', 'status' => 'confirmed', 'fact_ids' => ['fact:roof-area', 'fact:roof-material']]], []);
+        $runner->run($this->input(), [['id' => 'link:visual', 'status' => 'confirmed', 'fact_ids' => ['fact:roof-area', 'fact:roof-visual']]], []);
+        self::assertNotSame($runs->inputs[0]->inputFingerprint, $runs->inputs[1]->inputFingerprint);
+        self::assertSame(2, $model->calls);
     }
 
     public function test_project_engineer_quarantines_unknown_refs_and_keeps_server_required_selection(): void
@@ -189,22 +252,26 @@ final class SynthesisRoleRunMemoryRepository implements AiRoleRunRepository
 
     public ?AiRoleRunResult $lastResult = null;
 
-    private ?AiRoleRunResult $result = null;
+    private array $results = [];
+
+    private string $currentIdentity = '';
 
     public function claim(AiRoleRunInput $input, string $ownerUuid): AiRoleRunClaim
     {
         $this->inputs[] = $input;
+        $this->currentIdentity = $input->identityFingerprint();
+        $result = $this->results[$this->currentIdentity] ?? null;
 
-        return $this->result === null
+        return $result === null
             ? new AiRoleRunClaim(1, 'owned', $ownerUuid)
-            : new AiRoleRunClaim(1, 'replay', result: $this->result);
+            : new AiRoleRunClaim(1, 'replay', result: $result);
     }
 
-    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
-        $this->result = $result;
+        $this->results[$this->currentIdentity] = $result;
         $this->lastResult = $result;
     }
 

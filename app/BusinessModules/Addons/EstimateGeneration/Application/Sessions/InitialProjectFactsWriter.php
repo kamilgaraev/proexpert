@@ -49,6 +49,7 @@ final readonly class InitialProjectFactsWriter
             }
             $values[$field] = (string) $decimal;
         }
+        $this->writeDescription($session, $actor, $input);
         if ($values === []) {
             return;
         }
@@ -91,6 +92,40 @@ final readonly class InitialProjectFactsWriter
                     $organizationId, $projectId, $sessionId, $version, 'fact', $fact->id, $fact->id,
                     'user', (string) $actor->id, 'Числовой параметр введён пользователем при создании оценки', 1, $fact->evidenceIds), $fact);
             }
+        });
+    }
+
+    private function writeDescription(EstimateGenerationSession $session, User $actor, array $input): void
+    {
+        if (($input['evaluation_mode'] ?? null) !== 'universal' || ! is_string($input['description'] ?? null)
+            || trim($input['description']) === '') {
+            return;
+        }
+        $description = trim($input['description']);
+        if (mb_strlen($description) > 10000) {
+            throw new InitialProjectFactValidationFailed('description');
+        }
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $value = ['kind' => 'initial_description', 'description' => $description, 'numeric_parameters_confirmed' => false];
+        $hash = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($value));
+        $version = 'sha256:'.hash('sha256', 'initial-description:v1|'.implode('|', $scope).'|'.$hash);
+        $entityId = 'entity:'.hash('sha256', 'initial-description|'.implode('|', $scope));
+        $factId = 'fact:'.hash('sha256', $entityId.'|'.$version);
+        $this->evidence->transaction($scope[0], $scope[2], function () use ($scope, $version, $entityId, $factId, $value, $hash, $actor): void {
+            $node = $this->evidence->insertOrGet(new EvidenceData(...[...$scope, EvidenceType::SourceFact, EvidenceSourceType::UserInput,
+                'input:'.$scope[2], $version, ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.description'],
+                ['fact_key' => 'evaluation_choice', 'fact_value' => $hash], 0.0, EvidenceProducer::UserInputNormalizer->value,
+                'sha256:'.hash('sha256', 'initial-description:v1')]));
+            $evidenceId = 'evidence:'.$node->id;
+            $entity = new Entity($entityId, ...[...$scope, $version, 'quantity', $entityId,
+                ['semantic_type' => 'quantity', 'identity' => ['input_field' => 'description']]]);
+            $proof = new Evidence($evidenceId, ...[...$scope, $version, 'input:'.$scope[2], 'user_input', null, null,
+                'input_payload.description', EvidenceProducer::UserInputNormalizer->value, 'input:'.$scope[2], $hash]);
+            $fact = new Fact($factId, ...[...$scope, $version, $entityId, 'evaluation_answer', $value, null, 0.0, 'user_input', 'confirmed', [$evidenceId]]);
+            $this->models->saveSourceModel([$entity], [$fact], [$proof]);
+            $this->models->applyDecision(new Decision('decision:'.hash('sha256', $factId.'|initial-description'),
+                ...[...$scope, $version, 'fact', $factId, $factId, 'user', (string) $actor->id,
+                    'Описание введено пользователем; числа из свободного текста требуют отдельного подтверждения.', 1, [$evidenceId]]), $fact);
         });
     }
 }

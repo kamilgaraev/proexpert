@@ -37,6 +37,8 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         });
         Facade::setFacadeApplication($app);
         Http::swap(new Factory);
+        $app->instance(\App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
+            new \Tests\Support\EstimateGeneration\InMemoryVisionPhysicalAttemptStore);
     }
 
     protected function tearDown(): void
@@ -50,7 +52,7 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     #[Test]
     public function production_runtime_without_effective_snapshot_fails_closed(): void
     {
-        $this->configure(['model-a'], 1);
+        $this->configure(['openai/gpt-6-luna'], 1);
         $this->expectException(OcrConfigurationException::class);
         (new TimewebVisionOcrClient(runtimeEnvironment: new FixedOcrRuntimeEnvironment(true)))->recognize($this->input());
     }
@@ -59,25 +61,25 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     public function internal_retry_records_http_failure_then_success_exactly_once_each(): void
     {
         $store = $this->store();
-        $this->configure(['model-a'], 2);
+        $this->configure(['openai/gpt-6-luna'], 2);
         Http::fakeSequence()
-            ->push(['error' => ['code' => 'temporary']], 500)
-            ->push($this->successPayload('model-a'), 200);
+            ->push(['error' => ['code' => 'temporary'], 'usage' => ['prompt_tokens' => 0, 'completion_tokens' => 0]], 500)
+            ->push($this->successPayload('openai/gpt-6-luna'), 200);
 
-        (new TimewebVisionOcrClient($store))->recognize($this->input());
+        ($this->client($store))->recognize($this->input());
 
         self::assertSame(['http_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
-        self::assertSame(['unavailable', 'measured'], array_map(fn (AiUsageData $row): string => $row->usageStatus, $store->rows));
+        self::assertSame(['measured', 'measured'], array_map(fn (AiUsageData $row): string => $row->usageStatus, $store->rows));
     }
 
     #[Test]
     public function arbitrary_non_json_response_fails_without_changing_the_pinned_model(): void
     {
         $store = $this->store();
-        $this->configure(['model-a'], 1);
-        Http::fake(fn () => Http::response(['model' => 'model-a', 'choices' => [['message' => ['content' => 'plain OCR text']]]], 200));
+        $this->configure(['openai/gpt-6-luna'], 1);
+        Http::fake(fn () => Http::response(['model' => 'openai/gpt-6-luna', 'choices' => [['message' => ['content' => 'plain OCR text']]]], 200));
         try {
-            (new TimewebVisionOcrClient($store))->recognize($this->input());
+            ($this->client($store))->recognize($this->input());
             self::fail('Malformed response must fail.');
         } catch (OcrProviderException) {
         }
@@ -85,20 +87,20 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     }
 
     #[Test]
-    public function replay_keeps_attempt_id_new_claim_changes_it_and_recorder_failure_never_masks_success(): void
+    public function durable_replay_does_not_send_or_record_twice_and_accounting_failure_stops_publication(): void
     {
         $store = $this->store();
-        $this->configure(['model-a'], 1);
-        Http::fake(fn () => Http::response($this->successPayload('model-a'), 200));
-        $client = new TimewebVisionOcrClient($store);
+        $this->configure(['openai/gpt-6-luna'], 1);
+        Http::fake(fn () => Http::response($this->successPayload('openai/gpt-6-luna'), 200));
+        $client = $this->client($store);
 
         $client->recognize($this->input());
         $client->recognize($this->input());
         $client->recognize($this->input('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7e'));
 
-        self::assertSame($store->rows[0]->context->attemptId, $store->rows[1]->context->attemptId);
-        self::assertSame($store->rows[0]->context->correlationId, $store->rows[1]->context->correlationId);
-        self::assertNotSame($store->rows[0]->context->attemptId, $store->rows[2]->context->attemptId);
+        self::assertCount(2, $store->rows);
+        self::assertNotSame($store->rows[0]->context->attemptId, $store->rows[1]->context->attemptId);
+        Http::assertSentCount(2);
 
         $throwing = new class implements AiUsageStore
         {
@@ -107,17 +109,19 @@ final class TimewebVisionUsageAttemptTest extends TestCase
                 throw new \RuntimeException('recorder failed');
             }
         };
-        self::assertSame('model-a', (new TimewebVisionOcrClient($throwing))->recognize($this->input())->model);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('recorder failed');
+        $this->client($throwing)->recognize($this->input('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7f'));
     }
 
     #[Test]
     public function reported_model_mismatch_fails_without_changing_the_pinned_model(): void
     {
         $store = $this->store();
-        $this->configure(['model-a'], 1);
+        $this->configure(['openai/gpt-6-luna'], 1);
         Http::fake(fn () => Http::response($this->successPayload('unexpected-model'), 200));
         try {
-            (new TimewebVisionOcrClient($store))->recognize($this->input());
+            ($this->client($store))->recognize($this->input());
             self::fail('Reported model mismatch must fail.');
         } catch (OcrProviderException) {
         }
@@ -125,10 +129,10 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     }
 
     #[Test]
-    public function connection_retry_and_terminal_http_policy_have_exact_attempt_rows(): void
+    public function unknown_connection_outcome_is_not_retried_and_terminal_http_has_one_attempt(): void
     {
         $store = $this->store();
-        $this->configure(['model-a'], 2);
+        $this->configure(['openai/gpt-6-luna'], 2);
         $calls = 0;
         Http::fake(function () use (&$calls) {
             $calls++;
@@ -136,17 +140,22 @@ final class TimewebVisionUsageAttemptTest extends TestCase
                 throw new ConnectionException('offline');
             }
 
-            return Http::response($this->successPayload('model-a'), 200);
+            return Http::response($this->successPayload('openai/gpt-6-luna'), 200);
         });
-        (new TimewebVisionOcrClient($store))->recognize($this->input());
-        self::assertSame(['connection_failed', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
+        try {
+            $this->client($store)->recognize($this->input());
+            self::fail('An unknown transport outcome must stop automatic sends.');
+        } catch (OcrProviderException) {
+        }
+        self::assertSame(1, $calls);
+        self::assertSame(['ambiguous'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
 
         $terminalStore = $this->store();
         Http::swap(new Factory);
-        $this->configure(['model-a', 'model-b'], 3);
+        $this->configure(['openai/gpt-6-luna', 'model-b'], 3);
         Http::fake(fn () => Http::response(['error' => ['code' => 'unauthorized']], 401));
         try {
-            (new TimewebVisionOcrClient($terminalStore))->recognize($this->input());
+            $this->client($terminalStore)->recognize($this->input('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7f'));
             self::fail('401 must stop retries and model routing.');
         } catch (OcrProviderException) {
         }
@@ -161,6 +170,22 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         config()->set('estimate-generation.ocr.model', (string) ($models[0] ?? ''));
         config()->set('estimate-generation.ocr.retry_attempts', $retries);
         config()->set('estimate-generation.ocr.retry_delay_ms', 0);
+    }
+
+    private function client(AiUsageStore $store): TimewebVisionOcrClient
+    {
+        $prices = new class implements \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver
+        {
+            public function resolve(AiOperationContext $context, string $provider, string $model): \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot
+            {
+                return \App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot::fromArray([
+                    'input_per_million' => '13.5', 'cached_input_per_million' => '13.5', 'output_per_million' => '67.5',
+                    'reasoning_per_million' => '67.5', 'reasoning_mode' => 'included_in_output', 'image_unit' => '0', 'page_unit' => '0',
+                    'currency' => 'RUB', 'source' => 'fixture', 'version' => 'luna.v1', 'effective_at' => '2026-10-01T00:00:00+00:00']);
+            }
+        };
+
+        return new TimewebVisionOcrClient($store, priceResolver: $prices);
     }
 
     private function input(string $correlationId = '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'): OcrDocumentInput

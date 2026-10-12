@@ -58,6 +58,7 @@ final readonly class VisionGeometryExpertModel implements GeometryExpertModel
                     pageId: $sourceContext->pageId,
                     unitId: $sourceContext->unitId,
                     processingLineageId: $sourceContext->processingLineageId,
+                    creditOperationId: $sourceContext->creditOperationId,
                 ),
                 sourceTransform: $source->sourceTransform,
                 sheetRole: $source->sheetRole,

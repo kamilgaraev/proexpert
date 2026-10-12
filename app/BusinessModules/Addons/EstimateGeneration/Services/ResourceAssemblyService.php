@@ -26,6 +26,7 @@ class ResourceAssemblyService
         protected NormativeCandidatePresenter $candidatePresenter,
         protected ?WorkIntentClassifier $workIntentClassifier = null,
         protected EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
+        protected ?\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionHardGate $selectionHardGate = null,
     ) {}
 
     /**
@@ -163,6 +164,10 @@ class ResourceAssemblyService
     {
         $workItem = $this->withWorkIntent($workItem, $context);
         $workItem = $this->applyDecidedNormativeMatch($workItem, $match, true);
+        if (is_array($workItem['normative_match'] ?? null)) {
+            $workItem['normative_match']['hard_gate_passed'] = $this->selectionHardGate !== null
+                && $this->selectionHardGate->rejectionReasons($workItem, $context, $match) === [];
+        }
 
         return $this->noAirWorkItemPolicy->requiresReview($workItem)
             ? $this->markNoAirWorkItem($workItem)
@@ -490,6 +495,8 @@ class ResourceAssemblyService
 
         $workItem['normative_match'] = [
             'status' => 'matched',
+            'hard_gate_passed' => $this->selectionHardGate !== null
+                && $this->selectionHardGate->rejectionReasons($workItem, [], $match) === [],
             'selected_by_user' => $selectedByUser,
             'selected_candidate_key' => $selected['key'],
             'norm_id' => $selected['norm_id'],
@@ -653,6 +660,8 @@ class ResourceAssemblyService
                     'price_unit' => $resource['price_unit'] ?? $resource['unit'],
                     'quantity' => $quantity,
                     'quantity_per_unit' => $quantityPerUnit,
+                    'quantity_per_work_unit' => (string) $quantityPerUnitDecimal->multipliedBy(
+                        NormativeUnitNormalizer::safeQuantityFactorDecimal((string) $workItem['unit'], (string) $selected['unit']) ?? '1'),
                     'quantity_basis' => 'normative_resource',
                     'unit_price' => $unitPrice,
                     'total_price' => $exactDecimalPath

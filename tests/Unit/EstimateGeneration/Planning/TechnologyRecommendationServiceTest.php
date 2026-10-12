@@ -30,12 +30,61 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologyWorkPackage
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class TechnologyRecommendationServiceTest extends TestCase
 {
+    private \Illuminate\Container\Container $previousContainer;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->previousContainer = \Illuminate\Container\Container::getInstance();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('config', new \Illuminate\Config\Repository(['estimate-generation' => ['universal_enabled' => false]]));
+        \Illuminate\Container\Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        \Illuminate\Container\Container::setInstance($this->previousContainer);
+        parent::tearDown();
+    }
+
+    public function test_confirmed_catalog_system_can_be_reselected_from_current_facts_without_a_stale_planning_run(): void
+    {
+        [$service, $repository, $actor, $session, $context, $recommendation] = $this->selectionFixture('28', true);
+        $first = $service->respond($actor, $session, $context, 1, $recommendation->decisionKey, 'pitched_roof.metal_tile', null, 'Первый вариант');
+        $reselectionContext = new ActorContext(10, 20, 7, 'technology-reselection-12345678', self::SOURCE_VERSION);
+        $second = $service->reselect($actor, $session, $reselectionContext, $first->selectedFactId, $first->id, 'pitched_roof.standing_seam', 'Другой вариант');
+        $selected = $repository->fact(10, 20, 30, $second->selectedFactId);
+        self::assertSame($first->targetId, $second->targetId);
+        self::assertSame($first->selectedFactId, $selected->supersedesFactId);
+        self::assertSame('pitched_roof.standing_seam', $selected->value['system_id']);
+        self::assertSame($first->id, $selected->value['previous_decision_id']);
+        self::assertSame($second->id, $service->reselect($actor, $session, $reselectionContext, $first->selectedFactId, $first->id,
+            'pitched_roof.standing_seam', 'Другой вариант')->id);
+        $this->expectException(InvalidArgumentException::class);
+        $service->reselect($actor, $session, new ActorContext(10, 20, 7, 'technology-reselection-stale'),
+            $first->selectedFactId, $first->id, 'pitched_roof.metal_tile', 'Старый выбор');
+    }
+
+    public function test_reselection_rejects_a_concurrent_fact_change_at_the_atomic_persistence_boundary(): void
+    {
+        [$service, $repository, $actor, $session, $context, $recommendation] = $this->selectionFixture('28', true);
+        $first = $service->respond($actor, $session, $context, 1, $recommendation->decisionKey, 'pitched_roof.metal_tile', null, 'Первый вариант');
+        $repository->beforeTechnologyDecisionLock = function () use ($repository): void {
+            $repository->saveSourceModel([], [$this->fact('fact:concurrent-roof-type', 'roof_type', 'flat')], []);
+        };
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('changed before reselection persistence');
+        $service->reselect($actor, $session, new ActorContext(10, 20, 7, 'technology-reselection-race'),
+            $first->selectedFactId, $first->id, 'pitched_roof.standing_seam', 'Другой вариант');
+    }
+
     private const SOURCE_VERSION = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
     public function test_unknown_pitched_roof_material_returns_three_complete_systems_and_one_recommendation(): void
@@ -741,6 +790,7 @@ final class TechnologyRecommendationServiceTest extends TestCase
         );
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn($allowed);
+        $authorization->method('canCurrent')->willReturn($allowed);
         $trigger = new class implements PlanningReanalysisTrigger
         {
             public function trigger(int $sessionId, ActorContext $context): void {}

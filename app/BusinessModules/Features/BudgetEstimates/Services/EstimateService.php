@@ -130,6 +130,8 @@ class EstimateService
                 $data = $this->applyRegionalPriceVersion($data, $data['estimate_regional_price_version_id'] !== null ? (int) $data['estimate_regional_price_version_id'] : null);
             }
 
+            (new EstimateSourceVatCalculator)->assertHeaderUpdate($estimate, $data);
+
             $this->repository->update($estimate, $data);
             
             if (isset($data['overhead_rate']) || isset($data['profit_rate']) || isset($data['vat_rate'])) {

@@ -29,6 +29,120 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class ProjectUnderstandingCoordinatorTest extends TestCase
 {
     #[Test]
+    public function an_identity_only_photo_can_plan_an_unverified_worklist_without_confirming_a_dimension(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = $this->modelSource();
+        $entity = new Entity('room:photo', 1, 2, 3, $source, 'room', 'room:photo',
+            ['identity_only' => true, 'requires_confirmation' => true, 'semantic_type' => 'room']);
+        $fact = new Fact('fact:room-name', 1, 2, 3, $source, $entity->id, 'room_name', 'Помещение на фото',
+            null, 0.0, 'ai_inference', 'candidate', ['evidence:1']);
+        $models->saveSourceModel([$entity], [$fact], [$this->evidence('evidence:1')]);
+        $factory = new RecordingArbitratorFactory;
+        $coordinator = $this->coordinator($models, $factory);
+        self::assertFalse($coordinator->refresh(1, 2, 3, $this->token(), 1)->isReadyForPlanning());
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 2, allowIdentityOnlyPlanning: true);
+        self::assertTrue($result->isReadyForPlanning());
+        self::assertNotSame([], $result->limitations);
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame('candidate', $models->fact(1, 2, 3, 'fact:room-name')->status);
+        self::assertSame('room_name', $models->snapshot(1, 2, 3)->facts[0]->type);
+        self::assertSame($result->inputFingerprint, $coordinator->refresh(1, 2, 3, $this->token(), 3, allowIdentityOnlyPlanning: true)->inputFingerprint);
+    }
+
+    #[Test]
+    public function partial_identity_planning_never_accepts_a_candidate_area(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = $this->modelSource();
+        $entity = new Entity('room:photo', 1, 2, 3, $source, 'room', 'room:photo',
+            ['identity_only' => true, 'requires_confirmation' => true, 'semantic_type' => 'room']);
+        $models->saveSourceModel([$entity], [new Fact('fact:guessed-area', 1, 2, 3, $source, $entity->id,
+            'area', '12', 'm2', 0.0, 'ai_inference', 'candidate', ['evidence:1'])], [$this->evidence('evidence:1')]);
+        $result = $this->coordinator($models, new RecordingArbitratorFactory)
+            ->refresh(1, 2, 3, $this->token(), 1, allowIdentityOnlyPlanning: true);
+        self::assertFalse($result->isReadyForPlanning());
+        self::assertSame('candidate', $models->fact(1, 2, 3, 'fact:guessed-area')->status);
+    }
+
+    #[Test]
+    public function a_zero_engineer_allowance_keeps_deterministic_links_and_conflict_questions_without_a_model_call(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $source = $this->modelSource();
+        $left = new Fact('fact:conflict-left', 1, 2, 3, $source, 'entity:conflict-left', 'material', 'Газобетон', null, 0.0, 'document', 'confirmed', ['evidence:3']);
+        $right = new Fact('fact:conflict-right', 1, 2, 3, $source, 'entity:conflict-right', 'material', 'Керамический блок', null, 0.0, 'unresolved', 'unresolved', ['evidence:4']);
+        $conflict = Conflict::between('conflict:document-arbitration:conditional', [$left, $right], 'document_arbitration_unresolved');
+        $models->saveSourceModel([new Entity($left->entityId, 1, 2, 3, $source, 'material', $left->entityId),
+            new Entity($right->entityId, 1, 2, 3, $source, 'material', $right->entityId)], [$left, $right],
+            [$this->evidence('evidence:3'), $this->evidence('evidence:4')], [$conflict]);
+        $synthesis = new RecordingProjectSynthesisRunner;
+        $factory = new RecordingArbitratorFactory;
+        $allowance = new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance
+        {
+            public function partLimit(ProjectSynthesisInput $input): ?int
+            {
+                return 0;
+            }
+        };
+        $coordinator = $this->coordinator($models, $factory, synthesis: $synthesis, allowance: $allowance);
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 1);
+        self::assertCount(1, $result->links);
+        self::assertSame('linked', $result->links[0]['status']);
+        self::assertSame([$conflict->id], array_column($result->questions, 'conflict_id'));
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame(0, $synthesis->calls);
+        self::assertSame(0, $factory->calls);
+        self::assertSame($result->questions, $models->currentUnderstanding(1, 2, 3)['questions']);
+    }
+
+    #[Test]
+    public function a_zero_allowance_preserves_ambiguous_candidates_as_unresolved_without_calling_the_arbiter(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+        $factory = new RecordingArbitratorFactory('fact:right-2');
+        $synthesis = new RecordingProjectSynthesisRunner;
+        $allowance = new class implements \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance
+        {
+            public function partLimit(ProjectSynthesisInput $input): ?int
+            {
+                return 0;
+            }
+        };
+        $result = $this->coordinator($models, $factory, synthesis: $synthesis, allowance: $allowance)->refresh(1, 2, 3, $this->token(), 1);
+        self::assertCount(1, $result->links);
+        self::assertSame('unresolved', $result->links[0]['status']);
+        self::assertSame(['fact:left', 'fact:right', 'fact:right-2'], $result->links[0]['candidate_fact_ids']);
+        self::assertNotSame([], $result->questions);
+        self::assertSame(0, $factory->calls);
+        self::assertSame(0, $synthesis->calls);
+        self::assertSame(0, $result->providerCalls);
+    }
+
+    #[Test]
+    public function server_only_refresh_does_not_request_an_allowance_or_call_any_model(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+        $factory = new RecordingArbitratorFactory('fact:right-2');
+        $synthesis = new RecordingProjectSynthesisRunner;
+        $allowance = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class);
+        $allowance->expects(self::never())->method('partLimit');
+        $result = $this->coordinator($models, $factory, synthesis: $synthesis, allowance: $allowance)
+            ->refresh(1, 2, 3, $this->token(), 1, allowModelCalls: false);
+        self::assertCount(1, $result->links);
+        self::assertSame('unresolved', $result->links[0]['status']);
+        self::assertNotSame([], $result->questions);
+        self::assertSame(0, $factory->calls);
+        self::assertSame(0, $synthesis->calls);
+        self::assertSame(0, $result->providerCalls);
+    }
+
+    #[Test]
     #[DataProvider('deterministicCases')]
     public function mandatory_cross_document_scenarios_run_through_coordinator_and_persist(
         string $leftRole,
@@ -41,7 +155,8 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         $models = new InMemoryProjectModelRepository;
         $factory = new RecordingArbitratorFactory;
         $this->seedPair($models, $leftRole, $rightRole, $attribute, $value, $type);
-        $coordinator = $this->coordinator($models, $factory);
+        $synthesis = new RecordingProjectSynthesisRunner;
+        $coordinator = $this->coordinator($models, $factory, synthesis: $synthesis);
 
         $first = $coordinator->refresh(1, 2, 3, $this->token(), 1);
         $second = $coordinator->refresh(1, 2, 3, $this->token(), 2);
@@ -50,6 +165,10 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         self::assertSame($strategy, $first->links[0]['strategy']);
         self::assertSame($first->links, $second->links);
         self::assertSame(0, $factory->calls);
+        self::assertInstanceOf(ProjectSynthesisInput::class, $synthesis->input);
+        $validated = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisValidator)
+            ->validate(['links' => $synthesis->candidateLinks, 'questions' => []], $synthesis->input);
+        self::assertSame(['fact:left', 'fact:right'], $validated['links'][0]['fact_ids']);
         self::assertSame($first->links, $models->currentUnderstanding(1, 2, 3)['links']);
         self::assertNull($models->currentUnderstanding(99, 2, 3));
         self::assertTrue($first->isReadyForPlanning());
@@ -437,6 +556,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
         RecordingArbitratorFactory $factory,
         ?ProjectUnderstandingBudget $budget = null,
         ?ProjectSynthesisRunner $synthesis = null,
+        ?\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance $allowance = null,
     ): ProjectUnderstandingCoordinator {
         $translator = static fn (string $key, array $replace): string => strtr($key, $replace);
 
@@ -446,6 +566,7 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
             $factory,
             $budget ?? ProjectUnderstandingBudget::defaults(),
             $synthesis ?? new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
+            $allowance ?? new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance,
         );
     }
 
@@ -505,6 +626,8 @@ final class RecordingProjectSynthesisRunner implements ProjectSynthesisRunner
 
     public ?ProjectSynthesisInput $input = null;
 
+    public array $candidateLinks = [];
+
     public function run(
         ProjectSynthesisInput $input,
         array $candidateLinks,
@@ -512,6 +635,7 @@ final class RecordingProjectSynthesisRunner implements ProjectSynthesisRunner
     ): ProjectSynthesisSelection {
         $this->calls++;
         $this->input = $input;
+        $this->candidateLinks = $candidateLinks;
 
         return new ProjectSynthesisSelection(
             array_values(array_filter(array_column($candidateLinks, 'id'), 'is_string')),

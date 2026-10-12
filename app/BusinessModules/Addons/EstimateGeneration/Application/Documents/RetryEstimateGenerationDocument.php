@@ -123,6 +123,10 @@ final class RetryEstimateGenerationDocument
                     'requested_at' => $requestedAt,
                 ];
 
+                if (config('estimate-generation.credits.enabled', false)) {
+                    app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditSourceInvalidation::class)
+                        ->handle($lockedSession, 'document_retry_requested');
+                }
                 $preservedReady = $this->resetter->handle(
                     $lockedDocument,
                     $expectedSourceVersion,

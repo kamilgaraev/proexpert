@@ -21,8 +21,9 @@ final class SaveManualProjectFactsRequest extends FormRequest
         return [
             'state_version' => ['required', 'integer', 'min:0'], 'request_id' => ['required', 'uuid'],
             'entities' => ['required', 'array', 'min:1', 'max:100'],
-            'entities.*' => ['required', 'array:key,type,floor,zone,parent_key,parameters,coverage'],
+            'entities.*' => ['required', 'array:key,type,name,floor,zone,parent_key,parameters,coverage'],
             'entities.*.key' => ['required', 'string', 'max:120'],
+            'entities.*.name' => ['sometimes', 'required', 'string', 'max:160'],
             'entities.*.type' => ['required', 'in:room,wall,opening,site,roof,roof_facet,roof_opening'],
             'entities.*.floor' => ['nullable', 'string', 'max:120'], 'entities.*.zone' => ['nullable', 'string', 'max:120'],
             'entities.*.parent_key' => ['nullable', 'string', 'max:120'], 'entities.*.parameters' => ['sometimes', 'array', 'max:12'],

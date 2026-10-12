@@ -105,6 +105,25 @@ final readonly class SaveManualProjectFacts
             foreach ($input['entities'] as $index => $row) {
                 $entity = $entities[$byKey[$row['key']]];
                 $parameters = [];
+                if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [])) {
+                    $name = $row['name'] ?? $row['key'];
+                    if (! is_string($name) || trim($name) === '' || mb_strlen($name) > 160) {
+                        throw ValidationException::withMessages(['entities.'.$index.'.name' => 'Введите название объекта, не более 160 символов.']);
+                    }
+                    $factId = 'fact:'.hash('sha256', $requestId.'|'.$entity->id.'|entity_identity');
+                    $identity = ['answer_kind' => 'entity_identity', 'entity_id' => $entity->id, 'entity_type' => $row['type'],
+                        'name' => trim($name), 'identity_confirmed' => true, 'decision_id' => 'decision:'.hash('sha256', $requestId.'|'.$factId),
+                        'reason' => 'Пользователь подтвердил ручные исходные данные'];
+                    $choiceHash = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($identity));
+                    $node = $this->evidence->insertOrGet(new EvidenceData(...[...$scope, EvidenceType::SourceFact, EvidenceSourceType::UserInput,
+                        'input:'.$sessionId, $sourceVersion, ['source_key' => 'source:'.hash('sha256', $factId), 'native_reference' => 'input_payload.manual_facts'],
+                        ['fact_key' => 'evaluation_choice', 'fact_value' => $choiceHash], 0.0, EvidenceProducer::UserInputNormalizer->value,
+                        'sha256:'.hash('sha256', 'manual-entity-identity:v1')]));
+                    $evidenceId = 'evidence:'.$node->id;
+                    $proofs[$evidenceId] = new Evidence($evidenceId, ...[...$scope, $sourceVersion, 'input:'.$sessionId, 'user_input',
+                        null, null, 'input_payload.manual_facts', EvidenceProducer::UserInputNormalizer->value, 'input:'.$sessionId, $choiceHash]);
+                    $facts[] = $this->fact($scope, $sourceVersion, $entity, 'entity_identity', $identity, null, 'user_input', [$evidenceId], $requestId);
+                }
                 foreach ($row['parameters'] ?? [] as $parameter => $entry) {
                     $parameter = FactVocabulary::parameter($parameter);
                     $group = in_array($parameter, ['area', 'plan_area'], true) ? 'area' : 'length';
@@ -171,6 +190,7 @@ final readonly class SaveManualProjectFacts
             $payload['manual_fact_receipts'] = $receipts;
             $payload['manual_input_revision'] = ($payload['manual_input_revision'] ?? 0) + 1;
             $payload['input_confirmed'] = false;
+            unset($payload['confirmed_evaluation']);
             $session->fill(['input_payload' => $payload, 'state_version' => $expectedVersion + 1,
                 'status' => EstimateGenerationStatus::InputReviewRequired, 'processing_stage' => 'input_review_required'])->save();
 

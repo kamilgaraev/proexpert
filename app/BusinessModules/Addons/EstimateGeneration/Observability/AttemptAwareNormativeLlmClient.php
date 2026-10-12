@@ -48,6 +48,9 @@ final readonly class AttemptAwareNormativeLlmClient
         $sessionId = $operation->sessionId;
         $identity = get_object_vars($operation);
         unset($identity['checkpointClaimToken'], $identity['logicalAttempt'], $identity['stateVersion'], $identity['generationAttemptId']);
+        if ($operation->creditOperationId === null) {
+            unset($identity['creditOperationId']);
+        }
         $seed = json_encode([
             ...$identity,
             'candidate_set_hash' => (string) ($domainContext['candidate_set_hash'] ?? ''),
@@ -82,6 +85,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 'match_normatives',
                 'rerank',
                 $index + 1,
+                creditOperationId: $operation->creditOperationId,
             );
             $priceSnapshot = $this->priceResolver?->resolve(
                 $attemptContext,
@@ -100,11 +104,13 @@ final readonly class AttemptAwareNormativeLlmClient
                     'session_id' => $sessionId,
                     'state_version' => $operation->stateVersion,
                     'generation_attempt_id' => $operation->generationAttemptId,
+                    ...($operation->creditOperationId === null ? [] : ['credit_operation_id' => $operation->creditOperationId]),
                 ];
                 $options['estimate_generation_attempt'] = [
                     'attempt_id' => $attemptContext->attemptId,
                     'request_fingerprint' => hash('sha256', $seed),
                     'price_snapshot' => $priceSnapshot->toArray(),
+                    'operation' => $attemptContext->operation,
                 ];
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;

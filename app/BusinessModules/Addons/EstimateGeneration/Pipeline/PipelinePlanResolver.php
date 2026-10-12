@@ -42,6 +42,7 @@ final readonly class PipelinePlanResolver
                 $inputVersion, $seed->sessionStatus, priorOutputs: $prior,
                 generationAttemptId: $seed->generationAttemptId, baseInputVersion: $seed->baseInputVersion,
                 stage: $definition->stage, dependencyVersions: $dependencies,
+                creditOperationId: $seed->creditOperationId,
             );
         }
 

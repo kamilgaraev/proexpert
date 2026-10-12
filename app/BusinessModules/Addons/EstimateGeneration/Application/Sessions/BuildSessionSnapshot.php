@@ -82,6 +82,7 @@ final class BuildSessionSnapshot
             $blockers,
             $readinessEvaluated,
             $documentsSummary,
+            (bool) ($readinessSummary['can_generate'] ?? false),
         );
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
@@ -126,7 +127,35 @@ final class BuildSessionSnapshot
                 )->toArray(),
             recommendedStep: $workflow['recommended_step'],
             workflowSteps: $workflow['steps'],
+            creditPolicy: $this->creditPolicy($session),
+            evaluationConfirmation: $readinessSummary['confirmed_evaluation'] ?? null,
         );
+    }
+
+    private function creditPolicy(EstimateGenerationSession $session): array
+    {
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
+            return config('estimate-generation.credits.enabled', false)
+                ? ['enabled' => false, 'reason' => 'legacy_balance_requires_reconciliation'] : ['enabled' => false];
+        }
+        $organization = \App\Models\Organization::query()->findOrFail($session->organization_id);
+        $balance = app(\App\Services\Credits\AICreditService::class)->balance($organization);
+        $operationId = $session->input_payload['generation_credit_operation_id'] ?? $session->input_payload['documents_credit_operation_id'] ?? null;
+        $activeDocuments = is_string($operationId) && \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
+            ->where('operation_id', $operationId)->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
+            ->where('session_id', $session->id)->where('kind', 'documents')->whereIn('status', ['reserved', 'running'])->exists();
+        $receipt = $session->analysis_payload['credit_operation_receipt'] ?? null;
+        if (! is_array($receipt) || ($receipt['operation_id'] ?? null) !== $operationId) {
+            $receipt = null;
+        }
+
+        return ['enabled' => true, 'quote_required' => true, 'wallet' => 'most_shared',
+            'available_units_minor' => $balance['available_minor'], 'reserved_units_minor' => $balance['reserved_minor'],
+            'minimum_units_minor' => (int) config('ai-assistant-credits.minimum_units_minor', 50),
+            'charge_step_minor' => (int) config('ai-assistant-credits.charge_step_minor', 50),
+            'current_operation_id' => $operationId,
+            'active_document_operation' => $activeDocuments,
+            'receipt' => $receipt];
     }
 
     /**
@@ -142,13 +171,23 @@ final class BuildSessionSnapshot
         array $blockers,
         bool $readinessEvaluated,
         array $documentsSummary,
+        bool $canGenerate,
     ): array {
         if ($status === EstimateGenerationStatus::Archived) {
             return [];
         }
 
         $available = [];
-        foreach (self::STATUS_ACTIONS[$status->value] ?? [] as $action) {
+        $actions = self::STATUS_ACTIONS[$status->value] ?? [];
+        $universal = ($session->input_payload['evaluation_mode'] ?? null) === 'universal';
+        if ($universal && $status === EstimateGenerationStatus::Draft && $canGenerate
+            && ($documentsSummary['manual_input_available'] ?? false) === true) {
+            $actions[] = EstimateGenerationAction::Generate;
+        }
+        foreach ($actions as $action) {
+            if ($universal && $action === EstimateGenerationAction::Generate && (! $readinessEvaluated || ! $canGenerate)) {
+                continue;
+            }
             if (
                 $action === EstimateGenerationAction::StartDocumentProcessing
                 && array_key_exists('total', $documentsSummary)
@@ -266,9 +305,15 @@ final class BuildSessionSnapshot
                 && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
         $requiresDocumentReview = $status === EstimateGenerationStatus::InputReviewRequired
             && $actionRequired > 0;
-        $analysisComplete = $total > 0
+        $confirmedUniversal = ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && $status === EstimateGenerationStatus::ReadyToApply;
+        $manualInputReady = ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && ($documentsSummary['manual_input_available'] ?? false) === true
+            && $actionRequired === 0 && (int) ($documentsSummary['pending'] ?? $documentsSummary['pending_count'] ?? 0) === 0
+            && (int) ($documentsSummary['system_failure_count'] ?? 0) === 0;
+        $analysisComplete = $confirmedUniversal || $manualInputReady || ($total > 0
             && $this->documentAnalysisComplete($documentsSummary)
-            && ($usable + $ignored) >= $total;
+            && ($usable + $ignored) >= $total);
         $questionsResolved = $questionCount === 0;
 
         $available = [
@@ -279,7 +324,9 @@ final class BuildSessionSnapshot
             'review' => $analysisComplete && $questionsResolved && ! $requiresDocumentRecovery,
         ];
         $recommendedStep = match (true) {
+            $confirmedUniversal => 'review',
             $requiresDocumentRecovery, $requiresDocumentReview => 'documents',
+            $status === EstimateGenerationStatus::Draft && $manualInputReady => 'draft',
             $status === EstimateGenerationStatus::InputReviewRequired && $analysisComplete => $questionCount > 0
                 ? 'ai_questions'
                 : 'draft',

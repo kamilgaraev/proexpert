@@ -49,6 +49,22 @@ final class UniversalEvaluationBuilderTest extends TestCase
         self::assertSame(['wall'], $result['priority_questions'][0]['affected_position_keys']);
     }
 
+    public function test_unconfirmed_model_reserve_and_forged_manual_choice_remain_visible_blockers(): void
+    {
+        foreach ([['contingency_percent' => '7'], ['evaluation_policy' => ['contingency_selection' => ['kind' => 'fixed', 'currency' => 'RUB',
+            'quoted_amount' => '120', 'vat_mode' => 'included', 'vat_rate' => '20', 'basis' => 'Без канонического факта.',
+            'fact_id' => 'fact:'.str_repeat('a', 64), 'decision_id' => 'decision:'.str_repeat('b', 64)]]]] as $change) {
+            $draft = ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']],
+                'local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => [['key' => 'floor', 'name' => 'Пол', 'quantity' => null, 'unit' => 'm2']]]]]]];
+            $draft = array_replace_recursive($draft, $change);
+            $result = (new UniversalEvaluationBuilder)->build($draft, new ProjectModelSnapshot([], [], [], []));
+            self::assertContains('contingency_not_confirmed', array_column($result['missing_requirements'], 'reason'));
+            self::assertContains('contingency_confirmation', array_column($result['priority_questions'], 'key'));
+            self::assertArrayNotHasKey('contingency', $result['scenarios'][0]);
+            self::assertFalse($result['can_confirm_for_apply']);
+        }
+    }
+
     public function test_questions_are_bounded_merge_affected_work_and_skip_already_confirmed_parameters(): void
     {
         $questions = [];

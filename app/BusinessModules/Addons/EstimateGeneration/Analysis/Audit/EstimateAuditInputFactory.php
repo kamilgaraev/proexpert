@@ -118,8 +118,8 @@ final readonly class EstimateAuditInputFactory
                 }
                 $key = $fact->id.'|'.hash('sha256', json_encode($locator, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 $records[$key] = ['fact_id' => $fact->id, 'locator' => $locator];
-                if (count($records) >= 20000) {
-                    return array_values($records);
+                if (count($records) > 20000) {
+                    throw new InvalidArgumentException('estimate_audit_evidence_requires_section_split');
                 }
             }
         }
@@ -146,8 +146,8 @@ final readonly class EstimateAuditInputFactory
                         }
                         $key = $factId.'|'.hash('sha256', json_encode($locator, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                         $records[$key] = ['fact_id' => $factId, 'locator' => $locator];
-                        if (count($records) >= 20000) {
-                            return array_values($records);
+                        if (count($records) > 20000) {
+                            throw new InvalidArgumentException('estimate_audit_evidence_requires_section_split');
                         }
                     }
                 }

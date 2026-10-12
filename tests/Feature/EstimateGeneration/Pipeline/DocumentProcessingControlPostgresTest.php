@@ -1604,6 +1604,9 @@ final class DocumentProcessingControlPostgresTest extends EstimateGenerationCano
     /** @return array<string, mixed> */
     private function fixture(?string $costLimit = null): array
     {
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->allows('hasModuleAccess')->andReturn(true);
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
         $organization = Organization::factory()->create();
         $project = Project::factory()->for($organization)->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);

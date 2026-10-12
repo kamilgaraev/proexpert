@@ -110,6 +110,8 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 documentId: $context->documentId,
                 pageId: $context->pageId,
                 unitId: $context->unitId,
+                processingLineageId: \Illuminate\Support\Str::isUuid($context->processingAttemptId) ? strtolower($context->processingAttemptId) : null,
+                creditOperationId: $context->creditOperationId,
             ),
         ));
         $page = $recognition->pages[0] ?? null;

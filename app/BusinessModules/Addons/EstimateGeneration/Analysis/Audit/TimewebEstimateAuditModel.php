@@ -50,6 +50,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
             'validate_draft',
             'estimate_audit',
             $input->cycle + 1,
+            creditOperationId: $input->wireScope?->creditOperationId,
         );
         $price = $this->prices->resolve($context, $this->wire->provider(), $this->modelName);
         $response = [];
@@ -66,7 +67,7 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray()],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,
@@ -107,6 +108,9 @@ final readonly class TimewebEstimateAuditModel implements EstimateAuditModel
             .'Каждое замечание содержит type, severity, item_key, только переданные source_fact_ids, reason, impact, recommendation и correction. '
             .'Не создавай finding_id и source_locator: сервер построит их из текущих фактов и evidence. '
             .'Допустимые correction: operator_review либо remove_exact_duplicate с двумя ключами позиций и их точными fingerprint. '
+            .'При context_manifest оценивай работы этой части и её факты, включая назначенные неиспользованные факты. '
+            .'work_manifest содержит состав полной ревизии: не предлагай дубликат работы из другой части. '
+            .'Не считай отсутствие факта в части доказательством его отсутствия во всём проекте. '
             .'Верни только JSON с ключами accepted и findings; accepted=true допустим только при пустом findings.';
     }
 

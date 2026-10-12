@@ -8,6 +8,14 @@ final class EvaluationSectionMap
 {
     public static function forPackage(string $package): string
     {
+        if (str_starts_with($package, 'ai-composer-supplementary:')) {
+            $section = substr($package, strlen('ai-composer-supplementary:'));
+            if (in_array($section, ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating', 'ventilation',
+                'electricity', 'automation', 'technological_pipelines', 'equipment'], true)) {
+                return $section;
+            }
+        }
+
         return match ($package) {
             'rough_finishing', 'finish_finishing', 'office_finishing' => 'finishing',
             'walls', 'slabs', 'stairs', 'metal_frame', 'foundation', 'foundations', 'industrial_floor', 'envelope', 'gates' => 'structures',

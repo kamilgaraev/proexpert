@@ -20,7 +20,7 @@ class ResourceStrategy extends BaseItemStrategy
 
     public function canHandle(EstimateImportRowDTO $row): bool
     {
-        return in_array($row->itemType, ['material', 'equipment', 'machinery', 'labor']);
+        return in_array($row->itemType, ['material', 'equipment', 'machinery', 'labor', 'other'], true);
     }
 
     public function process(EstimateImportRowDTO $row, ImportContext $context): ?EstimateItem
@@ -52,13 +52,13 @@ class ResourceStrategy extends BaseItemStrategy
             'overhead_amount' => $row->overheadAmount ?? 0,
             'profit_amount' => $row->profitAmount ?? 0,
             'is_manual' => $row->isManual,
-            'labor_hours' => $row->itemType === 'labor' ? (float)($costs['quantity'] ?? 0) : 0,
-            'machinery_hours' => $row->itemType === 'machinery' && str_starts_with(mb_strtolower(trim((string)($row->unit ?? ''))), 'маш')
-                ? (float)($costs['quantity'] ?? 0)
+            'labor_hours' => $row->itemType === 'labor' ? (float) ($costs['quantity'] ?? 0) : 0,
+            'machinery_hours' => $row->itemType === 'machinery' && str_starts_with(mb_strtolower(trim((string) ($row->unit ?? ''))), 'маш')
+                ? (float) ($costs['quantity'] ?? 0)
                 : 0,
         ];
 
-        if (!empty($row->code)) {
+        if (! empty($row->code) && $row->itemType !== 'other') {
             try {
                 // Универсальный поиск/создание ресурса
                 $result = $this->resourceMatchingService->findOrCreate(
@@ -73,7 +73,7 @@ class ResourceStrategy extends BaseItemStrategy
                         'is_not_accounted' => $row->isNotAccounted,
                     ]
                 );
-                
+
                 // Связываем с позицией сметы
                 match ($result['type']) {
                     'material' => $itemData['material_id'] = $result['resource']->id,
@@ -81,7 +81,7 @@ class ResourceStrategy extends BaseItemStrategy
                     'labor' => $itemData['labor_resource_id'] = $result['resource']->id,
                     default => null,
                 };
-                
+
             } catch (\Exception $e) {
                 Log::error('resource_strategy.resource_failed', [
                     'type' => $row->itemType,
@@ -95,19 +95,19 @@ class ResourceStrategy extends BaseItemStrategy
         $createdItem = $this->itemService->addItem($itemData, $context->estimate);
 
         // Сохранение WorksList (если позиция пришла как material/equipment, но содержит работы)
-        if (!empty($row->worksList)) {
+        if (! empty($row->worksList)) {
             foreach ($row->worksList as $workData) {
                 EstimateItemWork::create([
                     'estimate_item_id' => $createdItem->id,
                     'caption' => $workData['caption'] ?? '',
-                    'sort_order' => (int)($workData['sort_order'] ?? 0),
+                    'sort_order' => (int) ($workData['sort_order'] ?? 0),
                     'metadata' => $workData['metadata'] ?? null,
                 ]);
             }
         }
 
         // Сохранение Totals (если позиция содержит Itog-структуру)
-        if (!empty($row->totals)) {
+        if (! empty($row->totals)) {
             foreach ($row->totals as $totalData) {
                 EstimateItemTotal::create([
                     'estimate_item_id' => $createdItem->id,
@@ -118,7 +118,7 @@ class ResourceStrategy extends BaseItemStrategy
                     'for_one_curr' => $totalData['for_one_curr'] ?? null,
                     'total_curr' => $totalData['total_curr'] ?? null,
                     'total_base' => $totalData['total_base'] ?? null,
-                    'sort_order' => (int)($totalData['sort_order'] ?? 0),
+                    'sort_order' => (int) ($totalData['sort_order'] ?? 0),
                     'metadata' => $totalData['metadata'] ?? null,
                 ]);
             }

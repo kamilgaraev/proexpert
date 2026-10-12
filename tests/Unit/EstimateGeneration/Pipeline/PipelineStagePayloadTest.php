@@ -30,13 +30,30 @@ final class PipelineStagePayloadTest extends TestCase
     public function test_universal_policy_is_additive_and_preserved_through_all_price_stages(): void
     {
         $policy = ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'renovation',
-            'selected_sections' => ['finishing'], 'construction_type' => 'current_repair'];
+            'selected_sections' => ['finishing'], 'construction_type' => 'current_repair',
+            'scope_selection' => null, 'scenario_selections' => null];
         foreach ([ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices] as $stage) {
             $data = ['regional_context' => [], 'supplementary_materials' => [], 'local_estimates' => [], 'evaluation_policy' => $policy];
             self::assertSame($data, PipelineStagePayload::from($stage, $data)->data);
         }
         $this->expectException(InvalidArgumentException::class);
         PipelineStagePayload::from(ProcessingStage::ResolvePrices, [...$data, 'evaluation_policy' => [...$policy, 'model' => 'openai/gpt-6-sol']]);
+    }
+
+    public function test_scenario_policy_is_structural_only_and_cannot_accept_scalar_or_unbounded_selections(): void
+    {
+        $policy = ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'renovation', 'selected_sections' => ['finishing']];
+        $data = ['regional_context' => [], 'supplementary_materials' => [], 'local_estimates' => [],
+            'evaluation_policy' => [...$policy, 'scenario_selections' => ['version' => 'evaluation-scenarios:v1', 'fact_id' => 'fact:scenario', 'definitions' => []]]];
+        self::assertSame($data, PipelineStagePayload::from(ProcessingStage::ResolvePrices, $data)->data);
+        foreach (['invalid', ['basis' => str_repeat('x', 2097153)]] as $selection) {
+            try {
+                PipelineStagePayload::from(ProcessingStage::ResolvePrices, [...$data, 'evaluation_policy' => [...$policy, 'scenario_selections' => $selection]]);
+                self::fail('An invalid scenario selection entered the pipeline.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('evaluation_policy_contract_invalid', $exception->getMessage());
+            }
+        }
     }
 
     #[Test]

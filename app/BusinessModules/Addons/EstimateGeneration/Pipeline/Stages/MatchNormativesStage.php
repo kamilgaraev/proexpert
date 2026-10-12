@@ -92,6 +92,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'logical_attempt' => $context->stageAttempt,
                         'state_version' => $context->stateVersion,
                         'generation_attempt_id' => $context->generationAttemptId,
+                        'credit_operation_id' => $context->creditOperationId,
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,

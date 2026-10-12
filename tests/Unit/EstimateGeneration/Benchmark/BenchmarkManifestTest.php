@@ -85,6 +85,26 @@ final class BenchmarkManifestTest extends TestCase
     }
 
     #[Test]
+    public function unscaled_fixtures_have_no_invented_measurements_zero_volumes_or_prices(): void
+    {
+        $manifest = BenchmarkManifest::fromFile($this->fixtureRoot.'/manifest.json', $this->fixtureRoot);
+        foreach (['dev-photo-plan-001', 'reg-undimensioned-sketch-001'] as $id) {
+            $case = $manifest->case($id);
+            $payload = json_decode(file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
+            $expected = \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkExpectedContract::expected($payload, 'benchmark-expected:v1');
+            self::assertSame(['areas', 'quantities', 'costs'], $expected['unknown_numeric_fields']);
+            self::assertSame([], $expected['areas']);
+            self::assertSame([], $expected['quantities']);
+            self::assertSame([], $expected['costs']);
+            self::assertSame([], $expected['applicable_item_ids']);
+            self::assertContains('scale_missing', $expected['review_codes']);
+            $prediction = [...$expected, 'model_schema_version' => 'benchmark-prediction:v1'];
+            unset($prediction['unknown_numeric_fields']);
+            self::assertSame($prediction, \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkExpectedContract::prediction($prediction));
+        }
+    }
+
+    #[Test]
     public function it_rejects_duplicate_content_across_datasets(): void
     {
         $manifest = $this->validInlineManifest();

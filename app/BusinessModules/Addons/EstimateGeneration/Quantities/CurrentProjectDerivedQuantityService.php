@@ -271,6 +271,32 @@ final readonly class CurrentProjectDerivedQuantityService
         array_push($requests, ...$this->technologyPackageRequests(
             $snapshot, $token, $technology, $completeness, $decisions,
         ));
+        $bindings = new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\DirectQuantityBinding;
+        $decisionIndex = array_column($decisions, null, 'selectedFactId');
+        $keys = [];
+        foreach ($snapshot->facts as $binding) {
+            $decision = $decisionIndex[$binding->id] ?? null;
+            if (! $decision instanceof Decision) {
+                continue;
+            }
+            $source = $bindings->source($snapshot, $binding, $decision);
+            $unit = $source === null ? null : $bindings::canonicalUnit($source->unit);
+            if ($source === null || $unit === null) {
+                continue;
+            }
+            $request = $this->request('direct_quantity', $source->entityId, ['measurement' => $source->id], $token, $technology, $completeness, $unit, 8);
+            $request['quantity_id'] = $binding->value['quantity_key'];
+            $request['quantity_binding_fact_id'] = $binding->id;
+            $request['quantity_binding_decision_id'] = $decision->id;
+            $requests[] = $request;
+            $keys[$request['quantity_id']] = ($keys[$request['quantity_id']] ?? 0) + 1;
+        }
+        foreach ($requests as &$request) {
+            if (($keys[$request['quantity_id']] ?? 0) > 1) {
+                $request['preflight_issues'] = [['code' => 'quantity_binding_ambiguous', 'operand' => 'measurement', 'fact_id' => null]];
+            }
+        }
+        unset($request);
 
         usort($requests, static fn (array $a, array $b): int => [$a['formula_identity'], $a['entity_id']] <=> [$b['formula_identity'], $b['entity_id']]);
 

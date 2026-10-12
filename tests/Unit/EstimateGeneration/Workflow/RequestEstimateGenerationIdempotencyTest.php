@@ -5,11 +5,9 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -17,6 +15,20 @@ use ReflectionClass;
 
 final class RequestEstimateGenerationIdempotencyTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('config', new \Illuminate\Config\Repository(['estimate-generation' => ['credits' => ['enabled' => false]]]));
+        \Illuminate\Container\Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        \Illuminate\Container\Container::setInstance(null);
+        parent::tearDown();
+    }
+
     #[Test]
     public function lost_queued_response_can_be_retried_with_start_version_without_redispatch(): void
     {
@@ -48,13 +60,12 @@ final class RequestEstimateGenerationIdempotencyTest extends TestCase
 
     private function useCase(): RequestEstimateGeneration
     {
-        $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn(true);
+        $authorization = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class);
         $reflection = new ReflectionClass(RequestEstimateGeneration::class);
         $useCase = $reflection->newInstanceWithoutConstructor();
         $reflection->getProperty('authorizer')->setValue(
             $useCase,
-            new EstimateGenerationActionAuthorizer($authorization),
+            $authorization,
         );
 
         return $useCase;

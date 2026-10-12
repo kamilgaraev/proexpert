@@ -18,9 +18,13 @@ class RebuildEstimateGenerationSectionRequest extends FormRequest
 
     public function rules(): array
     {
+        $required = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $this->user()->current_organization_id) ? 'required' : 'sometimes';
+
         return [
             'state_version' => ['required', 'integer', 'min:0'],
             'local_estimate_key' => ['required', 'string', 'max:255'],
+            'quote_id' => [$required, 'uuid'],
+            'request_id' => [$required, 'uuid'],
         ];
     }
 }

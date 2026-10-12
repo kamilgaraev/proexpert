@@ -13,6 +13,35 @@ use PHPUnit\Framework\TestCase;
 
 final class AICreditEconomicsMonitorTest extends TestCase
 {
+    public function test_estimator_source_journal_deduplicates_wallet_transfer_and_counts_failed_supplier_cost_with_eight_decimal_precision(): void
+    {
+        $first = ['organization_id' => 7, 'provider' => 'timeweb', 'requested_model' => 'openai/gpt-6-luna',
+            'attempt_id' => 'first-physical', 'operation' => 'estimate_composition', 'currency' => 'RUB',
+            'usage_status' => 'measured', 'pricing_status' => 'available', 'cost_amount' => '0.00607500',
+            'status' => 'succeeded', 'input_tokens' => 200, 'output_tokens' => 50];
+        $canonical = array_replace($this->cost('first-physical', 6075, 'estimate_composition'), ['organization_id' => 7, 'model' => 'openai/gpt-6-luna']);
+        $failed = array_replace($first, ['attempt_id' => 'failed-physical', 'status' => 'http_failed', 'cost_amount' => '0.01000001']);
+        $report = (new AICreditEconomicsMonitor)->evaluate([$canonical], [], [], [], estimator: [$first, $failed]);
+        self::assertSame(16076, $report['external_cost_micro_rub']);
+        self::assertSame(2, $report['provider_call_count']);
+        self::assertSame(1, $report['deduplicated_usage_count']);
+        self::assertSame(0, $report['unknown_cost_count']);
+    }
+
+    public function test_estimator_unknown_cost_is_not_free_and_explicit_zero_remains_known(): void
+    {
+        $unknown = ['organization_id' => 7, 'provider' => 'timeweb', 'requested_model' => 'openai/gpt-6-luna',
+            'attempt_id' => 'unknown-physical', 'operation' => 'vision', 'currency' => null,
+            'usage_status' => 'unavailable', 'pricing_status' => 'unavailable', 'cost_amount' => null];
+        $free = array_replace($unknown, ['attempt_id' => 'free-physical', 'currency' => 'RUB', 'usage_status' => 'measured',
+            'pricing_status' => 'available', 'cost_amount' => '0.00000000']);
+        $report = (new AICreditEconomicsMonitor)->evaluate([], [], [], [], estimator: [$unknown, $free]);
+        self::assertSame(0, $report['external_cost_micro_rub']);
+        self::assertSame(2, $report['provider_call_count']);
+        self::assertSame(1, $report['unknown_cost_count']);
+        self::assertSame('coverage_incomplete', $report['state']);
+    }
+
     public function test_deduplicates_linked_chat_and_adds_ocr_embeddings_and_failed_actual_costs(): void
     {
         $canonical = [$this->cost('call-1', 10000), $this->cost('ocr-1', 20000, 'ocr'),
@@ -205,6 +234,7 @@ final class AICreditEconomicsMonitorTest extends TestCase
             'period_start_at' => $now->toAtomString(), 'period_end_at' => $now->addDays(30)->toAtomString(),
         ], $now, null, null, 1000000);
         self::assertSame('allocated', $snapshot['status']);
+
         return $snapshot;
     }
 }

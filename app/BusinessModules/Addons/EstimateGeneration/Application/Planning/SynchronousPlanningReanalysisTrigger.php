@@ -19,6 +19,7 @@ final readonly class SynchronousPlanningReanalysisTrigger implements PlanningRea
             $sessionId,
             (string) Str::uuid(),
             1,
+            allowModelCalls: false,
         );
     }
 }

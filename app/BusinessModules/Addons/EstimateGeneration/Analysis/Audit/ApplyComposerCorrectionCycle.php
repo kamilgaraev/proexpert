@@ -12,10 +12,102 @@ final readonly class ApplyComposerCorrectionCycle
     public function __construct(
         private RunEstimateAudit $auditor,
         private RunEstimateComposerCorrection $corrector,
+        private int $maximumPartBytes = 458752,
     ) {}
 
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
     public function apply(EstimateAuditInput $root): array
+    {
+        $limit = null;
+        if ($root->wireScope?->creditOperationId !== null) {
+            $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
+                ->where('organization_id', $root->organizationId)->where('project_id', $root->projectId)
+                ->where('session_id', $root->sessionId)->where('operation_id', $root->wireScope->creditOperationId)->first(['processing_plan']);
+            if ($operation === null) {
+                throw new \InvalidArgumentException('estimate_audit_approved_plan_missing');
+            }
+            $plan = json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+            $limit = $plan['audit_part_limit'] ?? (isset($plan['roles']['estimate_audit']) ? 1 : 0);
+            if (! is_int($limit) || $limit < 0 || $limit > EstimateAuditBatchPlanner::MAX_PARTS
+                || ($limit > 0 && ! isset($plan['roles']['estimate_audit']))) {
+                throw new \InvalidArgumentException('estimate_audit_approved_plan_invalid');
+            }
+            if ($limit === 0) {
+                throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
+            }
+        }
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $root->organizationId, $root->projectId, $root->sessionId, $root->wireScope?->creditOperationId, 'estimate_audit');
+        $correctionPolicy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $root->organizationId, $root->projectId, $root->sessionId, $root->wireScope?->creditOperationId, 'estimate_composer_correction');
+        if ($policy !== null && $correctionPolicy !== null) {
+            $policy['maximum_serialized_input_bytes'] = min($policy['maximum_serialized_input_bytes'], $correctionPolicy['maximum_serialized_input_bytes']);
+        }
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, $this->maximumPartBytes);
+        if ($limit !== null && count($parts) > $limit) {
+            throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
+        }
+        if (count($parts) === 1) {
+            return $this->applyPart($parts[0]['input']);
+        }
+        $draft = $root->draft;
+        $findings = $reviews = $history = [];
+        $allAccepted = true;
+        $maximumCycles = 0;
+        // Validate every serialized part before the first physical audit request.
+        $inputs = array_column($parts, 'input');
+        foreach ($parts as $partIndex => $part) {
+            $outcome = $this->applyPart($inputs[$partIndex]);
+            $originalKeys = array_fill_keys($part['work_keys'], true);
+            $replacements = [];
+            foreach ($outcome['draft']['local_estimates'] ?? [] as $localIndex => $local) {
+                $newItems = [];
+                foreach ($local['sections'] ?? [] as $section) {
+                    foreach ($section['work_items'] ?? [] as $item) {
+                        if (isset($originalKeys[$item['key']])) {
+                            $replacements[$item['key']] = $item;
+                        } else {
+                            $newItems[] = $item;
+                        }
+                    }
+                }
+                if ($newItems !== []) {
+                    $draft['local_estimates'][] = [...$local, 'key' => 'audit-'.substr($part['id'], 5).'-'.$localIndex,
+                        'sections' => [['key' => 'audit-added', 'title' => $local['title'] ?? 'Дополнения', 'work_items' => $newItems]]];
+                }
+            }
+            foreach ($draft['local_estimates'] as &$local) {
+                foreach ($local['sections'] as &$section) {
+                    $section['work_items'] = array_values(array_filter(array_map(
+                        static fn (array $item): ?array => isset($originalKeys[$item['key']]) ? ($replacements[$item['key']] ?? null) : $item,
+                        $section['work_items'],
+                    )));
+                }
+                unset($section);
+            }
+            unset($local);
+            $allAccepted = $allAccepted && $outcome['audit']['status'] === 'accepted';
+            $maximumCycles = max($maximumCycles, $outcome['audit']['correction_cycles']);
+            array_push($findings, ...$outcome['audit']['findings']);
+            array_push($reviews, ...$outcome['draft']['audit_review_items']);
+            foreach ($outcome['audit']['history'] as $entry) {
+                $history[] = [...$entry, 'part_id' => $part['id']];
+            }
+        }
+        $audit = ['schema_version' => 1, 'snapshot_token' => $root->snapshotToken,
+            'status' => $allAccepted ? 'accepted' : 'review_required', 'correction_cycles' => $maximumCycles,
+            'parts' => array_map(static fn (array $part): array => ['id' => $part['id'], 'work_keys' => $part['work_keys']], $parts),
+            'findings' => $findings, 'history' => $history];
+        $draft['audit_review_items'] = $reviews;
+        $draft['independent_audit'] = $audit;
+        // A proposed new row must not collide with a work in another part.
+        (new EstimateAuditBatchPlanner)->plan($draft);
+
+        return ['draft' => $this->refreshArtifactHash($draft), 'audit' => $audit];
+    }
+
+    /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
+    private function applyPart(EstimateAuditInput $root): array
     {
         $draft = $root->draft;
         $history = [];
@@ -63,7 +155,10 @@ final readonly class ApplyComposerCorrectionCycle
             ],
             array_filter($final['findings'], static fn (array $finding): bool => $finding['severity'] === 'material'),
         ));
-        $draft['audit_review_items'] = array_slice($reviewItems, 0, 1000);
+        if (count($reviewItems) > 1000) {
+            throw new \InvalidArgumentException('estimate_audit_review_items_require_section_split');
+        }
+        $draft['audit_review_items'] = $reviewItems;
         $audit = [
             'schema_version' => 1,
             'snapshot_token' => $root->snapshotToken,

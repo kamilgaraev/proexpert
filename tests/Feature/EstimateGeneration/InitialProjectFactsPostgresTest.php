@@ -19,6 +19,30 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class InitialProjectFactsPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_description_is_a_canonical_text_source_without_promoting_its_numbers_to_dimensions(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $attributes['input_payload'] = ['evaluation_mode' => 'universal', 'description' => 'Ремонт кухни 12 м², потолок 3 м'];
+        $session = app(CreateEstimateGenerationSession::class)->handle($attributes, $actor);
+        $models = app(ProjectModelRepository::class);
+        $snapshot = $models->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
+        self::assertCount(1, $snapshot->facts);
+        self::assertSame('evaluation_answer', $snapshot->facts[0]->type);
+        self::assertSame($attributes['input_payload']['description'], $snapshot->facts[0]->value['description']);
+        self::assertFalse($snapshot->facts[0]->value['numeric_parameters_confirmed']);
+        self::assertNull($snapshot->facts[0]->unit);
+        self::assertSame('quantity', $snapshot->entities[0]->type);
+        self::assertArrayNotHasKey('area', $snapshot->entities[0]->attributes);
+        self::assertSame('input_payload.description', $snapshot->evidence[0]->nativeReference);
+        self::assertCount(1, $models->decisionsForSelectedFacts((int) $session->organization_id, (int) $session->project_id,
+            (int) $session->id, [$snapshot->facts[0]->id]));
+        $understanding = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class)
+            ->refresh((int) $session->organization_id, (int) $session->project_id, (int) $session->id, (string) \Illuminate\Support\Str::uuid(), 1);
+        self::assertTrue($understanding->isReadyForPlanning());
+        self::assertSame(0, $understanding->providerCalls);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
     public function test_initial_numbers_are_atomic_user_facts_with_evidence_and_decisions_and_area_is_calculable(): void
     {
         [$actor, $attributes] = $this->fixture();

@@ -33,23 +33,24 @@ class EstimateItemResource extends JsonResource
             'current_unit_price' => $this->current_unit_price ? (float) $this->current_unit_price : null,
             'price_coefficient' => $this->price_coefficient ? (float) $this->price_coefficient : null,
             'direct_costs' => (float) $this->direct_costs,
-            
+
             // Стоимость по компонентам
             'materials_cost' => $this->materials_cost ? (float) $this->materials_cost : null,
             'machinery_cost' => $this->machinery_cost ? (float) $this->machinery_cost : null,
             'labor_cost' => $this->labor_cost ? (float) $this->labor_cost : null,
             'equipment_cost' => $this->equipment_cost ? (float) $this->equipment_cost : null,
-            
+            'other_cost' => (string) $this->other_cost,
+
             'overhead_amount' => (float) $this->overhead_amount,
             'profit_amount' => (float) $this->profit_amount,
             'total_amount' => (float) $this->total_amount,
             'total_amount_with_vat' => $this->estimate ? round($this->total_amount * (1 + ($this->estimate->vat_rate ?? 0) / 100), 2) : (float) $this->total_amount,
             'current_total_amount' => $this->current_total_amount ? (float) $this->current_total_amount : null,
-            
+
             // Трудозатраты
             'labor_hours' => (float) ($this->labor_hours ?? 0),
             'machinery_hours' => (float) ($this->machinery_hours ?? 0),
-            
+
             // Базовая стоимость (для базисно-индексного метода)
             'base_costs' => $this->base_materials_cost || $this->base_machinery_cost || $this->base_labor_cost ? [
                 'materials' => (float) $this->base_materials_cost,
@@ -57,7 +58,7 @@ class EstimateItemResource extends JsonResource
                 'labor' => (float) $this->base_labor_cost,
                 'unit_price' => (float) $this->base_unit_price,
             ] : null,
-            
+
             // Индексы (детализация)
             'indices' => $this->price_index || $this->materials_index ? [
                 'general' => $this->price_index ? (float) $this->price_index : null,
@@ -65,11 +66,11 @@ class EstimateItemResource extends JsonResource
                 'machinery' => $this->machinery_index ? (float) $this->machinery_index : null,
                 'labor' => $this->labor_index ? (float) $this->labor_index : null,
             ] : null,
-            
+
             // Нормативная база
             'normative_rate_id' => $this->normative_rate_id,
             'normative_rate_code' => $this->normative_rate_code,
-            
+
             'justification' => $this->justification,
             'is_manual' => $this->is_manual,
             'metadata' => $this->metadata,
@@ -88,7 +89,7 @@ class EstimateItemResource extends JsonResource
 
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
-            
+
             'work_type' => $this->whenLoaded('workType'),
             'measurement_unit' => $this->whenLoaded('measurementUnit'),
             'resources' => EstimateItemResourceResource::collection($this->whenLoaded('resources')),
@@ -103,4 +104,3 @@ class EstimateItemResource extends JsonResource
         ];
     }
 }
-

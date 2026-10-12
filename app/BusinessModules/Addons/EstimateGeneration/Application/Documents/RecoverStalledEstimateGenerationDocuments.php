@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Throwable;
 
 final class RecoverStalledEstimateGenerationDocuments
 {
@@ -28,6 +29,8 @@ final class RecoverStalledEstimateGenerationDocuments
         $documents = EstimateGenerationDocument::query()
             ->with('session')
             ->where('status', 'queued')
+            ->whereHas('session', static fn (Builder $query) => $query->whereNotIn('status', ['cancelled', 'archived', 'applied']))
+            ->where(static fn (Builder $query) => $query->whereNull('processing_control_status')->orWhere('processing_control_status', '<>', 'cancelled'))
             ->where('updated_at', '<=', $minimumAge)
             ->orderBy('id')
             ->limit(max(1, $limit))
@@ -61,18 +64,28 @@ final class RecoverStalledEstimateGenerationDocuments
                 ],
             ])->saveQuietly();
 
-            ProcessEstimateGenerationDocumentJob::dispatch(
-                (int) $document->getKey(),
-                FailureExecutionSnapshot::capture(
-                    $session,
-                    'document_manifest_recovery',
-                    attemptId: $attemptId,
-                    documentId: (int) $document->getKey(),
-                    sourceVersion: $sourceVersion,
-                ),
-            )
-                ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE);
+            try {
+                ProcessEstimateGenerationDocumentJob::dispatch(
+                    (int) $document->getKey(),
+                    FailureExecutionSnapshot::capture(
+                        $session,
+                        'document_manifest_recovery',
+                        attemptId: $attemptId,
+                        documentId: (int) $document->getKey(),
+                        sourceVersion: $sourceVersion,
+                    ),
+                )
+                    ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
+                    ->onQueue(ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE);
+            } catch (Throwable $error) {
+                Log::warning('estimate_generation.document_manifest_recovery_deferred', [
+                    'document_id' => (int) $document->getKey(),
+                    'failure_code' => 'document_queue_unavailable',
+                    'exception_class' => $error::class,
+                ]);
+
+                continue;
+            }
 
             $dispatched++;
         }

@@ -29,6 +29,8 @@ final readonly class EstimateComposerInput
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
         public ?string $batchKey = null,
+        public ?array $contextManifest = null,
+        public array $allowedWorkSections = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -38,6 +40,8 @@ final readonly class EstimateComposerInput
             || ! array_is_list($decisions) || count($decisions) > 2000
             || ! array_is_list($candidates) || count($candidates) > 10000
             || ($batchKey !== null && preg_match('/^[a-f0-9]{64}$/D', $batchKey) !== 1)
+            || ($contextManifest !== null && (! is_string($contextManifest['parent_input_fingerprint'] ?? null)
+                || preg_match('/^[a-f0-9]{64}$/D', $contextManifest['parent_input_fingerprint']) !== 1))
             || ($facts === [] && $derivedQuantities === [] && $candidates === [])
             || ! array_is_list($missingDocuments) || count($missingDocuments) > 200) {
             throw new InvalidArgumentException('estimate_composer_input_invalid');
@@ -46,6 +50,13 @@ final readonly class EstimateComposerInput
             if (! is_array($fact) || ! self::identifier($fact['id'] ?? null)) {
                 throw new InvalidArgumentException('estimate_composer_fact_invalid');
             }
+        }
+        if (! array_is_list($allowedWorkSections) || count($allowedWorkSections) > 12
+            || count(array_filter($allowedWorkSections, 'is_string')) !== count($allowedWorkSections)
+            || count(array_unique($allowedWorkSections)) !== count($allowedWorkSections)
+            || array_diff($allowedWorkSections, ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
+                'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment']) !== []) {
+            throw new InvalidArgumentException('estimate_composer_work_sections_invalid');
         }
         foreach ($candidates as $candidate) {
             if (! is_array($candidate)
@@ -70,7 +81,12 @@ final readonly class EstimateComposerInput
 
     public function fingerprint(): string
     {
-        return hash('sha256', json_encode($this->canonicalPayload(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        $payload = $this->canonicalPayload();
+        if ($this->wireScope?->creditOperationId !== null) {
+            $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
+        }
+
+        return hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
     }
 
     /** @return array<string, mixed> */
@@ -92,6 +108,12 @@ final readonly class EstimateComposerInput
         ];
         if ($this->batchKey !== null) {
             $payload['batch_key'] = $this->batchKey;
+        }
+        if ($this->contextManifest !== null) {
+            $payload['context_manifest'] = $this->contextManifest;
+        }
+        if ($this->allowedWorkSections !== []) {
+            $payload['allowed_work_sections'] = $this->allowedWorkSections;
         }
 
         return $payload;

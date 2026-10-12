@@ -35,7 +35,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             'room:building-floor',
             ['area_m2' => 72.19, 'document_role' => 'building_floor'],
         );
-        $evidence = new Evidence(
+        $evidence = $this->nativeEvidence(
             'evidence:building-area',
             10,
             20,
@@ -49,7 +49,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             'native_numeric_parser',
         );
         $repository->saveSourceModel([$buildingFloor], [
-            new Fact(
+            $this->nativeFact(
                 'fact:building-area',
                 10,
                 20,
@@ -80,11 +80,11 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     {
         $repository = new InMemoryProjectModelRepository;
         $room = new Entity('room:simulation', 10, 20, 30, self::SOURCE, 'room', 'room:simulation');
-        $lengthEvidence = new Evidence('evidence:simulation-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
-        $widthEvidence = new Evidence('evidence:simulation-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
+        $lengthEvidence = $this->nativeEvidence('evidence:simulation-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
+        $widthEvidence = $this->nativeEvidence('evidence:simulation-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
         $repository->saveSourceModel([$room], [
-            new Fact('fact:simulation-length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
-            new Fact('fact:simulation-width', 10, 20, 30, self::SOURCE, $room->id, 'width', '10', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            $this->nativeFact('fact:simulation-length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            $this->nativeFact('fact:simulation-width', 10, 20, 30, self::SOURCE, $room->id, 'width', '10', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
         ], [$lengthEvidence, $widthEvidence]);
         $this->makeStageFiveCurrent($repository);
         $capture = $repository->snapshotForPlanning(10, 20, 30, 100);
@@ -92,24 +92,26 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
 
         $amounts = [];
         foreach (['5', '6', '7'] as $value) {
+            $userProof = new Evidence('evidence:simulation-user:'.$value, 10, 20, 30, self::SOURCE, 'input:30', 'user_input', nativeReference: 'input_payload.simulation');
             $facts = array_map(static fn (Fact $fact): Fact => $fact->id === 'fact:simulation-length'
                 ? new Fact(
                     $fact->id, $fact->organizationId, $fact->projectId, $fact->sessionId, $fact->sourceVersion,
-                    $fact->entityId, $fact->type, $value, $fact->unit, $fact->confidence, $fact->origin,
-                    $fact->status, $fact->evidenceIds, $fact->version + 1, $fact->supersedesFactId,
+                    $fact->entityId, $fact->type, $value, $fact->unit, 0.0, 'user_input',
+                    'confirmed', [$userProof->id], $fact->version + 1, $fact->supersedesFactId,
                 )
                 : $fact, $capture['snapshot']->facts);
             $projection = $service->simulate(
                 new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot(
                     $capture['snapshot']->entities,
                     $facts,
-                    $capture['snapshot']->evidence,
+                    [...$capture['snapshot']->evidence, $userProof],
                     $capture['snapshot']->conflicts,
                 ),
                 $capture['token'],
                 $repository->currentTechnologyRecommendations(10, 20, 30),
                 $repository->currentCompleteness(10, 20, 30),
-                [],
+                [new Decision('decision:simulation:'.$value, 10, 20, 30, self::SOURCE, 'fact', 'fact:simulation-length',
+                    'fact:simulation-length', 'user', '7', 'Пользователь рассматривает введённую длину', 2, [$userProof->id])],
             );
             $amounts[] = $projection['quantities']['floor_area']->amount ?? null;
         }
@@ -124,11 +126,11 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     {
         $repository = new InMemoryProjectModelRepository;
         $wall = new Entity('wall:1', 10, 20, 30, self::SOURCE, 'wall', 'wall:1');
-        $lengthEvidence = new Evidence('evidence:wall-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'wall:1');
-        $heightEvidence = new Evidence('evidence:wall-height', 10, 20, 30, self::SOURCE, 'artifact:section', 'cad', 2, null, 'wall:1');
+        $lengthEvidence = $this->nativeEvidence('evidence:wall-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'wall:1');
+        $heightEvidence = $this->nativeEvidence('evidence:wall-height', 10, 20, 30, self::SOURCE, 'artifact:section', 'cad', 2, null, 'wall:1');
         $repository->saveSourceModel([$wall], [
-            new Fact('fact:wall-length', 10, 20, 30, self::SOURCE, $wall->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
-            new Fact('fact:wall-height', 10, 20, 30, self::SOURCE, $wall->id, 'height', '3', 'm', 1.0, 'document', 'confirmed', [$heightEvidence->id]),
+            $this->nativeFact('fact:wall-length', 10, 20, 30, self::SOURCE, $wall->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            $this->nativeFact('fact:wall-height', 10, 20, 30, self::SOURCE, $wall->id, 'height', '3', 'm', 1.0, 'document', 'confirmed', [$heightEvidence->id]),
         ], [$lengthEvidence, $heightEvidence]);
         $this->makeStageFiveCurrent($repository);
 
@@ -138,12 +140,12 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertArrayNotHasKey('net_wall_area', $withoutOpenings['quantities']);
         self::assertSame('geometry_coverage_unknown', $withoutOpenings['warnings'][0]['inputs'][0]['code'] ?? null);
 
-        $coverageEvidence = new Evidence(
+        $coverageEvidence = $this->nativeEvidence(
             'evidence:wall-openings-coverage', 10, 20, 30, self::SOURCE,
             'artifact:plan', 'cad', 1, null, 'wall:1:openings',
         );
         $repository->saveSourceModel([], [
-            new Fact(
+            $this->nativeFact(
                 'fact:wall-openings-coverage', 10, 20, 30, self::SOURCE, $wall->id, 'geometry_coverage',
                 [
                     'relation' => 'wall_openings',
@@ -175,10 +177,10 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $partial = new Entity('opening:partial', 10, 20, 30, self::SOURCE, 'opening', 'opening:partial', [
             'wall_id' => $wall->id,
         ]);
-        $widthEvidence = new Evidence('evidence:opening-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
+        $widthEvidence = $this->nativeEvidence('evidence:opening-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
         $repository->saveSourceModel([$partial], [
-            new Fact('fact:opening-width', 10, 20, 30, self::SOURCE, $partial->id, 'width', '2', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
-            new Fact(
+            $this->nativeFact('fact:opening-width', 10, 20, 30, self::SOURCE, $partial->id, 'width', '2', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            $this->nativeFact(
                 'fact:wall-openings-coverage:v2', 10, 20, 30, self::SOURCE, $wall->id, 'geometry_coverage',
                 [
                     'relation' => 'wall_openings',
@@ -209,9 +211,9 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertSame('opening:partial', $withPartialOpening['warnings'][0]['inputs'][0]['source_locator']['native_reference'] ?? null);
         self::assertSame([], $repository->currentQuantities);
 
-        $heightEvidence = new Evidence('evidence:opening-height', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
+        $heightEvidence = $this->nativeEvidence('evidence:opening-height', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'opening:partial');
         $repository->saveSourceModel([], [
-            new Fact('fact:opening-height', 10, 20, 30, self::SOURCE, $partial->id, 'height', '2', 'm', 1.0, 'document', 'confirmed', [$heightEvidence->id]),
+            $this->nativeFact('fact:opening-height', 10, 20, 30, self::SOURCE, $partial->id, 'height', '2', 'm', 1.0, 'document', 'confirmed', [$heightEvidence->id]),
         ], [$heightEvidence]);
         $this->makeStageFiveCurrent($repository);
 
@@ -230,11 +232,11 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     {
         $repository = new InMemoryProjectModelRepository;
         $room = new Entity('room:identity', 10, 20, 30, self::SOURCE, 'room', 'room:identity');
-        $lengthEvidence = new Evidence('evidence:length:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length:v1');
-        $widthEvidence = new Evidence('evidence:width:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width:v1');
+        $lengthEvidence = $this->nativeEvidence('evidence:length:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length:v1');
+        $widthEvidence = $this->nativeEvidence('evidence:width:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width:v1');
         $repository->saveSourceModel([$room], [
-            new Fact('fact:length:v1', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
-            new Fact('fact:width:v1', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            $this->nativeFact('fact:length:v1', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            $this->nativeFact('fact:width:v1', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
         ], [$lengthEvidence, $widthEvidence]);
         $this->makeStageFiveCurrent($repository);
 
@@ -244,9 +246,9 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertCount(1, $repository->quantities);
         $firstIdentity = array_values($repository->quantities)[0]->id;
 
-        $replacementEvidence = new Evidence('evidence:length:v2', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length:v2');
+        $replacementEvidence = $this->nativeEvidence('evidence:length:v2', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length:v2');
         $repository->saveSourceModel([], [
-            new Fact(
+            $this->nativeFact(
                 'fact:length:v2', 10, 20, 30, self::SOURCE, $room->id, 'length', '5.0', 'm', 1.0,
                 'document', 'confirmed', [$replacementEvidence->id], 2, 'fact:length:v1',
             ),
@@ -279,11 +281,11 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     {
         $repository = new InMemoryProjectModelRepository;
         $room = new Entity('room:stale-stage-five', 10, 20, 30, self::SOURCE, 'room', 'room:stale-stage-five');
-        $lengthEvidence = new Evidence('evidence:stale-length:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:length:v1');
-        $widthEvidence = new Evidence('evidence:stale-width:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:width:v1');
+        $lengthEvidence = $this->nativeEvidence('evidence:stale-length:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:length:v1');
+        $widthEvidence = $this->nativeEvidence('evidence:stale-width:v1', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:width:v1');
         $repository->saveSourceModel([$room], [
-            new Fact('fact:stale-length:v1', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
-            new Fact('fact:stale-width:v1', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            $this->nativeFact('fact:stale-length:v1', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            $this->nativeFact('fact:stale-width:v1', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
         ], [$lengthEvidence, $widthEvidence]);
         $this->makeStageFiveCurrent($repository);
 
@@ -293,9 +295,9 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertCount(1, $repository->currentQuantities);
         self::assertCount(1, $repository->quantities);
 
-        $replacementEvidence = new Evidence('evidence:stale-length:v2', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:length:v2');
+        $replacementEvidence = $this->nativeEvidence('evidence:stale-length:v2', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:stale:length:v2');
         $repository->saveSourceModel([], [
-            new Fact(
+            $this->nativeFact(
                 'fact:stale-length:v2', 10, 20, 30, self::SOURCE, $room->id, 'length', '6', 'm', 1.0,
                 'document', 'confirmed', [$replacementEvidence->id], 2, 'fact:stale-length:v1',
             ),
@@ -313,11 +315,11 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
     {
         $repository = new InMemoryProjectModelRepository;
         $room = new Entity('room:collision', 10, 20, 30, self::SOURCE, 'room', 'room:collision');
-        $lengthEvidence = new Evidence('evidence:collision-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
-        $widthEvidence = new Evidence('evidence:collision-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
+        $lengthEvidence = $this->nativeEvidence('evidence:collision-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
+        $widthEvidence = $this->nativeEvidence('evidence:collision-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
         $repository->saveSourceModel([$room], [
-            new Fact('fact:collision-length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
-            new Fact('fact:collision-width', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
+            $this->nativeFact('fact:collision-length', 10, 20, 30, self::SOURCE, $room->id, 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]),
+            $this->nativeFact('fact:collision-width', 10, 20, 30, self::SOURCE, $room->id, 'width', '3', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]),
         ], [$lengthEvidence, $widthEvidence]);
         $this->makeStageFiveCurrent($repository);
         (new CurrentProjectDerivedQuantityService($repository, new DerivedQuantityFactory))->derive(10, 20, 30);
@@ -360,22 +362,22 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $roof = new Entity('roof:geometry', 10, 20, 30, self::SOURCE, 'quantity', 'roof:geometry', ['semantic_type' => 'roof']);
         $facet = new Entity('facet:1', 10, 20, 30, self::SOURCE, 'quantity', 'facet:1', ['semantic_type' => 'roof_facet', 'roof_id' => 'roof:geometry']);
         $opening = new Entity('roof-opening:1', 10, 20, 30, self::SOURCE, 'quantity', 'roof-opening:1', ['semantic_type' => 'roof_opening', 'roof_id' => 'roof:geometry']);
-        $evidence = new Evidence('evidence:roof-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'roof:area');
-        $lengthEvidence = new Evidence('evidence:room-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
-        $widthEvidence = new Evidence('evidence:room-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
-        $facetAreaEvidence = new Evidence('evidence:facet-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:area');
-        $facetRiseEvidence = new Evidence('evidence:facet-rise', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:rise');
-        $facetRunEvidence = new Evidence('evidence:facet-run', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:run');
-        $openingAreaEvidence = new Evidence('evidence:opening-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'opening:area');
-        $roofCoverageEvidence = new Evidence('evidence:roof-coverage', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'roof:geometry:coverage');
-        $area = new Fact('fact:roof-area', 10, 20, 30, self::SOURCE, 'roof:1', 'roof_area', '88.125', 'm2', 1.0, 'document', 'confirmed', [$evidence->id]);
-        $length = new Fact('fact:room-length', 10, 20, 30, self::SOURCE, 'room:1', 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]);
-        $width = new Fact('fact:room-width', 10, 20, 30, self::SOURCE, 'room:1', 'width', '4', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]);
-        $facetArea = new Fact('fact:facet-area', 10, 20, 30, self::SOURCE, 'facet:1', 'plan_area', '12', 'm2', 1.0, 'document', 'confirmed', [$facetAreaEvidence->id]);
-        $facetRise = new Fact('fact:facet-rise', 10, 20, 30, self::SOURCE, 'facet:1', 'slope_rise', '3', 'm', 1.0, 'document', 'confirmed', [$facetRiseEvidence->id]);
-        $facetRun = new Fact('fact:facet-run', 10, 20, 30, self::SOURCE, 'facet:1', 'slope_run', '4', 'm', 1.0, 'document', 'confirmed', [$facetRunEvidence->id]);
-        $openingArea = new Fact('fact:opening-area', 10, 20, 30, self::SOURCE, 'roof-opening:1', 'area', '1.25', 'm2', 1.0, 'document', 'confirmed', [$openingAreaEvidence->id]);
-        $roofFacetCoverage = new Fact(
+        $evidence = $this->nativeEvidence('evidence:roof-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'roof:area');
+        $lengthEvidence = $this->nativeEvidence('evidence:room-length', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:length');
+        $widthEvidence = $this->nativeEvidence('evidence:room-width', 10, 20, 30, self::SOURCE, 'artifact:plan', 'cad', 1, null, 'room:width');
+        $facetAreaEvidence = $this->nativeEvidence('evidence:facet-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:area');
+        $facetRiseEvidence = $this->nativeEvidence('evidence:facet-rise', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:rise');
+        $facetRunEvidence = $this->nativeEvidence('evidence:facet-run', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'facet:run');
+        $openingAreaEvidence = $this->nativeEvidence('evidence:opening-area', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'opening:area');
+        $roofCoverageEvidence = $this->nativeEvidence('evidence:roof-coverage', 10, 20, 30, self::SOURCE, 'artifact:roof', 'cad', 1, null, 'roof:geometry:coverage');
+        $area = $this->nativeFact('fact:roof-area', 10, 20, 30, self::SOURCE, 'roof:1', 'roof_area', '88.125', 'm2', 1.0, 'document', 'confirmed', [$evidence->id]);
+        $length = $this->nativeFact('fact:room-length', 10, 20, 30, self::SOURCE, 'room:1', 'length', '5', 'm', 1.0, 'document', 'confirmed', [$lengthEvidence->id]);
+        $width = $this->nativeFact('fact:room-width', 10, 20, 30, self::SOURCE, 'room:1', 'width', '4', 'm', 1.0, 'document', 'confirmed', [$widthEvidence->id]);
+        $facetArea = $this->nativeFact('fact:facet-area', 10, 20, 30, self::SOURCE, 'facet:1', 'plan_area', '12', 'm2', 1.0, 'document', 'confirmed', [$facetAreaEvidence->id]);
+        $facetRise = $this->nativeFact('fact:facet-rise', 10, 20, 30, self::SOURCE, 'facet:1', 'slope_rise', '3', 'm', 1.0, 'document', 'confirmed', [$facetRiseEvidence->id]);
+        $facetRun = $this->nativeFact('fact:facet-run', 10, 20, 30, self::SOURCE, 'facet:1', 'slope_run', '4', 'm', 1.0, 'document', 'confirmed', [$facetRunEvidence->id]);
+        $openingArea = $this->nativeFact('fact:opening-area', 10, 20, 30, self::SOURCE, 'roof-opening:1', 'area', '1.25', 'm2', 1.0, 'document', 'confirmed', [$openingAreaEvidence->id]);
+        $roofFacetCoverage = $this->nativeFact(
             'fact:roof-facet-coverage', 10, 20, 30, self::SOURCE, 'roof:geometry', 'geometry_coverage_roof_facets',
             [
                 'relation' => 'roof_facets',
@@ -390,7 +392,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
             ],
             null, 1.0, 'document', 'confirmed', [$roofCoverageEvidence->id],
         );
-        $roofOpeningCoverage = new Fact(
+        $roofOpeningCoverage = $this->nativeFact(
             'fact:roof-opening-coverage', 10, 20, 30, self::SOURCE, 'roof:geometry', 'geometry_coverage_roof_openings',
             [
                 'relation' => 'roof_openings',
@@ -414,7 +416,7 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         $this->confirmCoverage($repository, 'fact:roof-facet-coverage');
         $this->confirmCoverage($repository, 'fact:roof-opening-coverage');
         $catalogHash = str_repeat('c', 64);
-        $selectedSystem = new Fact(
+        $selectedSystem = $this->nativeFact(
             'fact:selected-roof-system', 10, 20, 30, self::SOURCE, 'roof:1', 'selected_roof_system',
             ['kind' => 'catalog_system', 'system_id' => 'metal-tile', 'catalog_version' => 'technology:v1', 'catalog_hash' => $catalogHash],
             null, 1.0, 'user_assumption', 'confirmed', [],
@@ -482,12 +484,42 @@ final class CurrentProjectDerivedQuantityServiceTest extends TestCase
         self::assertInstanceOf(Fact::class, $original);
         $current = array_values(array_filter($repository->currentFacts(10, 20, 30, $original->entityId),
             static fn (Fact $fact): bool => $fact->type === $original->type))[0] ?? $original;
-        $proof = new Evidence($factId.':user-proof', 10, 20, 30, self::SOURCE, 'input:coverage', 'user_input', nativeReference: 'input:coverage');
-        $selected = new Fact($factId.':reviewed', 10, 20, 30, self::SOURCE, $original->entityId, $original->type,
+        $proof = $this->nativeEvidence($factId.':user-proof', 10, 20, 30, self::SOURCE, 'input:coverage', 'user_input', nativeReference: 'input:coverage');
+        $selected = $this->nativeFact($factId.':reviewed', 10, 20, 30, self::SOURCE, $original->entityId, $original->type,
             $original->value, null, 0, 'user_input', 'confirmed', [$proof->id], max($current->version, $original->version) + 1, $current->id);
         $repository->saveSourceModel([], [$selected], [$proof]);
         $repository->applyDecision(new Decision($factId.':user-decision', 10, 20, 30, self::SOURCE, 'fact', $current->id,
             $selected->id, 'user', '7', 'Проверен полный состав геометрии', $selected->version, [$proof->id]), $selected);
+    }
+
+    /** Explicit certified document fixtures. Proposed user values must use their own decision and evidence. */
+    private function nativeFact(string $id, int $organizationId, int $projectId, int $sessionId, string $sourceVersion,
+        string $entityId, string $type, mixed $value, ?string $unit, float $confidence, string $origin, string $status,
+        array $evidenceIds, int $version = 1, ?string $supersedesFactId = null): Fact
+    {
+        $proofs = [];
+        if ($origin === 'document' && is_numeric($value)) {
+            foreach ($evidenceIds as $evidenceId) {
+                $proofs[$evidenceId] = ['entity_id' => $entityId, 'source_version' => $sourceVersion,
+                    'parameter' => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::parameter($type),
+                    'measurement' => \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::measurementSignature((string) $value, $unit),
+                    'evidence_fingerprint' => hash('sha256', $evidenceId)];
+            }
+        }
+
+        return new Fact($id, $organizationId, $projectId, $sessionId, $sourceVersion, $entityId, $type, $value, $unit,
+            $confidence, $origin, $status, $evidenceIds, $version, $supersedesFactId, $proofs);
+    }
+
+    private function nativeEvidence(string $id, int $organizationId, int $projectId, int $sessionId, string $sourceVersion,
+        string $sourceArtifactId, string $sourceType, ?int $page = null, ?array $region = null, ?string $nativeReference = null,
+        ?string $producerName = null): Evidence
+    {
+        $document = in_array($sourceType, ['cad', 'document'], true);
+
+        return new Evidence($id, $organizationId, $projectId, $sessionId, $sourceVersion, $sourceArtifactId,
+            $document ? 'document' : $sourceType, $page, $region, $nativeReference,
+            $document ? 'native_numeric_parser' : $producerName, fingerprint: hash('sha256', $id));
     }
 
     private function makeStageFiveCurrent(

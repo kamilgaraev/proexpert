@@ -9,6 +9,30 @@ use Illuminate\Validation\ValidationException;
 
 final class EvaluationWorkItemLocator
 {
+    public function replace(array $draft, array $input, string $workKey, array $replacement): array
+    {
+        $this->find($draft, $input, $workKey);
+        if (($replacement['key'] ?? null) !== $workKey) {
+            throw ValidationException::withMessages(['work_item_key' => trans_message('estimate_evaluation.work_missing_or_ambiguous')]);
+        }
+        $count = 0;
+        foreach ($draft['local_estimates'] ?? [] as $estimateIndex => $estimate) {
+            foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
+                foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                    if (($item['key'] ?? null) === $workKey) {
+                        $draft['local_estimates'][$estimateIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $replacement;
+                        $count++;
+                    }
+                }
+            }
+        }
+        if ($count !== 1) {
+            throw ValidationException::withMessages(['work_item_key' => trans_message('estimate_evaluation.work_missing_or_ambiguous')]);
+        }
+
+        return $draft;
+    }
+
     public function find(array $draft, array $input, string $workKey): array
     {
         $matches = [];

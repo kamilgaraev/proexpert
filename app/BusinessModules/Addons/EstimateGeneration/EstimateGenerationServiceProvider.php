@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\TimewebEstimate
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
@@ -534,6 +535,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class,
             static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog => \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::fromArray(
@@ -660,6 +663,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(EffectiveSettingsResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshotResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
+            physicalAttempts: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class),
         ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(AiRoleRunRepository::class, static fn ($app): AiRoleRunRepository => new EloquentAiRoleRunRepository(
@@ -700,6 +704,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiRoleRunRepository::class),
             $app->make(ProjectSynthesisModel::class),
             (string) config('estimate-generation.project_engineer.model'),
+            maxInputBytes: (int) config('estimate-generation.project_engineer.max_input_bytes'),
+            allowance: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class),
         ));
         $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
         $this->app->singleton(TimewebEstimateComposerModel::class, static fn ($app): TimewebEstimateComposerModel => new TimewebEstimateComposerModel(
@@ -724,6 +730,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner(
                 (int) config('estimate-generation.estimate_composer.max_input_bytes'),
             ),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class),
         ));
         $this->app->singleton(EstimateComposerInputFactory::class, static fn ($app): EstimateComposerInputFactory => new EstimateComposerInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
@@ -750,13 +757,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiRoleRunRepository::class),
             $app->make(EstimateAuditModel::class),
             (string) config('estimate-generation.estimate_auditor.model'),
+            (int) config('estimate-generation.estimate_auditor.max_input_bytes'),
         ));
         $this->app->singleton(EstimateAuditInputFactory::class, static fn ($app): EstimateAuditInputFactory => new EstimateAuditInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository::class),
             (int) config('estimate-generation.estimate_auditor.max_facts'),
         ));
-        $this->app->singleton(ApplyComposerCorrectionCycle::class);
+        $this->app->singleton(ApplyComposerCorrectionCycle::class, static fn ($app): ApplyComposerCorrectionCycle => new ApplyComposerCorrectionCycle(
+            $app->make(RunEstimateAudit::class),
+            $app->make(RunEstimateComposerCorrection::class),
+            max(1, min((int) config('estimate-generation.estimate_auditor.max_input_bytes'),
+                (int) config('estimate-generation.estimate_composer.max_input_bytes')) - 65536),
+        ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionPhysicalAttemptStore::class,
             static fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\EloquentVisionPhysicalAttemptStore(
@@ -768,6 +781,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EloquentEstimateComposerAllowance::class);
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
         $this->app->singleton(PipelineDefinitionGraph::class, static fn (): PipelineDefinitionGraph => PipelineDefinitionGraph::standard());
         $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);
@@ -784,6 +800,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             ),
         );
         $this->app->singleton(GenerationPipelineDataGateway::class, EloquentGenerationPipelineDataGateway::class);
+        $this->app->singleton(ResolvePricesStage::class, fn ($app) => new ResolvePricesStage(
+            $app->make(EstimatePricingService::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveCommercialWorkPrice::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+        ));
         $this->app->singleton(PipelineRegistry::class, fn ($app) => new PipelineRegistry([
             $app->make(UnderstandDocumentsStage::class),
             $app->make(UnderstandObjectStage::class),
@@ -833,7 +855,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(ProjectDocumentNormativeReferenceExtractor::class);
         $this->app->singleton(EstimatorReadinessService::class);
         $this->app->singleton(NormativeWorkItemPlannerService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionHardGate::class);
         $this->app->singleton(ResourceAssemblyService::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard::class);
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);
@@ -959,6 +984,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->everyMinute()
                     ->withoutOverlapping(5)
                     ->onOneServer();
+                $this->app->make(Schedule::class)
+                    ->call(fn (): int => $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverUnpublishedDocumentObjects::class)->handle())
+                    ->name('estimate-generation:recover-unpublished-document-objects')
+                    ->everyTenMinutes()->withoutOverlapping(10)->onOneServer();
                 $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationPipelinesJob)
                     ->everyMinute()

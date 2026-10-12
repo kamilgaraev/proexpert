@@ -24,11 +24,15 @@ final readonly class RunEstimateAudit
         private AiRoleRunRepository $runs,
         private EstimateAuditModel $model,
         private string $modelName,
+        private int $maximumInputBytes = 2097152,
     ) {}
 
     /** @return array{accepted:bool,findings:list<array<string,mixed>>,quarantined_findings:list<array{index:int,reason:string}>} */
     public function run(EstimateAuditInput $input): array
     {
+        if ($input->wireBytes() > $this->maximumInputBytes) {
+            throw new InvalidArgumentException('estimate_auditor_input_limit_exceeded');
+        }
         $runInput = new AiRoleRunInput(
             $input->organizationId,
             $input->projectId,
@@ -36,8 +40,8 @@ final readonly class RunEstimateAudit
             null,
             null,
             'estimate_audit_cycle',
-            $input->sessionId.':'.$input->cycle,
-            'audit-cycle:'.$input->cycle.':'.$input->snapshotToken,
+            $input->sessionId.':'.$input->cycle.($input->partId === 'whole' ? '' : ':'.$input->partId),
+            'audit-cycle:'.$input->cycle.':'.$input->snapshotToken.($input->partId === 'whole' ? '' : ':'.$input->partId),
             AiAnalysisRole::EstimateAuditor,
             $this->modelName,
             self::PROMPT_CONTRACT,
@@ -53,8 +57,9 @@ final readonly class RunEstimateAudit
         }
         $physicalAttemptId = null;
         try {
-            $raw = $this->model->audit($input, function (string $attemptId) use ($claim, &$physicalAttemptId): void {
-                $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId);
+            $raw = $this->model->audit($input, function (string $attemptId) use ($input, $claim, &$physicalAttemptId): void {
+                $creditId = $input->wireScope?->creditOperationId;
+                $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId, $creditId, $creditId === null ? null : 'estimate_audit');
                 $physicalAttemptId = $attemptId;
             });
             if ($physicalAttemptId === null) {

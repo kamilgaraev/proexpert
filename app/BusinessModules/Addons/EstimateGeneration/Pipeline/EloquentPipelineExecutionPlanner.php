@@ -41,6 +41,8 @@ final readonly class EloquentPipelineExecutionPlanner implements PipelineExecuti
             sessionStatus: $snapshot->status,
             generationAttemptId: $snapshot->attemptId,
             baseInputVersion: $baseInputVersion,
+            creditOperationId: is_string($session->input_payload['generation_credit_operation_id'] ?? null)
+                ? $session->input_payload['generation_credit_operation_id'] : null,
         );
 
         return $this->resolver->next($seed, $this->outputs->priorOutputs($seed));

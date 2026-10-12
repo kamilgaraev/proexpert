@@ -40,6 +40,10 @@ $lunaPrice = [[
 
 return [
     'universal_enabled' => (bool) env('ESTIMATE_GENERATION_UNIVERSAL_ENABLED', false),
+    'credits' => ['enabled' => (bool) env('ESTIMATE_GENERATION_SHARED_CREDITS_ENABLED', false),
+        'service_daily_expense_limit_rub' => '250.00', 'service_monthly_expense_limit_rub' => '4000.00'],
+    'live_qa' => ['enabled' => (bool) env('ESTIMATE_GENERATION_LIVE_QA_ENABLED', false),
+        'run_id' => env('ESTIMATE_GENERATION_LIVE_QA_RUN_ID')],
     'project_engineer' => [
         'model' => $lunaModel('ESTIMATE_GENERATION_PROJECT_ENGINEER_MODEL'),
         'max_input_bytes' => (int) env('ESTIMATE_GENERATION_PROJECT_ENGINEER_MAX_INPUT_BYTES', 524_288),
@@ -295,6 +299,8 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
         ]]]],
+        'estimate_dialogue_interpretation' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice]],
+        'estimate_composer_correction' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice]],
         'estimate_audit' => ['timeweb' => ['openai/gpt-6-luna' => $lunaPrice, 'openai/gpt-5-mini' => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
             'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),

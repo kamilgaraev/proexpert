@@ -11,6 +11,7 @@ final class AcceptanceBenchmarkGate
         'normative_top3' => 0.95,
         'evidenced_applicable_items' => 1.0,
         'technical_success_rate' => 0.98,
+        'unknown_numeric_values_preserved' => 1.0,
     ];
 
     public function assert(BenchmarkReportData $report): void

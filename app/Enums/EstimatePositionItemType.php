@@ -10,6 +10,7 @@ enum EstimatePositionItemType: string
     case MACHINERY = 'machinery';
     case LABOR = 'labor';
     case SUMMARY = 'summary';
+    case OTHER = 'other';
 
     /**
      * Получить все значения
@@ -24,13 +25,14 @@ enum EstimatePositionItemType: string
      */
     public function label(): string
     {
-        return match($this) {
+        return match ($this) {
             self::WORK => 'Работа',
             self::MATERIAL => 'Материал',
             self::EQUIPMENT => 'Оборудование',
             self::MACHINERY => 'Механизм',
             self::LABOR => 'Труд',
             self::SUMMARY => 'Итого',
+            self::OTHER => 'Прочие затраты',
         };
     }
 
@@ -82,4 +84,3 @@ enum EstimatePositionItemType: string
         return $this === self::SUMMARY;
     }
 }
-

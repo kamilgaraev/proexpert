@@ -31,9 +31,13 @@ final class UploadEstimateGenerationDocuments
     /** @param list<UploadedFile> $files */
     public function handle(EstimateGenerationSession $session, int $expectedVersion, array $files, User $user): UploadDocumentsResult
     {
+        if (DB::transactionLevel() !== 0) {
+            throw new \LogicException('document_upload_requires_operation_transaction_boundary');
+        }
+        $batch = new UnpublishedDocumentObjectBatch((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
         $created = collect();
         try {
-            return DB::transaction(function () use ($session, $expectedVersion, $files, $user, &$created): UploadDocumentsResult {
+            return DB::transaction(function () use ($session, $expectedVersion, $files, $user, &$created, $batch): UploadDocumentsResult {
                 $session = EstimateGenerationSession::query()->whereKey($session->getKey())
                     ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
                     ->lockForUpdate()->firstOrFail();
@@ -49,12 +53,9 @@ final class UploadEstimateGenerationDocuments
                     throw new DomainException('estimate_generation_document_file_limit_exceeded');
                 }
                 foreach ($files as $file) {
-                    $extension = strtolower($file->getClientOriginalExtension());
-                    if (! $settings->allowsFormat($extension)) {
-                        throw new DomainException('estimate_generation_document_format_disabled');
-                    }
+                    (new DocumentFileAdmission)->uploaded($file, $settings);
                 }
-                $documents = $this->parsing->storeParsedDocuments($session, $files, $user);
+                $documents = $this->parsing->storeParsedDocuments($session, $files, $user, $batch);
                 $created = $documents;
                 $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
                 $session = $session->fresh(['documents']) ?? $session->load('documents');
@@ -67,6 +68,7 @@ final class UploadEstimateGenerationDocuments
             }, 1);
         } catch (Throwable $exception) {
             $this->parsing->rollbackStoredDocuments($session, $created);
+            app(UnpublishedDocumentCleanupJournal::class)->recordBatch($batch);
             throw $exception;
         }
     }

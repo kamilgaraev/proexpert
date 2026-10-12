@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DeleteUnpublishedDocumentObject;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentObjectPublicationLock;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UnpublishedDocumentObject;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UnpublishedDocumentObjectBatch;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
@@ -26,7 +30,8 @@ class OcrDocumentStorageService
     public function storeUploadedDocument(
         EstimateGenerationSession $session,
         UploadedFile $file,
-        User $user
+        User $user,
+        ?UnpublishedDocumentObjectBatch $batch = null,
     ): EstimateGenerationDocument {
         $realPath = $file->getRealPath();
         $checksum = is_string($realPath) && $realPath !== ''
@@ -42,6 +47,10 @@ class OcrDocumentStorageService
             throw new TypedFailureException(FailureCategory::Terminal, 'document_organization_unavailable');
         }
         $directory = sprintf('estimate-generation/sessions/%d/documents', $session->id);
+        $prepared = static function (string $path) use ($batch, $checksum, $file): void {
+            $batch?->capture($path, $checksum, (int) $file->getSize());
+            (new DocumentObjectPublicationLock)->acquire($path);
+        };
         $storagePath = $this->fileService->upload(
             $file,
             $directory,
@@ -49,11 +58,13 @@ class OcrDocumentStorageService
             'private',
             $organization,
             privacyMode: true,
+            onObjectPrepared: $prepared,
         );
 
         if ($storagePath === false) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
+        $prepared($storagePath);
         try {
             try {
                 $head = $this->fileService->describeHead($storagePath);
@@ -88,7 +99,7 @@ class OcrDocumentStorageService
                 ],
             ]), 1);
         } catch (Throwable $exception) {
-            $this->removeUnpublishedPath($session, $storagePath);
+            $this->removeUnpublishedPath($session, $storagePath, $checksum, (int) $file->getSize());
             throw $exception;
         }
     }
@@ -96,7 +107,8 @@ class OcrDocumentStorageService
     public function storeReusedDocument(
         EstimateGenerationSession $session,
         EstimateGenerationDocument $source,
-        User $user
+        User $user,
+        ?UnpublishedDocumentObjectBatch $batch = null,
     ): EstimateGenerationDocument {
         if (
             (int) $source->organization_id !== (int) $session->organization_id
@@ -126,6 +138,8 @@ class OcrDocumentStorageService
             (int) $session->organization_id,
             sprintf('estimate-generation/sessions/%d/documents/%s.%s', $session->id, Str::uuid(), $extension),
         );
+        $batch?->capture($destinationPath, (string) $source->checksum_sha256, (int) $source->file_size_bytes);
+        (new DocumentObjectPublicationLock)->acquire($destinationPath);
         try {
             try {
                 $copy = $this->fileService->duplicateEstimateGenerationObject((string) $source->storage_path, $destinationPath);
@@ -162,7 +176,7 @@ class OcrDocumentStorageService
                 ],
             ]), 1);
         } catch (Throwable $exception) {
-            $this->removeUnpublishedPath($session, $destinationPath);
+            $this->removeUnpublishedPath($session, $destinationPath, (string) $source->checksum_sha256, (int) $source->file_size_bytes);
             throw $exception;
         }
     }
@@ -177,10 +191,10 @@ class OcrDocumentStorageService
             return false;
         }
 
-        return $this->removeUnpublishedPath($session, (string) $document->storage_path);
+        return $this->removeUnpublishedPath($session, (string) $document->storage_path, (string) $document->checksum_sha256, (int) $document->file_size_bytes);
     }
 
-    private function removeUnpublishedPath(EstimateGenerationSession $session, string $path): bool
+    private function removeUnpublishedPath(EstimateGenerationSession $session, string $path, string $sha256, int $sizeBytes): bool
     {
         $prefix = OrganizationStoragePath::forOrganization(
             (int) $session->organization_id,
@@ -194,12 +208,13 @@ class OcrDocumentStorageService
         }
 
         try {
-            if (EstimateGenerationDocument::query()->where('storage_path', $path)->exists()) {
-                return false;
-            }
-            $this->fileService->removeImmutable($path);
+            $object = new UnpublishedDocumentObject((int) $session->organization_id, (int) $session->project_id,
+                (int) $session->id, $path, $sha256, $sizeBytes);
+            $delete = new DeleteUnpublishedDocumentObject($this->fileService,
+                new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\PersistedDocumentObjectReferences,
+                new DocumentObjectPublicationLock);
 
-            return true;
+            return $delete->handle($object) === 'completed';
         } catch (Throwable $exception) {
             Log::warning('estimate_generation_document_cleanup_pending', [
                 'organization_id' => (int) $session->organization_id,

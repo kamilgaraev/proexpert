@@ -1,0 +1,72 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
+
+use App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
+use App\Models\Project;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+
+final class EstimateGenerationCreditController extends Controller
+{
+    public function startDocuments(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\StartEstimatorDocumentOperation $operation): JsonResponse
+    {
+        $approval = $request->validate(['request_id' => ['required', 'uuid'], 'quote_id' => ['required', 'uuid'],
+            'state_version' => ['required', 'integer', 'min:0']]);
+        $started = $operation->handle($request->user(), (int) $project->id, (int) $session->id, $approval);
+
+        return AdminResponse::success(['operation_id' => strtolower($approval['request_id']), 'state_version' => (int) $started->state_version,
+            'status' => $started->status->value], null, 202)->header('Cache-Control', 'private, no-store');
+    }
+
+    public function show(Request $request, Project $project, EstimateGenerationSession $session, string $operation): JsonResponse
+    {
+        $scoped = EstimateGenerationSession::query()->where('organization_id', $request->user()->current_organization_id)
+            ->where('project_id', $project->id)->whereKey($session->id)->firstOrFail();
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class)
+            ->authorize($request->user(), $scoped, 'estimate_generation.view');
+        $row = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')->where('operation_id', $operation)
+            ->where('organization_id', $scoped->organization_id)->where('project_id', $scoped->project_id)->where('session_id', $scoped->id)->first();
+        abort_if($row === null, 404);
+
+        return AdminResponse::success(['operation_id' => $row->operation_id, 'operation_kind' => $row->kind, 'status' => $row->status,
+            'state_version' => (int) $scoped->state_version, 'receipt' => $row->receipt === null ? null : json_decode($row->receipt, true, 64, JSON_THROW_ON_ERROR)])
+            ->header('Cache-Control', 'private, no-store');
+    }
+
+    public function quote(Request $request, Project $project, EstimateGenerationSession $session, EstimatorCreditOperations $operations): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'operation_kind' => ['required', 'in:generation,analysis,rebuild,dialogue,documents'],
+            'operation_parameters' => ['sometimes', 'array:local_estimate_key,command,idempotency_key'],
+            'operation_parameters.local_estimate_key' => ['required_if:operation_kind,rebuild', 'string', 'max:255'],
+            'operation_parameters.command' => ['required_if:operation_kind,dialogue', 'string', 'max:4000'],
+            'operation_parameters.idempotency_key' => ['required_if:operation_kind,dialogue', 'string', 'min:8', 'max:128']]);
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $request->user()->current_organization_id)) {
+            return AdminResponse::error('Общий кошелёк сметчика ещё не включён.', 409);
+        }
+        try {
+            return AdminResponse::success($operations->quote($request->user(), (int) $project->id, (int) $session->id,
+                $input['state_version'], $input['request_id'], $input['operation_kind'], $input['operation_parameters'] ?? []))->header('Cache-Control', 'private, no-store');
+        } catch (\DomainException $exception) {
+            throw ValidationException::withMessages(['quote' => match ($exception->getMessage()) {
+                'estimator_product_not_available' => trans_message('estimate_evaluation.product_not_available'),
+                'estimator_credit_document_preparation_required' => 'Сначала дождитесь подготовки страниц документа. Она не расходует единицы ИИ.',
+                'estimator_processing_plan_empty_or_oversized' => 'Для этого пакета не требуется отдельное распознавание ИИ либо превышены ограничения обработки. Локальные форматы обрабатываются бесплатно.',
+                'estimator_credit_documents_processing_active' => 'Дождитесь завершения текущего распознавания или остановите его перед новым запуском.',
+                'estimator_credit_quote_expired' => 'Предложение стоимости истекло. Получите новое перед запуском.',
+                'estimator_credit_request_id_conflict' => 'Этот запрос относится к другой версии исходных данных. Получите новое предложение.',
+                'estimator_known_context_changed' => 'Исходные данные или состав изменились. Обновите оценку и получите новое предложение стоимости.',
+                'estimator_known_context_requires_source_split' => 'Объём данных превышает предел одного запуска. Выберите отдельный раздел или разделите документы и повторите расчёт стоимости.',
+                default => 'Не удалось рассчитать стоимость операции для текущих данных.',
+            }]);
+        }
+    }
+}

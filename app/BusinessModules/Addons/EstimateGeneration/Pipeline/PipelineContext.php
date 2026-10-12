@@ -26,6 +26,7 @@ final readonly class PipelineContext
         public ?string $claimToken = null,
         public ?int $stageAttempt = null,
         public ?DateTimeImmutable $leaseExpiresAt = null,
+        public ?string $creditOperationId = null,
     ) {
         if ($sessionId <= 0 || $organizationId <= 0 || $projectId <= 0) {
             throw new InvalidArgumentException('Pipeline identity values must be positive.');
@@ -47,6 +48,9 @@ final readonly class PipelineContext
         }
         if ($generationAttemptId !== null && preg_match('/\A[0-9a-f-]{36}\z/', $generationAttemptId) !== 1) {
             throw new InvalidArgumentException('Pipeline generation attempt must be a UUID.');
+        }
+        if ($creditOperationId !== null && ! \Illuminate\Support\Str::isUuid($creditOperationId)) {
+            throw new InvalidArgumentException('Pipeline credit operation must be a UUID.');
         }
         if ($baseInputVersion !== null) {
             PipelineVersionValidator::assertSha256($baseInputVersion, 'base input');
@@ -85,6 +89,7 @@ final readonly class PipelineContext
             $this->claimToken,
             $this->stageAttempt,
             $this->leaseExpiresAt,
+            $this->creditOperationId,
         );
     }
 
@@ -107,6 +112,7 @@ final readonly class PipelineContext
             $claim->claimToken,
             $claim->attempt,
             $leaseExpiresAt,
+            $this->creditOperationId,
         );
     }
 }

@@ -103,6 +103,20 @@ final class InMemoryDocumentSourceReplacementPageStore implements DocumentSource
 
 final class DocumentSourceReplacementCoordinatorTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('config', new \Illuminate\Config\Repository(['estimate-generation' => ['credits' => ['enabled' => false]]]));
+        \Illuminate\Container\Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        \Illuminate\Container\Container::setInstance(null);
+        parent::tearDown();
+    }
+
     #[Test]
     public function invalidation_failure_rolls_back_replacement_and_retry_commits_once(): void
     {

@@ -33,6 +33,8 @@ class EstimateResource extends JsonResource
             'total_direct_costs' => (float) $estimate->total_direct_costs,
             'total_overhead_costs' => (float) $estimate->total_overhead_costs,
             'total_estimated_profit' => (float) $estimate->total_estimated_profit,
+            'total_other_costs' => (string) $estimate->total_other_costs,
+            'contingency_amount' => (string) $estimate->contingency_amount,
             'total_amount' => (float) $estimate->total_amount,
             'total_amount_with_vat' => (float) $estimate->total_amount_with_vat,
             'vat_rate' => (float) $estimate->vat_rate,
@@ -52,7 +54,7 @@ class EstimateResource extends JsonResource
             'import_diagnostics' => $estimate->import_diagnostics,
             'created_at' => $estimate->created_at?->toISOString(),
             'updated_at' => $estimate->updated_at?->toISOString(),
-            
+
             'project' => $this->whenLoaded('project'),
             'contract' => $primaryContract,
             'coverage' => new EstimateCoverageResource($coverage),
@@ -84,4 +86,3 @@ class EstimateResource extends JsonResource
         ];
     }
 }
-

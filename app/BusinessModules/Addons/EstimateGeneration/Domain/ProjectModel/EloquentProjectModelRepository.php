@@ -12,7 +12,7 @@ use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use JsonException;
 
-final readonly class EloquentProjectModelRepository implements ProjectModelRepository
+final readonly class EloquentProjectModelRepository implements ProjectModelRepository, TechnologyReselectionRepository
 {
     public function __construct(private DatabaseManager $database) {}
 
@@ -105,6 +105,10 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
             $this->appendFacts([$selectedFact]);
             $this->appendDecisions([$decision]);
+            if (\App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::matches($selectedFact)) {
+                // Confirmation does not change source quantities, prices or scope. Those choices invalidate projections separately.
+                return;
+            }
             $this->database->table('estimate_generation_project_understanding_runs')
                 ->where('organization_id', $decision->organizationId)
                 ->where('project_id', $decision->projectId)
@@ -161,6 +165,20 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             );
             if ($run === null || ! hash_equals($inputFingerprint, (string) $run->input_fingerprint)
                 || ! hash_equals($inputFingerprint, $capture['token'])) {
+                return false;
+            }
+            $this->applyDecision($decision, $selectedFact);
+
+            return true;
+        }, 3);
+    }
+
+    public function applyTechnologyReselection(Decision $decision, Fact $selectedFact, string $expectedFactId,
+        string $expectedDecisionId, string $inputFingerprint): bool
+    {
+        return $this->database->connection()->transaction(function () use ($decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint): bool {
+            $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
+            if (! (new TechnologyReselectionInvariant)->matches($this, $decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint)) {
                 return false;
             }
             $this->applyDecision($decision, $selectedFact);
@@ -286,6 +304,7 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
                     (string) $row->producer_name,
                     (string) $row->source_ref,
                     $choiceHash,
+                    (string) $row->fingerprint,
                 );
             }
         }
@@ -538,6 +557,9 @@ SQL, [
                     $projectionScopeId = $this->projectionScopeId($fact);
                     $entity = $this->entityRow($fact);
                     $payload = ['source' => $this->legacySource($fact->origin), 'value' => $fact->value];
+                    if ($fact->nativeNumericProofs !== []) {
+                        $payload['native_numeric_proofs'] = $fact->nativeNumericProofs;
+                    }
                     if ($fact->unit !== null) {
                         $payload['unit'] = $fact->unit;
                     }
@@ -590,11 +612,21 @@ SQL, [
 
     private function isConfirmationCandidate(Fact $fact, object $entity): bool
     {
-        if ($fact->status !== 'candidate' || (string) $entity->entity_kind !== 'equipment') {
+        if ($fact->status !== 'candidate') {
             return false;
         }
         $payload = $this->decodedJson($entity->payload);
         $properties = is_array($payload['properties'] ?? null) ? $payload['properties'] : [];
+        if ((string) $entity->entity_kind === 'room') {
+            return $fact->type === 'room_name' && $fact->unit === null && $fact->evidenceIds !== []
+                && is_string($fact->value) && trim($fact->value) !== '' && mb_strlen($fact->value) <= 240
+                && ($payload['semantic_type'] ?? null) === 'room'
+                && ($properties['identity_only'] ?? null) === true
+                && ($properties['requires_confirmation'] ?? null) === true;
+        }
+        if ((string) $entity->entity_kind !== 'equipment') {
+            return false;
+        }
 
         return ($properties['estimate_scope'] ?? null) === 'requires_confirmation'
             && in_array($properties['visual_inventory_category'] ?? null, [
@@ -1253,6 +1285,7 @@ SQL, [
                 continue;
             }
             $decoded = $this->decode($row->fact_value);
+            $payload = $this->decode($row->payload);
             $facts[] = new Fact(
                 (string) $row->stable_key,
                 (int) $row->organization_id,
@@ -1271,6 +1304,7 @@ SQL, [
                 $row->supersedes_assertion_id === null
                     ? null
                     : ($supersededKeys[(int) $row->supersedes_assertion_id] ?? null),
+                is_array($payload['native_numeric_proofs'] ?? null) ? $payload['native_numeric_proofs'] : [],
             );
         }
 
@@ -1541,8 +1575,8 @@ SQL, [
             'limitations' => $limitations,
             'provider_calls' => $providerCalls,
         ];
-        $encodedPayload = $this->json($payload);
-        $fingerprint = hash('sha256', $inputFingerprint."\0".$encodedPayload);
+        $encodedPayload = ProjectUnderstandingFingerprint::encode($payload);
+        $fingerprint = ProjectUnderstandingFingerprint::hash($inputFingerprint, $this->decode($encodedPayload));
 
         return $this->database->connection()->transaction(function () use (
             $organizationId,
@@ -1572,11 +1606,12 @@ SQL, [
                 ->lockForUpdate()
                 ->first();
             if ($existing !== null) {
-                $storedPayload = $this->json($this->decode($existing->result_payload));
+                $storedDecoded = $this->decode($existing->result_payload);
+                $storedPayload = ProjectUnderstandingFingerprint::canonicalJson($storedDecoded);
                 if (! hash_equals((string) $existing->input_fingerprint, $inputFingerprint)
                     || ! hash_equals(
                         (string) $existing->result_fingerprint,
-                        hash('sha256', (string) $existing->input_fingerprint."\0".$storedPayload),
+                        ProjectUnderstandingFingerprint::hash((string) $existing->input_fingerprint, $storedDecoded),
                     )
                     || ! hash_equals($storedPayload, $encodedPayload)) {
                     throw new InvalidArgumentException('Project understanding fingerprint collision.');
@@ -1657,14 +1692,29 @@ SQL, [
             $payload = $this->decode($row->result_payload);
             if (! hash_equals(
                 (string) $row->result_fingerprint,
-                hash('sha256', (string) $row->input_fingerprint."\0".$this->json($payload)),
+                ProjectUnderstandingFingerprint::hash((string) $row->input_fingerprint, $payload),
             )) {
                 throw new InvalidArgumentException('Project understanding fingerprint collision.');
             }
             $links = is_array($payload['links'] ?? null) ? $payload['links'] : [];
             $this->activateUnderstandingRun($row, $links);
 
-            return $this->currentUnderstanding($organizationId, $projectId, $sessionId);
+            $result = $this->currentUnderstanding($organizationId, $projectId, $sessionId);
+            $currentConflicts = [];
+            foreach ($this->currentConflicts($organizationId, $projectId, $sessionId) as $conflict) {
+                $currentConflicts[$conflict->id] = $conflict;
+            }
+            $replayedConflicts = [];
+            foreach ($result['conflicts'] ?? [] as $storedConflict) {
+                $id = is_array($storedConflict) ? ($storedConflict['id'] ?? null) : null;
+                if (! is_string($id) || ! isset($currentConflicts[$id])) {
+                    throw new InvalidArgumentException('Project understanding conflict history is incomplete.');
+                }
+                $replayedConflicts[] = $currentConflicts[$id];
+            }
+            $result['conflicts'] = $replayedConflicts;
+
+            return $result;
         }, 3);
     }
 
@@ -1683,6 +1733,13 @@ SQL, [
                 'fact.fact_version', 'fact.fact_status', 'fact.fact_value', 'fact.assertion_type',
                 'fact.fact_unit', 'fact.confidence', 'fact.fact_origin',
             ]);
+        $facts = $facts->reject(function ($fact) use ($organizationId, $projectId, $sessionId): bool {
+            $value = $this->decode($fact->fact_value);
+
+            return \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::matchesIdentity(
+                $organizationId, $projectId, $sessionId, (string) $fact->source_version, (string) $fact->entity_stable_key,
+                (string) $fact->assertion_type, (string) $fact->fact_origin, (string) $fact->fact_status, $value['value'] ?? $value);
+        });
         $factIds = $facts->pluck('id')->map(static fn ($id): int => (int) $id)->all();
         $bindings = $factIds === [] ? collect() : $this->database
             ->table('estimate_generation_project_model_fact_evidence as binding')
@@ -1769,8 +1826,13 @@ SQL, [
             $sourceVersions[] = (string) $fact->source_version;
         }
         $entities = [];
+        $confirmationAnchor = \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\SelectedScenarioConfirmationAnchor::identity($organizationId, $projectId, $sessionId);
         foreach ($entityRows as $entity) {
             $stableKey = (string) $entity->stable_key;
+            if ($stableKey === $confirmationAnchor['entity_id'] && (string) $entity->source_version === $confirmationAnchor['source_version']
+                && ! $facts->contains('entity_stable_key', $stableKey)) {
+                continue;
+            }
             if (isset($entities[$stableKey])) {
                 continue;
             }

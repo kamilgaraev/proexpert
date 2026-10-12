@@ -71,6 +71,13 @@ final class EstimateGenerationSessionController extends Controller
         }, 'list sessions', ['project_id' => $project->id]);
     }
 
+    public function capabilities(Request $request, Project $project,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEstimatorCapabilities $capabilities): JsonResponse
+    {
+        return AdminResponse::success($capabilities->handle($request->user(), (int) $project->id))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function store(CreateEstimateGenerationSessionRequest $request, Project $project): JsonResponse
     {
         try {

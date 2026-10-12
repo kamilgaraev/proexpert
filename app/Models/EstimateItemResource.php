@@ -28,9 +28,9 @@ class EstimateItemResource extends Model
     ];
 
     protected $casts = [
-        'quantity_per_unit' => 'decimal:4',
-        'total_quantity' => 'decimal:4',
-        'unit_price' => 'decimal:2',
+        'quantity_per_unit' => 'decimal:18',
+        'total_quantity' => 'decimal:18',
+        'unit_price' => 'decimal:12',
         'total_amount' => 'decimal:2',
     ];
 
@@ -82,5 +82,15 @@ class EstimateItemResource extends Model
     public function isEquipment(): bool
     {
         return $this->resource_type === 'equipment';
+    }
+
+    public function scopeMachinery($query)
+    {
+        return $query->where('resource_type', 'machinery');
+    }
+
+    public function isMachinery(): bool
+    {
+        return $this->resource_type === 'machinery';
     }
 }

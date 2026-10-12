@@ -63,6 +63,10 @@ final readonly class StopEstimateGenerationDocumentProcessing implements Session
                 throw new DocumentProcessingControlConflict('stale_source');
             }
 
+            if ($lockedDocument->status === 'ignored') {
+                return [$lockedSession, $lockedDocument, 'already_stopped', null];
+            }
+
             $meta = is_array($lockedDocument->meta) ? $lockedDocument->meta : [];
             $current = is_array($meta['processing_stop'] ?? null) ? $meta['processing_stop'] : [];
             $attemptId = is_string($meta['processing_attempt_id'] ?? null) ? $meta['processing_attempt_id'] : null;
@@ -141,6 +145,20 @@ final readonly class StopEstimateGenerationDocumentProcessing implements Session
                     'cancelled_unit_count' => count($cancelledUnitIds),
                 ],
             ]);
+
+            $creditId = $lockedSession->input_payload['documents_credit_operation_id'] ?? null;
+            if (is_string($creditId)) {
+                $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $creditId)
+                    ->where('organization_id', $lockedSession->organization_id)->where('project_id', $lockedSession->project_id)
+                    ->where('session_id', $lockedSession->id)->where('kind', 'documents')->lockForUpdate()->first();
+                $plan = $operation === null ? [] : json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+                $inManifest = array_filter($plan['documents'] ?? [], static fn (array $entry): bool => ($entry['document_id'] ?? null) === (int) $lockedDocument->id
+                    && ($entry['source_version'] ?? null) === $expectedSourceVersion) !== [];
+                if ($inManifest) {
+                    app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                        ->abort($lockedSession, $creditId, 'document_processing_stopped');
+                }
+            }
 
             return [$lockedSession, $lockedDocument, 'accepted', $attemptId];
         }, 3);

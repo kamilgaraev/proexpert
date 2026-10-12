@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Finance;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
@@ -20,6 +21,7 @@ final class EstimateFinanceQuery
             ->with(['resources.measurementUnit', 'measurementUnit'])->orderBy('id')->get();
         $childParents = $items->whereNotNull('parent_work_id')->pluck('parent_work_id')->flip();
         $itemIds = array_fill_keys($items->modelKeys(), true);
+        $sourceVat = ($estimate->metadata['vat_calculation_method'] ?? null) === EstimateSourceVatCalculator::METHOD;
         foreach ($items as $item) {
             $key = 'i:'.$item->id;
             $pendingResources = null;
@@ -34,7 +36,9 @@ final class EstimateFinanceQuery
                 'base_quantity' => (string) ($item->quantity ?? '0'),
                 'quantity_coefficient' => (string) ($item->quantity_coefficient ?? '1'),
                 'estimate_amount' => (string) ($item->total_amount ?? '0'),
-                'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($item->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
+                'estimate_amount_with_vat' => $sourceVat
+                    ? ($item->parent_work_id === null ? (new EstimateSourceVatCalculator)->line($estimate, $item)['gross_amount'] : null)
+                    : ($estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($item->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8)))),
                 'excluded' => (bool) $item->is_not_accounted,
                 'pending_resources' => $item->resources->isEmpty() ? ($pendingResources = $this->pendingResources($item)) : [],
             ];
@@ -56,7 +60,7 @@ final class EstimateFinanceQuery
                     'source_changed' => $resource->finance_source_hash !== null && $resource->finance_source_hash !== $sourceHash,
                     'quantity' => (string) ($resource->total_quantity ?? '0'),
                     'estimate_amount' => (string) ($resource->total_amount ?? '0'), 'excluded' => (bool) $item->is_not_accounted,
-                    'estimate_amount_with_vat' => $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($resource->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
+                    'estimate_amount_with_vat' => $sourceVat || $estimate->vat_rate === null ? null : FinanceDecimal::multiply((string) ($resource->total_amount ?? '0'), FinanceDecimal::add('1', FinanceDecimal::divide((string) $estimate->vat_rate, '100', 8))),
                 ];
             }
         }

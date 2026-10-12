@@ -29,7 +29,7 @@ final readonly class UserEvaluationChoiceWriter
         string $reason, string $requestId): array
     {
         $this->authorization->authorize($actor, $session, 'estimate_generation.review');
-        if (! Str::isUuid($requestId) || ! in_array($type, ['evaluation_price', 'evaluation_scope', 'evaluation_technology', 'evaluation_scenario', 'evaluation_answer', 'evaluation_currency'], true)
+        if (! Str::isUuid($requestId) || ! in_array($type, ['evaluation_price', 'evaluation_scope', 'evaluation_technology', 'evaluation_scenario', 'evaluation_answer', 'evaluation_currency', 'evaluation_contingency'], true)
             || $anchorKey === '' || strlen($anchorKey) > 191 || trim($reason) === '' || strlen($reason) > 1000) {
             throw new InvalidArgumentException('evaluation_choice_contract_invalid');
         }

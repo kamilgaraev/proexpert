@@ -34,6 +34,8 @@ class EstimateVersionRestoreService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            (new SourceMoneySnapshotGuard)->assertAccepted($lockedEstimate, $version->snapshot ?? []);
+
             if ($lockedEstimate->status === 'approved' && $lockedEstimate->current_version_id !== null) {
                 $lockedEstimate->forceFill([
                     'status' => 'draft',
@@ -75,9 +77,11 @@ class EstimateVersionRestoreService
 
         return DB::transaction(function () use ($estimate, $version): Estimate {
             $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            (new SourceMoneySnapshotGuard)->assertAccepted($estimate, $version->snapshot ?? []);
             $this->assertStructureReplaceable($estimate);
             $this->applyEstimateSnapshot($estimate, $version->snapshot ?? []);
             $this->replaceStructure($estimate, $version->snapshot ?? []);
+
             return $this->loadRestoredEstimate($estimate);
         });
     }
@@ -110,11 +114,13 @@ class EstimateVersionRestoreService
                 'import_diagnostics',
                 'statistics',
             ]),
-            $this->only($totalsPayload, [
+            $this->only($totalsPayload + ['total_other_costs' => '0.00', 'contingency_amount' => '0.00'], [
                 'total_direct_costs',
                 'total_overhead_costs',
                 'total_estimated_profit',
                 'total_equipment_costs',
+                'total_other_costs',
+                'contingency_amount',
                 'total_amount',
                 'total_amount_with_vat',
                 'total_base_direct_costs',
@@ -289,6 +295,7 @@ class EstimateVersionRestoreService
                 'machinery_cost',
                 'labor_cost',
                 'equipment_cost',
+                'other_cost',
                 'labor_hours',
                 'machinery_hours',
                 'base_materials_cost',

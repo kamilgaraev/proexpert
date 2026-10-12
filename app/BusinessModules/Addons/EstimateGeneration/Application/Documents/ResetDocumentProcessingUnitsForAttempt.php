@@ -23,6 +23,7 @@ final readonly class ResetDocumentProcessingUnitsForAttempt
                 continue;
             }
             $unitMeta = is_array($unit->metadata) ? $unit->metadata : [];
+            unset($unitMeta['credit_operation_id'], $unitMeta['credit_manifest_hash']);
             $unitStatus = $unit->status instanceof DocumentProcessingUnitStatus
                 ? $unit->status->value
                 : (string) $unit->status;

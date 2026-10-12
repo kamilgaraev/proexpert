@@ -33,7 +33,7 @@ final class AssistantStructuredFactLabels
             'schedule.status' => ScheduleStatusEnum::tryFrom($value)?->label(),
             'schedule_task.status' => TaskStatusEnum::tryFrom($value)?->label(),
             'estimate_item.item_type' => EstimatePositionItemType::tryFrom($value)?->label(),
-            'estimate_item_resource.resource_type' => in_array($value, ['material', 'labor', 'equipment'], true) ? EstimatePositionItemType::tryFrom($value)?->label() : null,
+            'estimate_item_resource.resource_type' => in_array($value, ['material', 'labor', 'equipment', 'machinery', 'other'], true) ? EstimatePositionItemType::tryFrom($value)?->label() : null,
             'purchase_request.status' => PurchaseRequestStatusEnum::tryFrom($value)?->label(),
             'supplier_request.status' => SupplierRequestStatusEnum::tryFrom($value)?->label(),
             'supplier_proposal.status' => SupplierProposalStatusEnum::tryFrom($value)?->label(),
@@ -67,6 +67,7 @@ final class AssistantStructuredFactLabels
         };
         if ($group !== null && preg_match('/^[a-z_]+$/D', $value)) {
             $key = $group.'.'.$value;
+
             return Lang::has($key) ? trans_message($key) : $value;
         }
 

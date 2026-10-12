@@ -47,6 +47,7 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             'owner_token' => $ownerToken,
             'lease_expires_at' => $databaseLeaseExpiresAt,
             'usage_recorded' => false,
+            ...($context->creditOperationId === null ? [] : ['credit_operation_id' => $context->creditOperationId, 'credit_role' => $context->operation]),
             'created_at' => $databaseNow,
             'updated_at' => $databaseNow,
         ]);
@@ -61,6 +62,10 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             $query = $this->database->table(self::TABLE)->where('attempt_id', $context->attemptId);
             $row = $query->lockForUpdate()->first();
             if ($row === null || ! hash_equals((string) $row->request_fingerprint, $requestFingerprint)) {
+                throw new VisionPhysicalAttemptCollision;
+            }
+            if (($row->credit_operation_id ?? null) !== $context->creditOperationId
+                || ($context->creditOperationId !== null && ($row->credit_role ?? null) !== $context->operation)) {
                 throw new VisionPhysicalAttemptCollision;
             }
             $snapshot = $this->snapshot($row);
@@ -127,6 +132,26 @@ final readonly class EloquentVisionPhysicalAttemptStore implements VisionPhysica
             $denialReason = $this->wireAuthorization?->denialReason($attemptId, $now, $costReservation);
             if ($denialReason !== null) {
                 return $denialReason;
+            }
+            $creditAttempt = $this->database->table(self::TABLE)->where('attempt_id', $attemptId)->lockForUpdate()->first();
+            $creditOperationId = $creditAttempt->credit_operation_id ?? null;
+            if ($creditOperationId === null && \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) ($creditAttempt->organization_id ?? 0))) {
+                return 'estimator_credit_quote_required';
+            }
+            try {
+                if ($costReservation->currency === 'RUB' && $costReservation->amount !== null) {
+                    app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorOrganizationExpenseBudget::class)
+                        ->admit((int) $creditAttempt->organization_id, \Brick\Math\BigDecimal::of($costReservation->amount)
+                            ->multipliedBy('1000000')->toScale(0, \Brick\Math\RoundingMode::Ceiling)->toInt());
+                }
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorQaSupplierExpenseGuard::class)->admit($attemptId, $costReservation);
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostLimitReached $exception) {
+                return $exception->reason;
+            }
+            if ($creditOperationId !== null) {
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorCreditAttemptAdmission::class)
+                    ->admit((string) $creditOperationId, $attemptId, (int) $creditAttempt->organization_id,
+                        (int) $creditAttempt->project_id, (int) $creditAttempt->session_id, (string) $creditAttempt->credit_role, $costReservation);
             }
 
             $databaseNow = $this->databaseTime($now);

@@ -76,6 +76,10 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             return $session;
         }
 
+        if (app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\CompleteEstimatorDocumentOperation::class)->handle($session)) {
+            return $session->fresh(['documents.processingUnits']) ?? $session;
+        }
+
         $readiness = $this->readiness->evaluate($session);
         if (! $readiness['can_generate']) {
             if ((int) ($readiness['summary']['pending_count'] ?? 0) === 0
@@ -104,13 +108,20 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             return $session;
         }
 
+        if (\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)
+            && ! is_string($session->input_payload['generation_credit_operation_id'] ?? null)) {
+            return $this->advance->documentsNeedReview($session, 'project_planning_requires_approval', ['planning_requires_paid_approval']);
+        }
+
         $planning = $this->planning->refresh(
             (int) $session->organization_id,
             (int) $session->project_id,
             (int) $session->getKey(),
             (string) Str::uuid(),
             max(1, (int) $session->state_version),
-            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope((int) $session->state_version),
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope((int) $session->state_version,
+                creditOperationId: is_string($session->input_payload['generation_credit_operation_id'] ?? null)
+                    ? $session->input_payload['generation_credit_operation_id'] : null),
         );
         if (! $planning->isReadyForCompleteness()) {
             return $this->advance->documentsNeedReview(
@@ -124,8 +135,11 @@ final class ReconcileEstimateGenerationDocuments implements DocumentMutationSess
             return $session;
         }
 
-        $attemptId = (string) Str::uuid();
-        $session = $this->advance->generationStarted($session, $attemptId);
+        $creditOperationId = $session->input_payload['generation_credit_operation_id'] ?? null;
+        $attemptId = is_string($creditOperationId) ? $creditOperationId : (string) Str::uuid();
+        $generationInput = ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            ? ['generation_evaluation_input_hash' => (new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint)->fromSession($session)] : [];
+        $session = $this->advance->generationStarted($session, $attemptId, $generationInput);
         GenerateEstimateDraftJob::dispatch(
             (int) $session->getKey(),
             $session->state_version,

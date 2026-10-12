@@ -41,7 +41,7 @@ final readonly class UniversalEvaluationBuilder
                         continue;
                     }
                     $quantity = is_array($item['quantity_basis_details'] ?? null) ? $item['quantity_basis_details'] : [];
-                    $entityId = $quantity['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
+                    $entityId = $item['metadata']['scope_entity_id'] ?? $quantity['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
                     if (! is_string($entityId) || ! isset($entityIds[$entityId])) {
                         $entityId = null;
                     } else {
@@ -84,7 +84,19 @@ final readonly class UniversalEvaluationBuilder
         $coverage = $this->completeness->evaluate($snapshot, $policy['profile_id'] ?? 'construction',
             $policy['construction_type'] ?? 'new_construction', $entityScope, $positions, $decisions, $technologies);
         $requirements = $coverage['missing_requirements'];
+        if (($policy['required_technology_revision'] ?? 0) > ($policy['technology_revision'] ?? 0)) {
+            $requirements[] = ['section' => 'roofing', 'entity_id' => null, 'requirement' => 'technology_composition_refresh',
+                'reason' => 'technology_selection_changed'];
+            $questionCandidates[] = ['key' => 'technology:composition-refresh',
+                'question' => 'Выбранная технология изменилась. Получите предложение стоимости ИИ для обновления состава работ.',
+                'affected_position_keys' => array_column(array_filter($positions, static fn (array $position): bool => $position['section'] === 'roofing'), 'key'),
+                'correctness_blocker' => true, 'cost_blocker' => true, 'easy_to_answer' => true,
+                'next_action' => 'quote_composition_refresh', 'effect' => 'Новый состав будет подготовлен отдельно; текущие позиции и созданная смета сохранятся.'];
+        }
         foreach ($requirements as $requirement) {
+            if ($requirement['requirement'] === 'technology_composition_refresh') {
+                continue;
+            }
             $affected = array_values(array_column(array_filter($positions, static fn (array $position): bool => $position['section'] === $requirement['section'] && ($requirement['entity_id'] === null || $position['entity_id'] === $requirement['entity_id'])), 'key'));
             $questionCandidates[] = ['key' => 'requirement:'.$requirement['section'].':'.($requirement['entity_id'] ?? 'scope').':'.$requirement['requirement'],
                 'question' => 'Уточните основание для «'.$this->requirementName($requirement['requirement']).'» в разделе «'.$requirement['section'].'».',
@@ -96,11 +108,41 @@ final readonly class UniversalEvaluationBuilder
             $requirements[] = ['requirement' => 'audit_finding', 'reason' => $finding['reason'] ?? 'audit_review_required',
                 'position_keys' => isset($finding['item_key']) ? [$finding['item_key']] : []];
         }
+        $contingency = null;
+        $contingencySelection = $policy['contingency_selection'] ?? null;
+        if (is_array($contingencySelection)) {
+            try {
+                $terms = (new EvaluationContingency)->terms($contingencySelection);
+                if (is_string($contingencySelection['decision_id'] ?? null)
+                    && (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $contingencySelection, 'evaluation_contingency',
+                        [...$terms, 'decision_id' => $contingencySelection['decision_id']])) {
+                    $contingency = (new EvaluationContingency)->component($contingencySelection);
+                }
+            } catch (InvalidArgumentException) {
+                // An invalid monetary choice is a visible blocker, never a zero reserve.
+            }
+        }
+        $legacyReserve = ! BigDecimal::of((string) ($draft['contingency_amount'] ?? '0'))->isZero()
+            || ! BigDecimal::of((string) ($draft['contingency_percent'] ?? '0'))->isZero();
+        if ($contingency === null && ($contingencySelection !== null || $legacyReserve)) {
+            $requirements[] = ['section' => 'financial', 'requirement' => 'contingency_confirmation', 'reason' => 'contingency_not_confirmed'];
+            $questionCandidates[] = ['key' => 'contingency_confirmation', 'question' => 'Подтвердите фиксированный резерв и условия НДС или явно задайте нулевой резерв.',
+                'affected_position_keys' => array_column($positions, 'key'), 'correctness_blocker' => true, 'cost_blocker' => true,
+                'easy_to_answer' => true, 'next_action' => 'confirm_contingency', 'effect' => 'Резерв изменит общий итог выбранного состава.'];
+        }
         $expectedScope = ['selected_sections' => $scope, 'profile_id' => $coverage['profile_id'],
             'construction_type' => $coverage['construction_type'], 'price_policy' => $policy['price_policy'] ?? 'normative',
             'profile_version' => $coverage['profile_version']];
         $scopeConfirmed = (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $policy['scope_selection'] ?? null, 'evaluation_scope', $expectedScope);
-        $result = $this->calculator->calculate([['id' => 'base', 'positions' => $positions, 'assumptions' => $assumptions]], $scope, $requirements, $scopeConfirmed);
+        $scenarios = (new EvaluationScenarioSet)->project($positions, $assumptions, $snapshot, $decisions, $policy['scenario_selections'] ?? null);
+        $scenarios = (new EvaluationScenarioCurrencyProjector)->project($scenarios, $policy['currency_selections'] ?? [], $snapshot, $decisions);
+        if ($contingency !== null) {
+            foreach ($scenarios as &$scenario) {
+                $scenario['contingency'] = $contingency;
+            }
+            unset($scenario);
+        }
+        $result = $this->calculator->calculate($scenarios, $scope, $requirements, $scopeConfirmed);
 
         return [...$result, 'profile_id' => $coverage['profile_id'], 'profile_version' => $coverage['profile_version'],
             'coverage' => $coverage, 'priority_questions' => $this->questions->prioritize($questionCandidates),

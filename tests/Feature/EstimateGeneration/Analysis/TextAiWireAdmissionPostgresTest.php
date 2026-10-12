@@ -46,6 +46,9 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
     protected function setUp(): void
     {
         parent::setUp();
+        $entitlements = \Mockery::mock(\App\Services\Entitlements\OrganizationEntitlementService::class);
+        $entitlements->allows('hasModuleAccess')->andReturn(true);
+        $this->app->instance(\App\Services\Entitlements\OrganizationEntitlementService::class, $entitlements);
         self::assertSame('pgsql', DB::connection()->getDriverName());
         self::assertStringEndsWith('_testing', DB::connection()->getDatabaseName());
         $this->schema = 'most_text_wire_'.bin2hex(random_bytes(8));
@@ -73,6 +76,7 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
             CREATE TABLE estimate_generation_document_pages (id bigint PRIMARY KEY);
             SQL);
         foreach ([
+            '2026_07_11_002000_create_estimate_generation_settings_and_budgets.php',
             '2026_08_10_000300_create_vision_physical_attempts.php',
             '2026_08_10_000400_add_recovery_lease_to_vision_physical_attempts.php',
             '2026_08_15_000100_separate_vision_logical_request_from_processing_lineage.php',
@@ -515,7 +519,7 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
         return new RunEstimateComposer(new EloquentAiRoleRunRepository(DB::connection(), 180), new TimewebEstimateComposerModel(
             $wire, new EloquentAiUsageStore(new AiCostCalculator, DB::connection()), $prices,
             'openai/gpt-6-luna', 100000, 4096, 30, new DurableAiPhysicalResponseStore(DB::connection()),
-        ), 'openai/gpt-6-luna');
+        ), 'openai/gpt-6-luna', allowance: new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EloquentEstimateComposerAllowance);
     }
 
     private function wire(): TimewebRerankWireClient

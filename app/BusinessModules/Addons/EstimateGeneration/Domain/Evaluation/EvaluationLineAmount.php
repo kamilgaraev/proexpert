@@ -12,6 +12,16 @@ final class EvaluationLineAmount
 {
     public function calculate(BigDecimal $quantity, BigDecimal $unitPrice, array $price): string
     {
+        if (isset($price['currency_conversion'])) {
+            $basis = $price['currency_conversion'];
+            if (! is_array($basis) || ! is_string($basis['quantity'] ?? null) || ! $quantity->isEqualTo($basis['quantity'])
+                || ($price['currency'] ?? null) !== 'RUB'
+                || ! $unitPrice->isEqualTo(BigDecimal::of($basis['source_snapshot']['unit_price'] ?? '-1')->multipliedBy($basis['rate']['rub_per_unit'] ?? '0'))) {
+                throw new InvalidArgumentException('evaluation_currency_quantity_or_price_changed');
+            }
+
+            return (new EvaluationCurrencyConversion)->money($basis)['quoted_amount'];
+        }
         $basis = $price['calculation_basis'] ?? null;
         if ($basis === null) {
             return (string) $quantity->multipliedBy($unitPrice)->toScale(2, RoundingMode::HalfUp);

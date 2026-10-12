@@ -19,41 +19,43 @@ class EstimateItemService
     public function addItem(array $data, Estimate $estimate): EstimateItem
     {
         return DB::transaction(function () use ($data, $estimate) {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             // Проверка лимита позиций
             $this->checkItemsLimit($estimate);
-            
-            if (!isset($data['position_number'])) {
+
+            if (! isset($data['position_number'])) {
                 $data['position_number'] = $this->repository->getNextPositionNumber($estimate->id);
             }
-            
-            if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && !isset($data['is_manual'])) {
+
+            if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && ! isset($data['is_manual'])) {
                 $data['is_manual'] = true;
             }
-            
+
             $item = $this->repository->create($data);
-            
+
             $this->calculationService->calculateItemTotal($item, $estimate);
-            
+
             if (isset($data['estimate_section_id'])) {
                 $section = $item->section;
                 if ($section) {
                     $this->calculationService->calculateSectionTotal($section);
                 }
             }
-            
+
             $this->calculationService->calculateEstimateTotal($estimate);
-            
+
             \Log::debug('estimate.item.added', [
                 'estimate_id' => $estimate->id,
                 'item_id' => $item->id,
                 'position_number' => $item->position_number,
                 'total_amount' => $item->total_amount,
             ]);
-            
+
             return $item;
         });
     }
-    
+
     /**
      * Проверить лимит позиций в смете
      */
@@ -61,10 +63,10 @@ class EstimateItemService
     {
         $module = app(\App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class);
         $limits = $module->getLimits();
-        
+
         $currentCount = $this->repository->countByEstimate($estimate->id);
         $maxItems = $limits['max_items_per_estimate'];
-        
+
         if ($maxItems && $currentCount >= $maxItems) {
             throw new \DomainException("Достигнут лимит позиций в смете: {$maxItems}");
         }
@@ -82,16 +84,20 @@ class EstimateItemService
             'quantity' => 1,
             'is_manual' => false,
         ], $overrides);
-        
+
         return $this->addItem($data, $estimate);
     }
 
     public function updateItem(EstimateItem $item, array $data): EstimateItem
     {
         return DB::transaction(function () use ($item, $data) {
+            $estimate = Estimate::query()->whereKey($item->estimate_id)->lockForUpdate()->firstOrFail();
+            $item = EstimateItem::query()->whereKey($item->id)->where('estimate_id', $estimate->id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertLineUpdate($estimate, $item, $data);
             $oldQuantity = (float) $item->quantity;
+            $exactOldQuantity = (string) $item->quantity;
 
-            if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && !isset($data['is_manual'])) {
+            if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && ! isset($data['is_manual'])) {
                 $data['is_manual'] = true;
             }
 
@@ -99,19 +105,30 @@ class EstimateItemService
             $item->refresh();
 
             if (array_key_exists('quantity', $data)) {
-                $this->scaleChildrenForQuantity($item, $oldQuantity, (float) $data['quantity'], $item->estimate);
+                if (($item->estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1') {
+                    $resized = (new GeneratedEstimateResourceResize)->resize($item, $exactOldQuantity, (string) $data['quantity'], $item->estimate);
+                    if (! $resized) {
+                        $item->update(['current_total_amount' => '0', 'total_amount' => '0']);
+                    }
+                } else {
+                    $this->scaleChildrenForQuantity($item, $oldQuantity, (float) $data['quantity'], $item->estimate);
+                }
                 $item->refresh();
             }
-            
+            if (array_key_exists('unit_price', $data) && ($item->estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1'
+                && ! array_key_exists('current_total_amount', $data) && ! array_key_exists('total_amount', $data)) {
+                $item->update(['current_total_amount' => '0', 'total_amount' => '0']);
+            }
+
             $estimate = $item->estimate;
             $this->calculationService->calculateItemTotal($item, $estimate);
-            
+
             if ($item->section) {
                 $this->calculationService->calculateSectionTotal($item->section);
             }
-            
+
             $this->calculationService->calculateEstimateTotal($estimate);
-            
+
             return $item->fresh();
         });
     }
@@ -119,6 +136,7 @@ class EstimateItemService
     public function bulkUpdate(Estimate $estimate, array $items): array
     {
         return DB::transaction(function () use ($estimate, $items): array {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
             $itemIds = collect($items)->pluck('id')->map(static fn ($id): int => (int) $id)->unique()->values();
 
             $models = EstimateItem::query()
@@ -129,26 +147,46 @@ class EstimateItemService
                 ->get()
                 ->keyBy('id');
 
+            foreach ($items as $itemData) {
+                $candidate = $models->get((int) $itemData['id']);
+                if ($candidate !== null) {
+                    (new EstimateSourceVatCalculator)->assertLineUpdate($estimate, $candidate, $this->bulkUpdatePayload($itemData));
+                }
+            }
+
             $updatedItems = collect();
             $sectionsToRecalculate = collect();
 
             foreach ($items as $itemData) {
                 $item = $models->get((int) $itemData['id']);
 
-                if (!$item) {
+                if (! $item) {
                     continue;
                 }
 
                 $oldSectionId = $item->estimate_section_id;
                 $oldQuantity = (float) $item->quantity;
+                $exactOldQuantity = (string) $item->quantity;
                 $data = $this->bulkUpdatePayload($itemData);
 
                 if (array_key_exists('quantity', $data)) {
                     $newQuantity = (float) $data['quantity'];
-                    $this->scaleChildrenForQuantity($item, $oldQuantity, $newQuantity, $estimate);
+                    if (($estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1') {
+                        if (! (new GeneratedEstimateResourceResize)->resize($item, $exactOldQuantity, (string) $data['quantity'], $estimate)) {
+                            $data['current_total_amount'] = '0';
+                            $data['total_amount'] = '0';
+                        }
+                    } else {
+                        $this->scaleChildrenForQuantity($item, $oldQuantity, $newQuantity, $estimate);
+                    }
+                }
+                if (array_key_exists('unit_price', $data) && ($estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1'
+                    && ! array_key_exists('current_total_amount', $data) && ! array_key_exists('total_amount', $data)) {
+                    $data['current_total_amount'] = '0';
+                    $data['total_amount'] = '0';
                 }
 
-                if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && !isset($data['is_manual'])) {
+                if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && ! isset($data['is_manual'])) {
                     $data['is_manual'] = true;
                 }
 
@@ -188,24 +226,25 @@ class EstimateItemService
     public function deleteItem(EstimateItem $item): bool
     {
         return DB::transaction(function () use ($item) {
-            $estimate = $item->estimate;
+            $estimate = Estimate::query()->whereKey($item->estimate_id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             $section = $item->section;
-            
+
             \Log::debug('estimate.item.deleting', [
                 'estimate_id' => $estimate->id,
                 'item_id' => $item->id,
                 'position_number' => $item->position_number,
                 'total_amount' => $item->total_amount,
             ]);
-            
+
             $result = $this->repository->delete($item);
-            
+
             if ($section) {
                 $this->calculationService->calculateSectionTotal($section);
             }
-            
+
             $this->calculationService->calculateEstimateTotal($estimate);
-            
+
             return $result;
         });
     }
@@ -214,18 +253,18 @@ class EstimateItemService
     {
         return DB::transaction(function () use ($item, $newSectionId) {
             $oldSection = $item->section;
-            
+
             $this->repository->moveToSection($item, $newSectionId);
-            
+
             if ($oldSection) {
                 $this->calculationService->calculateSectionTotal($oldSection);
             }
-            
+
             $newSection = $item->fresh()->section;
             if ($newSection) {
                 $this->calculationService->calculateSectionTotal($newSection);
             }
-            
+
             return $item->fresh();
         });
     }
@@ -237,47 +276,47 @@ class EstimateItemService
             $module = app(\App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class);
             $limits = $module->getLimits();
             $maxItems = $limits['max_items_per_estimate'];
-            
+
             $currentCount = $this->repository->countByEstimate($estimate->id);
             $newItemsCount = count($items);
-            
+
             if ($maxItems && ($currentCount + $newItemsCount) > $maxItems) {
                 throw new \DomainException(
-                    "Массовое добавление невозможно. Будет превышен лимит позиций: {$maxItems}. " .
+                    "Массовое добавление невозможно. Будет превышен лимит позиций: {$maxItems}. ".
                     "Текущее количество: {$currentCount}, добавляется: {$newItemsCount}"
                 );
             }
-            
+
             $createdItems = [];
-            
+
             foreach ($items as $itemData) {
                 $itemData['estimate_id'] = $estimate->id;
-                
-                if (!isset($itemData['position_number'])) {
+
+                if (! isset($itemData['position_number'])) {
                     $itemData['position_number'] = $this->repository->getNextPositionNumber($estimate->id);
                 }
-                
-                if ((isset($itemData['overhead_amount']) || isset($itemData['profit_amount'])) && !isset($itemData['is_manual'])) {
+
+                if ((isset($itemData['overhead_amount']) || isset($itemData['profit_amount'])) && ! isset($itemData['is_manual'])) {
                     $itemData['is_manual'] = true;
                 }
-                
+
                 $item = $this->repository->create($itemData);
                 $this->calculationService->calculateItemTotal($item, $estimate);
-                
+
                 $createdItems[] = $item;
             }
-            
+
             $sections = collect($createdItems)
-                ->filter(fn($item) => $item->section)
-                ->map(fn($item) => $item->section)
+                ->filter(fn ($item) => $item->section)
+                ->map(fn ($item) => $item->section)
                 ->unique('id');
-            
+
             foreach ($sections as $section) {
                 $this->calculationService->calculateSectionTotal($section);
             }
-            
+
             $this->calculationService->calculateEstimateTotal($estimate);
-            
+
             return $createdItems;
         });
     }
@@ -315,7 +354,7 @@ class EstimateItemService
             'metadata',
         ];
 
-        if (array_key_exists('section_id', $itemData) && !array_key_exists('estimate_section_id', $itemData)) {
+        if (array_key_exists('section_id', $itemData) && ! array_key_exists('estimate_section_id', $itemData)) {
             $itemData['estimate_section_id'] = $itemData['section_id'];
         }
 
@@ -348,6 +387,7 @@ class EstimateItemService
             $child->materials_cost = $itemType === \App\Enums\EstimatePositionItemType::MATERIAL->value ? $total : 0;
             $child->machinery_cost = $itemType === \App\Enums\EstimatePositionItemType::MACHINERY->value ? $total : 0;
             $child->labor_cost = $itemType === \App\Enums\EstimatePositionItemType::LABOR->value ? $total : 0;
+            $child->other_cost = $itemType === \App\Enums\EstimatePositionItemType::OTHER->value ? $total : 0;
             $child->total_amount = $total;
             $child->current_total_amount = $total;
 
@@ -395,4 +435,3 @@ class EstimateItemService
             ->each(fn ($section) => $this->calculationService->calculateSectionTotal($section));
     }
 }
-

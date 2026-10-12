@@ -91,7 +91,7 @@ final readonly class HandleEstimateGenerationDraftFailure
                     dependencyVersions: $dependencies,
                 );
                 if ($checkpoint->status === CheckpointStatus::Failed) {
-                    $this->recover($failure, (string) $checkpoint->base_input_version);
+                    $this->recover($failure, (string) $checkpoint->base_input_version, $snapshot->attemptId);
                 } else {
                     $claim = CheckpointClaim::acquired(
                         $context,
@@ -101,7 +101,7 @@ final readonly class HandleEstimateGenerationDraftFailure
                         (int) $checkpoint->getKey(),
                     );
                     if ($this->checkpoints->fail($claim, $error, new DateTimeImmutable)) {
-                        $this->recover($failure, (string) $checkpoint->base_input_version);
+                        $this->recover($failure, (string) $checkpoint->base_input_version, $snapshot->attemptId);
                     }
                 }
             } catch (Throwable) {
@@ -115,16 +115,17 @@ final readonly class HandleEstimateGenerationDraftFailure
         ]);
     }
 
-    private function recover(FailureData $failure, string $inputVersion): void
+    private function recover(FailureData $failure, string $inputVersion, string $generationAttemptId): void
     {
-        $this->database->transaction(function () use ($failure, $inputVersion): void {
+        $this->database->transaction(function () use ($failure, $inputVersion, $generationAttemptId): void {
             $session = EstimateGenerationSession::query()
                 ->whereKey($failure->context->sessionId)
                 ->where('organization_id', $failure->context->organizationId)
                 ->where('project_id', $failure->context->projectId)
                 ->lockForUpdate()
                 ->first();
-            if (! $session instanceof EstimateGenerationSession) {
+            if (! $session instanceof EstimateGenerationSession
+                || ! hash_equals((string) ($session->input_payload['generation_attempt_id'] ?? ''), $generationAttemptId)) {
                 return;
             }
 
@@ -135,6 +136,16 @@ final readonly class HandleEstimateGenerationDraftFailure
                 ->whereIn('status', ['ready_for_review', 'review_required', 'approved'])
                 ->exists();
             $outcome = $this->recovery->decide($failure, $stateVersion, $session->status, $hasUsableDraft);
+            $creditOperationId = $session->input_payload['generation_credit_operation_id'] ?? null;
+            if ($creditOperationId !== null && $outcome === FailureRecoveryOutcome::Retry) {
+                // This callback runs after queue retries are exhausted. New paid work needs a new approved operation.
+                $outcome = FailureRecoveryOutcome::NeedsInput;
+            }
+            if ($creditOperationId !== null
+                && in_array($outcome, [FailureRecoveryOutcome::NeedsInput, FailureRecoveryOutcome::Terminal], true)) {
+                app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+                    ->abort($session, $creditOperationId, 'failed');
+            }
 
             if ($outcome === FailureRecoveryOutcome::NeedsInput) {
                 if ($session->status === EstimateGenerationStatus::ProcessingDocuments) {
@@ -150,7 +161,7 @@ final readonly class HandleEstimateGenerationDraftFailure
             }
 
             $failed = $this->advance->failed($session, $failure->code);
-            if (! $hasUsableDraft) {
+            if (! $hasUsableDraft && $creditOperationId === null) {
                 $this->quota->releaseTechnicalFailure(
                     (string) $failed->organization_id,
                     (string) $failed->getKey(),

@@ -484,7 +484,8 @@ class ExcelEstimateBuilder
             ['Накладные расходы (' . number_format($totals['overhead_rate'], 2) . '%):', $totals['total_overhead_costs']],
             ['Сметная прибыль (' . number_format($totals['profit_rate'], 2) . '%):', $totals['total_estimated_profit']],
             ['ИТОГО без НДС:', $totals['total_amount']],
-            ['НДС (' . number_format($totals['vat_rate'], 0) . '%):', $totals['vat_amount']],
+            [($totals['vat_calculation_method'] ?? null) === \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator::METHOD
+                ? 'НДС по подтверждённым источникам:' : 'НДС (' . number_format($totals['vat_rate'], 0) . '%):', $totals['vat_amount']],
             ['ВСЕГО С НДС:', $totals['total_amount_with_vat']],
         ];
 

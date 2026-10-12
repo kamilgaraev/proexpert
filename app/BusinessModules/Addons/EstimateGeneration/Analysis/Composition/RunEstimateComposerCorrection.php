@@ -36,8 +36,8 @@ final readonly class RunEstimateComposerCorrection
             null,
             null,
             'estimate_correction_cycle',
-            $scope->sessionId.':'.$scope->cycle,
-            'composer-correction:'.$scope->cycle.':'.$scope->snapshotToken,
+            $scope->sessionId.':'.$scope->cycle.($scope->partId === 'whole' ? '' : ':'.$scope->partId),
+            'composer-correction:'.$scope->cycle.':'.$scope->snapshotToken.($scope->partId === 'whole' ? '' : ':'.$scope->partId),
             AiAnalysisRole::EstimateComposer,
             $this->modelName,
             self::PROMPT_CONTRACT,
@@ -53,8 +53,9 @@ final readonly class RunEstimateComposerCorrection
         }
         $attemptId = null;
         try {
-            $raw = $this->model->correct($input, function (string $id) use ($claim, &$attemptId): void {
-                $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $id);
+            $raw = $this->model->correct($input, function (string $id) use ($scope, $claim, &$attemptId): void {
+                $creditId = $scope->wireScope?->creditOperationId;
+                $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $id, $creditId, $creditId === null ? null : 'estimate_composer_correction');
                 $attemptId = $id;
             });
             if ($attemptId === null || array_keys($raw) !== ['corrections']) {

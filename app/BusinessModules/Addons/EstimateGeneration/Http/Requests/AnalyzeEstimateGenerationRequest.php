@@ -18,6 +18,8 @@ final class AnalyzeEstimateGenerationRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['state_version' => ['required', 'integer', 'min:0']];
+        return ['state_version' => ['required', 'integer', 'min:0'],
+            'quote_id' => [\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $this->user()->current_organization_id) ? 'required' : 'nullable', 'uuid'],
+            'request_id' => [\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $this->user()->current_organization_id) ? 'required' : 'nullable', 'uuid']];
     }
 }

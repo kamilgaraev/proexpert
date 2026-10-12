@@ -27,6 +27,33 @@ final class ProjectPlanningPipelineTest extends TestCase
 {
     private const SOURCE = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
+    private \Illuminate\Container\Container $previousContainer;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->previousContainer = \Illuminate\Container\Container::getInstance();
+        $container = new \Illuminate\Container\Container;
+        $container->instance('config', new \Illuminate\Config\Repository(['estimate-generation' => ['universal_enabled' => false]]));
+        \Illuminate\Container\Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        \Illuminate\Container\Container::setInstance($this->previousContainer);
+        parent::tearDown();
+    }
+
+    public function test_decision_reanalysis_runs_server_planning_and_completeness_without_any_model(): void
+    {
+        $repository = $this->repository();
+        $trigger = new \App\BusinessModules\Addons\EstimateGeneration\Application\Planning\SynchronousPlanningReanalysisTrigger($this->pipeline($repository, true));
+        $trigger->trigger(30, new \App\BusinessModules\Addons\EstimateGeneration\Domain\Decisions\ActorContext(10, 20, 40, 'technology-choice:12345678'));
+        self::assertSame(1, $repository->technologyPlanningWriteCount);
+        self::assertSame(1, $repository->completenessWriteCount);
+        self::assertSame(0, $repository->currentUnderstanding(10, 20, 30)['provider_calls']);
+    }
+
     public function test_successful_current_understanding_runs_recommendations_then_completeness_once(): void
     {
         $repository = $this->repository();
@@ -107,7 +134,7 @@ final class ProjectPlanningPipelineTest extends TestCase
         return $repository;
     }
 
-    private function pipeline(InMemoryProjectModelRepository $repository): ProjectPlanningPipeline
+    private function pipeline(InMemoryProjectModelRepository $repository, bool $serverOnly = false): ProjectPlanningPipeline
     {
         $translator = static fn (string $key, array $replace = []): string => strtr($key, $replace);
         $technology = TechnologySystemCatalog::fromArray(
@@ -116,14 +143,26 @@ final class ProjectPlanningPipelineTest extends TestCase
         $rules = CompletenessRuleCatalog::fromArray(
             require dirname(__DIR__, 4).'/config/estimate-generation-completeness-rules.php',
         );
+        $arbitrators = new PipelineNoopArbitratorFactory;
+        $synthesis = new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner;
+        $allowance = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance;
+        if ($serverOnly) {
+            $arbitrators = $this->createMock(CrossDocumentFactArbitratorFactory::class);
+            $arbitrators->expects(self::never())->method('create');
+            $synthesis = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner::class);
+            $synthesis->expects(self::never())->method('run');
+            $allowance = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class);
+            $allowance->expects(self::never())->method('partLimit');
+        }
 
         return new ProjectPlanningPipeline(
             new ProjectUnderstandingCoordinator(
                 $repository,
                 new TargetedConflictResolver($translator),
-                new PipelineNoopArbitratorFactory,
+                $arbitrators,
                 ProjectUnderstandingBudget::defaults(),
-                new \Tests\Support\EstimateGeneration\PassthroughProjectSynthesisRunner,
+                $synthesis,
+                $allowance,
             ),
             new ProjectPlanningCoordinator(
                 $repository,

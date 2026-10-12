@@ -21,6 +21,8 @@ final readonly class EstimateAuditInput
         public array $evidence,
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
+        public string $partId = 'whole',
+        public array $contextManifest = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -31,6 +33,14 @@ final readonly class EstimateAuditInput
             || ! array_is_list($evidence) || count($evidence) > 20000
             || $draft === [] || array_is_list($draft)) {
             throw new InvalidArgumentException('estimate_audit_input_invalid');
+        }
+        if ($partId !== 'whole' && preg_match('/\Apart:[a-f0-9]{40}\z/', $partId) !== 1) {
+            throw new InvalidArgumentException('estimate_audit_part_identity_invalid');
+        }
+        if ($contextManifest !== [] && (($contextManifest['contract'] ?? null) !== 'estimate-audit-context:v1'
+            || preg_match('/^[a-f0-9]{64}$/D', (string) ($contextManifest['parent_fingerprint'] ?? '')) !== 1
+            || ! is_int($contextManifest['total_facts'] ?? null) || $contextManifest['total_facts'] < count($facts))) {
+            throw new InvalidArgumentException('estimate_audit_context_manifest_invalid');
         }
         $factIds = [];
         foreach ($facts as $fact) {
@@ -46,7 +56,9 @@ final readonly class EstimateAuditInput
                 throw new InvalidArgumentException('estimate_audit_evidence_invalid');
             }
         }
-        if (strlen($this->canonicalJson($this->canonicalPayload())) > 2_097_152) {
+        // The full server snapshot can exceed a single wire request. It is never
+        // sent before section/context partitioning and admission checks.
+        if (strlen($this->canonicalJson($this->canonicalPayload())) > ($partId === 'whole' ? 33_554_432 : 2_097_152)) {
             throw new InvalidArgumentException('estimate_audit_input_too_large');
         }
     }
@@ -66,12 +78,19 @@ final readonly class EstimateAuditInput
             'draft' => $this->draft,
             'evidence' => $this->evidence,
             'contract_version' => $this->contractVersion,
+            ...($this->partId === 'whole' ? [] : ['part_id' => $this->partId]),
+            ...($this->contextManifest === [] ? [] : ['context_manifest' => $this->contextManifest]),
         ];
     }
 
     public function fingerprint(): string
     {
-        return hash('sha256', $this->canonicalJson($this->canonicalPayload()));
+        $payload = $this->canonicalPayload();
+        if ($this->wireScope?->creditOperationId !== null) {
+            $payload['approved_operation_id'] = $this->wireScope->creditOperationId;
+        }
+
+        return hash('sha256', $this->canonicalJson($payload));
     }
 
     public function withDraft(array $draft, int $cycle): self
@@ -88,7 +107,26 @@ final readonly class EstimateAuditInput
             $this->evidence,
             $this->contractVersion,
             $this->wireScope,
+            $this->partId,
+            $this->contextManifest,
         );
+    }
+
+    public function withPart(array $draft, string $partId): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken, $this->cycle,
+            $this->facts, $this->derivedQuantities, $draft, $this->evidence, $this->contractVersion, $this->wireScope, $partId, $this->contextManifest);
+    }
+
+    public function withContextPart(array $draft, string $partId, array $facts, array $quantities, array $evidence, array $manifest): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken, $this->cycle,
+            $facts, $quantities, $draft, $evidence, $this->contractVersion, $this->wireScope, $partId, $manifest);
+    }
+
+    public function wireBytes(): int
+    {
+        return strlen($this->canonicalJson(['audit_input' => $this->canonicalPayload()]));
     }
 
     private function canonicalJson(array $payload): string

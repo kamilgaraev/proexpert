@@ -25,6 +25,8 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         private ProjectSynthesisModel $model,
         private string $modelName,
         private ProjectSynthesisValidator $validator = new ProjectSynthesisValidator,
+        private int $maxInputBytes = 524288,
+        private ProjectSynthesisAllowance $allowance = new EloquentProjectSynthesisAllowance,
     ) {}
 
     /**
@@ -36,12 +38,41 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         array $candidateLinks,
         array $candidateQuestions,
     ): ProjectSynthesisSelection {
+        $validated = $this->validator->validate(['links' => $candidateLinks, 'questions' => $candidateQuestions], $input);
+        $limit = $this->allowance->partLimit($input);
+        if ($limit === 0) {
+            throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
+        }
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId, 'project_synthesis');
+        $parts = (new ProjectSynthesisContextPlanner($policy))->prepare($input, $validated['links'], $validated['questions'], $this->maxInputBytes);
+        if ($limit !== null && count($parts) > $limit) {
+            throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
+        }
+        if (count($parts) === 1) {
+            return $this->runPart($parts[0]['input'], $parts[0]['links'], $parts[0]['questions']);
+        }
+        $links = $questions = [];
+        foreach ($parts as $part) {
+            $selected = $this->runPart($part['input'], $part['links'], $part['questions']);
+            array_push($links, ...$selected->acceptedLinkIds);
+            array_push($questions, ...$selected->questionConflictIds);
+        }
+        sort($links, SORT_STRING);
+        sort($questions, SORT_STRING);
+
+        return new ProjectSynthesisSelection($links, $questions);
+    }
+
+    private function runPart(ProjectSynthesisInput $input, array $candidateLinks, array $candidateQuestions): ProjectSynthesisSelection
+    {
         $validatedCandidates = $this->validator->validate([
             'links' => $candidateLinks,
             'questions' => $candidateQuestions,
         ], $input);
         $candidateLinks = $validatedCandidates['links'];
         $candidateQuestions = $validatedCandidates['questions'];
+        $candidateFingerprint = ProjectSynthesisAttemptIdentity::fingerprint($input, $candidateLinks, $candidateQuestions);
         $runInput = new AiRoleRunInput(
             organizationId: $input->organizationId,
             projectId: $input->projectId,
@@ -49,12 +80,12 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
             documentId: null,
             pageId: null,
             subjectType: 'estimate_session',
-            subjectId: (string) $input->sessionId,
-            subjectVersion: $input->aggregateSourceVersion(),
+            subjectId: (string) $input->sessionId.($input->partId === 'whole' ? '' : ':'.$input->partId),
+            subjectVersion: $input->aggregateSourceVersion().($input->partId === 'whole' ? '' : ':'.$input->partId),
             role: AiAnalysisRole::ProjectEngineer,
             model: $this->modelName,
             promptContractVersion: self::PROMPT_CONTRACT,
-            inputFingerprint: $input->fingerprint(),
+            inputFingerprint: $candidateFingerprint,
         );
         $owner = AiOperationContext::deterministicId('project-synthesis-owner|'.$input->fingerprint().'|'.bin2hex(random_bytes(16)));
         $claim = $this->runs->claim($runInput, $owner);
@@ -70,8 +101,9 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
                 $input,
                 $candidateLinks,
                 $candidateQuestions,
-                function (string $attemptId) use ($claim, &$physicalAttemptId): void {
-                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId);
+                function (string $attemptId) use ($input, $claim, &$physicalAttemptId): void {
+                    $creditId = $input->wireScope?->creditOperationId;
+                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId, $creditId, $creditId === null ? null : 'project_synthesis');
                     $physicalAttemptId = $attemptId;
                 },
             );

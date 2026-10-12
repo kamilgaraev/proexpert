@@ -46,6 +46,44 @@ final class RetryEstimateGenerationSession
             function (EstimateGenerationSession $session) use ($command, &$reconcileImmediately): EstimateGenerationSession {
                 ($this->authorizer ?? app(EstimateGenerationActionAuthorization::class))
                     ->authorize($command->actor, $session, 'estimate_generation.generate');
+                $creditEnabled = \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id);
+                $freeApplyRecovery = $session->status === EstimateGenerationStatus::Failed && $session->resume_status === EstimateGenerationStatus::Applying;
+                if (! $creditEnabled && ! $freeApplyRecovery) {
+                    $session->input_payload = [...($session->input_payload ?? []), 'generation_credit_operation_id' => null];
+                }
+                if ($creditEnabled && ! $freeApplyRecovery) {
+                    if (! $command->actor instanceof \App\Models\User || ! is_array($command->creditApproval)
+                        || ! Str::isUuid($command->creditApproval['quote_id'] ?? '') || ! Str::isUuid($command->creditApproval['request_id'] ?? '')) {
+                        throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Повторный платный запуск требует подтверждения нового предложения стоимости.']);
+                    }
+                    $operationId = strtolower($command->creditApproval['request_id']);
+                    $previous = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)
+                        ->where('organization_id', $command->organizationId)->where('project_id', $command->projectId)->where('session_id', $command->sessionId)
+                        ->where('actor_user_id', $command->actor->id)->where('kind', 'generation')->first();
+                    if ($previous !== null && $previous->receipt !== null) {
+                        $quote = \App\Models\Credits\AICreditQuote::query()->findOrFail($previous->quote_id);
+                        if ($quote->public_id !== strtolower($command->creditApproval['quote_id']) || (int) $previous->approved_state_version !== $command->expectedStateVersion) {
+                            throw \Illuminate\Validation\ValidationException::withMessages(['request_id' => 'Идентификатор относится к другой операции.']);
+                        }
+
+                        return $session;
+                    }
+                    if ($session->status === EstimateGenerationStatus::Generating
+                        || $session->status === EstimateGenerationStatus::InputReviewRequired
+                        || ($session->status === EstimateGenerationStatus::Failed && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments)) {
+                        throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Сначала подготовьте документы либо проверьте исход активной операции.']);
+                    }
+                    try {
+                        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+                            ->begin($command->actor, $session, $command->expectedStateVersion, $operationId, $command->creditApproval['quote_id'], 'generation');
+                    } catch (\DomainException $exception) {
+                        throw \Illuminate\Validation\ValidationException::withMessages(['quote_id' => 'Предложение стоимости недействительно либо баланса недостаточно.']);
+                    }
+                    $session->input_payload = [...($session->input_payload ?? []), 'generation_credit_operation_id' => $operationId];
+                    \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)
+                        ->update(['receipt' => \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
+                            'operation_id' => $operationId, 'status' => 'queued']), 'updated_at' => now()]);
+                }
                 if ($session->state_version !== $command->expectedStateVersion) {
                     throw new StaleEstimateGenerationState((int) $session->getKey(), $command->expectedStateVersion);
                 }
@@ -182,7 +220,7 @@ final class RetryEstimateGenerationSession
 
     private function startGeneration(EstimateGenerationSession $session): EstimateGenerationSession
     {
-        $attemptId = ($this->attemptIdFactory)();
+        $attemptId = $this->attemptId($session);
         $session = $this->advance->generationStarted($session, $attemptId, $this->refreshedRegionalContext($session));
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
@@ -206,7 +244,7 @@ final class RetryEstimateGenerationSession
                 ],
             ];
         }
-        $attemptId = ($this->attemptIdFactory)();
+        $attemptId = $this->attemptId($session);
         $session = $this->advance->generationRetried(
             $session,
             $attemptId,
@@ -220,11 +258,24 @@ final class RetryEstimateGenerationSession
 
     private function restartGeneration(EstimateGenerationSession $session): EstimateGenerationSession
     {
-        $attemptId = ($this->attemptIdFactory)();
+        $attemptId = $this->attemptId($session);
         $session = $this->advance->generationRestarted($session, $attemptId, $this->refreshedRegionalContext($session));
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;
+    }
+
+    private function attemptId(EstimateGenerationSession $session): string
+    {
+        if (! \App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditPolicy::enabledForOrganization((int) $session->organization_id)) {
+            return ($this->attemptIdFactory)();
+        }
+        $operationId = $session->input_payload['generation_credit_operation_id'] ?? null;
+        if (! is_string($operationId) || ! Str::isUuid($operationId)) {
+            throw new \DomainException('estimator_credit_retry_operation_missing');
+        }
+
+        return $operationId;
     }
 
     private function refreshedRegionalContext(EstimateGenerationSession $session): array
