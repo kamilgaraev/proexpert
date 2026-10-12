@@ -183,7 +183,7 @@ final class EvaluationScenariosPostgresTest extends EstimateGenerationCanonicalP
             'local_estimates' => [['key' => 'rough_finishing', 'sections' => [['work_items' => [['key' => 'floor', 'name' => 'Пол',
                 'item_type' => 'priced_work', 'quantity' => null, 'unit' => 'm2',
                 'commercial_price_snapshot' => ['unit_price' => '100', 'unit' => 'm2', 'currency' => 'RUB', 'verified' => true,
-                    'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10']]]]]]]];
+                    'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10', 'vat_mode' => 'not_applicable']]]]]]]];
         $draft['evaluation_result'] = (new UniversalEvaluationBuilder)->build($draft,
             new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
         $draft['source_input_version'] = 'sha256:'.app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session);

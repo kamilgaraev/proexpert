@@ -64,7 +64,7 @@ final class SelectedEvaluationScenarioTest extends TestCase
             $scenarios[] = ['id' => $id, 'assumptions' => ['Явно заданный сценарный объём'], 'positions' => [[
                 'key' => 'floor', 'section' => 'finishing', 'unit' => 'm2', 'quantity' => $quantity, 'quantity_status' => 'assumed',
                 'price_snapshot' => ['unit_price' => '100', 'unit' => 'm2', 'currency' => 'RUB', 'verified' => true,
-                    'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-12'],
+                    'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-12', 'vat_mode' => 'not_applicable'],
             ]]];
         }
 

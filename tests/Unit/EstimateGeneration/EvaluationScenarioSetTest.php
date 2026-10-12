@@ -150,7 +150,7 @@ final class EvaluationScenarioSetTest extends TestCase
     {
         return [['key' => 'floor', 'section' => 'finishing', 'quantity' => null, 'unit' => 'm2', 'warnings' => [],
             'price_snapshot' => ['unit_price' => '100', 'unit' => 'm2', 'currency' => 'RUB', 'verified' => true,
-                'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10']]];
+                'source_type' => 'catalog', 'source_reference' => 'catalog:1', 'as_of_date' => '2026-10-10', 'vat_mode' => 'not_applicable']]];
     }
 
     private function proof(): array
