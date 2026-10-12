@@ -230,11 +230,23 @@ final class AssistantDomainSearchCountEvidence
         if ($expectedProject !== null && (! is_int($expectedProject) || $expectedProject < 1)) { return false; }
         if ($projectScoped && $expectedProject === null || ($scope['project_id'] ?? null) !== $expectedProject
             || isset($requestScope['query']) && $requestScope['query'] !== '') { return false; }
+        return self::overdueCountArguments($query, $expectedProject) !== null;
+    }
+
+    public static function overdueCountArguments(string $query, ?int $projectId): ?array
+    {
+        if (! self::isOverdueTaskRequest($query)) { return null; }
+        $organizationWide = self::isOrganizationWideRequest($query);
+        $projectScoped = preg_match('/(?<!\pL)(?:в|на|по|для|из)\s+(?:(?:текущ[а-яё]*|выбранн[а-яё]*|этом|этого|наш[а-яё]*)\s+)?(?:проект|объект)[а-яё]*(?!\pL)/iu', $query, $projectMatch) === 1;
+        if ($projectScoped && $projectId === null || $projectId !== null && $projectId < 1) { return null; }
         $semantic = preg_replace('/(?<!\pL)просроч[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
         if ($projectScoped) { $semantic = str_replace($projectMatch[0], '', $semantic); }
         if ($organizationWide) { $semantic = preg_replace(self::ORGANIZATION_SCOPE, '', $semantic) ?? $semantic; }
         $semantic = preg_replace('/(?<!\pL)их(?!\pL)/iu', '', $semantic) ?? $semantic;
-        return self::hasOnlyConfirmedTargetWords($semantic, 'schedule_task');
+        if (! self::hasOnlyConfirmedTargetWords($semantic, 'schedule_task')) { return null; }
+
+        return ['domain' => 'schedule', 'entity_type' => 'schedule_task', 'predicate' => 'overdue', 'query' => '',
+            'project_id' => $organizationWide ? null : $projectId];
     }
 
     private static function hasOnlyConfirmedTargetWords(string $query, string $entityType): bool

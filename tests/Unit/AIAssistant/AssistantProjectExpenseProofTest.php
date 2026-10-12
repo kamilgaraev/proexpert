@@ -88,6 +88,72 @@ final class AssistantProjectExpenseProofTest extends TestCase
             + ['_tool_name' => 'get_live_project_financial_evidence'];
     }
 
+    public function test_empty_authorized_period_proves_no_records_without_inventing_money_or_currency(): void
+    {
+        $read = $this->emptyRead();
+        $proof = (new AssistantStructuredFactVerifier)->guard(self::QUERY, '0 RUB', [$read], ['project_id' => 52]);
+        self::assertSame('success', $read['status']);
+        self::assertTrue($read['useful']);
+        self::assertSame('verified', $proof['validation_status']);
+        self::assertFalse($proof['needs_clarification']);
+        self::assertSame($read['source_refs'], $proof['source_refs']);
+        self::assertStringContainsString('расходные записи не найдены', $proof['text']);
+        self::assertStringContainsString('2025-09-01', $proof['text']);
+        self::assertStringNotContainsString('RUB', $proof['text']);
+        self::assertStringNotContainsString('0.00', $proof['text']);
+        self::assertTrue((new AssistantStructuredFactVerifier)->guard(self::QUERY, '', [$read], ['project_id' => 53])['needs_clarification']);
+        self::assertTrue((new AssistantStructuredFactVerifier)->guard('Расходы нашего объекта за сентябрь 2026 года', '', [$read], ['project_id' => 52])['needs_clarification']);
+    }
+
+    public function test_changed_or_stale_empty_period_proof_is_rejected(): void
+    {
+        foreach (['count', 'source_version', 'time'] as $case) {
+            $read = $this->emptyRead();
+            if ($case === 'count') { $read['financial_evidence']['absence']['record_count'] = 1; }
+            if ($case === 'source_version') { $read['financial_evidence']['absence']['source_ref']['source_version'] = 'changed'; }
+            if ($case === 'time') { $read['financial_evidence']['absence']['source_ref']['fetched_at'] = gmdate(DATE_ATOM, time() - 3600); }
+            self::assertTrue((new AssistantStructuredFactVerifier)->guard(self::QUERY, '', [$read], ['project_id' => 52])['needs_clarification'], $case);
+        }
+    }
+
+    public function test_missing_actual_source_coverage_cannot_prove_empty_period(): void
+    {
+        $native = $this->native();
+        $native['sources'] = $native['aggregates'] = [];
+        foreach ($native['coverage'] as &$coverage) { $coverage['included_source_rows'] = 0; }
+        unset($coverage);
+        $native['coverage'][1]['available'] = false;
+        $read = (new AssistantLiveProjectFinanceProjection)->project($native, 1, 52);
+        self::assertFalse($read['source_covered']);
+        self::assertSame([], $read['source_refs']);
+    }
+
+    public function test_empty_currency_subset_cannot_prove_absence_of_all_project_expenses(): void
+    {
+        $native = $this->native();
+        $native['sources'] = $native['aggregates'] = [];
+        foreach ($native['coverage'] as &$coverage) { $coverage['included_source_rows'] = 0; }
+        unset($coverage);
+        $native['filters']['currency'] = 'USD';
+        $read = (new AssistantLiveProjectFinanceProjection)->project($native, 1, 52);
+        self::assertFalse($read['source_covered']);
+        self::assertSame([], $read['source_refs']);
+        $read = $this->emptyRead();
+        $read['financial_evidence']['absence']['source_ref']['requested_currency'] = 'USD';
+        self::assertTrue((new AssistantStructuredFactVerifier)->guard(self::QUERY, '', [$read], ['project_id' => 52])['needs_clarification']);
+    }
+
+    private function emptyRead(): array
+    {
+        $native = $this->native();
+        $native['sources'] = $native['aggregates'] = [];
+        foreach ($native['coverage'] as &$coverage) { $coverage['included_source_rows'] = 0; }
+        unset($coverage);
+
+        return (new AssistantLiveProjectFinanceProjection)->project($native, 1, 52)
+            + ['_tool_name' => 'get_live_project_financial_evidence'];
+    }
+
     private function native(): array
     {
         $sources = [];

@@ -73,7 +73,31 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
         self::assertNotSame('source_identity_unavailable', $output['reason'] ?? null);
     }
 
-    private function fixture(bool $revokeAfterRead, string $sourceType = 'completed_work'): array
+    public function test_empty_period_reference_is_reexecuted_with_current_authorization(): void
+    {
+        [$reader, $actor, $organization, $native] = $this->fixture(false, 'completed_work', true);
+        $reference = (new AssistantLiveProjectFinanceProjection)->project($native, 1, 7)['source_refs'][0];
+        self::assertTrue($reader->matchesReference($actor, (int) $organization->id, $reference));
+    }
+
+    public function test_new_record_invalidates_previously_empty_period_reference(): void
+    {
+        [$reader, $actor, $organization, $native] = $this->fixture(false);
+        $native['sources'] = $native['aggregates'] = [];
+        foreach ($native['coverage'] as &$coverage) { $coverage['included_source_rows'] = 0; }
+        unset($coverage);
+        $reference = (new AssistantLiveProjectFinanceProjection)->project($native, 1, 7)['source_refs'][0];
+        self::assertFalse($reader->matchesReference($actor, (int) $organization->id, $reference));
+    }
+
+    public function test_revoked_financial_access_cannot_publish_empty_period_reference(): void
+    {
+        [$reader, $actor, $organization] = $this->fixture(true, 'completed_work', true);
+        $this->expectException(AccessDeniedHttpException::class);
+        $reader->read($actor, $organization, ['project_id' => 7, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30', 'currency' => null]);
+    }
+
+    private function fixture(bool $revokeAfterRead, string $sourceType = 'completed_work', bool $empty = false): array
     {
         $this->previousResolver = Model::getConnectionResolver();
         $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure test must not connect to PostgreSQL')])->onlyMethods(['select'])->getMock();
@@ -120,10 +144,16 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
             'project_id' => 7, 'amount_without_vat' => '1.25', 'management_amount' => '1.25', 'recognition_date' => '2026-09-01', 'problem_flags' => ''];
         $coverage = array_map(static fn (string $type): array => ['source_type' => $type, 'available' => $type !== 'budget_amount', 'included_source_rows' => $type === $sourceType ? 1 : 0, 'problem_rows_count' => 0],
             ['budget_amount', 'contract_performance_act', 'completed_work', 'payment_document', 'warehouse_movement', 'time_entry', 'machinery_shift', 'machinery_maintenance']);
-        $sources->expects(self::once())->method('exactFinancialSourceRows')->with(self::callback(static fn (array $input): bool => $input['organization_id'] === 1 && $input['project_id'] === 7), [7], $actor)->willReturn([
+        $native = [
             'status' => 'success', 'filters' => ['organization_id' => 1, 'project_id' => 7, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30', 'currency' => null], 'sources' => [$source],
             'aggregates' => [['project_id' => 7, 'currency' => 'RUB', 'source_rows_count' => 1, 'problem_flags' => '', 'plan_revenue' => '0', 'plan_cost' => '0', 'forecast_revenue' => '0', 'forecast_cost' => '0', 'actual_revenue' => $sourceType === 'machinery_shift' ? '0' : '1.25', 'actual_cost' => $sourceType === 'machinery_shift' ? '1.25' : '0']],
-            'coverage' => $coverage, 'budget_version' => null, 'fetched_at' => (new \DateTimeImmutable('-1 second'))->format(DATE_ATOM)]);
-        return [new AssistantLiveProjectFinanceReader(new ReportHttpAuthorizationOrchestrator($database, new ReportExecutionContextFactory, $targets, $subjects, $scopes), $sources, new AssistantLiveProjectFinanceProjection, $policy, $authorization), $actor, $organization];
+            'coverage' => $coverage, 'budget_version' => null, 'fetched_at' => (new \DateTimeImmutable('-1 second'))->format(DATE_ATOM)];
+        if ($empty) {
+            $native['sources'] = $native['aggregates'] = [];
+            foreach ($native['coverage'] as &$item) { $item['included_source_rows'] = 0; }
+            unset($item);
+        }
+        $sources->expects(self::once())->method('exactFinancialSourceRows')->with(self::callback(static fn (array $input): bool => $input['organization_id'] === 1 && $input['project_id'] === 7), [7], $actor)->willReturn($native);
+        return [new AssistantLiveProjectFinanceReader(new ReportHttpAuthorizationOrchestrator($database, new ReportExecutionContextFactory, $targets, $subjects, $scopes), $sources, new AssistantLiveProjectFinanceProjection, $policy, $authorization), $actor, $organization, $native];
     }
 }
