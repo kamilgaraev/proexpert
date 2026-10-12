@@ -209,6 +209,13 @@ final class ContractDocumentRenderer
 
             return '<a href="#clause-'.$this->escape($attrs['target']).'">'.$numbers[$attrs['target']].'</a>';
         }
+        if ($node['type'] === 'clause' && ($attrs['textPlacement'] ?? 'inline') === 'inline') {
+            $first = $node['content'][0] ?? [];
+            if (($first['type'] ?? null) === 'group' && empty($first['attrs']['layout']) && ($first['content'][0]['type'] ?? null) === 'paragraph'
+                && array_filter($first['content'], static fn (array $child): bool => !in_array($child['type'], ['paragraph', 'heading'], true)) === []) {
+                $node['content'] = [...$first['content'], ...array_slice($node['content'], 1)];
+            }
+        }
         $children = implode('', array_map(fn (array $child): string => $this->html($child, $numbers, $typography), $node['content'] ?? []));
         $tag = match ($node['type']) {
             'doc' => 'article', 'paragraph' => 'p', 'heading' => 'h'.$attrs['level'],

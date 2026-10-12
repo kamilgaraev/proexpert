@@ -4,6 +4,7 @@ return [
     'group' => 'Реквизиты договора и сторон',
     'contract_number' => 'Номер договора',
     'contract_date' => 'Дата договора',
+    'contract_total_amount' => 'Цена договора',
     'project_name' => 'Название проекта',
     'first_party_name' => 'Заказчик — наименование',
     'first_party_legal_name' => 'Заказчик — полное юридическое наименование',

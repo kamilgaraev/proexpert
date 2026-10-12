@@ -40,6 +40,13 @@ final class ContractTemplateCardService
         $resolved['contract_profile_code'] ??= 'contract.work';
         $context['contract']['profile_code'] = $resolved['contract_profile_code'];
         $types = array_column($resolved['definitions'], 'definition', 'id');
+        if (($input['resolve_only'] ?? false) !== true) {
+            foreach ($types as $id => $definition) {
+                if (($definition['source']['kind'] ?? null) === 'contract_context' && ($definition['source']['field'] ?? null) === 'contract.total_amount') {
+                    throw new ContractBuilderException('contracts.current_price_requires_contract', 422, [], 'template.values.'.$id);
+                }
+            }
+        }
         $values = $template['values'];
         $catalog = app(ContractEntityCatalog::class);
         $snapshots = $catalog->snapshots($actor, $organizationId, $types, $values);

@@ -19,6 +19,58 @@ use PHPUnit\Framework\TestCase;
 
 final class ContractDocumentLayoutTest extends TestCase
 {
+    public function test_paragraph_alignment_stays_independent_inside_one_text_group_in_pdf_and_word(): void
+    {
+        $paragraphs = array_map(static fn (array $item): array => ['type' => 'paragraph',
+            'attrs' => ['format' => ['align' => $item[1]]], 'content' => [['type' => 'text', 'text' => $item[0]]]],
+            [['Первый абзац', 'center'], ['Второй абзац', 'center'], ['Третий абзац', 'left']]);
+        $document = ['type' => 'doc', 'content' => [['type' => 'group', 'content' => $paragraphs]]];
+        (new ContractDocumentValidator)->validate(['variables' => [], 'document' => $document]);
+        $html = (new ContractDocumentRenderer)->render($document, [], []);
+        self::assertSame(3, substr_count($html, '<p '));
+        self::assertSame(2, substr_count($html, 'text-align:center'));
+        $exporter = new ContractDocumentExporter;
+        $pdfText = (new \Smalot\PdfParser\Parser)->parseContent($exporter->render($html, 'pdf'))->getText();
+        foreach (['Первый абзац', 'Второй абзац', 'Третий абзац'] as $text) self::assertStringContainsString($text, $pdfText);
+        $file = tempnam(sys_get_temp_dir(), 'most-paragraphs-');
+        file_put_contents($file, $exporter->render($html, 'docx'));
+        try {
+            $zip = new \ZipArchive;
+            self::assertTrue($zip->open($file));
+            $xml = new \DOMDocument;
+            self::assertTrue($xml->loadXML($zip->getFromName('word/document.xml')));
+            $zip->close();
+            $query = new \DOMXPath($xml);
+            $query->registerNamespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main');
+            self::assertSame(2, $query->query('//w:pPr/w:jc[@w:val="center"]')->length);
+            self::assertSame(3, $query->query('//w:p[w:r/w:t]')->length);
+        } finally { unlink($file); }
+        $document['attrs'] = self::content()['document']['attrs'];
+        $document['content'][0]['attrs']['layout'] = ['id' => 'text-group', 'x' => 0, 'y' => 0, 'width' => 170, 'minHeight' => 0];
+        $plan = (new \App\Services\Contract\ContractDocumentPrintLayout)->decode((new ContractDocumentRenderer)->render($document, [], []));
+        $texts = array_values(array_filter($plan['pages'][0], static fn (array $item): bool => $item['type'] === 'text'));
+        self::assertCount(3, $texts);
+        self::assertGreaterThan($texts[2]['x'] + 20, $texts[0]['x']);
+        self::assertGreaterThan($texts[2]['x'] + 20, $texts[1]['x']);
+    }
+
+    public function test_text_group_at_start_of_clause_keeps_number_on_first_paragraph(): void
+    {
+        $document = ['type' => 'doc', 'content' => [['type' => 'clause', 'attrs' => ['id' => 'stable-clause', 'textPlacement' => 'inline'], 'content' => [
+            ['type' => 'group', 'content' => [
+                ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Первый абзац']]],
+                ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Второй абзац']]],
+            ]],
+            ['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'После текста']]],
+        ]]]];
+        (new ContractDocumentValidator)->validate(['document' => $document, 'variables' => []]);
+        $html = (new ContractDocumentRenderer)->render($document, [], []);
+        self::assertStringContainsString('<p><strong class="contract-clause-number">1. </strong>Первый абзац</p>', $html);
+        self::assertSame(1, substr_count($html, 'contract-clause-number'));
+        self::assertStringContainsString('Второй абзац', $html);
+        self::assertStringContainsString('После текста', $html);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
