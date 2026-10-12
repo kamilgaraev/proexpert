@@ -163,10 +163,11 @@ final class ContractVariableDefinitionValidator
         }
         if (isset($definition['display'])) {
             $display = $definition['display'];
-            if (array_diff(array_keys($display), ['group', 'hint']) !== []) {
+            if (array_diff(array_keys($display), ['group', 'hint', 'presentation']) !== []) {
                 $this->invalid();
             }
-            foreach ($display as $value) {
+            if (array_key_exists('presentation', $display)) ContractVariablePresentation::validate($definition['type'], $display['presentation']);
+            foreach (array_intersect_key($display, ['group' => true, 'hint' => true]) as $value) {
                 if (!is_string($value) || mb_strlen($value) > 1000) {
                     $this->invalid();
                 }

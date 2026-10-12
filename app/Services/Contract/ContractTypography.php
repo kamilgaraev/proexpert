@@ -8,7 +8,7 @@ use App\Exceptions\ContractBuilderException;
 
 final class ContractTypography
 {
-    public const FONTS = ['Most Contract', 'DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono'];
+    public const FONTS = ['Most Contract', ...ContractFontCatalog::FAMILIES];
 
     public static function validate(mixed $format, bool $paragraph = false): void
     {
@@ -40,8 +40,7 @@ final class ContractTypography
     {
         $style = '';
         if (isset($format['fontFamily'])) {
-            $font = $format['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $format['fontFamily'];
-            $style .= "font-family:'".$font."';";
+            $style .= 'font-family:'.ContractFontCatalog::css($format['fontFamily']).';';
         }
         foreach (['fontSize' => ['font-size', 'pt'], 'color' => ['color', ''], 'align' => ['text-align', ''],
             'lineHeight' => ['line-height', ''], 'firstLineIndent' => ['text-indent', 'mm'], 'spaceAfter' => ['margin-bottom', 'mm']] as $key => [$property, $unit]) {

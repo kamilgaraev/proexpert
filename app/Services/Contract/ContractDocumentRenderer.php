@@ -292,10 +292,10 @@ final class ContractDocumentRenderer
         }
 
         $locale ??= $this->locale;
-        return match ($definition['type']) {
+        $formatted = match ($definition['type']) {
             'text' => (string) $value,
             'number' => ContractDocumentLocale::decimal((string) $value, false, $locale),
-            'money' => ContractDocumentLocale::decimal($value['amount'], true, $locale)."\u{00A0}".($value['currency'] === 'RUB' && $locale === 'ru-RU' ? '₽' : $value['currency']),
+            'money' => ContractDocumentLocale::decimal((string) $value['amount'], true, $locale)."\u{00A0}".($value['currency'] === 'RUB' && $locale === 'ru-RU' ? '₽' : $value['currency']),
             'percentage' => ContractDocumentLocale::decimal((string) $value, false, $locale)."\u{00A0}%",
             'boolean' => ContractDocumentLocale::boolean($value, $locale),
             'date' => ContractDocumentLocale::date($value, $locale),
@@ -304,6 +304,7 @@ final class ContractDocumentRenderer
             'table' => json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             default => $this->invalid(),
         };
+        return ContractVariablePresentation::format($definition, $value, $formatted);
     }
 
     private function escape(string $text): string

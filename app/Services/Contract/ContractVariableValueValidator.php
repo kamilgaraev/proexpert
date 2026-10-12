@@ -83,6 +83,8 @@ final class ContractVariableValueValidator
             }
         }
 
+        try { ContractVariablePresentation::assertValue($definition, $value); }
+        catch (ContractBuilderException $error) { throw $error->atField($path); }
         return $value;
     }
 

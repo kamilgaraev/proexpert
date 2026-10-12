@@ -39,7 +39,7 @@ final class ContractPrintPlanValidator
                         $this->invalid();
                     }
                     if (! is_string($item['text'] ?? null) || strlen($item['text']) > 100000
-                        || ! in_array($item['fontFamily'] ?? null, ['DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono', 'Most Contract'], true)
+                        || ! in_array($item['fontFamily'] ?? null, ContractTypography::FONTS, true)
                         || ! $this->number($item['fontSize'] ?? null, 1, 72)
                         || ! $this->number($item['wordSpacing'] ?? null, -20, 500)
                         || ! $this->number($item['letterSpacing'] ?? null, -20, 100)) {

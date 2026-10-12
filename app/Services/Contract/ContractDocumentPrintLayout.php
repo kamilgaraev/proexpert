@@ -190,11 +190,7 @@ final class ContractDocumentPrintLayout
                     $html .= '<img src="'.$this->escape($item['src']).'" alt="'.$this->escape($item['alt']).'" style="'.$position.'width:'.$item['width'].'pt;height:'.$item['height'].'pt">';
                 } else {
                     $decoration = trim(($item['underline'] ? 'underline ' : '').($item['strike'] ? 'line-through' : '')) ?: 'none';
-                    $family = match ($item['fontFamily']) {
-                        'DejaVu Serif' => '"DejaVu Serif",serif',
-                        'DejaVu Sans Mono' => '"DejaVu Sans Mono",monospace',
-                        default => '"DejaVu Sans",sans-serif',
-                    };
+                    $family = ContractFontCatalog::css($item['fontFamily']);
                     $style = $position.'white-space:pre;font-family:'.$family.';font-size:'.$item['fontSize'].'pt;line-height:1;'
                         .'font-weight:'.($item['bold'] ? 'bold' : 'normal').';font-style:'.($item['italic'] ? 'italic' : 'normal').';'
                         .'word-spacing:'.$item['wordSpacing'].'pt;letter-spacing:'.$item['letterSpacing'].'pt;text-decoration:'.$decoration.';color:'.($item['color'] ?? '#172033');

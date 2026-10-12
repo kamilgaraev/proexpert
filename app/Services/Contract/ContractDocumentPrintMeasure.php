@@ -7,12 +7,10 @@ namespace App\Services\Contract;
 use App\Exceptions\ContractBuilderException;
 use DOMElement;
 use DOMNode;
-use Dompdf\Dompdf;
 use Dompdf\Frame;
 use Dompdf\FrameDecorator\ListBullet;
 use Dompdf\FrameDecorator\Text;
 use Dompdf\FrameDecorator\Image;
-use Dompdf\Options;
 
 final class ContractDocumentPrintMeasure
 {
@@ -23,12 +21,9 @@ final class ContractDocumentPrintMeasure
         if ($blocks === []) {
             return [];
         }
-        $options = new Options;
-        $options->setIsRemoteEnabled(false);
-        $options->setIsPhpEnabled(false);
-        $options->setIsJavascriptEnabled(false);
-        $options->setDefaultFont('DejaVu Sans');
-        $pdf = new Dompdf($options);
+        $families = [];
+        foreach ($blocks as $block) array_push($families, $block['layout']['fontFamily'] ?? 'DejaVu Sans', ...ContractDocumentFonts::families($block['html']));
+        $pdf = ContractDocumentFonts::pdf($families);
         $pdf->setPaper([0, 0, 900, 20000]);
         $measurements = [];
         $html = '<!doctype html><html><head><meta charset="UTF-8"><style>'
@@ -45,11 +40,7 @@ final class ContractDocumentPrintMeasure
             if ($family === 'Most Contract') {
                 $family = 'DejaVu Sans';
             }
-            $cssFamily = match ($family) {
-                'DejaVu Serif' => '"DejaVu Serif",serif',
-                'DejaVu Sans Mono' => '"DejaVu Sans Mono",monospace',
-                default => '"DejaVu Sans",sans-serif',
-            };
+            $cssFamily = ContractFontCatalog::css($family);
             $style = 'width:'.($layout['width'] * self::PT_PER_MM).'pt;page-break-after:always;'
                 .'line-height:'.($layout['lineHeight'] ?? 1.4).';text-align:'.($layout['align'] ?? 'left').';'
                 .'text-indent:'.(($layout['firstLineIndent'] ?? 0) * self::PT_PER_MM).'pt;font-family:'.$cssFamily.';'
@@ -115,7 +106,8 @@ final class ContractDocumentPrintMeasure
                 if ($family === 'Most Contract') {
                     $family = 'DejaVu Sans';
                 }
-                $font = $pdf->getFontMetrics()->getFont($family, ($bold ? 'bold' : '').($italic ? 'italic' : '') ?: 'normal');
+                $font = (string) $style->font_family;
+                $family = ContractDocumentFonts::actualFamily($pdf->getFontMetrics(), $font);
                 $spacing = $frame instanceof Text ? $frame->get_text_spacing() + (float) $style->word_spacing : 0.0;
                 $width = $pdf->getFontMetrics()->getTextWidth($text, $font, $size, $spacing, (float) $style->letter_spacing);
                 if ($frame instanceof ListBullet) {
