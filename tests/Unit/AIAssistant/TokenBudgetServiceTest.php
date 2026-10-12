@@ -170,6 +170,37 @@ final class TokenBudgetServiceTest extends TestCase
         }
     }
 
+    public function test_native_parallel_call_batch_preserves_all_matching_outputs(): void
+    {
+        $items = [['role' => 'user', 'content' => 'Кондиционеры и остатки на складе'],
+            ['type' => 'function_call', 'call_id' => 'bim', 'name' => 'get_bim_model_elements', 'arguments' => '{}'],
+            ['type' => 'function_call', 'call_id' => 'stock', 'name' => 'get_material_stock', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'stock', 'output' => '{"quantity":12}'],
+            ['type' => 'function_call_output', 'call_id' => 'bim', 'output' => '{"count":3}']];
+
+        self::assertSame($items, $this->budget()->prepare($items, [], 'normal')['messages']);
+        $system = ['role' => 'system', 'content' => 'Проверяй источники'];
+        $history = [$system, ['role' => 'user', 'content' => 'Старый вопрос'],
+            ['type' => 'function_call', 'call_id' => 'old_bim', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call', 'call_id' => 'old_stock', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'old_bim', 'output' => str_repeat('x', 6000)],
+            ['type' => 'function_call_output', 'call_id' => 'old_stock', 'output' => str_repeat('x', 6000)]];
+        self::assertSame([$system, ...$items], $this->budget()->prepare([...$history, ...$items], [], 'short')['messages']);
+    }
+
+    public function test_native_batch_rejects_partial_outputs_followed_by_another_batch(): void
+    {
+        $items = [['type' => 'function_call', 'call_id' => 'first', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call', 'call_id' => 'second', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'first', 'output' => '{}'],
+            ['type' => 'function_call', 'call_id' => 'third', 'name' => 'lookup', 'arguments' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'second', 'output' => '{}'],
+            ['type' => 'function_call_output', 'call_id' => 'third', 'output' => '{}']];
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('assistant_native_pair_invalid');
+        $this->budget()->prepare($items);
+    }
+
     public function test_native_images_use_the_same_reserved_vision_budget(): void
     {
         $items = [['role' => 'user', 'content' => [

@@ -227,11 +227,12 @@ final class TokenBudgetService
     {
         $pending = [];
         $seen = [];
+        $outputsStarted = false;
         foreach ($items as $item) {
             $type = $item['type'] ?? null;
             if ($type === 'function_call') {
                 $id = $item['call_id'] ?? null;
-                if (!is_string($id) || $id === '' || isset($seen[$id]) || $pending !== []) {
+                if (!is_string($id) || $id === '' || isset($seen[$id]) || ($pending !== [] && $outputsStarted)) {
                     throw new DomainException('assistant_native_pair_invalid');
                 }
                 $seen[$id] = true;
@@ -242,6 +243,7 @@ final class TokenBudgetService
                     throw new DomainException('assistant_native_pair_invalid');
                 }
                 unset($pending[$id]);
+                $outputsStarted = $pending !== [];
             } elseif ($pending !== []) {
                 throw new DomainException('assistant_native_pair_invalid');
             }

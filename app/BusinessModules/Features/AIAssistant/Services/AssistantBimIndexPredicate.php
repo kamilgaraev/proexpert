@@ -22,7 +22,14 @@ final class AssistantBimIndexPredicate
         }
         $attributes = "concat_ws(' ', ".implode(', ', $attributeValues).')';
         $classifications = $this->labels('classifications');
-        $classifier = $this->classifier("concat_ws(' ', ".$this->engineering(true).", {$attributes}, {$classifications})");
+        $equipmentQuery = (new AssistantBimIndexProjection)->queryEquipment(trim($filters['element_query'] ?? ''));
+        if (! empty($filters['equipment_kind']) || $equipmentQuery !== null) {
+            $genericCategories = implode(', ', array_map(static fn (string $category): string => "'{$category}'", AssistantBimIndexProjection::genericEquipmentCategories()));
+            $input = (clone $scope)->toBase()->reorder()->select($table.'.*')
+                ->selectRaw("CASE WHEN upper({$table}.category) IN ({$genericCategories}) THEN concat_ws(' ', ".$this->engineering(true).", {$attributes}, {$classifications}) ELSE '' END AS assistant_equipment_identity")->offset(0);
+            $scope->setQuery($scope->getQuery()->newQuery()->fromSub($input, $table));
+        }
+        $classifier = $this->classifier($table.'.assistant_equipment_identity');
         foreach (['material_query' => $this->labels("properties -> 'materials'"),
             'classification_query' => $classifications, 'storey_query' => "{$table}.properties #>> '{_ifc,storey,name}'"] as $filter => $expression) {
             if (! empty($filters[$filter])) {
@@ -40,7 +47,7 @@ final class AssistantBimIndexPredicate
         }
         $term = trim($filters['element_query'] ?? '');
         if ($term !== '') {
-            $kind = (new AssistantBimIndexProjection)->queryEquipment($term);
+            $kind = $equipmentQuery;
             if ($kind !== null) {
                 $scope->whereRaw("({$classifier}) = ?", [$kind]);
             } else {

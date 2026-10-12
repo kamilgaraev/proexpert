@@ -14,11 +14,11 @@ final readonly class AssistantBimIndexQuery
     {
         $table = $scope->getModel()->getTable();
         $indexedCount = (clone $scope)->count();
-        $schema2Count = (clone $scope)->whereRaw("{$table}.properties #> '{_ifc,schema_version}' = '2'::jsonb")->count();
+        $schema2Count = (clone $scope)->where($table.'.source_schema_version', 2)->count();
         $categoriesResult = (clone $scope)->reorder()->select($table.'.category')->selectRaw('COUNT(*) AS element_count')
             ->groupBy($table.'.category')->orderBy($table.'.category')->limit(101)->get()
             ->map(static fn ($row): array => ['category' => $row->category, 'count' => (int) $row->element_count])->all();
-        $fingerprint = (clone $scope)->reorder()->select([])->selectRaw("md5(COALESCE(string_agg(md5(concat_ws('|', {$table}.id::text, {$table}.updated_at::text, {$table}.name, {$table}.category, {$table}.global_id, {$table}.properties::text, {$table}.classifications::text)), '' ORDER BY {$table}.id), '')) AS fingerprint")->first()?->fingerprint;
+        $fingerprint = (clone $scope)->reorder()->select([])->selectRaw("md5(COALESCE(string_agg(md5(concat_ws('|', {$table}.id::text, {$table}.updated_at::text, {$table}.source_content_hash)), '' ORDER BY {$table}.id), '')) AS fingerprint")->first()?->fingerprint;
         $this->predicate->apply($scope, $filters, $categories);
         $matchedCount = (clone $scope)->count();
         $columns = ['id', 'project_id', 'version_id', 'derivative_id', 'express_id', 'global_id', 'category', 'name', 'properties', 'classifications', 'updated_at'];

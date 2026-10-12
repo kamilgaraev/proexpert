@@ -79,7 +79,9 @@ final class AssistantToolFirstQualityTest extends TestCase
         $coverage = \Mockery::mock((new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class))->newInstanceWithoutConstructor());
         $coverage->shouldReceive('coverage')->andReturn(['document_coverage' => ['total' => 1, 'ready' => 1, 'pending' => 0,
             'ocr_required' => 0, 'ocr_processing' => 0, 'failed' => 0, 'unsupported' => 0, 'empty' => 0],
-            'archive_scan' => ['processing' => false, 'expected_file_count' => 1, 'scanned_file_count' => 1]]);
+            'archive_scan' => ['processing' => false, 'expected_file_count' => 1, 'scanned_file_count' => 1],
+            'retrieval_coverage' => ['complete' => true, 'fresh' => true, 'mode' => 'lexical',
+                'expected_units' => 1, 'current_units' => 1, 'partial_documents' => 0]]);
         $application->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class, $coverage);
     }
 
@@ -125,11 +127,10 @@ final class AssistantToolFirstQualityTest extends TestCase
 
         $providerRequest = $this->providerCalls[0];
         $this->assertSame($query, end($providerRequest['messages'])['content']);
-        $this->assertCount(2, $providerRequest['options']['tools']);
+        $this->assertCount(1, $providerRequest['options']['tools']);
         $definitions = $providerRequest['options']['tools'];
-        $this->assertSame(['assistant_domain_discover_capabilities', 'get_material_stock'], array_column(array_column($definitions, 'function'), 'name'));
-        $this->assertSame('object', $definitions[0]['function']['parameters']['type']);
-        $this->assertSame('object', $definitions[1]['function']['parameters']['type']);
+        $this->assertSame(['assistant_domain_discover_capabilities'], array_column($definitions, 'name'));
+        $this->assertSame('object', $definitions[0]['parameters']['type']);
     }
 
     public function test_actual_ask_renders_model_selected_presentation_from_checked_rows_only(): void
@@ -161,8 +162,8 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertStringNotContainsString('](https://evil.test)', $response['message']['content']);
         $this->assertSame('partial', $response['message']['metadata']['validation_status']);
         $this->assertCount(1, $response['message']['metadata']['source_refs']);
-        $toolMessage = array_values(array_filter($this->providerCalls[1]['messages'], static fn (array $message): bool => ($message['role'] ?? null) === 'tool'))[0];
-        $providerResult = json_decode($toolMessage['content'], true, 512, JSON_THROW_ON_ERROR);
+        $toolMessage = array_values(array_filter($this->providerCalls[1]['messages'], static fn (array $message): bool => ($message['type'] ?? null) === 'function_call_output'))[0];
+        $providerResult = json_decode($toolMessage['output'], true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame($contract, $providerResult['presentation_contract']);
         $this->assertSame('r01', $providerResult['results'][0]['presentation_ref']);
         $this->assertSame(['name', 'status'], $providerResult['presentation_contract']['fields']);
@@ -362,14 +363,14 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame(3, $this->toolExecutions);
         $this->assertSame(array_values($toolResults), $service->providerSourceResults);
         $messages = $this->providerCalls[3]['messages'];
-        $userMessages = array_values(array_filter($messages, static fn (array $message): bool => $message['role'] === 'user'));
+        $userMessages = array_values(array_filter($messages, static fn (array $message): bool => ($message['role'] ?? null) === 'user'));
         $this->assertSame($query, $userMessages[array_key_last($userMessages)]['content']);
-        $tools = array_values(array_filter($messages, static fn (array $message): bool => $message['role'] === 'tool'));
-        $this->assertSame(['call_0', 'call_1', 'call_2'], array_column($tools, 'tool_call_id'));
-        $calls = array_values(array_filter($messages, static fn (array $message): bool => isset($message['tool_calls'])));
-        $this->assertSame(['call_0', 'call_1', 'call_2'], array_map(static fn (array $message): string => $message['tool_calls'][0]['id'], $calls));
+        $tools = array_values(array_filter($messages, static fn (array $message): bool => ($message['type'] ?? null) === 'function_call_output'));
+        $this->assertSame(['call_0', 'call_1', 'call_2'], array_column($tools, 'call_id'));
+        $calls = array_values(array_filter($messages, static fn (array $message): bool => ($message['type'] ?? null) === 'function_call'));
+        $this->assertSame(['call_0', 'call_1', 'call_2'], array_column($calls, 'call_id'));
         foreach ($tools as $index => $tool) {
-            $view = json_decode($tool['content'], true, 512, JSON_THROW_ON_ERROR);
+            $view = json_decode($tool['output'], true, 512, JSON_THROW_ON_ERROR);
             $this->assertSame(['limit' => 20, 'returned' => 20, 'has_more' => true], $view['result_window']);
             $originalReferences = array_values($toolResults)[$index]['source_refs'];
             $this->assertSame(['entity_type' => $originalReferences[0]['entity_type'], 'organization_id' => 15, 'estimate_id' => 99, 'content_scope' => 'structured',
@@ -421,11 +422,13 @@ final class AssistantToolFirstQualityTest extends TestCase
         $fetchedAt = now()->toISOString();
         $reference = ['entity_type' => 'estimate_item_resource', 'entity_id' => 91, 'organization_id' => 15,
             'content_scope' => 'structured', 'checked_fields' => ['name', 'quantity', 'unit'],
+            'required_permissions' => ['budget-estimates.view'], 'required_domains' => ['estimates'], 'source_version' => 'resource-current',
             'fetched_at' => $fetchedAt, 'navigation' => ['url' => '/estimates/99?position_id=91']];
         $fields = ['name' => 'Раствор', 'quantity' => '5.12500000', 'unit' => 'м³'];
+        $model = new class extends \Illuminate\Database\Eloquent\Model {};
+        $model->setRawAttributes(['id' => 91] + $fields, true);
         $proof = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload([
-            ['entity_type' => 'estimate_item_resource', 'entity_id' => 91, 'fields' => $fields,
-                'source_ref' => $reference, 'version' => str_repeat('a', 64)],
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::row($model, 'estimate_item_resource', array_keys($fields), $reference),
         ], $fetchedAt);
         $result = ['status' => 'success', ...$proof, 'source_refs' => [$reference],
             'results' => [['entity_type' => 'estimate_item_resource', 'id' => 91,
@@ -435,7 +438,7 @@ final class AssistantToolFirstQualityTest extends TestCase
             ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_read')]],
         ]);
 
-        $response = $service->ask('Покажи количество ресурса и его спецификацию.', 15, $this->actor(), 7);
+        $response = $service->ask('Покажи объём ресурса в м³ и его спецификацию.', 15, $this->actor(), 7);
 
         $metadata = $response['message']['metadata'];
         $this->assertCount(1, $this->providerCalls);
@@ -614,6 +617,81 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertStringNotContainsString('bim-internal-secret', json_encode($this->providerCalls, JSON_THROW_ON_ERROR));
     }
 
+    public function test_bim_timeout_after_empty_project_search_is_retained_and_never_becomes_project_absence_or_retry(): void
+    {
+        $empty = ['status' => 'success', 'results' => [], 'result_window' => ['returned' => 0, 'has_more' => false], 'source_refs' => []];
+        $pdo = new \PDOException('statement timeout');
+        $pdo->errorInfo = ['57014', 7, 'statement timeout'];
+        $timeout = new \Illuminate\Database\QueryException('pgsql', 'SELECT COUNT(*) FROM test_bim_index', [], $pdo);
+        $bimCall = $this->toolCall('get_bim_model_elements');
+        $bimCall['function']['arguments'] = '{"project_id":52}';
+        $service = $this->service(['search_projects' => $empty, 'get_bim_model_elements' => $timeout], [
+            ['content' => '', 'tool_calls' => [$this->toolCall('search_projects')]],
+            ['content' => '', 'tool_calls' => [$bimCall]],
+            ['content' => trans_message('ai_assistant.project_search_no_matches')],
+        ], requestContext: ['project_id' => 52], nativeFixture: true);
+        $service->bimProjectName = 'Тестовый';
+        $service->freshProjectSearch = $empty;
+        $service->bimAliasMatch = true;
+        $response = $service->ask('у нас в проекте севгу есть кондиционеры, сколько их?', 15, $this->actor(), 7);
+        self::assertSame(trans_message('ai_assistant.data_read_timed_out'), $response['message']['content']);
+        self::assertTrue($response['message']['metadata']['needs_clarification']);
+        self::assertSame('read_timed_out', $response['message']['metadata']['unavailable_reason']);
+        self::assertSame([], $response['message']['metadata']['source_refs']);
+        self::assertSame(0, $service->bimFallbackReads);
+        $results = $service->providerSourceResults;
+        self::assertCount(2, $results);
+        self::assertSame(['search_projects', 'get_bim_model_elements'], $service->providerToolNames);
+        self::assertSame('unavailable', $results[1]['status']);
+        self::assertSame('read_timed_out', $results[1]['reason']);
+    }
+
+    public function test_explicit_bim_timeout_state_blocks_empty_project_guard_without_fresh_search_or_fallback(): void
+    {
+        $service = $this->service([], []);
+        $empty = ['_tool_name' => 'search_projects', 'status' => 'success', 'results' => [],
+            'result_window' => ['returned' => 0, 'has_more' => false], 'source_refs' => []];
+        $failed = ['_tool_name' => 'get_bim_model_elements', 'status' => 'unavailable', 'reason' => 'read_timed_out', 'source_refs' => []];
+        $result = $service->verifyEmptyProjectForTest('у нас в проекте севгу есть кондиционеры, сколько их?', [$empty, $failed], $this->actor(), 15, 52);
+        self::assertSame('read_timed_out', $result['reason']);
+        self::assertSame(trans_message('ai_assistant.data_read_timed_out'), $result['text']);
+        self::assertSame(0, $service->freshProjectReads);
+        self::assertSame(0, $service->bimFallbackReads);
+    }
+
+    public function test_bim_alias_fallback_timeout_returns_unavailable_instead_of_project_absence(): void
+    {
+        $service = $this->service([], []);
+        $service->bimAliasMatch = true;
+        $pdo = new \PDOException('statement timeout');
+        $pdo->errorInfo = ['57014', 7, 'statement timeout'];
+        $exception = new \Illuminate\Database\QueryException('pgsql', 'SELECT COUNT(*) FROM test_bim_index', [], $pdo);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class, new class($exception) {
+            public function __construct(private \Throwable $exception) {}
+            public function read(User $actor, int $organizationId, array $arguments): array { throw $this->exception; }
+        });
+        $result = $service->bimAliasFallbackForTest('у нас в проекте севгу есть кондиционеры, сколько их?', 'севгу', $this->actor(), 15, 52);
+        self::assertSame('unavailable', $result['status']);
+        self::assertSame('read_timed_out', $result['reason']);
+        self::assertTrue($result['needs_clarification']);
+        self::assertSame([], $result['source_refs']);
+    }
+
+    public function test_bim_alias_fallback_rethrows_unrelated_sql_errors(): void
+    {
+        $service = $this->service([], []);
+        $service->bimAliasMatch = true;
+        $pdo = new \PDOException('column missing');
+        $pdo->errorInfo = ['42703', 7, 'column missing'];
+        $exception = new \Illuminate\Database\QueryException('pgsql', 'SELECT missing FROM test_bim_index', [], $pdo);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class, new class($exception) {
+            public function __construct(private \Throwable $exception) {}
+            public function read(User $actor, int $organizationId, array $arguments): array { throw $this->exception; }
+        });
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $service->bimAliasFallbackForTest('у нас в проекте севгу есть кондиционеры, сколько их?', 'севгу', $this->actor(), 15, 52);
+    }
+
     public function test_last_allowed_read_returns_proven_rows_instead_of_generic_freshness_warning(): void
     {
         $fetchedAt = now()->toISOString();
@@ -710,8 +788,8 @@ final class AssistantToolFirstQualityTest extends TestCase
 
         $response = $service->ask('Сколько бетона на складе?', 15, $this->actor(), 7);
 
-        $toolMessage = array_values(array_filter($this->providerCalls[1]['messages'], static fn (array $message): bool => $message['role'] === 'tool'))[0];
-        $result = json_decode($toolMessage['content'], true, 512, JSON_THROW_ON_ERROR);
+        $toolMessage = array_values(array_filter($this->providerCalls[1]['messages'], static fn (array $message): bool => ($message['type'] ?? null) === 'function_call_output'))[0];
+        $result = json_decode($toolMessage['output'], true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame('unavailable', $result['status']);
         $this->assertSame('read_timed_out', $result['reason']);
         $this->assertArrayNotHasKey('stock', $result);
@@ -1347,7 +1425,7 @@ final class AssistantToolFirstQualityTest extends TestCase
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
-        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null): ToolFirstStubService
+        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true): ToolFirstStubService
     {
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
@@ -1355,7 +1433,7 @@ final class AssistantToolFirstQualityTest extends TestCase
             $tool->method('getName')->willReturn($name);
             $tool->method('getDescription')->willReturn('Readonly tool');
             $tool->method('getParametersSchema')->willReturn(['type' => 'object',
-                'properties' => $name === 'get_bim_model_elements' ? ['project_id' => ['type' => ['integer', 'null']]] : [], 'additionalProperties' => false]);
+                'properties' => $name === 'get_bim_model_elements' ? ['project_id' => ['type' => ['integer', 'null']], 'model_query' => ['type' => ['string', 'null']]] : [], 'additionalProperties' => false]);
             $tool->method('execute')->willReturnCallback(function () use ($result): array {
                 $this->assertNotEmpty($this->providerCalls);
                 $this->toolExecutions++;
@@ -1366,11 +1444,30 @@ final class AssistantToolFirstQualityTest extends TestCase
             });
             $registry->registerTool($tool);
         }
-        $provider = $this->createMock(LLMProviderInterface::class);
+        $provider = $nativeFixture
+            ? $this->createMock(ToolFirstNativeProviderFixture::class)
+            : $this->createMock(LLMProviderInterface::class);
         $provider->method('getModel')->willReturn('openai/gpt-6-luna');
-        $provider->expects($this->exactly(count($responses)))->method('chat')->willReturnCallback(function (array $messages, array $options) use (&$responses): array {
+        $issuedNativeCalls = [];
+        $provider->expects($this->exactly(count($responses)))->method($nativeFixture ? 'responses' : 'chat')->willReturnCallback(function (array $messages, array $options) use (&$responses, $nativeFixture, &$issuedNativeCalls): array {
             $this->providerCalls[] = ['messages' => $messages, 'options' => $options];
-            return array_shift($responses) + ['input_tokens' => 10, 'output_tokens' => 10, 'tokens_used' => 20, 'model' => 'openai/gpt-6-luna'];
+            $response = array_shift($responses);
+            if ($nativeFixture) {
+                $calls = [];
+                foreach ($response['tool_calls'] ?? [] as $index => $call) {
+                    $callId = $call['id'] ?? 'native_call_'.count($this->providerCalls).'_'.$index;
+                    if (isset($issuedNativeCalls[$callId])) { $callId .= '_'.count($this->providerCalls).'_'.$index; }
+                    $issuedNativeCalls[$callId] = true;
+                    $calls[] = ['type' => 'function_call', 'id' => 'native_item_'.count($this->providerCalls).'_'.$index,
+                        'call_id' => $callId,
+                        'name' => $call['function']['name'], 'arguments' => $call['function']['arguments']];
+                }
+                $response['function_calls'] = $calls;
+                $response['output'] = $calls;
+                $response['provider_response_ref'] = 'native_response_'.count($this->providerCalls);
+                unset($response['tool_calls']);
+            }
+            return $response + ['input_tokens' => 10, 'output_tokens' => 10, 'tokens_used' => 20, 'model' => 'openai/gpt-6-luna'];
         });
         $conversation = $this->getMockBuilder(Conversation::class)->onlyMethods(['save'])->getMock();
         $conversation->forceFill(['id' => 7, 'organization_id' => 15, 'user_id' => 7, 'context' => []]);
@@ -1397,7 +1494,7 @@ final class AssistantToolFirstQualityTest extends TestCase
         $accessResolver = $this->createMock(AssistantAccessContextResolver::class);
         if ($navigationPermissions === null) {
             $orchestrator = $this->createMock(AssistantTaskOrchestrator::class);
-            $orchestrator->method('plan')->willReturnCallback(static fn (string $query): array => ['request' => ['message' => $query, 'context' => [], 'allow_actions' => false],
+            $orchestrator->method('plan')->willReturnCallback(static fn (string $query): array => ['request' => ['message' => $query, 'context' => $requestContext, 'allow_actions' => false],
                 'task_type' => 'summary', 'capability' => [], 'access_context_public' => []]);
             $orchestrator->method('buildPayload')->willReturnCallback($payloadBuilder ?? static fn (array $plan, string $answer, array $options): array => $options + ['answer' => $answer]);
         } else {
@@ -1427,6 +1524,11 @@ final class AssistantToolFirstQualityTest extends TestCase
     }
 }
 
+interface ToolFirstNativeProviderFixture extends LLMProviderInterface
+{
+    public function responses(array $messages, array $options = []): array;
+}
+
 final class ToolFirstStubService extends AIAssistantService
 {
     public Conversation $conversation;
@@ -1438,12 +1540,50 @@ final class ToolFirstStubService extends AIAssistantService
     public int $stockVerifications = 0;
 
     public array $providerSourceResults = [];
+    public array $providerToolNames = [];
 
     public ?\Throwable $preparationFailure = null;
+    public ?string $bimProjectName = null;
+    public ?array $freshProjectSearch = null;
+    public ?bool $bimAliasMatch = null;
+    public int $freshProjectReads = 0;
+    public int $bimFallbackReads = 0;
+
+    public function verifyEmptyProjectForTest(string $question, array $results, User $actor, int $organizationId, ?int $projectId): ?array
+    {
+        return parent::verifyEmptyNamedProjectSearch($question, $results, $actor, $organizationId, $projectId);
+    }
+
+    public function bimAliasFallbackForTest(string $question, string $alias, User $actor, int $organizationId, int $projectId): ?array
+    {
+        return parent::readBimAliasFallback($question, $alias, $actor, $organizationId, $projectId);
+    }
+
+    protected function readableBimProjectName(User $actor, int $organizationId, int $projectId): ?string
+    {
+        return $this->bimProjectName ?? parent::readableBimProjectName($actor, $organizationId, $projectId);
+    }
+
+    protected function readFreshProjectSearch(string $name, User $actor, int $organizationId): array|string|null
+    {
+        $this->freshProjectReads++;
+        return $this->freshProjectSearch ?? parent::readFreshProjectSearch($name, $actor, $organizationId);
+    }
+
+    protected function scopedBimAliasMatches(User $actor, int $organizationId, int $projectId, string $alias): bool
+    {
+        return $this->bimAliasMatch ?? parent::scopedBimAliasMatches($actor, $organizationId, $projectId, $alias);
+    }
+
+    protected function readBimAliasFallback(string $question, string $alias, User $actor, int $organizationId, int $projectId): ?array
+    {
+        $this->bimFallbackReads++;
+        return null;
+    }
 
     protected function prepareProviderPayload(array $messages, array $options, int $organizationId, User $user): array
     {
-        if ($this->preparationFailure !== null && array_filter($messages, static fn (array $message): bool => ($message['role'] ?? null) === 'tool') !== []) {
+        if ($this->preparationFailure !== null && array_filter($messages, static fn (array $message): bool => ($message['type'] ?? null) === 'function_call_output') !== []) {
             throw $this->preparationFailure;
         }
         return parent::prepareProviderPayload($messages, $options, $organizationId, $user);
@@ -1452,6 +1592,7 @@ final class ToolFirstStubService extends AIAssistantService
     protected function toolResultForProvider(string $toolName, array|string $result): array|string
     {
         if (is_array($result)) { $this->providerSourceResults[] = $result; }
+        $this->providerToolNames[] = $toolName;
         return parent::toolResultForProvider($toolName, $result);
     }
 
@@ -1463,6 +1604,9 @@ final class ToolFirstStubService extends AIAssistantService
 
     protected function verifyBimModel(array $result, User $actor, int $organizationId): array
     {
+        if (($result['status'] ?? null) === 'unavailable' && ($result['reason'] ?? null) === 'read_timed_out') {
+            return parent::verifyBimModel($result, $actor, $organizationId);
+        }
         return $this->verifiedBim;
     }
 
