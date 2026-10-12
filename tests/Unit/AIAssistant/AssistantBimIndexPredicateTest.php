@@ -15,6 +15,48 @@ use PHPUnit\Framework\TestCase;
 final class AssistantBimIndexPredicateTest extends TestCase
 {
     private $previousResolver;
+
+    public function test_known_equipment_prefilter_preserves_authorized_scope_and_reads_identity_and_enum_in_one_pass(): void
+    {
+        $scope = $this->scope();
+        $scope->where('design_ifc_model_elements.project_id', 52)
+            ->where('design_ifc_model_elements.version_id', 15)->where('design_ifc_model_elements.derivative_id', 7)
+            ->whereIn('design_ifc_model_elements.id', $scope->getQuery()->newQuery()->from('authorized_elements')->select('id'));
+        (new AssistantBimIndexPredicate)->apply($scope, ['equipment_kind' => 'air_conditioner'], []);
+        $sql = $scope->toSql();
+        self::assertSame(1, substr_count($sql, 'jsonb_path_query'));
+        self::assertStringContainsString('bool_or(', $sql);
+        self::assertStringContainsString('assistant_equipment_identity', $sql);
+        self::assertStringContainsString('where "design_ifc_model_elements"."project_id" = ?', $sql);
+        self::assertStringContainsString('"design_ifc_model_elements"."version_id" = ?', $sql);
+        self::assertStringContainsString('"design_ifc_model_elements"."derivative_id" = ?', $sql);
+        self::assertStringContainsString('"design_ifc_model_elements"."id" in (select "id" from "authorized_elements")', $sql);
+        self::assertStringContainsString('and upper(design_ifc_model_elements.category) IN (', $sql);
+        self::assertStringNotContainsString("'IFCWALL'", $sql);
+        self::assertSame([52, 15, 7, 'air_conditioner'], $scope->getBindings());
+    }
+
+    public function test_unknown_equipment_keeps_structural_and_missing_categories_in_the_scope(): void
+    {
+        $scope = $this->scope();
+        (new AssistantBimIndexPredicate)->apply($scope, ['equipment_kind' => 'unknown'], []);
+        self::assertStringNotContainsString('where upper(design_ifc_model_elements.category) IN (', $scope->toSql());
+        self::assertSame(['unknown'], $scope->getBindings());
+    }
+
+    public function test_empty_and_null_equipment_kind_preserve_typed_pump_and_fan_word_queries(): void
+    {
+        $initial = $this->scope();
+        foreach (['насосы' => ['pump', 'IFCPUMP'], 'вентиляторы' => ['fan', 'IFCFAN']] as $query => [$kind, $category]) {
+            foreach (['', null] as $emptyKind) {
+                $scope = clone $initial;
+                (new AssistantBimIndexPredicate)->apply($scope, ['element_query' => $query, 'equipment_kind' => $emptyKind], []);
+                $sql = $scope->toSql();
+                self::assertStringContainsString(", '{$category}') offset 0", $sql);
+                self::assertSame([$kind], $scope->getBindings());
+            }
+        }
+    }
     public function test_semantic_air_conditioner_query_uses_explicit_type_evidence_and_never_the_unitary_category_alone(): void
     {
         $scope = $this->scope();

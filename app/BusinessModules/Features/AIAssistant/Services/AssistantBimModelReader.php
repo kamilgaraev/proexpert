@@ -150,7 +150,8 @@ final readonly class AssistantBimModelReader
                 'categories' => [], 'elements' => [], 'total' => null, 'has_more' => false,
                 'estimate_link_coverage' => $filters['include_estimate_links'] ? 'page_limited' : 'not_requested'];
             if (! $tooMany) {
-                $scope = (clone $elements)->where('design_ifc_model_elements.version_id', $candidate->id);
+                $scope = (clone $elements)->where('design_ifc_model_elements.project_id', $candidate->project_id)
+                    ->where('design_ifc_model_elements.version_id', $candidate->id);
                 $derivatives = $this->access->engineeringEntityQuery($actor, $organizationId, 'design_model_derivative');
                 $derivative = $derivatives?->where('design_model_derivatives.version_id', $candidate->id)
                     ->where('design_model_derivatives.project_id', $candidate->project_id)
