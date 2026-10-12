@@ -1086,6 +1086,9 @@ class AIAssistantService
             $validationStatus = $structuredCheck['validation_status'] ?? $financialCheck['validation_status'] ?? 'unverified';
             $assistantPayload['validation_status'] = $validationStatus === 'unverified' && $assistantPayload['source_refs'] !== []
                 ? 'partial' : $validationStatus;
+            if (($structuredCheck['status'] ?? null) === 'unavailable' && ($structuredCheck['reason'] ?? null) === 'read_timed_out') {
+                $assistantPayload['unavailable_reason'] = 'read_timed_out';
+            }
             if (($stockDomainResolved || (($structuredCheck['replaced'] ?? false)
                 && in_array($validationStatus, ['verified', 'partial'], true) && $assistantPayload['source_refs'] !== [])) && empty($taskPlan['capability'])
                 && is_array($assistantPayload['missing_data'] ?? null)) {
@@ -1645,6 +1648,9 @@ class AIAssistantService
     protected function verifyBimModel(array $result, User $actor, int $organizationId): array
     {
         $this->executionCheckpoint();
+        if (($result['status'] ?? null) === 'unavailable' && ($result['reason'] ?? null) === 'read_timed_out') {
+            return $this->bimReadTimedOutAnswer();
+        }
         try {
             $verified = $this->readPhase(fn (): ?array => app(AssistantBimModelReader::class)
                 ->verifiedAnswer($result, $actor, $organizationId), $actor, $organizationId);
@@ -1652,7 +1658,8 @@ class AIAssistantService
             if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '57014') {
                 throw $exception;
             }
-            $verified = null;
+            $this->executionCheckpoint();
+            return $this->bimReadTimedOutAnswer();
         } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
             $verified = null;
         }
@@ -2280,7 +2287,10 @@ class AIAssistantService
             }
             $this->logging->technical('ai.tool.error', $technicalContext, 'error');
             if ($exception instanceof QueryException && (string) ($exception->errorInfo[0] ?? $exception->getCode()) === '57014') {
-                return ['status' => 'unavailable', 'reason' => 'read_timed_out', 'error' => trans_message('ai_assistant.data_read_timed_out')];
+                $unavailable = ['status' => 'unavailable', 'reason' => 'read_timed_out', 'needs_clarification' => true,
+                    'source_refs' => [], 'error' => trans_message('ai_assistant.data_read_timed_out')];
+                $this->activeToolResults[] = $unavailable + ['_tool_name' => $toolName];
+                return $unavailable;
             }
             return ['error' => $message];
         }
@@ -3750,9 +3760,20 @@ class AIAssistantService
             if (($result['source_refs'] ?? []) === []) { return null; }
 
             return $reader->verifiedAnswer($result, $actor, $organizationId);
-        } catch (\Throwable) {
+        } catch (QueryException $exception) {
+            if ((string) ($exception->errorInfo[0] ?? $exception->getCode()) !== '57014') {
+                throw $exception;
+            }
+            return $this->bimReadTimedOutAnswer();
+        } catch (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
             return null;
         }
+    }
+
+    private function bimReadTimedOutAnswer(): array
+    {
+        return ['status' => 'unavailable', 'reason' => 'read_timed_out', 'text' => trans_message('ai_assistant.data_read_timed_out'),
+            'replaced' => true, 'validation_status' => 'partial', 'needs_clarification' => true, 'source_refs' => []];
     }
 
     private function simpleBimEquipmentQuestion(string $question, string $alias): bool
@@ -3771,6 +3792,14 @@ class AIAssistantService
     protected function verifyEmptyNamedProjectSearch(string $question, array $toolResults, User $actor, int $organizationId, ?int $projectId = null): ?array
     {
         $name = AssistantBimModelSelector::namedProject($question);
+        if ($name !== null && (int) $actor->current_organization_id === $organizationId) {
+            foreach ($toolResults as $toolResult) {
+                if (($toolResult['_tool_name'] ?? null) === 'get_bim_model_elements'
+                    && ($toolResult['status'] ?? null) === 'unavailable' && ($toolResult['reason'] ?? null) === 'read_timed_out') {
+                    return $this->bimReadTimedOutAnswer();
+                }
+            }
+        }
         $result = count($toolResults) === 1 ? reset($toolResults) : null;
         if ($name === null || ($result['_tool_name'] ?? null) !== 'search_projects' || ! $this->emptyProjectSearchResult($result)
             || (int) $actor->current_organization_id !== $organizationId) {

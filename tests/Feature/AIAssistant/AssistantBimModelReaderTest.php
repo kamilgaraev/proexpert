@@ -412,6 +412,39 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertFalse(app(AssistantSourceReferenceGuard::class)->fresh($this->fixture->member, $this->fixture->organization->id, $result['source_refs']));
     }
 
+    public function test_stored_source_hash_tracks_raw_mutations_and_distinguishes_nullable_and_delimited_values(): void
+    {
+        $version = $this->model('Проверка источника', 'source-hash.ifc');
+        $derivative = $this->readyIndex($version, 1);
+        $element = $this->element($version, 'IFCSLAB', 'А|Б');
+        $element->updateQuietly(['derivative_id' => $derivative->id]);
+        $hash = $element->refresh()->getRawOriginal('source_content_hash');
+        $originalHash = $hash;
+        self::assertMatchesRegularExpression('/^[a-f0-9]{32}$/D', $hash);
+        self::assertArrayNotHasKey('source_content_hash', $element->toArray());
+        self::assertArrayNotHasKey('source_schema_version', $element->toArray());
+        self::assertSame(2, $element->getRawOriginal('source_schema_version'));
+        $updatedAt = $element->getRawOriginal('updated_at');
+
+        foreach (['name' => 'Б', 'category' => 'IFCSLAB|А', 'global_id' => '', 'classifications' => '["Изменённая классификация"]'] as $field => $value) {
+            DB::table('design_ifc_model_elements')->where('id', $element->id)->update([$field => $value]);
+            $currentHash = $element->refresh()->getRawOriginal('source_content_hash');
+            self::assertNotSame($hash, $currentHash, $field);
+            self::assertSame($updatedAt, $element->getRawOriginal('updated_at'));
+            if ($field === 'category') {
+                self::assertNotSame($originalHash, $currentHash);
+            }
+            $hash = $currentHash;
+        }
+
+        DB::table('design_ifc_model_elements')->where('id', $element->id)->update(['global_id' => null]);
+        self::assertNotSame($hash, $element->refresh()->getRawOriginal('source_content_hash'));
+        foreach (['2', 1, null] as $schemaVersion) {
+            DB::table('design_ifc_model_elements')->where('id', $element->id)->update(['properties' => json_encode(['_ifc' => ['schema_version' => $schemaVersion]], JSON_THROW_ON_ERROR)]);
+            self::assertNull($element->refresh()->getRawOriginal('source_schema_version'));
+        }
+    }
+
     public function test_named_package_resolves_current_ifc_disciplines_with_parent_provenance_and_keeps_history_explicit(): void
     {
         $this->project->updateQuietly(['name' => 'Тестовый']);
