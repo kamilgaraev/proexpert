@@ -17,6 +17,17 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectSynthesisTest extends TestCase
 {
+    public function test_physical_engineer_identity_includes_the_exact_candidate_set_and_canonical_business_input(): void
+    {
+        $input = $this->input();
+        $identity = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAttemptIdentity::class;
+        $links = [['id' => 'link:roof', 'fact_ids' => ['fact:roof-material', 'fact:roof-area']]];
+        $first = $identity::fingerprint($input, $links, []);
+        self::assertNotSame($input->fingerprint(), $first);
+        self::assertNotSame($first, $identity::fingerprint($input, [], []));
+        self::assertSame($first, $identity::fingerprint($input, [['fact_ids' => ['fact:roof-material', 'fact:roof-area'], 'id' => 'link:roof']], []));
+    }
+
     public function test_input_fingerprint_covers_every_source_role_decision_and_contract_version(): void
     {
         $base = $this->input();

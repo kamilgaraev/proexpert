@@ -42,10 +42,7 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         ], $input);
         $candidateLinks = $validatedCandidates['links'];
         $candidateQuestions = $validatedCandidates['questions'];
-        $candidateFingerprint = hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode([
-            'contract' => 'project-synthesis-candidates:v1', 'input_fingerprint' => $input->fingerprint(),
-            'links' => $candidateLinks, 'questions' => $candidateQuestions,
-        ]));
+        $candidateFingerprint = ProjectSynthesisAttemptIdentity::fingerprint($input, $candidateLinks, $candidateQuestions);
         $runInput = new AiRoleRunInput(
             organizationId: $input->organizationId,
             projectId: $input->projectId,

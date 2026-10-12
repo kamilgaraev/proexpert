@@ -49,10 +49,11 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
         if (strlen($payload) > $this->maxInputBytes) {
             throw new InvalidArgumentException('project_synthesis_input_limit_exceeded');
         }
-        $attemptId = AiOperationContext::deterministicId('project-synthesis-attempt|'.$input->fingerprint());
+        $candidateFingerprint = ProjectSynthesisAttemptIdentity::fingerprint($input, $candidateLinks, $candidateQuestions);
+        $attemptId = AiOperationContext::deterministicId('project-synthesis-attempt|'.$candidateFingerprint);
         $onPhysicalAttemptReserved($attemptId);
         $context = new AiOperationContext(
-            AiOperationContext::deterministicId('project-synthesis|'.$input->fingerprint()),
+            AiOperationContext::deterministicId('project-synthesis|'.$candidateFingerprint),
             $attemptId,
             $input->organizationId,
             $input->projectId,
@@ -69,7 +70,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
         $started = hrtime(true);
         $usageRecorded = false;
         try {
-            $replay = $this->responses?->replayBeforeWire($attemptId, $input->fingerprint());
+            $replay = $this->responses?->replayBeforeWire($attemptId, $candidateFingerprint);
             if ($replay !== null) {
                 $response = [...$replay['provider_response'], 'physical_attempt_receipt' => [
                     'duration_ms' => $replay['duration_ms'], 'price_snapshot' => $replay['price_snapshot'], 'usage_recorded' => $replay['usage_recorded'],
@@ -87,7 +88,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
                 'temperature' => 0,
                 'max_tokens' => $this->maxOutputTokens,
                 'timeout' => $this->timeoutSeconds,
-                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $input->fingerprint(), 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
+                'estimate_generation_attempt' => ['attempt_id' => $attemptId, 'request_fingerprint' => $candidateFingerprint, 'price_snapshot' => $price->toArray(), 'operation' => $context->operation],
                 'estimate_generation_scope' => [
                     'organization_id' => $input->organizationId,
                     'project_id' => $input->projectId,
@@ -102,7 +103,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
             $status = 'succeeded';
             $this->responses?->store(
                 $attemptId,
-                $input->fingerprint(),
+                $candidateFingerprint,
                 $decoded,
                 $response,
                 (int) max(0, round((hrtime(true) - $started) / 1_000_000)),
@@ -124,7 +125,7 @@ final readonly class TimewebProjectSynthesisModel implements ProjectSynthesisMod
             if (! $usageRecorded) {
                 $this->record($context, $status, $httpCode, $response, $started, $price);
                 if ($status === 'succeeded') {
-                    $this->responses?->markUsageRecorded($attemptId, $input->fingerprint());
+                    $this->responses?->markUsageRecorded($attemptId, $candidateFingerprint);
                 }
             }
         }
