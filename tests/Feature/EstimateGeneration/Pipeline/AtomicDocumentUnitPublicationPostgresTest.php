@@ -953,6 +953,13 @@ final class AtomicDocumentUnitPublicationPostgresTest extends EstimateGeneration
                 $length = $this->numericObservation($context, $separatorVariant, '5.50', 'length', 'm');
                 $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 11, $this->nativeProof([$length]));
             }
+            $writer->writeArbitration([$length], [$this->acceptedDecision($length)], $context->documentId, 11, $this->nativeProof([$length]));
+            self::assertSame(4, DB::table('estimate_generation_project_model_assertions')->where('session_id', $context->sessionId)->count());
+            self::assertSame(4, DB::table('estimate_generation_evidence')->where('session_id', $context->sessionId)->count());
+            $currentFacts = (new EloquentProjectModelRepository(app('db')))->currentFacts($context->organizationId, $context->projectId, $context->sessionId);
+            self::assertCount(1, $currentFacts);
+            self::assertSame('5.50', $currentFacts[0]->value);
+            self::assertSame($legacyEntityId, $currentFacts[0]->entityId);
 
             self::assertSame(1, DB::table('estimate_generation_project_model_entities')
                 ->where('session_id', $context->sessionId)->where('source_version', $sourceVersion)->count());

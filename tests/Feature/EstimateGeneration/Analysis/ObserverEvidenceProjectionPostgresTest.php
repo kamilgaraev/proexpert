@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Analysis;
 
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ArbitrationDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\EloquentProjectModelRepository;
@@ -12,29 +13,100 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
-use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Testing\TestCase;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('postgres-contract')]
-final class ObserverEvidenceProjectionPostgresTest extends TestCase
+final class ObserverEvidenceProjectionPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    public function createApplication(): Application
+    #[Test]
+    public function photo_room_names_remain_visible_candidates_with_evidence_and_without_dimensions(): void
     {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(Kernel::class)->bootstrap();
+        self::assertSame('pgsql', DB::getDriverName());
+        DB::beginTransaction();
+        try {
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id, 'project_id' => $project->id,
+                'user_id' => User::factory()->create()->id, 'status' => 'draft',
+                'processing_stage' => 'draft', 'processing_progress' => 0, 'input_payload' => [],
+            ]);
+            $sourceVersion = 'sha256:'.str_repeat('b', 64);
+            $scope = [(int) $organization->id, (int) $project->id, (int) $session->id];
+            $models = new EloquentProjectModelRepository(app('db'));
+            $writer = new ProjectModelEvidenceWriter($models, new EloquentEvidenceRepository(DB::connection()));
+            $claims = [];
+            foreach (['first-floor', 'second-floor'] as $index => $floor) {
+                $claims[] = new ObservationClaim('literal:room:'.($index + 1), 'observer_literal', 'room.kitchen', 'room_name',
+                    ['type' => 'string', 'data' => 'Кухня'], null, 'literal:room:'.($index + 1), true,
+                    ...[...$scope, $sourceVersion, ['page' => 1, 'unit_type' => 'raster_image', 'unit_index' => 1,
+                        'source_version' => $sourceVersion, 'floor_id' => $floor,
+                        'region_key' => 'region:'.str_repeat((string) ($index + 1), 64), 'bbox' => [10, 20, 30, 40]], 0.9]);
+            }
+            $writer->writeIndependentObservations($claims, 173, 1);
+            $writer->writeIndependentObservations($claims, 173, 1);
+            $writer->writeArbitration($claims, array_map(static fn (ObservationClaim $claim): ArbitrationDecision => new ArbitrationDecision(
+                $claim->id, 'accepted', [$claim->id], [$claim->evidenceRef], 'fixture_label_observed', null,
+            ), $claims), 173, 1);
 
-        return $app;
+            $snapshot = $models->snapshot(...$scope);
+            self::assertCount(2, $snapshot->entities);
+            self::assertCount(2, $snapshot->facts);
+            self::assertSame(['room_name'], array_values(array_unique(array_map(static fn ($fact): string => $fact->type, $snapshot->facts))));
+            self::assertCount(2, array_unique(array_map(static fn ($fact): string => $fact->entityId, $snapshot->facts)));
+            foreach ($snapshot->facts as $fact) {
+                self::assertSame('room_name', $fact->type);
+                self::assertSame('Кухня', $fact->value);
+                self::assertSame('candidate', $fact->status);
+                self::assertNull($fact->unit);
+                self::assertCount(1, $fact->evidenceIds);
+            }
+            foreach ($snapshot->entities as $entity) {
+                self::assertSame('room', $entity->type);
+                self::assertSame('Кухня', $entity->attributes['name']);
+                self::assertTrue($entity->attributes['properties']['identity_only']);
+                foreach (['area', 'length', 'width', 'height', 'polygon'] as $parameter) {
+                    self::assertArrayNotHasKey($parameter, $entity->attributes);
+                }
+            }
+            $evidence = DB::table('estimate_generation_evidence')->where('session_id', $scope[2])->get();
+            self::assertCount(2, $evidence);
+            foreach ($evidence as $row) {
+                $value = json_decode($row->value, true, flags: JSON_THROW_ON_ERROR);
+                $locator = json_decode($row->locator, true, flags: JSON_THROW_ON_ERROR);
+                self::assertSame(['fact_key' => 'room_name', 'fact_value' => hash('sha256', 'Кухня')], $value);
+                self::assertSame(1, $locator['page']);
+                self::assertSame([10, 20, 30, 40], $locator['bbox']);
+                self::assertSame($sourceVersion, $row->source_version);
+            }
+            self::assertSame(0, DB::table('estimate_generation_quantity_takeoffs')->where('session_id', $scope[2])->count());
+            foreach ([['fact_key' => 'room_name', 'fact_value' => 'material:'.str_repeat('a', 64)],
+                ['fact_key' => 'room_name', 'fact_value' => str_repeat('a', 64), 'unit' => 'm2']] as $invalidValue) {
+                try {
+                    DB::transaction(function () use ($evidence, $invalidValue): void {
+                        $row = (array) $evidence[0];
+                        unset($row['id']);
+                        $row['value'] = json_encode($invalidValue, JSON_THROW_ON_ERROR);
+                        DB::table('estimate_generation_evidence')->insert($row);
+                    });
+                    self::fail('SQL accepted a monetary/material or numeric room-name proof.');
+                } catch (QueryException $exception) {
+                    self::assertStringContainsString('room_identity_evidence_invalid', $exception->getMessage());
+                }
+            }
+        } finally {
+            DB::rollBack();
+        }
     }
 
     #[Test]
     public function production_shaped_completed_observer_batch_is_atomic_and_keeps_only_canonical_project_model_candidates(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
 
         DB::beginTransaction();
         try {
@@ -112,7 +184,6 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
     public function candidate_replay_is_idempotent_and_distinct_observations_do_not_collide(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
 
         $organization = Organization::factory()->create();
         $project = Project::factory()->for($organization)->create();
@@ -162,7 +233,6 @@ final class ObserverEvidenceProjectionPostgresTest extends TestCase
     public function visual_confirmation_candidate_is_current_while_an_ordinary_candidate_remains_non_current(): void
     {
         self::assertSame('pgsql', DB::getDriverName());
-        self::assertSame('1', getenv('RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT'));
 
         DB::beginTransaction();
         try {

@@ -598,11 +598,21 @@ SQL, [
 
     private function isConfirmationCandidate(Fact $fact, object $entity): bool
     {
-        if ($fact->status !== 'candidate' || (string) $entity->entity_kind !== 'equipment') {
+        if ($fact->status !== 'candidate') {
             return false;
         }
         $payload = $this->decodedJson($entity->payload);
         $properties = is_array($payload['properties'] ?? null) ? $payload['properties'] : [];
+        if ((string) $entity->entity_kind === 'room') {
+            return $fact->type === 'room_name' && $fact->unit === null && $fact->evidenceIds !== []
+                && is_string($fact->value) && trim($fact->value) !== '' && mb_strlen($fact->value) <= 240
+                && ($payload['semantic_type'] ?? null) === 'room'
+                && ($properties['identity_only'] ?? null) === true
+                && ($properties['requires_confirmation'] ?? null) === true;
+        }
+        if ((string) $entity->entity_kind !== 'equipment') {
+            return false;
+        }
 
         return ($properties['estimate_scope'] ?? null) === 'requires_confirmation'
             && in_array($properties['visual_inventory_category'] ?? null, [
