@@ -215,6 +215,10 @@ final readonly class RunEstimateComposer
                     'exclusions' => $record['exclusions'] ?? null,
                     'missing_document_recommendations' => $record['missing_document_recommendations'] ?? null,
                 ];
+                if ($kind === 'supplementary' && (array_key_exists('unit', $record) || array_key_exists('work_section', $record))) {
+                    $projected['unit'] = $record['unit'] ?? null;
+                    $projected['work_section'] = $record['work_section'] ?? null;
+                }
                 $intent = EstimateWorkIntent::fromArray($projected);
                 if (isset($seenCandidateIds[$intent->candidateId]) || isset($supplementaryById[$intent->candidateId])) {
                     throw new InvalidArgumentException('estimate_composer_candidate_duplicate');
@@ -225,6 +229,9 @@ final readonly class RunEstimateComposer
                     }
                 }
                 if ($intent->kind === 'supplementary') {
+                    if ($intent->workSection !== null && ! in_array($intent->workSection, $input->allowedWorkSections, true)) {
+                        throw new InvalidArgumentException('estimate_composer_work_section_not_selected');
+                    }
                     if ($intent->workKey === null
                         || isset($candidateWorkKeys[$intent->workKey])
                         || isset($supplementaryWorkKeys[$intent->workKey])) {

@@ -159,7 +159,8 @@ final readonly class EstimateComposerBatchPlanner
             $facts, $quantities, $decisions, $candidates, $input->missingDocuments, $input->contractVersion, $input->wireScope, $key,
             ['contract' => 'composer-context:v1', 'parent_input_fingerprint' => $parent,
                 'parent_counts' => ['facts' => count($input->facts), 'quantities' => count($input->derivedQuantities),
-                    'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]]);
+                    'decisions' => count($input->decisions), 'candidates' => count($input->candidates), 'missing_documents' => count($input->missingDocuments)]],
+            $input->allowedWorkSections);
     }
 
     private function fits(EstimateComposerInput $input): bool

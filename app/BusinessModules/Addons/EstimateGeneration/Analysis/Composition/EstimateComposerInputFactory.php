@@ -34,6 +34,7 @@ final readonly class EstimateComposerInputFactory
         array $derivedQuantities,
         array $missingDocuments,
         ?AiSessionWireScope $wireScope = null,
+        array $allowedWorkSections = [],
     ): EstimateComposerInput {
         $capture = $this->models->snapshotForPlanning(
             $organizationId,
@@ -82,6 +83,7 @@ final readonly class EstimateComposerInputFactory
             missingDocuments: $missingDocuments,
             contractVersion: RunEstimateComposer::PROMPT_CONTRACT,
             wireScope: $wireScope,
+            allowedWorkSections: $allowedWorkSections,
         );
     }
 

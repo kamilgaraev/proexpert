@@ -398,6 +398,74 @@ final class EstimateComposerTest extends TestCase
         );
     }
 
+    public function test_text_grounded_supplementary_work_keeps_its_selected_section_and_unit_without_inventing_a_volume(): void
+    {
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64),
+            [['id' => 'fact:description', 'type' => 'evaluation_answer', 'value' => ['description' => 'Нужно окрасить стены.'], 'unit' => null, 'status' => 'confirmed']],
+            [], [], [], [], RunEstimateComposer::PROMPT_CONTRACT, allowedWorkSections: ['finishing']);
+        $intent = ['kind' => 'supplementary', 'candidate_id' => null, 'work_key' => 'paint-walls', 'name' => 'Окраска стен',
+            'derived_quantity_id' => null, 'source_fact_ids' => ['fact:description'], 'technology_package_candidate' => null,
+            'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => [], 'unit' => 'm2', 'work_section' => 'finishing'];
+        $model = new RecordedEstimateComposerModel(['work_intents' => [$intent, [...$intent, 'work_key' => 'electric-installation', 'work_section' => 'electricity']]]);
+        $result = (new RunEstimateComposer(new ComposerRoleRunMemoryRepository, $model, 'openai/gpt-6-luna'))->run($input);
+        self::assertCount(1, $result);
+        self::assertSame('finishing', $result[0]['work_section']);
+        $facadeApplication = \Illuminate\Support\Facades\Facade::getFacadeApplication();
+        $previous = ['app' => [\Illuminate\Support\Facades\App::class, \Illuminate\Support\Facades\App::getFacadeRoot()],
+            'config' => [\Illuminate\Support\Facades\Config::class, \Illuminate\Support\Facades\Config::getFacadeRoot()],
+            'translator' => [\Illuminate\Support\Facades\Lang::class, \Illuminate\Support\Facades\Lang::getFacadeRoot()]];
+        $loader = new \Illuminate\Translation\ArrayLoader;
+        $loader->addMessages('ru', 'estimate_generation', ['composition' => ['supplementary_title' => 'Дополнительные работы', 'supplementary_section' => 'Работы']]);
+        \Illuminate\Support\Facades\App::swap(new class
+        {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        \Illuminate\Support\Facades\Config::swap(new \Illuminate\Config\Repository(['app' => ['fallback_locale' => 'ru']]));
+        \Illuminate\Support\Facades\Lang::swap(new \Illuminate\Translation\Translator($loader, 'ru'));
+        try {
+            $locals = (new EstimateCompositionProjector)->apply([], $result, [], $input->facts);
+        } finally {
+            foreach ($previous as $accessor => [$facade, $root]) {
+                if ($root !== null) {
+                    $facade::swap($root);
+                } else {
+                    \Illuminate\Support\Facades\Facade::clearResolvedInstance($accessor);
+                    $facadeApplication?->forgetInstance($accessor);
+                }
+            }
+        }
+        self::assertSame('ai-composer-supplementary:finishing', $locals[0]['key']);
+        $item = $locals[0]['sections'][0]['work_items'][0];
+        self::assertSame('m2', $item['unit']);
+        self::assertNull($item['quantity']);
+        $evaluation = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)->build(
+            ['evaluation_policy' => ['mode' => 'universal', 'profile_id' => 'construction', 'selected_sections' => ['finishing']], 'local_estimates' => $locals],
+            new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelSnapshot([], [], [], []));
+        self::assertCount(1, $evaluation['scenarios'][0]['positions']);
+        self::assertSame('finishing', $evaluation['scenarios'][0]['positions'][0]['section']);
+        self::assertNull($evaluation['scenarios'][0]['positions'][0]['quantity']);
+        self::assertFalse($evaluation['can_confirm_for_apply']);
+    }
+
+    public function test_batching_keeps_the_approved_section_whitelist_in_every_physical_part(): void
+    {
+        $candidates = [];
+        for ($index = 0; $index < 65; $index++) {
+            $candidates[] = ['candidate_id' => 'candidate:'.$index, 'work_key' => 'work:'.$index, 'name' => 'Отделочные работы', 'unit' => 'm2',
+                'quantity' => null, 'quantity_formula' => null, 'source_fact_ids' => ['fact:description'], 'technology_package_candidate' => null];
+        }
+        $input = new EstimateComposerInput(10, 20, 30, str_repeat('a', 64), [['id' => 'fact:description', 'value' => 'Отделочные работы']],
+            [], [], $candidates, [], RunEstimateComposer::PROMPT_CONTRACT, allowedWorkSections: ['finishing']);
+        $parts = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner)->plan($input);
+        self::assertCount(3, $parts);
+        foreach ($parts as $part) {
+            self::assertSame(['finishing'], $part->canonicalPayload()['allowed_work_sections']);
+        }
+    }
+
     public function test_timeweb_model_calls_only_the_pinned_model_with_bounded_price_free_json_contract(): void
     {
         $input = $this->input(candidates: [[

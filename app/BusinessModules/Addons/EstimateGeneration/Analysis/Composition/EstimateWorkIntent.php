@@ -20,6 +20,8 @@ final readonly class EstimateWorkIntent
         public array $assumptions,
         public array $exclusions,
         public array $missingDocumentRecommendations,
+        public ?string $unit = null,
+        public ?string $workSection = null,
     ) {
         if (! in_array($kind, ['existing', 'supplementary'], true)
             || ! self::identifier($candidateId)
@@ -30,7 +32,13 @@ final readonly class EstimateWorkIntent
         self::assertStringList($assumptions, 20, 500, false);
         self::assertStringList($exclusions, 20, 500, false);
         self::assertStringList($missingDocumentRecommendations, 20, 800, false);
-        if ($kind === 'existing' && ($workKey !== null || $name !== null || $derivedQuantityId !== null)) {
+        if (($unit === null) !== ($workSection === null)
+            || ($unit !== null && \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\WorkQuantityInputUnit::parse($unit) === null)
+            || ($workSection !== null && ! in_array($workSection, ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage',
+                'heating', 'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment'], true))) {
+            throw new InvalidArgumentException('estimate_work_intent_measure_or_section_invalid');
+        }
+        if ($kind === 'existing' && ($workKey !== null || $name !== null || $derivedQuantityId !== null || $unit !== null || $workSection !== null)) {
             throw new InvalidArgumentException('estimate_work_intent_existing_shape_invalid');
         }
         if ($kind === 'supplementary' && (
@@ -62,6 +70,14 @@ final readonly class EstimateWorkIntent
             'exclusions',
             'missing_document_recommendations',
         ];
+        foreach (['unit', 'work_section'] as $key) {
+            if (array_key_exists($key, $payload)) {
+                $expectedKeys[] = $key;
+                if ($payload[$key] !== null && ! is_string($payload[$key])) {
+                    throw new InvalidArgumentException('estimate_work_intent_measure_or_section_invalid');
+                }
+            }
+        }
         sort($actualKeys, SORT_STRING);
         sort($expectedKeys, SORT_STRING);
         if ($actualKeys !== $expectedKeys) {
@@ -83,6 +99,8 @@ final readonly class EstimateWorkIntent
             missingDocumentRecommendations: is_array($payload['missing_document_recommendations'])
                 ? $payload['missing_document_recommendations']
                 : [''],
+            unit: $payload['unit'] ?? null,
+            workSection: $payload['work_section'] ?? null,
         );
     }
 
@@ -100,6 +118,7 @@ final readonly class EstimateWorkIntent
             'assumptions' => $this->assumptions,
             'exclusions' => $this->exclusions,
             'missing_document_recommendations' => $this->missingDocumentRecommendations,
+            ...($this->unit === null ? [] : ['unit' => $this->unit, 'work_section' => $this->workSection]),
         ];
     }
 

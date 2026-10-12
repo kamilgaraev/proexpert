@@ -97,7 +97,8 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         return [[true], [false]];
     }
 
-    public function test_text_only_job_publishes_a_worklist_with_unknown_quantities_and_questions_without_charging_for_unpriced_work(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('textOnlyCompositionCases')]
+    public function test_text_only_job_publishes_a_worklist_with_unknown_quantities_and_questions_without_charging_for_unpriced_work(bool $supplementary): void
     {
         (new \Tests\Support\EstimateGeneration\InMemoryS3HttpStorage)->install();
         $this->seedGlobalSettings();
@@ -116,12 +117,20 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 'construction_type' => 'current_repair', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']],
         ], $actor);
         $history = [];
+        $composerResponse = ['work_intents' => []];
+        if ($supplementary) {
+            $facts = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)
+                ->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id)->facts;
+            $composerResponse['work_intents'][] = ['kind' => 'supplementary', 'work_key' => 'painting-from-description', 'name' => 'Окраска стен',
+                'derived_quantity_id' => null, 'source_fact_ids' => [$facts[0]->id], 'technology_package_candidate' => null,
+                'unit' => 'm2', 'work_section' => 'finishing', 'assumptions' => [], 'exclusions' => [], 'missing_document_recommendations' => []];
+        }
         $responses = array_map(static fn (array $payload): \GuzzleHttp\Psr7\Response => new \GuzzleHttp\Psr7\Response(200,
             ['Content-Type' => 'application/json'], json_encode([
                 'id' => 'chatcmpl-text-only', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
                 'choices' => [['index' => 0, 'finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => json_encode($payload, JSON_THROW_ON_ERROR)]]],
                 'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 50, 'total_tokens' => 150],
-            ], JSON_THROW_ON_ERROR)), [['work_intents' => []], ['findings' => []]]);
+            ], JSON_THROW_ON_ERROR)), [$composerResponse, ['findings' => []]]);
         $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler($responses));
         $handler->push(\GuzzleHttp\Middleware::history($history));
         $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class,
@@ -143,6 +152,13 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $session->refresh();
         self::assertSame('estimate_review_required', $session->status->value);
         $evaluation = $session->draft_payload['evaluation_result'];
+        if ($supplementary) {
+            $position = array_column($evaluation['scenarios'][0]['positions'], null, 'key')['painting-from-description'] ?? null;
+            self::assertNotNull($position);
+            self::assertSame('finishing', $position['section']);
+            self::assertSame('m2', $position['unit']);
+            self::assertNull($position['quantity']);
+        }
         self::assertNotEmpty($evaluation['scenarios'][0]['positions']);
         foreach ($evaluation['scenarios'][0]['positions'] as $position) {
             self::assertNull($position['quantity']);
@@ -158,6 +174,11 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
         self::assertCount(2, $history);
         self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+    }
+
+    public static function textOnlyCompositionCases(): array
+    {
+        return [[false], [true]];
     }
 
     public function test_fresh_text_without_files_queues_only_with_an_approved_quote_and_replays_once(): void

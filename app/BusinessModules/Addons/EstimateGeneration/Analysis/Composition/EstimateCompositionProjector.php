@@ -108,17 +108,24 @@ final readonly class EstimateCompositionProjector
         }
 
         if ($supplementary !== []) {
-            $localEstimates[] = [
-                'key' => 'ai-composer-supplementary',
-                'title' => trans_message('estimate_generation.composition.supplementary_title'),
-                'scope_type' => 'supplementary',
-                'source_refs' => $this->sourceRefs($supplementary),
-                'sections' => [[
-                    'key' => 'ai-composer-supplementary',
-                    'title' => trans_message('estimate_generation.composition.supplementary_section'),
-                    'work_items' => $this->supplementaryItems($supplementary, $derivedQuantities, $facts),
-                ]],
-            ];
+            $groups = [];
+            foreach ($supplementary as $id => $intent) {
+                $package = isset($intent['work_section']) ? 'ai-composer-supplementary:'.$intent['work_section'] : 'ai-composer-supplementary';
+                $groups[$package][$id] = $intent;
+            }
+            foreach ($groups as $package => $group) {
+                $localEstimates[] = [
+                    'key' => $package,
+                    'title' => trans_message('estimate_generation.composition.supplementary_title'),
+                    'scope_type' => 'supplementary',
+                    'source_refs' => $this->sourceRefs($group),
+                    'sections' => [[
+                        'key' => $package,
+                        'title' => trans_message('estimate_generation.composition.supplementary_section'),
+                        'work_items' => $this->supplementaryItems($group, $derivedQuantities, $facts),
+                    ]],
+                ];
+            }
         }
 
         return $localEstimates;
@@ -170,7 +177,7 @@ final readonly class EstimateCompositionProjector
                 'item_type' => 'priced_work',
                 'unit' => is_array($quantity)
                     ? $this->boundedString($quantity['unit'] ?? null, 32)
-                    : $this->boundedString($sourceFact['unit'] ?? null, 32),
+                    : $this->boundedString($sourceFact['unit'] ?? $intent['unit'] ?? null, 32),
                 'quantity' => is_array($quantity)
                     ? $this->positiveDecimal($quantity['value'] ?? null)
                     : $this->positiveDecimal($sourceFact['value'] ?? null),

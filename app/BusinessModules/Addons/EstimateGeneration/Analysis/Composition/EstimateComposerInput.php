@@ -30,6 +30,7 @@ final readonly class EstimateComposerInput
         public ?AiSessionWireScope $wireScope = null,
         public ?string $batchKey = null,
         public ?array $contextManifest = null,
+        public array $allowedWorkSections = [],
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -49,6 +50,13 @@ final readonly class EstimateComposerInput
             if (! is_array($fact) || ! self::identifier($fact['id'] ?? null)) {
                 throw new InvalidArgumentException('estimate_composer_fact_invalid');
             }
+        }
+        if (! array_is_list($allowedWorkSections) || count($allowedWorkSections) > 12
+            || count(array_filter($allowedWorkSections, 'is_string')) !== count($allowedWorkSections)
+            || count(array_unique($allowedWorkSections)) !== count($allowedWorkSections)
+            || array_diff($allowedWorkSections, ['structures', 'finishing', 'roofing', 'earthworks', 'water_supply', 'sewerage', 'heating',
+                'ventilation', 'electricity', 'automation', 'technological_pipelines', 'equipment']) !== []) {
+            throw new InvalidArgumentException('estimate_composer_work_sections_invalid');
         }
         foreach ($candidates as $candidate) {
             if (! is_array($candidate)
@@ -103,6 +111,9 @@ final readonly class EstimateComposerInput
         }
         if ($this->contextManifest !== null) {
             $payload['context_manifest'] = $this->contextManifest;
+        }
+        if ($this->allowedWorkSections !== []) {
+            $payload['allowed_work_sections'] = $this->allowedWorkSections;
         }
 
         return $payload;
