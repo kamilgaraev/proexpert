@@ -266,6 +266,9 @@ final class AssistantDataAccessPolicy
             foreach ($domains as $domain) {
                 if (! is_string($domain) || ! $this->canReadDomain($user, $organizationId, $domain)) { return false; }
             }
+            if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentMetadataReader::isMetadataReference($reference)) {
+                return $this->accessibleDocuments($user, $organizationId, AIAssistantDocument::query()->whereKey($id))->exists();
+            }
             return $this->canReadEntity($user, $organizationId, $type, $id);
         }
         if (isset($reference['source_type'])) {

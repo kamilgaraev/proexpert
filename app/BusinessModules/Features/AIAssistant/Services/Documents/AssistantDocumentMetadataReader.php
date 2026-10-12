@@ -11,6 +11,8 @@ use App\Models\User;
 
 final readonly class AssistantDocumentMetadataReader
 {
+    public const FIELDS = ['id', 'filename', 'status', 'coverage_status', 'project_id', 'file_id'];
+
     public function __construct(private AssistantDataAccessPolicy $policy) {}
 
     public function read(User $actor, int $organizationId, array $arguments, ?callable $checkpoint = null): array
@@ -23,7 +25,7 @@ final readonly class AssistantDocumentMetadataReader
         if ($name !== '') { $query->where('filename', 'ilike', '%'.addcslashes($name, '%_\\').'%'); }
         $limit = min((int) ($arguments['limit'] ?? 20), AssistantStructuredFactFormatter::MAX_ROWS);
         $offset = (int) ($arguments['metadata_offset'] ?? 0);
-        $fields = ['id', 'filename', 'status', 'coverage_status', 'project_id', 'file_id'];
+        $fields = self::FIELDS;
         $documents = $query->select([...$fields, 'updated_at'])->orderBy('id')->offset($offset)->limit($limit + 1)->get();
         $fetchedAt = now()->toISOString();
         $rows = [];
@@ -43,5 +45,20 @@ final readonly class AssistantDocumentMetadataReader
             'result_window' => ['offset' => $offset, 'limit' => $limit, 'returned' => count($rows), 'has_more' => $documents->count() > $limit,
                 'next_offset' => $documents->count() > $limit ? $offset + $limit : null]]
             + AssistantStructuredFactFormatter::payload($rows, $fetchedAt);
+    }
+
+    public static function isMetadataReference(array $reference): bool
+    {
+        $fields = $reference['checked_fields'] ?? null;
+        if (($reference['entity_type'] ?? null) !== 'assistant_document'
+            || ($reference['content_scope'] ?? null) !== 'structured'
+            || ($reference['source_type'] ?? null) !== 'file_document'
+            || ! is_array($fields) || count($fields) !== count(self::FIELDS)
+            || count(array_filter($fields, 'is_string')) !== count($fields)
+            || array_diff(self::FIELDS, $fields) !== [] || array_diff($fields, self::FIELDS) !== []) { return false; }
+        foreach (['source_id', 'unit_id', 'unit_checksum', 'checksum', 'text_offset', 'text_length'] as $field) {
+            if (isset($reference[$field])) { return false; }
+        }
+        return true;
     }
 }

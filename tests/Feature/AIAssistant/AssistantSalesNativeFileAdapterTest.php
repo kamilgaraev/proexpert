@@ -7,6 +7,8 @@ namespace Tests\Feature\AIAssistant;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
 use App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocumentUnit;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestLifecycle;
+use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentMetadataReader;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentService;
 use App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantSalesNativeFileAdapter;
 use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
@@ -29,6 +31,47 @@ use Tests\TestCase;
 
 final class AssistantSalesNativeFileAdapterTest extends TestCase
 {
+    public function test_completed_metadata_list_checks_twenty_current_native_sources_without_downloading_bodies(): void
+    {
+        [$fixture, $batch, $adapter] = $this->fixture();
+        $batches = [$batch];
+        for ($i = 1; $i < 20; $i++) {
+            $batches[] = Model::withoutEvents(function () use ($batch, $fixture): CrmImportBatch {
+                $copy = $batch->replicate(['id']);
+                $copy->id = (string) Str::uuid();
+                $copy->stored_path = 'org-'.$fixture->organization->id.'/crm/imports/'.Str::uuid().'.csv';
+                $copy->save();
+                return $copy;
+            });
+        }
+        foreach ($batches as $source) {
+            $adapter->map($fixture->owner, $fixture->organization->id, 'crm_import_batch', $source->id);
+        }
+        $this->app->instance(AssistantSalesNativeFileAdapter::class, $this->noStorageAdapter());
+        $result = app(AssistantDocumentMetadataReader::class)->read($fixture->owner, $fixture->organization->id, ['limit' => 20]);
+        self::assertCount(20, $result['source_refs']);
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)->fresh($fixture->owner, $fixture->organization->id, $result['source_refs']));
+        $response = ['message' => ['metadata' => ['source_refs' => $result['source_refs']]]];
+        $method = new \ReflectionMethod(AssistantRequestLifecycle::class, 'assertResponseAccess');
+        $method->invoke(app(AssistantRequestLifecycle::class), $response, $fixture->owner, $fixture->organization->id);
+        $batches[0]->update(['stored_path' => 'org-'.$fixture->organization->id.'/crm/imports/'.Str::uuid().'.csv']);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $method->invoke(app(AssistantRequestLifecycle::class), $response, $fixture->owner, $fixture->organization->id);
+    }
+
+    public function test_metadata_reference_rechecks_current_role_without_downloading_the_native_body(): void
+    {
+        [$fixture, $batch, $adapter] = $this->fixture();
+        $adapter->map($fixture->owner, $fixture->organization->id, 'crm_import_batch', $batch->id);
+        $this->app->instance(AssistantSalesNativeFileAdapter::class, $this->noStorageAdapter());
+        $result = app(AssistantDocumentMetadataReader::class)->read($fixture->owner, $fixture->organization->id, ['limit' => 20]);
+        self::assertCount(1, $result['source_refs']);
+        $policy = app(AssistantDataAccessPolicy::class);
+        self::assertTrue($policy->canReadReference($fixture->owner, $fixture->organization->id, $result['source_refs'][0]));
+        UserRoleAssignment::query()->where('user_id', $fixture->owner->id)->update(['is_active' => false]);
+        self::assertFalse($policy->canReadReference($fixture->owner, $fixture->organization->id, $result['source_refs'][0]));
+    }
+
     public function test_native_crm_uuid_document_is_mapped_without_fake_file_id_and_processed_by_actual_pipeline(): void
     {
         [$fixture, $batch, $adapter] = $this->fixture();
