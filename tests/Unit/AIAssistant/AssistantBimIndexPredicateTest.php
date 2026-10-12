@@ -16,7 +16,7 @@ final class AssistantBimIndexPredicateTest extends TestCase
 {
     private $previousResolver;
 
-    public function test_known_equipment_prefilter_preserves_authorized_scope_and_reads_identity_and_enum_in_one_pass(): void
+    public function test_stored_equipment_filter_preserves_authorized_scope_without_parsing_raw_json(): void
     {
         $scope = $this->scope();
         $scope->where('design_ifc_model_elements.project_id', 52)
@@ -24,14 +24,13 @@ final class AssistantBimIndexPredicateTest extends TestCase
             ->whereIn('design_ifc_model_elements.id', $scope->getQuery()->newQuery()->from('authorized_elements')->select('id'));
         (new AssistantBimIndexPredicate)->apply($scope, ['equipment_kind' => 'air_conditioner'], []);
         $sql = $scope->toSql();
-        self::assertSame(1, substr_count($sql, 'jsonb_path_query'));
-        self::assertStringContainsString('bool_or(', $sql);
-        self::assertStringContainsString('assistant_equipment_identity', $sql);
+        self::assertStringNotContainsString('jsonb_path_query', $sql);
+        self::assertStringNotContainsString('assistant_equipment_identity', $sql);
+        self::assertStringContainsString('"design_ifc_model_elements"."source_equipment_kind" = ?', $sql);
         self::assertStringContainsString('where "design_ifc_model_elements"."project_id" = ?', $sql);
         self::assertStringContainsString('"design_ifc_model_elements"."version_id" = ?', $sql);
         self::assertStringContainsString('"design_ifc_model_elements"."derivative_id" = ?', $sql);
         self::assertStringContainsString('"design_ifc_model_elements"."id" in (select "id" from "authorized_elements")', $sql);
-        self::assertStringContainsString('and upper(design_ifc_model_elements.category) IN (', $sql);
         self::assertStringNotContainsString("'IFCWALL'", $sql);
         self::assertSame([52, 15, 7, 'air_conditioner'], $scope->getBindings());
     }
@@ -52,7 +51,9 @@ final class AssistantBimIndexPredicateTest extends TestCase
                 $scope = clone $initial;
                 (new AssistantBimIndexPredicate)->apply($scope, ['element_query' => $query, 'equipment_kind' => $emptyKind], []);
                 $sql = $scope->toSql();
-                self::assertStringContainsString(", '{$category}') offset 0", $sql);
+                self::assertStringContainsString('"design_ifc_model_elements"."source_equipment_kind" = ?', $sql);
+                self::assertStringNotContainsString('offset 0', $sql);
+                self::assertStringContainsString("category) = '{$category}' THEN '{$kind}'", $this->classifierSql());
                 self::assertSame([$kind], $scope->getBindings());
             }
         }
@@ -61,7 +62,7 @@ final class AssistantBimIndexPredicateTest extends TestCase
     {
         $scope = $this->scope();
         (new AssistantBimIndexPredicate)->apply($scope, ['element_query' => 'кондиционеры'], []);
-        $sql = $scope->toSql();
+        $sql = $this->classifierSql();
         self::assertStringContainsString('AIRCONDITIONINGUNIT', $sql);
         self::assertStringContainsString('{_ifc,type_predefined_type}', $sql);
         self::assertStringContainsString('jsonb_path_query', $sql);
@@ -80,21 +81,43 @@ final class AssistantBimIndexPredicateTest extends TestCase
         self::assertSame(['%coolingcapacity%', "%x\\%' or true --%"], $scope->getBindings());
     }
 
-    public function test_category_and_morphological_name_matches_remain_alternatives_with_additional_material_filter(): void
+    public function test_typed_category_counts_never_admit_name_matches_and_keep_material_filters(): void
     {
         $scope = $this->scope();
         (new AssistantBimIndexPredicate)->apply($scope, ['element_query' => 'перекрытия', 'material_query' => 'бетон'], ['IFCSLAB']);
         self::assertContains('IFCSLAB', $scope->getBindings());
-        self::assertContains('%перекрыти%', $scope->getBindings());
+        self::assertNotContains('%перекрыти%', $scope->getBindings());
         self::assertContains('%бетон%', $scope->getBindings());
         self::assertStringContainsString("properties -> 'materials'", $scope->toSql());
+        self::assertStringNotContainsString('"design_ifc_model_elements"."name"', $scope->toSql());
+        self::assertStringNotContainsString(' or ', $scope->toSql());
+    }
+
+    public function test_explicit_ifc_type_and_other_structural_aliases_stay_bound_to_their_categories(): void
+    {
+        $initial = $this->scope();
+        foreach (['стены' => ['IFCWALL', 'IFCWALLSTANDARDCASE'], 'колонны' => ['IFCCOLUMN'], 'IFCSLAB' => ['IFCSLAB']] as $term => $categories) {
+            $scope = clone $initial;
+            (new AssistantBimIndexPredicate)->apply($scope, ['element_query' => $term], $categories);
+            self::assertSame($categories, $scope->getBindings());
+            self::assertStringContainsString('"design_ifc_model_elements"."category" in (', $scope->toSql());
+            self::assertStringNotContainsString('"design_ifc_model_elements"."name"', $scope->toSql());
+        }
+    }
+
+    public function test_unrecognized_free_text_still_searches_names_with_bound_tokens(): void
+    {
+        $scope = $this->scope();
+        (new AssistantBimIndexPredicate)->apply($scope, ['element_query' => 'VEZA_СТЕНОВОЙ'], []);
+        self::assertStringContainsString('design_ifc_model_elements.name', $scope->toSql());
+        self::assertSame(['%veza%', '%стенов%'], $scope->getBindings());
     }
 
     public function test_sql_classifier_uses_the_same_closed_generic_classes_and_reference_guards_as_projection(): void
     {
         $scope = $this->scope();
         (new AssistantBimIndexPredicate)->apply($scope, ['equipment_kind' => 'air_conditioner'], []);
-        $sql = $scope->toSql();
+        $sql = $this->classifierSql();
         self::assertStringContainsString("NOT IN ('IFCUNITARYEQUIPMENT', 'IFCBUILDINGELEMENTPROXY', 'IFCFLOWTERMINAL'", $sql);
         self::assertStringContainsString("THEN 'unknown'", $sql);
         self::assertStringContainsString('(?:для|к|под|for|to|under)', $sql);
@@ -108,13 +131,34 @@ final class AssistantBimIndexPredicateTest extends TestCase
     {
         $scope = $this->scope();
         (new AssistantBimIndexPredicate)->apply($scope, ['equipment_kind' => 'air_conditioner'], []);
-        $sql = $scope->toSql();
+        $sql = $this->classifierSql();
         self::assertStringContainsString('GP_Наименование|ADSK_Наименование|Наименование', $sql);
         self::assertStringContainsString('{Прочее,Категория}', $sql);
         self::assertStringContainsString(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimIndexProjection::airConditionerUnitPattern(), $sql);
         self::assertStringContainsString(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimIndexProjection::airConditionerUnitReferencePattern(), $sql);
         self::assertStringContainsString('assistant_equipment_identity', $sql);
         self::assertSame(['air_conditioner'], $scope->getBindings());
+    }
+
+    public function test_stored_classifier_is_versioned_immutable_and_reads_only_supplied_raw_arguments(): void
+    {
+        $sql = $this->classifierSql();
+        self::assertStringStartsWith('CREATE FUNCTION assistant_ifc_equipment_kind_v1(', $sql);
+        self::assertStringContainsString('IMMUTABLE PARALLEL SAFE SET search_path = pg_catalog', $sql);
+        self::assertStringNotContainsString('OR REPLACE', $sql);
+        self::assertSame(1, substr_count($sql, 'jsonb_path_query'));
+        self::assertStringContainsString('bool_or(', $sql);
+        self::assertStringContainsString('input_category AS category, input_name AS name, input_properties AS properties, input_classifications AS classifications', $sql);
+        self::assertStringNotContainsString('from "design_ifc_model_elements"', $sql);
+    }
+
+    private function classifierSql(): string
+    {
+        $migration = require dirname(__DIR__, 3).'/app/BusinessModules/Features/DesignManagement/migrations/2026_10_12_120000_add_ifc_equipment_kind.php';
+        $sql = (new \ReflectionClass($migration))->getConstant('CLASSIFIER_FUNCTION');
+        self::assertIsString($sql);
+
+        return $sql;
     }
 
     private function scope(): Builder

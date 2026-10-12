@@ -289,6 +289,49 @@ final class AssistantDomainSearchCountEvidenceTest extends TestCase
         }
     }
 
+    public function test_natural_overdue_task_count_requires_verified_predicate_and_current_project(): void
+    {
+        $query = 'Есть на нашем объекте просроченные задачи? Сколько их?';
+        $evidence = $this->evidence(24, 'now', 1, 'schedule_task', ['project_id' => 52, 'predicate' => 'overdue']);
+        $result = (new AssistantStructuredFactVerifier)->guard($query, 'Найдено 20.', [['domain_search_count_evidence' => $evidence]], ['project_id' => 52]);
+        self::assertSame('verified', $result['validation_status']);
+        self::assertSame([$evidence['source_ref']], $result['source_refs']);
+        self::assertFalse($result['needs_clarification']);
+        self::assertStringContainsString('24', $result['text']);
+        foreach ([[], ['project_id' => 53]] as $scope) {
+            self::assertFalse(AssistantDomainSearchCountEvidence::matchesRequestedScope($query, $evidence, $scope));
+        }
+        $unfiltered = $this->evidence(40, 'now', 1, 'schedule_task', ['project_id' => 52]);
+        self::assertFalse(AssistantDomainSearchCountEvidence::matchesRequestedScope($query, $unfiltered, ['project_id' => 52]));
+    }
+
+    public function test_overdue_count_requires_canonical_predicate_clock_and_rejects_additional_filters(): void
+    {
+        $evidence = $this->evidence(3, 'now', 1, 'schedule_task', ['project_id' => 52, 'predicate' => 'overdue']);
+        $reordered = $evidence;
+        $reordered['source_ref'] = $this->reverseAssociativeKeys($reordered['source_ref']);
+        self::assertTrue(AssistantDomainSearchCountEvidence::trusted($reordered));
+        foreach (['Сколько просроченных задач в текущем проекте?', 'Есть на нашем объекте просроченные задачи? Сколько их?'] as $query) {
+            self::assertTrue(AssistantDomainSearchCountEvidence::matchesRequestedScope($query, $reordered, ['project_id' => 52]));
+        }
+        foreach (['Сколько задач в проекте?', 'Сколько критических просроченных задач в проекте?',
+            'Сколько просроченных задач проекта СевГУ?', 'Сколько просроченных задач за прошлый месяц?',
+            'Есть просроченные задачи и договоры? Сколько их?'] as $query) {
+            self::assertFalse(AssistantDomainSearchCountEvidence::matchesRequestedScope($query, $evidence, ['project_id' => 52]), $query);
+        }
+        $clock = $evidence['source_ref']['_search_count_clock'];
+        try {
+            \Carbon\CarbonImmutable::setTestNow(\Carbon\CarbonImmutable::parse($clock['date'], $clock['timezone'])->addDay());
+            self::assertFalse(AssistantDomainSearchCountEvidence::trusted($evidence));
+            self::assertFalse(AssistantDomainSearchCountEvidence::matchesRequestedScope('Сколько просроченных задач в проекте?', $evidence, ['project_id' => 52]));
+        } finally {
+            \Carbon\CarbonImmutable::setTestNow();
+        }
+        $tampered = $evidence;
+        $tampered['source_ref']['_search_count_query']['predicate'] = null;
+        self::assertFalse(AssistantDomainSearchCountEvidence::trusted($tampered));
+    }
+
     private function evidence(int $total, string $time = 'now', int $organizationId = 1, string $entityType = 'contract', array $arguments = []): array
     {
         config(['app.key' => 'search-count-test-key']);

@@ -77,15 +77,31 @@ final class AssistantFactIntentClassifier
             || preg_match(self::OVERDUE, $query) || preg_match(self::OWNER, $query));
     }
 
+    public static function isProjectExpenseRequest(string $query): bool
+    {
+        if (self::isNarrative($query) || preg_match('/(?<!\pL)(?:проект|объект|стройк)[а-яё]*(?!\pL)/iu', $query) !== 1
+            || preg_match('/(?<!\pL)(?:расход[а-яё]*|затрат[а-яё]*|потрат[а-яё]*|израсходовал[а-яё]*)(?!\pL)/iu', $query) !== 1) {
+            return false;
+        }
+        $money = preg_match('/(?:ден[еь]г|рубл|₽|финансов)/iu', $query) === 1;
+        $timeMeasure = '(?:час[а-яё]*|дн(?:ей|я|и)|суток)';
+        $physical = '/(?<!\pL)(?:расход[а-яё]*\s+(?:бетон|вод|топлив|материал|электроэнерг)[а-яё]*'
+            .'|затрат[а-яё]*\s+(?:[а-яё]+\s+){0,2}(?:труд|времен)[а-яё]*'
+            .'|сколько\s+(?:(?:бетон|вод|топлив|материал)[а-яё]*|'.$timeMeasure.')'
+            .'|потрат[а-яё]*\s+(?:\d+(?:[.,]\d+)?\s+)?'.$timeMeasure
+            .'|(?:килограмм|литр|тонн|кубометр|человеко)[а-яё]*)(?!\pL)|м[²³23]/iu';
+        return $money || preg_match($physical, $query) !== 1;
+    }
+
     public static function isFactual(string $query): bool
     {
         return ! self::isNarrative($query) && (self::requiresStructuredRead($query) || preg_match(self::MONEY, $query)
-            || preg_match(self::FINANCIAL_RECORD, $query) || preg_match('/(?:остат|колич|объ[её]м|сколько)/iu', $query));
+            || preg_match(self::FINANCIAL_RECORD, $query) || self::isProjectExpenseRequest($query) || preg_match('/(?:остат|колич|объ[её]м|сколько)/iu', $query));
     }
 
     public static function isMoneyOnly(string $query): bool
     {
-        return ! self::isNarrative($query) && (bool) preg_match(self::MONEY, $query)
+        return ! self::isNarrative($query) && ((bool) preg_match(self::MONEY, $query) || self::isProjectExpenseRequest($query))
             && ! self::requiresStructuredRead($query) && ! preg_match('/позиц/iu', $query);
     }
 
@@ -119,6 +135,10 @@ final class AssistantFactIntentClassifier
         }
         if (preg_match('/(?:остат|колич|объ[её]м)/iu', $query)) {
             $requirements[] = array_merge(['quantity', 'quantity_total', 'total_quantity', 'completed_quantity', 'volume_completed', 'material_quantity', 'personnel_count', 'equipment_count'], $groups['quantity'] ?? []);
+        }
+
+        if (self::isProjectExpenseRequest($query)) {
+            $requirements[] = ['actual_cost'];
         }
 
         return $requirements;

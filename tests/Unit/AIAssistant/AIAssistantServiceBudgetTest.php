@@ -311,6 +311,109 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_current_object_contract_snapshot_binds_omitted_null_and_foreign_model_project_to_ui_scope(): void
+    {
+        $schema = (new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetContractSnapshotTool)->getParametersSchema();
+        foreach ([[], ['project_id' => null], ['project_id' => 100]] as $arguments) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_contract_snapshot');
+            $tool->method('getParametersSchema')->willReturn($schema);
+            $tool->expects($this->once())->method('execute')->with(['project_id' => 52], $this->anything(), $this->anything())->willReturn(['status' => 'success', 'contracts' => []]);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry, true);
+            $plan = ['request' => ['message' => 'Что у нас по договорам на этом объекте? Выбери один и покажи номер, подрядчика, сроки и сумму с валютой.',
+                'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+            $failures = [];
+            self::assertSame('success', $service->exposeHandleToolCall(['name' => 'get_contract_snapshot',
+                'arguments' => json_encode($arguments === [] ? new \stdClass : $arguments, JSON_THROW_ON_ERROR)], $plan, $failures)['status']);
+            self::assertSame([], $failures);
+        }
+    }
+
+    public function test_current_object_read_rejects_foreign_contract_before_provider_and_active_evidence(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('assistant_domain_read');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['id' => ['type' => 'integer']]]);
+        $tool->expects($this->once())->method('execute')->with(['id' => 315], $this->anything(), $this->anything())->willReturn([
+            'results' => [['entity_type' => 'contract', 'id' => 315]],
+            'source_refs' => [['entity_type' => 'contract', 'entity_id' => 315, 'project_id' => 100]],
+        ]);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $plan = ['request' => ['message' => 'Покажи договор на этом объекте.', 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['name' => 'assistant_domain_read', 'arguments' => '{"id":315}'], $plan, $failures);
+        self::assertSame('current_project_scope_mismatch', $result['reason']);
+        self::assertSame([], $result['source_refs']);
+        self::assertArrayNotHasKey('results', $result);
+        self::assertSame([], (new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
+    }
+
+    public function test_current_object_requires_unique_reference_instead_of_raw_project_context(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_contract_snapshot');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer']]]);
+        $tool->expects($this->never())->method('execute');
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $failures = [];
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'get_contract_snapshot', 'arguments' => '{}'],
+            ['request' => ['message' => 'Договоры на этом объекте?', 'context' => ['project_id' => 52]]], $failures);
+        self::assertSame('current_project_required', $result['reason']);
+        self::assertTrue($result['needs_clarification']);
+        self::assertSame([], $result['source_refs']);
+    }
+
+    public function test_current_object_domain_project_read_uses_own_key_and_contract_search_uses_project_filter(): void
+    {
+        foreach (['assistant_domain_read', 'assistant_domain_search'] as $name) {
+            $arguments = $name === 'assistant_domain_read' ? ['entity_type' => 'project', 'id' => 100]
+                : ['entity_type' => 'contract', 'project_id' => null];
+            $expected = $name === 'assistant_domain_read' ? ['entity_type' => 'project', 'id' => 52]
+                : ['entity_type' => 'contract', 'project_id' => 52];
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn($name);
+            $properties = ['entity_type' => ['type' => 'string']] + ($name === 'assistant_domain_read'
+                ? ['id' => ['type' => 'integer']] : ['project_id' => ['type' => ['integer', 'null']]]);
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties]);
+            $tool->expects($this->once())->method('execute')->with($expected, $this->anything(), $this->anything())->willReturn([
+                'source_refs' => [['entity_type' => $name === 'assistant_domain_read' ? 'project' : 'live_domain_search_count',
+                    'entity_id' => 52, 'project_id' => $name === 'assistant_domain_read' ? null : 52]],
+            ]);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => $name,
+                'arguments' => json_encode($arguments, JSON_THROW_ON_ERROR)], ['request' => ['message' => 'Договоры на этом объекте?',
+                    'context' => ['entity_references' => [['entity_type' => 'project', 'entity_id' => '52']]]]], $failures);
+            self::assertCount(1, $result['source_refs']);
+            self::assertSame([], $failures);
+        }
+    }
+
+    public function test_organization_and_explicit_entity_requests_preserve_model_scope(): void
+    {
+        foreach (['Выбери договор во всех проектах.', 'Покажи договор №315.', 'Покажи договоры проекта «СевГУ».'] as $question) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('get_contract_snapshot');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer']]]);
+            $tool->expects($this->once())->method('execute')->with(['project_id' => 100], $this->anything(), $this->anything())->willReturn([
+                'source_refs' => [['entity_type' => 'contract', 'entity_id' => 315, 'project_id' => 100]],
+            ]);
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $failures = [];
+            $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'get_contract_snapshot', 'arguments' => '{"project_id":100}'],
+                ['request' => ['message' => $question, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]], $failures);
+            self::assertCount(1, $result['source_refs']);
+            self::assertSame([], $failures);
+        }
+    }
+
     public function test_bim_project_question_without_verified_scope_does_not_read_all_organization_models(): void
     {
         foreach (['Сколько кондиционеров в текущем проекте?', 'У нас в проекте севгу есть кондиционеры, сколько их?'] as $query) {

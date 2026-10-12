@@ -59,7 +59,7 @@ class AssistantCapabilityRegistry
             'contracts' => ['договор', 'контракт', 'подрядчик'],
             'finance' => ['платеж', 'оплат', 'финанс', 'счет', 'счёт', 'задолж', 'долг'],
             'procurement' => ['закуп', 'снабжен', 'поставщик', 'заказ поставщик'],
-            'schedule' => ['график', 'срок', 'критический путь'],
+            'schedule' => ['график', 'срок', 'задач', 'критический путь'],
             'warehouse' => ['склад', 'остатк', 'материал'],
             'site_requests' => ['заявка с объекта', 'заявки с объекта', 'заявку с объекта', 'заявка на материал', 'заявка на техник', 'заявка на персонал'],
             'works' => ['выполненн работ', 'выполненные работы', 'объем работ', 'объём работ'],
@@ -76,7 +76,7 @@ class AssistantCapabilityRegistry
             'crm' => ['crm', 'срм', 'лид', 'сделк', 'воронк', 'контакт'],
             'commercial_processes' => ['коммерческ предложен', 'коммерческ', 'кп'],
             'knowledge' => ['база знаний', 'базы знаний', 'базе знаний', 'статья', 'статьи', 'инструкци'],
-            'design' => ['пир', 'проектирован', 'проектная документац', 'пакет проект', 'модель bim', 'замечания проект', ...AssistantBimModelReader::keywords()],
+            'design' => ['пир', 'проектирован', 'проектная документац', 'пакет проект', 'модель bim', 'замечания проект', ...array_diff(AssistantBimModelReader::keywords(), ['оборудован'])],
             'budgeting' => ['бюджетирован', 'бюджет', 'бдр', 'бддс', 'цфо', 'кассовый разрыв', 'управленческ'],
             'tenders' => ['тендер', 'конкурс', 'тендерная заявк'],
             'advance_accounting' => ['подотчет', 'подотчёт', 'авансовый отчет', 'авансовый отчёт'],
@@ -278,6 +278,13 @@ class AssistantCapabilityRegistry
         $assistantPath = mb_strtolower(trim((string) ($context['ui_state']['assistant_path'] ?? '')));
 
         $capabilities = $this->all();
+        if (AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
+            foreach ($capabilities as $capability) {
+                if ($capability['domain'] === 'finance') {
+                    return $capability;
+                }
+            }
+        }
         $selectedEstimate = $this->hasEstimateContext($context);
         if (AssistantEstimateCompositionIntent::matches($query, $selectedEstimate)
             || (! AssistantFactIntentClassifier::isNarrative($query) && preg_match('/смет/iu', $query) && preg_match('/позиц/iu', $query))) {

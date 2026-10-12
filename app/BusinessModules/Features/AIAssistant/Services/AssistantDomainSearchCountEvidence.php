@@ -19,7 +19,15 @@ final class AssistantDomainSearchCountEvidence
         $scope = ['domain' => $definition->domain, 'entity_type' => $entityType,
             'query' => trim((string) ($arguments['query'] ?? '')),
             'project_id' => is_numeric($arguments['project_id'] ?? null) ? (int) $arguments['project_id'] : null, 'fields' => $fields];
-        $identity = self::sign([$organizationId, (string) $actor->getKey(), $scope]);
+        $clock = null;
+        if (($arguments['predicate'] ?? null) === 'overdue') {
+            if ($definition->domain !== 'schedule' || $entityType !== 'schedule_task') {
+                throw new \LogicException('unsupported_count_predicate');
+            }
+            $scope['predicate'] = 'overdue';
+            $clock = self::predicateClock();
+        }
+        $identity = self::sign([$organizationId, (string) $actor->getKey(), $scope, $clock]);
         $permissions = array_merge($definition->permissions, (array) ($definition->entityPermissions[$entityType] ?? []));
         foreach ($fields as $field) {
             $permissions = array_merge($permissions, (array) ($definition->fieldPermissions[$field] ?? []));
@@ -30,6 +38,9 @@ final class AssistantDomainSearchCountEvidence
             'required_domains' => [match ($definition->domain) { 'works' => 'projects', 'acts' => 'contracts', default => $definition->domain }],
             'required_permissions' => array_values(array_unique($permissions)), 'source_version' => self::sign([$identity, $total]),
             'fetched_at' => $fetchedAt, '_search_count_query' => $scope, '_search_count_actor' => (string) $actor->getKey()];
+        if ($clock !== null) {
+            $reference['_search_count_clock'] = $clock;
+        }
         $reference['_search_count_proof'] = self::sign($reference);
 
         return ['field' => 'record_count', 'value' => $total, 'source_ref' => $reference];
@@ -45,6 +56,12 @@ final class AssistantDomainSearchCountEvidence
             || ($reference['content_scope'] ?? null) !== 'structured' || ! is_array($reference['_search_count_query'] ?? null)
             || ! is_string($reference['_search_count_actor'] ?? null) || ! is_string($reference['_search_count_proof'] ?? null)
             || ! is_string($reference['fetched_at'] ?? null)) {
+            return false;
+        }
+        if (($reference['_search_count_query']['predicate'] ?? null) === 'overdue'
+            && (($reference['_search_count_query']['domain'] ?? null) !== 'schedule'
+                || ($reference['_search_count_query']['entity_type'] ?? null) !== 'schedule_task'
+                || ! self::matchesPredicateClock($reference['_search_count_clock'] ?? null))) {
             return false;
         }
         try {
@@ -102,6 +119,9 @@ final class AssistantDomainSearchCountEvidence
     public static function matchesRequestedEntity(string $query, array $evidence): bool
     {
         $scope = $evidence['source_ref']['_search_count_query'] ?? [];
+        if (self::isOverdueTaskRequest($query)) {
+            return ($scope['domain'] ?? null) === 'schedule' && ($scope['entity_type'] ?? null) === 'schedule_task';
+        }
         $type = $scope['entity_type'] ?? null;
         $target = self::targetPhrase($query);
         if (! is_string($type) || $target === null) { return false; }
@@ -139,6 +159,10 @@ final class AssistantDomainSearchCountEvidence
     public static function matchesRequestedScope(string $query, array $evidence, array $requestScope = []): bool
     {
         $scope = $evidence['source_ref']['_search_count_query'] ?? [];
+        if (self::isOverdueTaskRequest($query)) {
+            return self::matchesOverdueTaskScope($query, $evidence, $requestScope);
+        }
+        if (isset($scope['predicate'])) { return false; }
         $searchTerm = '';
         $semanticQuery = $query;
         $searchPattern = '/(?:по\s+(?:поиску|запросу)|со\s+словом|содержащ[а-яё]*\s+(?:слово|текст))\s+["«“]([^"»”]{1,200})["»”]/iu';
@@ -174,6 +198,43 @@ final class AssistantDomainSearchCountEvidence
         }
 
         return mb_strtolower(trim((string) ($scope['query'] ?? ''), " \t\n\r\0\x0B\"«»“”")) === mb_strtolower($searchTerm);
+    }
+
+    public static function predicateClock(): array
+    {
+        $timezone = (string) config('app.timezone', 'UTC');
+        return ['date' => \Carbon\CarbonImmutable::now($timezone)->toDateString(), 'timezone' => $timezone];
+    }
+
+    private static function matchesPredicateClock(mixed $clock): bool
+    {
+        $current = self::predicateClock();
+        return is_array($clock) && count($clock) === 2 && ($clock['date'] ?? null) === $current['date']
+            && ($clock['timezone'] ?? null) === $current['timezone'];
+    }
+
+    private static function isOverdueTaskRequest(string $query): bool
+    {
+        return self::isCountRequest($query) && preg_match('/(?<!\pL)просроч[а-яё]*\s+задач[а-яё]*(?!\pL)/iu', $query) === 1;
+    }
+
+    private static function matchesOverdueTaskScope(string $query, array $evidence, array $requestScope): bool
+    {
+        $scope = $evidence['source_ref']['_search_count_query'] ?? [];
+        if (($scope['domain'] ?? null) !== 'schedule' || ($scope['entity_type'] ?? null) !== 'schedule_task'
+            || ($scope['predicate'] ?? null) !== 'overdue' || ($scope['query'] ?? null) !== ''
+            || ! self::matchesPredicateClock($evidence['source_ref']['_search_count_clock'] ?? null)) { return false; }
+        $organizationWide = self::isOrganizationWideRequest($query);
+        $expectedProject = $organizationWide ? null : ($requestScope['project_id'] ?? null);
+        $projectScoped = preg_match('/(?<!\pL)(?:в|на|по|для|из)\s+(?:(?:текущ[а-яё]*|выбранн[а-яё]*|этом|этого|наш[а-яё]*)\s+)?(?:проект|объект)[а-яё]*(?!\pL)/iu', $query, $projectMatch) === 1;
+        if ($expectedProject !== null && (! is_int($expectedProject) || $expectedProject < 1)) { return false; }
+        if ($projectScoped && $expectedProject === null || ($scope['project_id'] ?? null) !== $expectedProject
+            || isset($requestScope['query']) && $requestScope['query'] !== '') { return false; }
+        $semantic = preg_replace('/(?<!\pL)просроч[а-яё]*(?!\pL)/iu', '', $query) ?? $query;
+        if ($projectScoped) { $semantic = str_replace($projectMatch[0], '', $semantic); }
+        if ($organizationWide) { $semantic = preg_replace(self::ORGANIZATION_SCOPE, '', $semantic) ?? $semantic; }
+        $semantic = preg_replace('/(?<!\pL)их(?!\pL)/iu', '', $semantic) ?? $semantic;
+        return self::hasOnlyConfirmedTargetWords($semantic, 'schedule_task');
     }
 
     private static function hasOnlyConfirmedTargetWords(string $query, string $entityType): bool

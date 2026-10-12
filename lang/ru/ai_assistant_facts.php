@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'schedule_overdue_count' => 'Просроченных незавершённых задач графика в указанной области: :count.',
     'returned_scope' => 'Показаны поля найденных записей. Полнота списка и общие итоги не подтверждены.',
     'search_record_count' => 'В проверенном поиске найдено записей: :count.',
     'search_record_count_organization' => 'В доступных данных организации найдено записей: :count.',

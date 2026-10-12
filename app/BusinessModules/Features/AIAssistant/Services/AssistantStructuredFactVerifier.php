@@ -10,6 +10,9 @@ final class AssistantStructuredFactVerifier
 {
     public function guard(string $query, string $text, array $toolResults = [], array $requestScope = []): array
     {
+        if (AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
+            return $this->verifiedProjectExpenses($query, $text, $toolResults, $requestScope);
+        }
         $planCandidate = AssistantPresentationPlanner::isPlanCandidate($text);
         if (AssistantDomainSearchCountEvidence::isCountRequest($query)) {
             return $this->verifiedCount($query, $text, $toolResults, $requestScope);
@@ -34,10 +37,70 @@ final class AssistantStructuredFactVerifier
 
     public function confirmedResults(array $toolResults, ?string $query = null, array $requestScope = []): array
     {
+        if ($query !== null && AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
+            return $this->verifiedProjectExpenses($query, '', $toolResults, $requestScope);
+        }
         if ($query !== null && AssistantDomainSearchCountEvidence::isCountRequest($query)) {
             return $this->verifiedCount($query, '', $toolResults, $requestScope);
         }
         return $this->verifiedResults(null, '', $toolResults, $query);
+    }
+
+    private function verifiedProjectExpenses(string $query, string $text, array $toolResults, array $requestScope): array
+    {
+        $unverified = ['text' => trans_message('ai_assistant_financial.project_expense_unverified'), 'validation_status' => 'partial',
+            'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
+        if (AssistantRequestProjectScope::organizationWide($query)
+            || preg_match('/(?:планов|прогноз|(?:по|согласно)\s+плану)/iu', $query) === 1) { return $unverified; }
+        $projectId = $requestScope['project_id'] ?? null;
+        $period = (new \App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantPeriodResolver)->resolve($query);
+        if (! is_int($projectId) || $projectId < 1 || $period?->dateFrom === null || $period->dateTo === null) { return $unverified; }
+        $candidates = [];
+        foreach ($toolResults as $result) {
+            $evidence = is_array($result) ? ($result['financial_evidence'] ?? null) : null;
+            if (! is_array($result) || ($result['_tool_name'] ?? null) !== 'get_live_project_financial_evidence'
+                || ($result['source_covered'] ?? false) !== true || ! is_array($evidence)
+                || ($evidence['scope'] ?? null) !== 'authorized_project_period_totals'
+                || ! is_array($evidence['rows'] ?? null) || $evidence['rows'] === []
+                || ! in_array($evidence['validation_status'] ?? null, ['verified', 'partial'], true)
+                || ($evidence['source_refs'] ?? null) !== array_column($evidence['rows'], 'source_ref')
+                || ($evidence['version'] ?? null) !== AssistantSourceReferenceIdentity::key($evidence['rows'])) { continue; }
+            $lines = [];
+            $currencies = [];
+            $valid = true;
+            foreach ($evidence['rows'] as $row) {
+                $ref = is_array($row) ? ($row['source_ref'] ?? null) : null;
+                $key = is_array($ref) ? ($ref['composite_key'] ?? null) : null;
+                $currency = is_array($row) ? ($row['currency'] ?? null) : null;
+                $cost = is_array($row) ? ($row['fields']['actual_cost'] ?? null) : null;
+                if (! is_array($row) || ! is_array($ref) || ! is_array($key)
+                    || ($row['entity_type'] ?? null) !== 'live_project_financial_projection'
+                    || ($ref['entity_type'] ?? null) !== 'live_project_financial_projection'
+                    || ($ref['projection_name'] ?? null) !== 'live_project_financial_projection'
+                    || ($row['entity_id'] ?? null) !== $projectId || ($ref['entity_id'] ?? null) !== $projectId
+                    || ($key['project_id'] ?? null) !== $projectId || ($key['period_start'] ?? null) !== $period->dateFrom
+                    || ($key['period_end'] ?? null) !== $period->dateTo || ! is_string($currency)
+                    || ! in_array($currency, ['RUB', 'USD', 'EUR'], true) || ($key['currency'] ?? null) !== $currency
+                    || isset($currencies[$currency]) || ! is_string($cost) || preg_match('/^-?\d+\.\d{2}$/D', $cost) !== 1
+                    || ! is_string($ref['source_hash'] ?? null) || ! is_string($ref['fetched_at'] ?? null)
+                    || ($row['source_version'] ?? null) !== ($ref['source_version'] ?? null)
+                    || ($ref['source_version'] ?? null) !== AssistantSourceReferenceIdentity::key(['source_hash' => $ref['source_hash'],
+                        'currency' => $currency, 'fields' => $row['fields']])) { $valid = false; break; }
+                try {
+                    $age = time() - (new \DateTimeImmutable($ref['fetched_at']))->getTimestamp();
+                    if ($age < -60 || $age > 600) { $valid = false; break; }
+                } catch (\Throwable) { $valid = false; break; }
+                $currencies[$currency] = true;
+                $lines[] = trans_message('ai_assistant_financial.project_expense_total', ['from' => $period->dateFrom,
+                    'to' => $period->dateTo, 'amount' => $cost, 'currency' => $currency]);
+            }
+            if ($valid && $lines !== []) {
+                $candidate = ['text' => implode("\n", $lines), 'validation_status' => 'verified', 'source_refs' => $evidence['source_refs'],
+                    'replaced' => $text !== implode("\n", $lines), 'needs_clarification' => false, 'structured_evidence_truncated' => false];
+                $candidates[AssistantSourceReferenceIdentity::key($candidate)] = $candidate;
+            }
+        }
+        return count($candidates) === 1 ? reset($candidates) : $unverified;
     }
 
     private function verifiedCount(string $query, string $text, array $toolResults, array $requestScope = []): array
@@ -56,8 +119,9 @@ final class AssistantStructuredFactVerifier
                 'source_refs' => [], 'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
         }
         $evidence = reset($counts);
-        $key = AssistantDomainSearchCountEvidence::isOrganizationWideRequest($query) ? 'search_record_count_organization'
-            : (($evidence['source_ref']['project_id'] ?? null) !== null ? 'search_record_count_project' : 'search_record_count');
+        $key = ($evidence['source_ref']['_search_count_query']['predicate'] ?? null) === 'overdue' ? 'schedule_overdue_count'
+            : (AssistantDomainSearchCountEvidence::isOrganizationWideRequest($query) ? 'search_record_count_organization'
+            : (($evidence['source_ref']['project_id'] ?? null) !== null ? 'search_record_count_project' : 'search_record_count'));
         $formatted = trans_message('ai_assistant_facts.'.$key, ['count' => $evidence['value']]);
 
         return ['text' => $formatted, 'validation_status' => 'verified', 'source_refs' => [$evidence['source_ref']],

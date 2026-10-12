@@ -10,7 +10,7 @@ final class DesignIfcModelElement extends Model
 {
     protected $table = 'design_ifc_model_elements';
 
-    protected $hidden = ['source_content_hash', 'source_schema_version'];
+    protected $hidden = ['source_content_hash', 'source_schema_version', 'source_equipment_kind'];
 
     protected $fillable = [
         'organization_id', 'project_id', 'version_id', 'derivative_id', 'express_id',

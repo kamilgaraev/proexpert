@@ -93,7 +93,7 @@ final class MutationConsentMatrixAssistantService extends AIAssistantService
         $actor->current_organization_id = 15;
         $executed = null;
         $evidence = $failures = $proposals = $urls = [];
-        $response = $this->handleToolCall(['function' => ['name' => $toolName, 'arguments' => '{}']], $organization, $actor, 15, $plan, $allowActions, $executed, $evidence, $failures, $proposals, $urls);
+        $response = $this->handleToolCall(['type' => 'function_call', 'call_id' => 'call_mutation', 'name' => $toolName, 'arguments' => '{}'], $organization, $actor, 15, $plan, $allowActions, $executed, $evidence, $failures, $proposals, $urls);
         return ['response' => $response, 'proposals' => $proposals, 'executed' => $executed];
     }
 }

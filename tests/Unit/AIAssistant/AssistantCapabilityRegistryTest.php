@@ -18,6 +18,28 @@ final class AssistantCapabilityRegistryTest extends TestCase
 
     use UsesAssistantUnitTranslations;
 
+    public function test_overdue_tasks_select_schedule_instead_of_project_context(): void
+    {
+        $capability = (new AssistantCapabilityRegistry)->match('Есть на нашем объекте просроченные задачи? Сколько их?',
+            ['source_module' => 'project-management', 'source_route' => '/projects/52']);
+        self::assertSame('schedule', $capability['domain']);
+    }
+
+    public function test_generic_equipment_is_machinery_and_explicit_bim_equipment_remains_design(): void
+    {
+        $registry = new AssistantCapabilityRegistry;
+        self::assertSame('machinery', $registry->match('Покажи оборудование')['domain']);
+        self::assertSame('design', $registry->match('Сколько кондиционеров в IFC модели?')['domain']);
+    }
+
+    public function test_project_expenses_choose_finance_instead_of_project_status(): void
+    {
+        $registry = new AssistantCapabilityRegistry;
+        foreach (['Покажи расходы нашего объекта за сентябрь 2025 года.', 'Сколько потратили на нашем объекте?', 'Затраты проекта за месяц'] as $query) {
+            self::assertSame('finance', $registry->match($query, ['source_route' => '/projects/52'])['domain'], $query);
+        }
+    }
+
     public function test_every_catalog_domain_has_read_permissions_and_navigation(): void
     {
         $catalog = new AssistantDomainCatalog(AssistantDomainCatalog::defaults());
