@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Understanding;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisSelection;
@@ -12,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectS
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectUnderstandingFingerprint;
 
 final readonly class ProjectUnderstandingCoordinator
 {
@@ -21,6 +24,7 @@ final readonly class ProjectUnderstandingCoordinator
         private CrossDocumentFactArbitratorFactory $arbitrators,
         private ProjectUnderstandingBudget $budget,
         private ProjectSynthesisRunner $synthesis,
+        private ProjectSynthesisAllowance $allowance = new EloquentProjectSynthesisAllowance,
     ) {}
 
     public function refresh(
@@ -148,7 +152,10 @@ final readonly class ProjectUnderstandingCoordinator
             $wireScope,
         );
         $sourceVersion = $synthesisInput->aggregateSourceVersion();
-        $inputFingerprint = $synthesisInput->fingerprint();
+        $approvedParts = $this->allowance->partLimit($synthesisInput);
+        $inputFingerprint = $approvedParts === null ? $synthesisInput->fingerprint()
+            : hash('sha256', $synthesisInput->fingerprint().'|approved-synthesis-parts:'.$approvedParts);
+        $inputFingerprint = hash('sha256', ProjectUnderstandingFingerprint::CONTRACT."\0".$inputFingerprint);
         $replayed = $this->models->replayUnderstanding(
             $organizationId,
             $projectId,
@@ -171,7 +178,7 @@ final readonly class ProjectUnderstandingCoordinator
         }
         $linker = new CrossDocumentFactLinker(
             $this->conflicts,
-            $this->arbitrators->create(
+            $approvedParts === 0 ? null : $this->arbitrators->create(
                 $organizationId,
                 $projectId,
                 $sessionId,
@@ -198,15 +205,20 @@ final readonly class ProjectUnderstandingCoordinator
             }
         }
         $candidateQuestions = array_values($questionsByConflict);
+        $candidateLinks = array_map(static fn (array $link): array => [...$link,
+            'fact_ids' => $link['candidate_fact_ids'] ?? [$link['left_fact_id'], $link['right_fact_id']]], $result->links);
         $synthesisProviderCalls = 0;
         if ($result->links === [] && $candidateQuestions === []) {
             $selection = new ProjectSynthesisSelection([], []);
+        } elseif ($approvedParts === 0) {
+            // The linker already validates scope, evidence and deterministic compatibility; retain its original statuses.
+            $selection = new ProjectSynthesisSelection(array_column($result->links, 'id'), array_column($candidateQuestions, 'conflict_id'));
         } else {
-            $synthesisProviderCalls = count((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisBatchPlanner)->plan($result->links, $candidateQuestions));
+            $synthesisProviderCalls = count((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisBatchPlanner)->plan($candidateLinks, $candidateQuestions));
             if ($synthesisProviderCalls + $result->providerCalls > $this->budget->maxProviderCalls) {
                 return $this->budgetLimitation();
             }
-            $selection = $this->synthesis->run($synthesisInput, $result->links, $candidateQuestions);
+            $selection = $this->synthesis->run($synthesisInput, $candidateLinks, $candidateQuestions);
         }
         $acceptedLinks = array_values(array_filter(
             $result->links,

@@ -23,6 +23,56 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_simple_paid_understanding_keeps_current_conflict_questions_without_any_model_expense(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveManualProjectFacts::class)->handle(
+            $actor, $scope->projectId, $scope->sessionId, 0, (string) Str::uuid(), ['entities' => [
+                ['key' => 'room-a', 'type' => 'room', 'name' => 'Первое помещение'],
+                ['key' => 'room-b', 'type' => 'room', 'name' => 'Второе помещение'],
+            ]]);
+        $models = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+        $facts = $models->snapshot((int) $organization->id, $scope->projectId, $scope->sessionId)->facts;
+        self::assertCount(2, $facts);
+        $conflict = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Conflict::between(
+            'conflict:manual:scope-confirmation', $facts, 'manual_scope_confirmation_required');
+        $models->saveSourceModel([], [], [], [$conflict]);
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:simple-understanding');
+        $operationId = (string) Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 1, $operationId, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session->fresh(), 1, $operationId, $quote['quote_id'], 'generation'));
+        $wire = new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(1, null, $operationId);
+        $coordinator = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class);
+        $result = $coordinator->refresh((int) $organization->id, $scope->projectId, $scope->sessionId, (string) Str::uuid(), 1, $wire);
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame([$conflict->id], array_column($result->questions, 'conflict_id'));
+        $factIds = array_column($facts, 'id');
+        sort($factIds, SORT_STRING);
+        self::assertSame($factIds, $result->questions[0]['fact_ids']);
+        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $scope->sessionId)->count());
+        $replayed = $coordinator->refresh((int) $organization->id, $scope->projectId, $scope->sessionId, (string) Str::uuid(), 2, $wire);
+        self::assertEquals($result->questions, $replayed->questions);
+        self::assertSame([$conflict->id], array_column($replayed->conflicts, 'id'));
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+            ->abort($session->fresh(), $operationId, 'fixture_finished'));
+        $row = DB::table('estimate_generation_project_understanding_runs')->where('session_id', $scope->sessionId)->sole();
+        $payload = json_decode($row->result_payload, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectUnderstandingFingerprint::CONTRACT, $payload['result_contract']);
+        $payload['questions'][0]['fact_ids'] = [];
+        DB::table('estimate_generation_project_understanding_runs')->where('id', $row->id)
+            ->update(['result_payload' => json_encode($payload, JSON_THROW_ON_ERROR)]);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('Project understanding fingerprint collision.');
+        $coordinator->refresh((int) $organization->id, $scope->projectId, $scope->sessionId, (string) Str::uuid(), 3, $wire);
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('auditPartitionApprovals')]
     public function test_real_audit_parts_use_the_original_reserve_and_reject_an_unapproved_expansion(bool $enoughParts): void
     {
@@ -92,7 +142,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('engineerPartitionApprovals')]
-    public function test_real_engineer_candidate_identity_matches_the_paid_physical_attempt_and_replays_once(int $linkCount, bool $enoughParts): void
+    public function test_real_engineer_candidate_identity_matches_the_paid_physical_attempt_and_replays_once(int $linkCount, bool $enoughParts, bool $complex = true): void
     {
         $this->seedGlobalSettings();
         [$organization, $actor, $scope] = $this->fixture();
@@ -100,7 +150,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $permissions->allows('canCurrent')->andReturn(true);
         $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
         $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
-        $session->update(['input_payload' => ['profile_id' => 'industrial',
+        $session->update(['input_payload' => ['profile_id' => $complex ? 'industrial' : 'construction',
             'selected_sections' => $enoughParts ? ['structure', 'finishing'] : ['structure']]]);
         app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:engineer-identity');
         $operationId = (string) Str::uuid();
@@ -165,7 +215,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
 
     public static function engineerPartitionApprovals(): array
     {
-        return [[1, true], [65, true], [65, false]];
+        return [[1, true], [65, true], [65, false], [1, false, false]];
     }
 
     public function test_an_unknown_legacy_paid_balance_keeps_legacy_billing_without_a_new_shared_reserve(): void

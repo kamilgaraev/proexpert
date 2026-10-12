@@ -35,6 +35,7 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(15, $plan['roles']['vision']['max_calls']);
         self::assertSame(4096, $plan['roles']['vision']['output_ceiling']);
         self::assertArrayNotHasKey('project_synthesis', $plan['roles']);
+        self::assertSame(0, $plan['synthesis_part_limit']);
         self::assertArrayNotHasKey('rerank', $plan['roles']);
         self::assertSame(array_sum(array_column($plan['roles'], 'max_calls')), $plan['maximum_calls']);
     }

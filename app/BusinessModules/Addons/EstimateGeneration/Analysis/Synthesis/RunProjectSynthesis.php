@@ -26,6 +26,7 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         private string $modelName,
         private ProjectSynthesisValidator $validator = new ProjectSynthesisValidator,
         private int $maxInputBytes = 524288,
+        private ProjectSynthesisAllowance $allowance = new EloquentProjectSynthesisAllowance,
     ) {}
 
     /**
@@ -39,17 +40,12 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
     ): ProjectSynthesisSelection {
         $validated = $this->validator->validate(['links' => $candidateLinks, 'questions' => $candidateQuestions], $input);
         $parts = (new ProjectSynthesisBatchPlanner)->plan($validated['links'], $validated['questions']);
+        $limit = $this->allowance->partLimit($input);
+        if ($limit !== null && count($parts) > $limit) {
+            throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
+        }
         if (count($parts) === 1) {
             return $this->runPart($input, $validated['links'], $validated['questions']);
-        }
-        if ($input->wireScope?->creditOperationId !== null) {
-            $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
-                ->where('organization_id', $input->organizationId)->where('project_id', $input->projectId)
-                ->where('session_id', $input->sessionId)->where('operation_id', $input->wireScope->creditOperationId)->first(['processing_plan']);
-            $plan = $operation === null ? [] : json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
-            if (count($parts) > (int) ($plan['synthesis_part_limit'] ?? 1)) {
-                throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
-            }
         }
         $prepared = [];
         foreach ($parts as $part) {

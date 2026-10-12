@@ -534,6 +534,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\TargetedConflictResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Application\Understanding\ProjectUnderstandingCoordinator::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance::class);
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::class,
             static fn (): \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog => \App\BusinessModules\Addons\EstimateGeneration\Planning\TechnologySystemCatalog::fromArray(
@@ -702,6 +704,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(ProjectSynthesisModel::class),
             (string) config('estimate-generation.project_engineer.model'),
             maxInputBytes: (int) config('estimate-generation.project_engineer.max_input_bytes'),
+            allowance: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class),
         ));
         $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
         $this->app->singleton(TimewebEstimateComposerModel::class, static fn ($app): TimewebEstimateComposerModel => new TimewebEstimateComposerModel(

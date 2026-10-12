@@ -1561,8 +1561,8 @@ SQL, [
             'limitations' => $limitations,
             'provider_calls' => $providerCalls,
         ];
-        $encodedPayload = $this->json($payload);
-        $fingerprint = hash('sha256', $inputFingerprint."\0".$encodedPayload);
+        $encodedPayload = ProjectUnderstandingFingerprint::encode($payload);
+        $fingerprint = ProjectUnderstandingFingerprint::hash($inputFingerprint, $this->decode($encodedPayload));
 
         return $this->database->connection()->transaction(function () use (
             $organizationId,
@@ -1592,11 +1592,12 @@ SQL, [
                 ->lockForUpdate()
                 ->first();
             if ($existing !== null) {
-                $storedPayload = $this->json($this->decode($existing->result_payload));
+                $storedDecoded = $this->decode($existing->result_payload);
+                $storedPayload = ProjectUnderstandingFingerprint::canonicalJson($storedDecoded);
                 if (! hash_equals((string) $existing->input_fingerprint, $inputFingerprint)
                     || ! hash_equals(
                         (string) $existing->result_fingerprint,
-                        hash('sha256', (string) $existing->input_fingerprint."\0".$storedPayload),
+                        ProjectUnderstandingFingerprint::hash((string) $existing->input_fingerprint, $storedDecoded),
                     )
                     || ! hash_equals($storedPayload, $encodedPayload)) {
                     throw new InvalidArgumentException('Project understanding fingerprint collision.');
@@ -1677,14 +1678,29 @@ SQL, [
             $payload = $this->decode($row->result_payload);
             if (! hash_equals(
                 (string) $row->result_fingerprint,
-                hash('sha256', (string) $row->input_fingerprint."\0".$this->json($payload)),
+                ProjectUnderstandingFingerprint::hash((string) $row->input_fingerprint, $payload),
             )) {
                 throw new InvalidArgumentException('Project understanding fingerprint collision.');
             }
             $links = is_array($payload['links'] ?? null) ? $payload['links'] : [];
             $this->activateUnderstandingRun($row, $links);
 
-            return $this->currentUnderstanding($organizationId, $projectId, $sessionId);
+            $result = $this->currentUnderstanding($organizationId, $projectId, $sessionId);
+            $currentConflicts = [];
+            foreach ($this->currentConflicts($organizationId, $projectId, $sessionId) as $conflict) {
+                $currentConflicts[$conflict->id] = $conflict;
+            }
+            $replayedConflicts = [];
+            foreach ($result['conflicts'] ?? [] as $storedConflict) {
+                $id = is_array($storedConflict) ? ($storedConflict['id'] ?? null) : null;
+                if (! is_string($id) || ! isset($currentConflicts[$id])) {
+                    throw new InvalidArgumentException('Project understanding conflict history is incomplete.');
+                }
+                $replayedConflicts[] = $currentConflicts[$id];
+            }
+            $result['conflicts'] = $replayedConflicts;
+
+            return $result;
         }, 3);
     }
 
