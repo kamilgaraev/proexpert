@@ -94,6 +94,7 @@ final readonly class EstimatorCreditOperations
         if ($this->database->transactionLevel() < 1 || ! Str::isUuid($requestId) || ! Str::isUuid($quoteId)) {
             throw new DomainException('estimator_credit_begin_requires_transaction');
         }
+        $session = $this->session($actor, (int) $session->project_id, (int) $session->id);
         $this->authorization->authorize($actor, $session, $kind === 'dialogue' ? 'estimate_generation.review' : 'estimate_generation.generate');
         app(EstimatorProductAccess::class)->requireAvailable((int) $session->organization_id);
         if (in_array($session->status->value, ['applied', 'archived'], true)) {
@@ -143,7 +144,7 @@ final readonly class EstimatorCreditOperations
 
     private function session(User $actor, int $projectId, int $sessionId): EstimateGenerationSession
     {
-        return EstimateGenerationSession::query()->where('organization_id', $actor->current_organization_id)
+        return EstimateGenerationSession::query()->useWritePdo()->where('organization_id', $actor->current_organization_id)
             ->where('project_id', $projectId)->whereKey($sessionId)->lockForUpdate()->firstOrFail();
     }
 

@@ -23,6 +23,64 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_an_unsuccessful_generation_result_rolls_back_the_reserve_receipt_and_jobs(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['status' => 'ready_to_generate', 'input_payload' => ['generation_mode' => 'strict_documents']]);
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:rejected-generation');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $readiness = \Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::class);
+        $readiness->shouldReceive('evaluate')->once()->andReturnUsing(function () use ($organization): array {
+            self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+
+            return ['can_generate' => false, 'summary' => ['pending_count' => 0], 'blocking_message_key' => 'estimate_generation.documents_require_action'];
+        });
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::class, $readiness);
+        \Illuminate\Support\Facades\Queue::fake();
+        $result = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration::class)->handle($session, 0, null, $actor,
+            creditApproval: ['request_id' => $id, 'quote_id' => $quote['quote_id'], 'state_version' => 0]);
+        self::assertFalse($result->successful);
+        self::assertSame(409, $result->httpStatus);
+        self::assertSame(0, $result->session->state_version);
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->first();
+        self::assertSame('quoted', $operation->status);
+        self::assertNull($operation->receipt);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Queue::assertNothingPushed();
+    }
+
+    public function test_a_stale_service_session_cannot_reserve_a_quote_after_a_database_only_session_change(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:stale-service-session');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        DB::table('estimate_generation_sessions')->where('id', $session->id)->update(['state_version' => 1,
+            'input_payload' => json_encode(['profile_id' => 'industrial'], JSON_THROW_ON_ERROR)]);
+        try {
+            DB::transaction(function () use ($operations, $actor, $session, $id, $quote): void {
+                $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation');
+                self::fail('The stale service object created a reserve despite a newer database state.');
+            });
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
+            self::assertSame(1, $session->fresh()->state_version);
+        }
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame('quoted', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
+    }
+
     public function test_a_quote_reserves_the_real_known_composer_parts_even_with_one_selected_section(): void
     {
         [$organization, $actor, $scope] = $this->fixture();
