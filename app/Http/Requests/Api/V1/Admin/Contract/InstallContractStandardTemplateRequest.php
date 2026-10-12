@@ -17,6 +17,6 @@ final class InstallContractStandardTemplateRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['code' => ['required', 'string', Rule::in(ContractStandardTemplates::CODES)]];
+        return ['code' => ['required', 'string', Rule::in([...ContractStandardTemplates::CODES, 'work'])]];
     }
 }

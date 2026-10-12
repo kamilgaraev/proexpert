@@ -15,6 +15,7 @@ final class RecordExternalContractDecisionRequest extends FormRequest
     {
         return ['expected_version' => ['required', 'integer', 'min:1'], 'decision' => ['required', Rule::in(['accepted', 'rejected'])],
             'reason' => ['nullable', 'string', 'max:2000'], 'request_key' => ['required', 'string', 'max:191'],
+            'party_key' => ['nullable', 'string', 'max:36'],
             'basis' => ['required', 'string', 'max:2000'], 'asset_id' => ['required', 'integer', 'min:1']];
     }
 }

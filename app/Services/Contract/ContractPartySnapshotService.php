@@ -56,6 +56,10 @@ class ContractPartySnapshotService
             throw new Exception(trans_message('contract.organization_context_missing'));
         }
 
+        if ($contract->direct_party !== null) {
+            return ContractDirectParties::resolve((int) $contract->organization_id, $contract->direct_party, (string) $contract->direct_direction);
+        }
+
         return match ($sideType) {
             ContractSideTypeEnum::GENERAL_CONTRACT => [
                 $this->fromProjectCustomer($contract, $owner),
@@ -140,6 +144,7 @@ class ContractPartySnapshotService
                     legalAddress: $resolved['legal_address'] ?? null,
                     email: $resolved['email'] ?? null,
                     phone: $resolved['phone'] ?? null,
+                    requisites: ContractPartyRequisites::directoryBankDetails($resolved['bank_details'] ?? null),
                 );
             }
         }
@@ -180,6 +185,7 @@ class ContractPartySnapshotService
             legalAddress: $contract->contractor->legal_address,
             email: $contract->contractor->email,
             phone: $contract->contractor->phone,
+            requisites: ContractPartyRequisites::directoryBankDetails($contract->contractor->bank_details),
         );
     }
 
@@ -205,9 +211,22 @@ class ContractPartySnapshotService
         ContractPartySideEnum $side,
         ContractPartyData $partyData
     ): void {
+        $existing = $contract->parties()->where('side', $side->value)->first();
+        $data = $partyData->toArray();
+        if ($existing !== null) {
+            $sameIdentity = $partyData->counterpartyId !== null && $existing->counterparty_id === $partyData->counterpartyId
+                || $partyData->linkedOrganizationId !== null && $existing->linked_organization_id === $partyData->linkedOrganizationId
+                || $partyData->counterpartyId === null && $partyData->linkedOrganizationId === null
+                    && $existing->counterparty_id === null && $existing->linked_organization_id === null
+                    && array_map(static fn (string $key) => ($existing->snapshot ?? [])[$key] ?? null, ['name', 'legal_name', 'inn', 'ogrn'])
+                        === array_map(static fn (string $key) => $data['snapshot'][$key] ?? null, ['name', 'legal_name', 'inn', 'ogrn']);
+            if ($sameIdentity) {
+                $data['snapshot'] = [...array_intersect_key($existing->snapshot ?? [], ContractPartyRequisites::LABELS), ...$data['snapshot']];
+            }
+        }
         $contract->parties()->updateOrCreate(
             ['side' => $side->value],
-            $partyData->toArray()
+            $data
         );
     }
 

@@ -17,6 +17,7 @@ class ContractParty extends Model
     protected $fillable = [
         'contract_id',
         'side',
+        'party_key',
         'role',
         'counterparty_id',
         'linked_organization_id',

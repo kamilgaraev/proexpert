@@ -92,6 +92,7 @@ class ProjectCustomerResolverService
                 'legal_address' => $project->customerCounterparty->legal_address,
                 'email' => $project->customerCounterparty->email,
                 'phone' => $project->customerCounterparty->phone,
+                'bank_details' => $project->customerCounterparty->bank_details,
             ];
         }
 

@@ -51,7 +51,7 @@ final class ContractProposalService
             $parties = $draft['parties'];
             $own = array_values(array_filter($parties, static fn (array $party): bool => (int) ($party['linked_organization_id'] ?? 0) === $organizationId));
             $opposite = array_values(array_filter($parties, static fn (array $party): bool => (int) ($party['linked_organization_id'] ?? 0) !== $organizationId));
-            if (count($own) !== 1 || count($opposite) !== 1) {
+            if (count($own) !== 1 || count($opposite) < 1 || count($opposite) > 19) {
                 throw new AuthorizationException;
             }
             $content = Arr::only($draft, ['document', 'definitions', 'blocks', 'values', 'entity_snapshots', 'parties', 'attachments']);
@@ -67,6 +67,12 @@ final class ContractProposalService
                 'content_hash' => hash('sha256', $this->json([$templateVersionId, $content])),
                 'request_key' => $key, 'request_fingerprint' => $fingerprint, 'revision_request_key' => (string) Str::uuid(), 'created_at' => now(),
             ]);
+            foreach ($opposite as $party) {
+                DB::table('contract_builder_proposal_recipients')->insert([
+                    'proposal_id' => $id, 'party_key' => ContractRevisionParties::key($party),
+                    'party_name' => $party['name'], 'party_organization_id' => $party['linked_organization_id'] ?? null,
+                ]);
+            }
 
             return $this->present(DB::table('contract_builder_proposals')->where('id', $id)->firstOrFail());
         });
@@ -90,26 +96,40 @@ final class ContractProposalService
             $this->views->find($actor, $organizationId, $contractId);
             $instance = DB::table('contract_builder_instances')->where('contract_id', $contractId)->firstOrFail();
             $proposal = DB::table('contract_builder_proposals')->where('instance_id', $instance->id)->where('id', $proposalId)->lockForUpdate()->firstOrFail();
-            if ($external === null
-                ? ((int) $proposal->author_organization_id === $organizationId || (int) $proposal->recipient_organization_id !== $organizationId)
-                : ($proposal->recipient_organization_id !== null || (int) $proposal->author_organization_id !== $organizationId)) {
-                throw new AuthorizationException;
-            }
-            if ($proposal->status !== 'pending') {
-                if ($proposal->decision_key !== $key || !hash_equals($proposal->decision_fingerprint, $fingerprint)) {
+            $recipients = DB::table('contract_builder_proposal_recipients')->where('proposal_id', $proposalId)->lockForUpdate()->get();
+            $eligible = $recipients->filter(static fn (object $row): bool => $external === null
+                ? (int) ($row->party_organization_id ?? 0) === $organizationId
+                : $row->party_organization_id === null && (!isset($external['party_key']) || $row->party_key === $external['party_key']));
+            if ($eligible->count() !== 1 || ($external === null
+                ? (int) $proposal->author_organization_id === $organizationId
+                : (int) $proposal->author_organization_id !== $organizationId)) { throw new AuthorizationException; }
+            $recipient = $eligible->first();
+            if ($recipient->status !== 'pending') {
+                if ($recipient->decision_key !== $key || !hash_equals($recipient->decision_fingerprint, $fingerprint)) {
                     $this->conflict();
                 }
                 return $this->present($proposal);
             }
-            if ((int) $proposal->lock_version !== $expectedVersion || !ContractBuilderWorkflow::canRevise($contract, $instance)) {
+            if ($proposal->status !== 'pending' || (int) $proposal->lock_version !== $expectedVersion || !ContractBuilderWorkflow::canRevise($contract, $instance)) {
                 $this->conflict();
             }
             $revisionId = null;
             $proof = $external === null ? null : app(ContractBuilderAssetService::class)->evidence($actor, $organizationId, $contractId, $external['asset_id']);
             if ($decision === 'accepted') {
+                app(ContractProposalReviewService::class)->assertAcceptedClauses($proposalId, (int) $recipient->id);
                 if ((int) $instance->current_revision_id !== (int) $proposal->base_revision_id) {
                     $this->conflict();
                 }
+            }
+            $decisionFields = [
+                'status' => $decision, 'decided_by' => $actor->id, 'decision_organization_id' => $organizationId,
+                'decision_reason' => $reason, 'decision_key' => $key, 'decision_fingerprint' => $fingerprint,
+                'decision_kind' => $external === null ? 'connected' : 'external', 'decision_basis' => $external['basis'] ?? null,
+                'decision_proof' => $proof === null ? null : $this->json($proof), 'decided_at' => now(),
+            ];
+            DB::table('contract_builder_proposal_recipients')->where('id', $recipient->id)->update($decisionFields);
+            $complete = $decision === 'accepted' && !DB::table('contract_builder_proposal_recipients')->where('proposal_id', $proposalId)->where('status', '<>', 'accepted')->exists();
+            if ($complete) {
                 $base = DB::table('contract_builder_revisions')->where('instance_id', $instance->id)->where('id', $proposal->base_revision_id)->firstOrFail();
                 $content = json_decode($proposal->content, true, 512, JSON_THROW_ON_ERROR);
                 (new ContractDocumentRenderer)->render($content['document'], $content['definitions'], $content['values'], $content['entity_snapshots']);
@@ -129,11 +149,8 @@ final class ContractProposalService
                 app(ContractRevisionDocumentService::class)->request($revisionId, (int) $actor->id);
             }
             DB::table('contract_builder_proposals')->where('id', $proposalId)->update([
-                'status' => $decision, 'decided_by' => $actor->id, 'decision_organization_id' => $organizationId,
-                'decision_reason' => $reason, 'decision_key' => $key, 'decision_fingerprint' => $fingerprint,
-                'decision_kind' => $external === null ? 'connected' : 'external', 'decision_basis' => $external['basis'] ?? null,
-                'decision_proof' => $proof === null ? null : $this->json($proof),
-                'decided_at' => now(), 'accepted_revision_id' => $revisionId, 'lock_version' => $expectedVersion + 1,
+                ...($complete || $decision === 'rejected' ? [...$decisionFields, 'accepted_revision_id' => $revisionId] : []),
+                'lock_version' => $expectedVersion + 1,
             ]);
 
             return $this->present(DB::table('contract_builder_proposals')->where('id', $proposalId)->firstOrFail());
@@ -145,7 +162,8 @@ final class ContractProposalService
         $this->views->find($actor, $organizationId, $contractId);
         $instance = DB::table('contract_builder_instances')->where('contract_id', $contractId)->firstOrFail();
         $proposal = DB::table('contract_builder_proposals')->where('instance_id', $instance->id)->where('id', $proposalId)
-            ->where(fn ($query) => $query->where('author_organization_id', $organizationId)->orWhere('recipient_organization_id', $organizationId))->firstOrFail();
+            ->where(fn ($query) => $query->where('author_organization_id', $organizationId)->orWhereExists(fn ($recipients) => $recipients
+                ->selectRaw('1')->from('contract_builder_proposal_recipients')->whereColumn('proposal_id', 'contract_builder_proposals.id')->where('party_organization_id', $organizationId)))->firstOrFail();
 
         return $this->present($proposal);
     }
@@ -157,7 +175,8 @@ final class ContractProposalService
         $rows = DB::table('contract_builder_proposals')->where('instance_id', $instance->id)
             ->select(['id', 'base_revision_id', 'draft_version', 'author_organization_id', 'recipient_organization_id',
                 'message', 'status', 'lock_version', 'created_by', 'created_at', 'decided_by', 'decided_at', 'decision_reason', 'decision_kind', 'decision_basis', 'decision_proof', 'accepted_revision_id', 'content_hash'])
-            ->where(fn ($query) => $query->where('author_organization_id', $organizationId)->orWhere('recipient_organization_id', $organizationId))
+            ->where(fn ($query) => $query->where('author_organization_id', $organizationId)->orWhereExists(fn ($recipients) => $recipients
+                ->selectRaw('1')->from('contract_builder_proposal_recipients')->whereColumn('proposal_id', 'contract_builder_proposals.id')->where('party_organization_id', $organizationId)))
             ->when($before !== null, fn ($query) => $query->where('id', '<', $before))->orderByDesc('id')->limit(21)->get();
         $items = $rows->take(20)->map(fn (object $row): array => Arr::except($this->present($row), ['content']))->all();
 
@@ -188,6 +207,13 @@ final class ContractProposalService
             'accepted_revision_id' => $proposal->accepted_revision_id, 'content_hash' => $proposal->content_hash,
             'decision_kind' => $proposal->decision_kind, 'decision_basis' => $proposal->decision_basis,
             'decision_proof' => $proposal->decision_proof === null ? null : json_decode($proposal->decision_proof, true, 512, JSON_THROW_ON_ERROR),
+            'recipients' => DB::table('contract_builder_proposal_recipients')->where('proposal_id', $proposal->id)->orderBy('id')->get()->map(static fn (object $row): array => [
+                'party_key' => $row->party_key, 'party_name' => $row->party_name,
+                'organization_id' => $row->party_organization_id === null ? null : (int) $row->party_organization_id,
+                'status' => $row->status, 'decision_reason' => $row->decision_reason, 'decision_basis' => $row->decision_basis,
+                'decided_by' => $row->decided_by, 'decided_at' => $row->decided_at,
+                'decision_proof' => $row->decision_proof === null ? null : json_decode($row->decision_proof, true, 512, JSON_THROW_ON_ERROR),
+            ])->all(),
         ];
         if (isset($proposal->content)) {
             $result['content'] = json_decode($proposal->content, true, 512, JSON_THROW_ON_ERROR);

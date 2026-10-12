@@ -22,7 +22,7 @@ final readonly class LegalSignatureProjection
                     ->whereColumn('successor.replaces_request_id', 'legal_signature_requests.id');
             })
             ->orderBy('id')
-            ->get(['status', 'method', 'required_signature_kinds']);
+            ->get(['status', 'method', 'required_signature_kinds', 'signers']);
         $statuses = $requests->pluck('status')->map(static fn (mixed $status): string => (string) $status)->all();
         $latestVerificationIds = $this->connection->table('legal_signature_verifications')
             ->selectRaw('MAX(id)')
@@ -58,6 +58,9 @@ final readonly class LegalSignatureProjection
             ->map(static fn (object $request): string => $request->method === 'paper' ? 'paper_original' : (string) $request->method)
             ->unique()->values()->all();
         $requirementsSatisfied = array_diff($requiredKinds, $completedKinds) === [];
+        $completedSignerSets = $requests->filter(static fn (object $request): bool => $request->status === 'completed')
+            ->map(static fn (object $request): array => is_string($request->signers) ? json_decode($request->signers, true, flags: JSON_THROW_ON_ERROR) : (array) $request->signers)->all();
+        $requirementsSatisfied = $requirementsSatisfied && (new LegalContractSignerCoverage($this->connection))->satisfied($document, $completedSignerSets);
         if ($requests->isEmpty()) {
             [$signatureStatus, $lifecycle] = ['not_signed', 'draft'];
         } elseif (in_array('revoked', $electronicEvidenceStatuses, true)) {
@@ -70,6 +73,8 @@ final readonly class LegalSignatureProjection
             [$signatureStatus, $lifecycle] = ['partially_signed', 'partially_signed'];
         } elseif ($hasPending) {
             [$signatureStatus, $lifecycle] = ['pending', 'signing'];
+        } elseif (! $hasCompleted) {
+            [$signatureStatus, $lifecycle] = ['not_signed', $document->approval_status === 'approved' ? 'approved' : 'draft'];
         } else {
             [$signatureStatus, $lifecycle] = ['signed', 'signed'];
         }

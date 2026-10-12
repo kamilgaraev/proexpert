@@ -28,8 +28,8 @@ class StoreContractRequest extends FormRequest
             return false;
         }
 
-        $projectIds = $routeProjectId !== null ? [$routeProjectId] : [];
-        if ($routeProjectId !== null && $this->boolean('is_multi_project')) {
+        $projectIds = $routeProjectId !== null ? [$routeProjectId] : $this->numericProjectIds([$this->input('project_id')]);
+        if ($this->boolean('is_multi_project')) {
             $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
         }
 
@@ -81,6 +81,13 @@ class StoreContractRequest extends FormRequest
             }
 
             if (! $sideType) {
+                return;
+            }
+
+            if ($this->input('direct_party') !== null) {
+                if ($sideType !== ContractSideTypeEnum::CONTRACT || $contractorId || $supplierId || $isSelfExecution || $this->input('superior_organization_id')) {
+                    $validator->errors()->add('direct_party', 'Выберите стороны напрямую без проектной иерархии и собственных сил.');
+                }
                 return;
             }
 
@@ -151,7 +158,7 @@ class StoreContractRequest extends FormRequest
             'nullable',
             'integer',
             $this->availableProjectRule($organizationId),
-            'required_without:project_ids',
+            Rule::requiredIf(fn (): bool => $this->input('direct_party') === null && !$this->filled('project_ids')),
         ];
         $projectIdsRules = ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'];
         $projectIdsItemRules = [
@@ -178,6 +185,11 @@ class StoreContractRequest extends FormRequest
 
         return [
             'template' => ['sometimes', 'array:template_id,template_version,values,source_hash'],
+            'party_details' => ['sometimes', 'array', 'max:20'],
+            'party_details.*' => ['array'],
+            'direct_party' => ['sometimes', 'nullable', 'array', 'max:12'],
+            'additional_parties' => ['sometimes', 'array', 'list', 'max:18'],
+            'additional_parties.*' => ['array'],
             'template.template_id' => ['required_with:template', 'uuid'],
             'template.template_version' => ['required_with:template', 'integer', 'min:1'],
             'template.values' => ['present_with:template', 'array', 'max:500'],
@@ -393,6 +405,9 @@ class StoreContractRequest extends FormRequest
             currency: mb_strtoupper((string) ($this->validated('currency') ?? config('payments.defaults.currency', 'RUB'))),
             superior_organization_id: $this->validated('superior_organization_id') !== null ? (int) $this->validated('superior_organization_id') : null,
             direction: $this->validated('direction'),
+            party_details: $this->validated('party_details') ?? [],
+            additional_parties: $this->validated('additional_parties') ?? [],
+            direct_party: $this->validated('direct_party'),
         );
     }
 }

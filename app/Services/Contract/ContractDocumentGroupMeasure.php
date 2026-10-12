@@ -35,6 +35,7 @@ final class ContractDocumentGroupMeasure
             usort($children, static fn ($a, $b): int => $a['layout']['y'] <=> $b['layout']['y']);
             $placed = [];
             $items = [];
+            $headers = [];
             $height = 0;
             $unit = ContractDocumentPrintMeasure::PT_PER_MM;
             foreach ($children as $child) {
@@ -66,9 +67,16 @@ final class ContractDocumentGroupMeasure
                     $item['y'] += $y;
                     $items[] = $item;
                 }
+                foreach ($measurement['headers'] ?? [] as $header) {
+                    $header['top'] += $y;
+                    $header['bottom'] += $y;
+                    foreach ($header['items'] as &$headerItem) { $headerItem['x'] += $x; $headerItem['y'] += $y; }
+                    unset($headerItem);
+                    $headers[] = $header;
+                }
             }
 
-            return ['items' => $items, 'height' => $height];
+            return ['items' => $items, 'height' => $height, 'headers' => $headers];
         };
 
         return array_map($compose, $tree);

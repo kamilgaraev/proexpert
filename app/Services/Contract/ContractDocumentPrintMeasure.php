@@ -6,10 +6,12 @@ namespace App\Services\Contract;
 
 use App\Exceptions\ContractBuilderException;
 use DOMElement;
+use DOMNode;
 use Dompdf\Dompdf;
 use Dompdf\Frame;
 use Dompdf\FrameDecorator\ListBullet;
 use Dompdf\FrameDecorator\Text;
+use Dompdf\FrameDecorator\Image;
 use Dompdf\Options;
 
 final class ContractDocumentPrintMeasure
@@ -52,7 +54,7 @@ final class ContractDocumentPrintMeasure
                 .'line-height:'.($layout['lineHeight'] ?? 1.4).';text-align:'.($layout['align'] ?? 'left').';'
                 .'text-indent:'.(($layout['firstLineIndent'] ?? 0) * self::PT_PER_MM).'pt;font-family:'.$cssFamily.';'
                 .(isset($layout['fontSize']) ? 'font-size:'.$layout['fontSize'].'pt;' : '');
-            $html .= '<section data-measure="'.$index.'" data-font-family="'.$family.'" style="'.$style.'">'.$block['html'].'</section>';
+            $html .= '<section data-measure="'.$index.'" data-font-family="'.htmlspecialchars($family, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'" style="'.htmlspecialchars($style, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'">'.$block['html'].'</section>';
         }
         $html .= '</body></html>';
         $pdf->setCallbacks([['event' => 'end_frame', 'f' => function (Frame $frame) use (&$measurements, $pdf): void {
@@ -78,7 +80,13 @@ final class ContractDocumentPrintMeasure
             }
             [$x, $y] = $frame->get_position();
             $style = $frame->get_style();
-            if ($frame instanceof Text || $frame instanceof ListBullet) {
+            if ($frame instanceof Image && $node instanceof DOMElement) {
+                $box = $frame->get_border_box();
+                $source = $node->getAttribute('src');
+                ContractInlineImage::bytes($source);
+                $this->addItem($measurements[$index], $node, ['type' => 'image', 'x' => (float) $box['x'], 'y' => (float) $box['y'],
+                    'width' => (float) $box['w'], 'height' => (float) $box['h'], 'src' => $source, 'alt' => $node->getAttribute('alt')]);
+            } elseif ($frame instanceof Text || $frame instanceof ListBullet) {
                 $text = $frame instanceof Text ? $frame->get_text()
                     : ($node instanceof DOMElement && $node->hasAttribute('dompdf-counter') ? $node->getAttribute('dompdf-counter').'.' : '•');
                 if ($text === '') {
@@ -88,6 +96,25 @@ final class ContractDocumentPrintMeasure
                 $italic = in_array($style->font_style, ['italic', 'oblique'], true);
                 $size = (float) $style->font_size;
                 $family = $root->getAttribute('data-font-family');
+                $color = '#172033';
+                $familyFound = false;
+                $colorFound = false;
+                for ($parent = $node->parentNode; $parent instanceof DOMElement; $parent = $parent->parentNode) {
+                    if (!$familyFound && $parent->hasAttribute('data-contract-font')) {
+                        $family = $parent->getAttribute('data-contract-font');
+                        $familyFound = true;
+                    }
+                    if (!$colorFound && $parent->hasAttribute('data-contract-color')) {
+                        $color = $parent->getAttribute('data-contract-color');
+                        $colorFound = true;
+                    }
+                    if ($parent === $root) {
+                        break;
+                    }
+                }
+                if ($family === 'Most Contract') {
+                    $family = 'DejaVu Sans';
+                }
                 $font = $pdf->getFontMetrics()->getFont($family, ($bold ? 'bold' : '').($italic ? 'italic' : '') ?: 'normal');
                 $spacing = $frame instanceof Text ? $frame->get_text_spacing() + (float) $style->word_spacing : 0.0;
                 $width = $pdf->getFontMetrics()->getTextWidth($text, $font, $size, $spacing, (float) $style->letter_spacing);
@@ -97,7 +124,7 @@ final class ContractDocumentPrintMeasure
                 $item = ['type' => 'text', 'text' => $text, 'x' => (float) $x, 'y' => (float) $y,
                     'width' => $width, 'height' => $pdf->getFontMetrics()->getFontHeight($font, $size),
                     'fontFamily' => $family, 'fontSize' => $size, 'bold' => $bold, 'italic' => $italic, 'underline' => false, 'strike' => false,
-                    'wordSpacing' => $spacing, 'letterSpacing' => (float) $style->letter_spacing, 'href' => null];
+                    'wordSpacing' => $spacing, 'letterSpacing' => (float) $style->letter_spacing, 'href' => null, 'color' => $color];
                 for ($parent = $node->parentNode; $parent instanceof DOMElement && $parent !== $root; $parent = $parent->parentNode) {
                     if ($parent->tagName === 'u') {
                         $item['underline'] = true;
@@ -107,10 +134,13 @@ final class ContractDocumentPrintMeasure
                         $item['href'] = $parent->getAttribute('href');
                     }
                 }
-                $measurements[$index]['items'][] = $item;
+                $this->addItem($measurements[$index], $node, $item);
             } elseif ($node instanceof DOMElement && $node->tagName === 'td') {
                 $box = $frame->get_border_box();
-                $measurements[$index]['items'][] = ['type' => 'rect', 'x' => (float) $box['x'], 'y' => (float) $box['y'], 'width' => (float) $box['w'], 'height' => (float) $box['h']];
+                $this->addItem($measurements[$index], $node, ['type' => 'rect', 'x' => (float) $box['x'], 'y' => (float) $box['y'], 'width' => (float) $box['w'], 'height' => (float) $box['h']]);
+            } elseif ($node instanceof DOMElement && $node->tagName === 'table') {
+                $box = $frame->get_border_box();
+                $measurements[$index]['table_bounds'][$node->getNodePath()] = (float) $box['y'] + (float) $box['h'];
             } elseif ($node instanceof DOMElement && $node->hasAttribute('id')) {
                 $measurements[$index]['items'][] = ['type' => 'anchor', 'name' => $node->getAttribute('id'), 'x' => (float) $x, 'y' => (float) $y, 'width' => 0, 'height' => 0];
             }
@@ -123,6 +153,15 @@ final class ContractDocumentPrintMeasure
                 $measurement['height'] = max($measurement['height'], $item['y'] + $item['height']);
             }
             unset($item);
+            foreach ($measurement['headers'] ?? [] as $key => $header) {
+                $top = min(array_column($header, 'y'));
+                $bottom = max(array_map(static fn (array $item): float => $item['y'] + $item['height'], $header));
+                foreach ($header as &$headerItem) { $headerItem['y'] -= $measurement['origin']; }
+                unset($headerItem);
+                $measurement['headers'][$key] = ['top' => $top - $measurement['origin'], 'height' => $bottom - $top,
+                    'bottom' => ($measurement['table_bounds'][$key] ?? $bottom) - $measurement['origin'], 'items' => $header];
+            }
+            $measurement['headers'] = array_values($measurement['headers'] ?? []);
             if ($measurement['height'] > 19000) {
                 throw new ContractBuilderException('contracts.builder_export_invalid', 422);
             }
@@ -130,5 +169,18 @@ final class ContractDocumentPrintMeasure
         unset($measurement);
 
         return $measurements;
+    }
+
+    private function addItem(array &$measurement, DOMNode $node, array $item): void
+    {
+        $measurement['items'][] = $item;
+        $header = false;
+        for ($parent = $node; $parent instanceof DOMNode; $parent = $parent->parentNode) {
+            if ($parent instanceof DOMElement && $parent->getAttribute('data-contract-repeat-header') === '1') { $header = true; }
+            if ($parent instanceof DOMElement && $parent->tagName === 'table') {
+                if ($header) { $measurement['headers'][$parent->getNodePath()][] = $item; }
+                break;
+            }
+        }
     }
 }

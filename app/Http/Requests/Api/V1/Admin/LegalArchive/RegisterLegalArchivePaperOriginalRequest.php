@@ -15,7 +15,7 @@ final class RegisterLegalArchivePaperOriginalRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
+        $rules = [
             'lock_version' => ['required', 'integer', 'min:0'],
             'document_version_id' => ['required', 'integer', 'min:1'],
             'idempotency_key' => ['required', 'string', 'max:191'],
@@ -23,10 +23,19 @@ final class RegisterLegalArchivePaperOriginalRequest extends FormRequest
             'storage_location' => ['required', 'string', 'max:2000'],
             'authority_confirmed' => ['required', 'accepted'],
             'signers' => ['required', 'array', 'min:1', 'max:20'],
-            'signers.*.kind' => ['required', 'in:manual'],
-            'signers.*.name' => ['required', 'string', 'max:255'],
+            'signers.*.kind' => ['required', 'in:manual,party'],
+            'signers.*.name' => ['required', 'string', 'max:512'],
+            'signers.*.organization_id' => ['nullable', 'integer', 'min:1'],
+            'signers.*.party_id' => ['required_if:signers.*.kind,party', 'nullable', 'integer', 'min:1'],
+            'signers.*.tax_number' => ['nullable', 'string', 'max:32'],
+            'signers.*.registration_number' => ['nullable', 'string', 'max:64'],
+            'signers.*.party_role' => ['required_if:signers.*.kind,party', 'nullable', 'string', 'max:64'],
             'signers.*.position' => ['nullable', 'string', 'max:255'],
             'signers.*.authority_basis' => ['nullable', 'string', 'max:512'],
         ];
+        foreach ((array) $this->input('signers', []) as $index => $signer) {
+            if (!is_array($signer) || ($signer['kind'] ?? null) !== 'party') $rules['signers.'.$index.'.name'] = ['required', 'string', 'max:255'];
+        }
+        return $rules;
     }
 }

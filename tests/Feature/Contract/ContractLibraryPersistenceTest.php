@@ -13,6 +13,36 @@ use Tests\TestCase;
 
 final class ContractLibraryPersistenceTest extends TestCase
 {
+    public function test_initial_revision_rejects_negative_assigned_price_before_any_write(): void
+    {
+        $owner = Organization::factory()->create();
+        $executor = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $owner->id]);
+        $authorization = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturn(true);
+        $library = new \App\Services\Contract\ContractLibraryService($authorization);
+        $views = new \App\Services\Contract\ContractOrganizationViewService($authorization);
+        $instances = new \App\Services\Contract\ContractBuilderInstanceService($authorization, $views, $library, new \App\Services\Contract\ContractVariableValueValidator);
+        $project = \App\Models\Project::factory()->create(['organization_id' => $owner->id]);
+        $contractor = \App\Models\Contractor::create(['organization_id' => $owner->id, 'source_organization_id' => $executor->id, 'name' => 'Исполнитель']);
+        $contract = \App\Models\Contract::create(['organization_id' => $owner->id, 'project_id' => $project->id, 'contractor_id' => $contractor->id, 'number' => 'NEGATIVE-PRICE', 'date' => '2026-10-11', 'status' => 'draft', 'total_amount' => 100, 'contract_side_type' => 'subcontract']);
+        $contract->parties()->create(['side' => 'first', 'role' => 'contractor', 'linked_organization_id' => $owner->id, 'name' => 'Подрядчик', 'snapshot' => []]);
+        $contract->parties()->create(['side' => 'second', 'role' => 'subcontractor', 'linked_organization_id' => $executor->id, 'name' => 'Исполнитель', 'snapshot' => []]);
+        $views->synchronizeNewContract($contract);
+        $field = $library->create($actor, $owner->id, 'variable', 'Цена договора', ['type' => 'money', 'required' => true, 'assignment' => ['target' => 'price']], 'negative-field');
+        $id = $field['item']['id'];
+        $library->publish($actor, $owner->id, $id, 1, 1);
+        $template = $library->create($actor, $owner->id, 'template', 'Проверка цены', ['variables' => [$id => 1], 'document' => ['type' => 'doc', 'content' => [['type' => 'clause', 'attrs' => ['id' => 'price'], 'content' => [['type' => 'paragraph', 'content' => [['type' => 'variable', 'attrs' => ['variableId' => $id]]]]]]]]], 'negative-template');
+        $library->publish($actor, $owner->id, $template['item']['id'], 1, 1);
+        try {
+            $instances->create($actor, $owner->id, $contract->id, $template['item']['id'], 1, [$id => ['amount' => '-1', 'currency' => 'RUB']], 'negative-create');
+            self::fail('Negative assigned price must not create an initial revision');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame(422, $error->getCode());
+        }
+        self::assertSame(0, DB::table('contract_builder_instances')->where('contract_id', $contract->id)->count());
+        self::assertSame(0, DB::table('contract_builder_revisions')->join('contract_builder_instances', 'contract_builder_instances.id', '=', 'contract_builder_revisions.instance_id')->where('contract_builder_instances.contract_id', $contract->id)->count());
+    }
     public function test_formulas_are_calculated_and_frozen_in_shared_revision(): void
     {
         $owner = Organization::factory()->create();

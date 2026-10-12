@@ -104,6 +104,13 @@ class UpdateContractRequest extends FormRequest
                 return;
             }
 
+            if ($this->input('direct_party', $contract?->direct_party) !== null) {
+                if ($sideType !== ContractSideTypeEnum::CONTRACT || $contractorId || $supplierId || $isSelfExecution || $this->input('superior_organization_id', $contract?->superior_organization_id)) {
+                    $validator->errors()->add('direct_party', 'Выберите стороны напрямую без проектной иерархии и собственных сил.');
+                }
+                return;
+            }
+
             if ($sideType->requiresSupplier()) {
                 if (! $supplierId) {
                     $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
@@ -207,6 +214,7 @@ class UpdateContractRequest extends FormRequest
         }
 
         return [
+            'direct_party' => ['sometimes', 'nullable', 'array', 'max:12'],
             'project_id' => $projectIdRules,
             'contract_side_type' => ['sometimes', 'required', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
@@ -338,6 +346,7 @@ class UpdateContractRequest extends FormRequest
         ]);
 
         $allowedFields = [
+            'direct_party',
             'superior_organization_id',
             'direction',
             'project_id',
@@ -459,7 +468,8 @@ class UpdateContractRequest extends FormRequest
                 : $contract->contract_side_type,
             currency: mb_strtoupper((string) ($validatedData['currency'] ?? $contract->currency ?? 'RUB')),
             superior_organization_id: array_key_exists('superior_organization_id', $validatedData) ? $validatedData['superior_organization_id'] : $contract->superior_organization_id,
-            direction: $validatedData['direction'] ?? null,
+            direction: $validatedData['direction'] ?? $contract->direct_direction,
+            direct_party: array_key_exists('direct_party', $validatedData) ? $validatedData['direct_party'] : $contract->direct_party,
         );
     }
 

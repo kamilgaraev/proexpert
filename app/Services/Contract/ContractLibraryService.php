@@ -169,6 +169,48 @@ final class ContractLibraryService
         return (new ContractDocumentResolver)->resolve($version['content'], fn (string $id, int $version, string $kind): array => $this->publishedVersion($organizationId, $id, $version, $kind));
     }
 
+    public function resolveInstanceContent(User $actor, int $organizationId, array $content, array $definitions, array $blocks): array
+    {
+        return (new ContractDocumentResolver)->resolve($content, function (string $id, int $number, string $kind) use ($actor, $organizationId, $definitions, $blocks): array {
+            if ($kind === 'variable' && ($definitions[$id]['version'] ?? null) === $number) {
+                $field = $definitions[$id];
+                return ['id' => $field['version_id'], 'title' => $field['title'], 'content' => $field['definition']];
+            }
+            if ($kind === 'block') {
+                foreach ($blocks as $block) {
+                    if ($block['id'] === $id && $block['version'] === $number) {
+                        return ['id' => $block['version_id'], 'title' => $block['title'], 'content' => $block['content']];
+                    }
+                }
+            }
+            $this->authorize($actor, $organizationId, 'view');
+            return $this->publishedVersion($organizationId, $id, $number, $kind);
+        });
+    }
+
+    public function resolveInstanceBlocks(User $actor, int $organizationId, array $references, array $frozen): array
+    {
+        if (count($references) > 200) { throw new ContractBuilderException('contracts.builder_input_invalid', 422); }
+        $blocks = [];
+        foreach ($references as $occurrence => $reference) {
+            if (!is_string($occurrence) || preg_match('/^[A-Za-z0-9_-]{1,1600}$/D', $occurrence) !== 1
+                || !is_array($reference) || array_diff(array_keys($reference), ['id', 'version']) !== []
+                || !is_string($reference['id'] ?? null) || !Str::isUuid($reference['id'])
+                || !is_int($reference['version'] ?? null) || $reference['version'] < 1) {
+                throw new ContractBuilderException('contracts.builder_input_invalid', 422);
+            }
+            $existing = $frozen[$occurrence] ?? null;
+            if ($existing !== null && $existing['id'] === $reference['id'] && $existing['version'] === $reference['version']) {
+                $blocks[$occurrence] = $existing;
+                continue;
+            }
+            $this->authorize($actor, $organizationId, 'view');
+            $version = $this->publishedVersion($organizationId, $reference['id'], $reference['version'], 'block');
+            $blocks[$occurrence] = [...$reference, 'version_id' => $version['id'], 'title' => $version['title'], 'content' => $version['content']];
+        }
+        return $blocks;
+    }
+
     public function revise(User $actor, int $organizationId, string $itemId, int $expectedVersion, string $title, array $content, string $key): array
     {
         $this->authorize($actor, $organizationId, 'create');

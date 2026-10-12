@@ -27,6 +27,7 @@ Route::prefix('contract-library')->name('contracts.library.')->group(function ()
     Route::get('entities', [\App\Http\Controllers\Api\V1\Admin\Contract\ContractEntityController::class, 'index'])
         ->middleware('authorize:contracts.view')->name('entities');
     $controller = \App\Http\Controllers\Api\V1\Admin\Contract\ContractLibraryController::class;
+    Route::get('type-profiles', [$controller, 'typeProfiles'])->middleware('authorize:contracts.library.view')->name('type-profiles.index');
     Route::get('', [$controller, 'index'])->middleware('authorize:contracts.library.view')->name('index');
     Route::post('definitions/read', [$controller, 'definitions'])->middleware('authorize:contracts.library.view')->name('definitions');
     Route::post('{libraryItem}/versions/{libraryVersion}/calculate', [$controller, 'calculate'])->whereUuid('libraryItem')->whereNumber('libraryVersion')
@@ -57,10 +58,16 @@ Route::prefix('contracts/{contract}/builder')->whereNumber('contract')->name('co
     Route::get('proposals/{proposal}/preview', [$proposals, 'preview'])->whereNumber('proposal')->middleware('authorize:contracts.view')->name('proposals.preview');
     Route::post('proposals/{proposal}/decision', [$proposals, 'decide'])->whereNumber('proposal')->middleware('authorize:contracts.revisions.accept')->name('proposals.decide');
     Route::post('proposals/{proposal}/external-decision', [$proposals, 'externalDecision'])->whereNumber('proposal')->middleware('authorize:contracts.revisions.record_external')->name('proposals.external-decision');
+    $review = \App\Http\Controllers\Api\V1\Admin\Contract\ContractProposalReviewController::class;
+    Route::get('proposals/{proposal}/review', [$review, 'show'])->whereNumber('proposal')->middleware('authorize:contracts.view')->name('proposals.review');
+    Route::post('proposals/{proposal}/comments', [$review, 'comment'])->whereNumber('proposal')->middleware('authorize:contracts.view')->name('proposals.comments');
+    Route::post('proposals/{proposal}/clause-decision', [$review, 'decide'])->whereNumber('proposal')->middleware('authorize:contracts.revisions.accept')->name('proposals.clause-decision');
+    Route::post('proposals/{proposal}/external-clause-decision', [$review, 'external'])->whereNumber('proposal')->middleware('authorize:contracts.revisions.record_external')->name('proposals.external-clause-decision');
     $assets = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderAssetController::class;
     Route::post('assets', [$assets, 'store'])->middleware('authorize:contracts.view')->name('assets.store');
     Route::get('assets/{asset}/download', [$assets, 'download'])->whereNumber('asset')->middleware('authorize:contracts.view')->name('assets.download');
     $draftController = \App\Http\Controllers\Api\V1\Admin\Contract\ContractBuilderDraftController::class;
+    Route::post('draft/resolve-content', [$draftController, 'resolveContent'])->middleware('authorize:contracts.edit')->name('draft.resolve-content');
     $templateUpdate = \App\Http\Controllers\Api\V1\Admin\Contract\ContractTemplateUpdateController::class;
     Route::get('template-update', [$templateUpdate, 'preview'])->middleware('authorize:contracts.edit')->name('template-update.preview');
     Route::post('template-update', [$templateUpdate, 'apply'])->middleware('authorize:contracts.edit')->name('template-update.apply');

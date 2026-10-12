@@ -11,6 +11,7 @@ enum ContractPartyRoleEnum: string
     case CONTRACTOR = 'contractor';
     case SUBCONTRACTOR = 'subcontractor';
     case SUPPLIER = 'supplier';
+    case OTHER = 'other';
 
     public function label(): string
     {
@@ -20,6 +21,7 @@ enum ContractPartyRoleEnum: string
             self::CONTRACTOR => 'Подрядчик',
             self::SUBCONTRACTOR => 'Субподрядчик',
             self::SUPPLIER => 'Поставщик',
+            self::OTHER => 'Участник договора',
         };
     }
 }

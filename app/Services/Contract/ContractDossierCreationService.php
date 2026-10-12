@@ -93,8 +93,9 @@ final class ContractDossierCreationService
                     ]], $input->sourceLinks),
                     'metadata' => $this->documentMetadata($contract, $input),
                 ];
-                if ($input->confidentialityLevel !== null) {
-                    $documentData['confidentiality_level'] = $input->confidentialityLevel;
+                $confidentiality = $input->confidentialityLevel ?? (ContractDocumentProfiles::all()[$input->profileCode]['confidentiality_level'] ?? null);
+                if ($confidentiality !== null) {
+                    $documentData['confidentiality_level'] = $confidentiality;
                 }
                 $document = $this->documents->create($organizationId, (int) $actor->id, $documentData);
                 $this->contractMutations->update(

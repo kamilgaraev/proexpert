@@ -34,25 +34,30 @@ final class ContractPositionedExporter
             if ($page > 0) {
                 $canvas->new_page();
             }
-            foreach ($items as $item) {
+            foreach ([...$items, ...(new ContractPageDecorations)->items($plan, $page)] as $item) {
                 if ($item['type'] === 'rect') {
                     $canvas->rectangle($item['x'], $item['y'], $item['width'], $item['height'], [.67, .70, .75], .5);
                 } elseif ($item['type'] === 'anchor') {
                     $canvas->add_named_dest($item['name']);
+                } elseif ($item['type'] === 'image') {
+                    ContractInlineImage::bytes($item['src']);
+                    $canvas->image($item['src'], $item['x'], $item['y'], $item['width'], $item['height']);
                 } else {
                     $family = $item['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $item['fontFamily'];
                     $font = $metrics->getFont($family, ($item['bold'] ? 'bold' : '').($item['italic'] ? 'italic' : '') ?: 'normal');
-                    $canvas->text($item['x'], $item['y'], $item['text'], $font, $item['fontSize'], [.09, .125, .2], $item['wordSpacing'], $item['letterSpacing']);
+                    $hex = $item['color'] ?? '#172033';
+                    $color = array_map(static fn (int $offset): float => hexdec(substr($hex, $offset, 2)) / 255, [1, 3, 5]);
+                    $canvas->text($item['x'], $item['y'], $item['text'], $font, $item['fontSize'], $color, $item['wordSpacing'], $item['letterSpacing']);
                     if ($item['href'] !== null) {
                         $canvas->add_link($item['href'], $item['x'], $item['y'], $item['width'], $item['height']);
                     }
                     if ($item['underline'] || $item['strike']) {
                         $baseline = $metrics->getFontBaseline($font, $item['fontSize']);
                         if ($item['underline']) {
-                            $canvas->line($item['x'], $item['y'] + $baseline + .5, $item['x'] + $item['width'], $item['y'] + $baseline + .5, [.09, .125, .2], .5);
+                            $canvas->line($item['x'], $item['y'] + $baseline + .5, $item['x'] + $item['width'], $item['y'] + $baseline + .5, $color, .5);
                         }
                         if ($item['strike']) {
-                            $canvas->line($item['x'], $item['y'] + $baseline * .6, $item['x'] + $item['width'], $item['y'] + $baseline * .6, [.09, .125, .2], .5);
+                            $canvas->line($item['x'], $item['y'] + $baseline * .6, $item['x'] + $item['width'], $item['y'] + $baseline * .6, $color, .5);
                         }
                     }
                 }
@@ -65,16 +70,18 @@ final class ContractPositionedExporter
     private function docx(array $plan): string
     {
         $word = new PhpWord;
+        $word->getSettings()->setThemeFontLang(new \PhpOffice\PhpWord\Style\Language($plan['locale'] ?? 'ru-RU'));
         $word->setDefaultFontName('DejaVu Sans');
         $word->setDefaultFontSize(10);
         $word->setDefaultParagraphStyle(['spaceBefore' => 0, 'spaceAfter' => 0]);
         $margins = $plan['page']['margins'];
-        foreach ($plan['pages'] as $items) {
+        $imageDescriptions = [];
+        foreach ($plan['pages'] as $pageIndex => $items) {
             $section = $word->addSection(['pageSizeW' => (int) round($plan['width'] * 20), 'pageSizeH' => (int) round($plan['height'] * 20),
                 'orientation' => $plan['page']['orientation'], 'marginTop' => (int) round($margins['top'] * 1440 / 25.4),
                 'marginRight' => (int) round($margins['right'] * 1440 / 25.4), 'marginBottom' => (int) round($margins['bottom'] * 1440 / 25.4),
                 'marginLeft' => (int) round($margins['left'] * 1440 / 25.4), 'breakType' => 'nextPage']);
-            foreach ($items as $item) {
+            foreach ([...$items, ...(new ContractPageDecorations)->items($plan, $pageIndex)] as $item) {
                 if ($item['type'] === 'anchor') {
                     $section->addBookmark($this->bookmark($item['name']));
 
@@ -84,12 +91,17 @@ final class ContractPositionedExporter
                     'left' => $item['x'], 'top' => $item['y'], 'unit' => 'pt', 'pos' => 'absolute',
                     'hPos' => 'absolute', 'vPos' => 'absolute', 'hPosRelTo' => 'page', 'vPosRelTo' => 'page',
                     'wrap' => 'infront', 'innerMargin' => 0, 'borderSize' => $item['type'] === 'rect' ? 1 : 0, 'borderColor' => $item['type'] === 'rect' ? 'AAB3BF' : null];
+                if ($item['type'] === 'image') {
+                    $section->addImage(ContractInlineImage::bytes($item['src']), $style);
+                    $imageDescriptions[] = $item['alt'];
+                    continue;
+                }
                 $box = $section->addTextBox($style);
                 if ($item['type'] !== 'text') {
                     continue;
                 }
                 $font = ['name' => $item['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $item['fontFamily'], 'size' => $item['fontSize'], 'bold' => $item['bold'], 'italic' => $item['italic'],
-                    'underline' => $item['underline'] ? 'single' : 'none', 'strikethrough' => $item['strike']];
+                    'underline' => $item['underline'] ? 'single' : 'none', 'strikethrough' => $item['strike'], 'color' => ltrim($item['color'] ?? '#172033', '#'), 'lang' => $plan['locale'] ?? 'ru-RU'];
                 $paragraph = ['spaceBefore' => 0, 'spaceAfter' => 0, 'lineHeight' => 1];
                 if ($item['href'] !== null) {
                     $internal = str_starts_with($item['href'], '#');
@@ -107,7 +119,7 @@ final class ContractPositionedExporter
         try {
             Settings::setOutputEscapingEnabled(true);
             IOFactory::createWriter($word, 'Word2007')->save($path);
-            (new ContractPositionedWordPackage)->finish($path);
+            (new ContractPositionedWordPackage)->finish($path, $imageDescriptions);
             $bytes = file_get_contents($path);
             if ($bytes === false) {
                 throw new ContractBuilderException('contracts.builder_export_failed', 503);

@@ -24,6 +24,32 @@ class UserManagementControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_workflow_role_options_use_names_and_only_active_local_approvers(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'organization_admin');
+        $foreign = Organization::factory()->create();
+        $approver = $this->createOrganizationUser($context->organization, 'organization_admin');
+        $inactive = $this->createOrganizationUser($context->organization, 'organization_admin');
+        $context->organization->users()->updateExistingPivot($inactive->id, ['is_active' => false]);
+        $this->createOrganizationUser($foreign, 'organization_admin');
+        $role = OrganizationCustomRole::createRole(organizationId: $context->organization->id, name: 'Юридический отдел', modulePermissions: ['legal_archive' => ['view', 'workflow.approve']], interfaceAccess: ['admin'], createdBy: $context->user);
+        $foreignRole = OrganizationCustomRole::createRole(organizationId: $foreign->id, name: 'Чужой юридический отдел', interfaceAccess: ['admin'], createdBy: $context->user);
+        UserRoleAssignment::assignRole(user: $approver, roleSlug: $role->slug, context: AuthorizationContext::getOrganizationContext($context->organization->id), roleType: UserRoleAssignment::TYPE_CUSTOM);
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnUsing(static fn (User $user, string $permission): bool => $permission === 'legal_archive.settings.manage' ? $user->id === $context->user->id : in_array($permission, ['legal_archive.view', 'legal_archive.workflow.approve'], true) && $user->id === $approver->id);
+        $options = new \App\Services\LegalArchive\Workflow\LegalWorkflowRoleOptions($authorization, app(\App\Domain\Authorization\Services\RoleScanner::class), app(\App\Domain\Authorization\Services\RolePayloadFormatter::class));
+        $result = $options->forOrganization($context->user, $context->organization->id);
+        $roles = array_column($result['roles'], null, 'slug');
+        self::assertFalse($result['can_create']);
+        self::assertSame('Администратор организации', $roles['organization_admin']['name']);
+        self::assertSame(1, $roles['organization_admin']['active_assignees_count']);
+        self::assertSame('Юридический отдел', $roles[$role->slug]['name']);
+        self::assertSame(1, $roles[$role->slug]['active_assignees_count']);
+        self::assertArrayNotHasKey($foreignRole->slug, $roles);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $options->forOrganization($context->user, $foreign->id);
+    }
+
     public function test_organization_admin_can_open_admin_user_list(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'organization_admin');

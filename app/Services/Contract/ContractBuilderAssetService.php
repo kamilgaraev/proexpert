@@ -117,6 +117,9 @@ final class ContractBuilderAssetService
                 'ResponseContentType' => $asset->mime_type,
                 'ResponseContentDisposition' => "attachment; filename*=UTF-8''".rawurlencode($asset->name),
             ]);
+            if (!is_string($url) || trim($url) === '') {
+                throw new ContractBuilderException('contracts.builder_asset_storage_failed', 503);
+            }
         } catch (\Throwable $exception) {
             Log::error('Contract asset download failed', ['contract_id' => $contractId, 'asset_id' => $id, 'exception' => $exception::class]);
             throw new ContractBuilderException('contracts.builder_asset_storage_failed', 503);

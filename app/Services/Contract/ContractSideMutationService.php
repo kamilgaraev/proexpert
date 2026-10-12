@@ -89,6 +89,8 @@ class ContractSideMutationService
 
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
             $this->contractPartySnapshotService->syncParties($contract->refresh(), true);
+            ContractAdditionalParties::apply($contract, $targetOrganizationId, $contractDTO->additional_parties);
+            ContractPartyRequisites::applyToContract($contract, $contractDTO->party_details);
             $this->assertRequestedDirection($contract, $contractDTO);
             app(ContractOrganizationViewService::class)->synchronizeNewContract($contract);
 
@@ -424,7 +426,9 @@ class ContractSideMutationService
             || (int) ($contract->superior_organization_id ?? 0) !== (int) ($contractDTO->superior_organization_id ?? 0)
             || (int) ($contract->project_id ?? 0) !== (int) ($contractDTO->project_id ?? 0)
             || (int) ($contract->contractor_id ?? 0) !== (int) ($contractDTO->contractor_id ?? 0)
-            || (int) ($contract->supplier_id ?? 0) !== (int) ($contractDTO->supplier_id ?? 0);
+            || (int) ($contract->supplier_id ?? 0) !== (int) ($contractDTO->supplier_id ?? 0)
+            || $contract->direct_party !== $contractDTO->direct_party
+            || ($contractDTO->direct_party !== null && $contract->direct_direction !== $contractDTO->direction);
     }
 
     private function assertRequestedDirection(Contract $contract, ContractDTO $contractDTO): void
@@ -477,6 +481,17 @@ class ContractSideMutationService
 
         if (! $sideType instanceof ContractSideTypeEnum) {
             throw new Exception('Не указан тип договора.');
+        }
+
+        if ($contractDTO->direct_party !== null) {
+            $directProjectIds = $contractDTO->is_multi_project ? ($contractDTO->project_ids ?? []) : ($contractDTO->project_id === null ? [] : [$contractDTO->project_id]);
+            ContractDirectProjectAccess::assertAllowed($organizationId, Project::query()->whereIn('id', $directProjectIds)->get()->all());
+            if ($sideType !== ContractSideTypeEnum::CONTRACT || $contractDTO->is_self_execution
+                || $contractDTO->contractor_id !== null || $contractDTO->supplier_id !== null || $contractDTO->superior_organization_id !== null) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['direct_party' => 'Для прямого выбора сторон не используйте подрядчика, поставщика, собственные силы или проектную иерархию.']);
+            }
+            ContractDirectParties::resolve($organizationId, $contractDTO->direct_party, (string) $contractDTO->direction);
+            return $contractDTO;
         }
 
         $this->assertSideAllowedForProjectContext($sideType, $projectContext);
@@ -573,6 +588,9 @@ class ContractSideMutationService
             currency: $contractDTO->currency,
             superior_organization_id: $contractDTO->superior_organization_id,
             direction: $contractDTO->direction,
+            party_details: $contractDTO->party_details,
+            additional_parties: $contractDTO->additional_parties,
+            direct_party: $contractDTO->direct_party,
         );
     }
 

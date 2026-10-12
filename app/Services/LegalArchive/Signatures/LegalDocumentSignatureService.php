@@ -184,11 +184,7 @@ final class LegalDocumentSignatureService
                 'requested_at' => now(),
                 'expires_at' => $expiresAt,
             ]);
-            $lockedDocument->forceFill([
-                'signature_status' => 'pending',
-                'lifecycle_status' => 'signing',
-                'lock_version' => ((int) $lockedDocument->lock_version) + 1,
-            ])->save();
+            $this->projection->apply($lockedDocument);
             $this->audit->record('signature_requested', $lockedDocument, $actor, [
                 'source_event_id' => "signature-request:{$request->id}",
                 'idempotency_key' => $key,

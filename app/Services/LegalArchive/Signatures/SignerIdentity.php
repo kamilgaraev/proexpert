@@ -23,7 +23,7 @@ final readonly class SignerIdentity
         public ?string $registrationNumber = null,
         public ?string $authorityBasis = null,
     ) {
-        if (! in_array($kind, self::KINDS, true) || trim($name) === '' || mb_strlen($name) > 255) {
+        if (! in_array($kind, self::KINDS, true) || trim($name) === '' || mb_strlen($name) > ($kind === 'party' ? 512 : 255)) {
             throw new DomainException('legal_signature_signer_identity_invalid');
         }
         $valid = match ($kind) {

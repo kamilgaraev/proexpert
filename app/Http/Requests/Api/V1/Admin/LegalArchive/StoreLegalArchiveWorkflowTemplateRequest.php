@@ -59,7 +59,7 @@ final class StoreLegalArchiveWorkflowTemplateRequest extends FormRequest
                         ->where('is_active', true)
                         ->exists();
                     if (! $isActiveMember) {
-                        $validator->errors()->add("steps.{$index}.actor_reference", trans_message('legal_archive.messages.workflow_assignee_invalid'));
+                        $validator->errors()->add("steps.{$index}.actor_reference", trans_message('legal_archive.domain_errors.workflow_assignee_invalid'));
                     }
                 }
                 if ($actorType === 'role') {
@@ -70,7 +70,7 @@ final class StoreLegalArchiveWorkflowTemplateRequest extends FormRequest
                         ->active()
                         ->exists();
                     if (! $isSystemRole && ! $isOrganizationRole) {
-                        $validator->errors()->add("steps.{$index}.actor_reference", trans_message('legal_archive.messages.workflow_assignee_invalid'));
+                        $validator->errors()->add("steps.{$index}.actor_reference", trans_message('legal_archive.domain_errors.workflow_assignee_invalid'));
                     }
                 }
             }

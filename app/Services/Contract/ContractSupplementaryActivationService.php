@@ -62,7 +62,7 @@ final class ContractSupplementaryActivationService
             if ($document->status !== 'draft' || $changes === [] || $lastAppliedId !== $previousDocumentId
                 || !hash_equals($document->content_hash, $hash) || $date < now()->toDateString()
                 || DB::table('contract_supplementary_activations')->where('document_id', $document->id)->whereIn('status', ['scheduled', 'failed'])->exists()
-                || DB::table('contract_supplementary_confirmations')->where('document_id', $document->id)->where('content_hash', $hash)->distinct()->count('side') !== 2) {
+                || !ContractRevisionParties::confirmed(json_decode($document->parties, true, 512, JSON_THROW_ON_ERROR), DB::table('contract_supplementary_confirmations')->where('document_id', $document->id)->get()->all(), $hash)) {
                 throw new ContractBuilderException('contracts.activation_conflict', 409);
             }
             $revision = [

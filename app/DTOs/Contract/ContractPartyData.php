@@ -20,6 +20,7 @@ class ContractPartyData
         public readonly ?string $legalAddress = null,
         public readonly ?string $email = null,
         public readonly ?string $phone = null,
+        public readonly array $requisites = [],
     ) {
     }
 
@@ -38,6 +39,7 @@ class ContractPartyData
             'legal_address' => $this->legalAddress,
             'email' => $this->email,
             'phone' => $this->phone,
+            ...$this->requisites,
         ];
     }
 

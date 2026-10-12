@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Admin\Contract;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Contract\SaveContractBuilderDraftRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\ResolveContractDraftContentRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\ContractBuilderDraftResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\Contract\ContractBuilderDraftService;
@@ -26,7 +27,7 @@ final class ContractBuilderDraftController extends Controller
         $data = $request->validated();
         $draft = $service->save($request->user(), (int) $request->attributes->get('current_organization_id'), $contract,
             (int) $data['base_revision'], (int) $data['expected_version'], $data['document'], $data['values'], $data['request_key'], $data['source_refresh_hash'] ?? null,
-            isset($data['attachment_ids']) ? array_map('intval', $data['attachment_ids']) : null);
+            isset($data['attachment_ids']) ? array_map('intval', $data['attachment_ids']) : null, null, $data['variables'] ?? null, $data['block_references'] ?? null, $data['party_details'] ?? null);
 
         return AdminResponse::success((new ContractBuilderDraftResource($draft))->resolve($request));
     }
@@ -34,6 +35,12 @@ final class ContractBuilderDraftController extends Controller
     public function sourceChanges(Request $request, int $contract, ContractBuilderDraftService $service): JsonResponse
     {
         return AdminResponse::success($service->sourceChanges($request->user(), (int) $request->attributes->get('current_organization_id'), $contract));
+    }
+
+    public function resolveContent(ResolveContractDraftContentRequest $request, int $contract, ContractBuilderDraftService $service): JsonResponse
+    {
+        return AdminResponse::success($service->resolveContent($request->user(), (int) $request->attributes->get('current_organization_id'), $contract,
+            (int) $request->validated('base_revision'), $request->validated('content')));
     }
 
     public function preview(Request $request, int $contract, ContractBuilderDraftService $service): JsonResponse

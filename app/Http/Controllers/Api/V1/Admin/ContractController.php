@@ -201,6 +201,8 @@ class ContractController extends Controller
             );
 
             return AdminResponse::success(new ContractResource($updatedContract));
+        } catch (\App\Exceptions\ContractBuilderException|\Illuminate\Validation\ValidationException $exception) {
+            throw $exception;
         } catch (AuthorizationException $exception) {
             $this->logFailure('contract.update.forbidden', $request, $exception, [
                 'contract_id' => $contractId,

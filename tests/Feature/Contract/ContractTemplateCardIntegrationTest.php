@@ -144,10 +144,21 @@ final class ContractTemplateCardIntegrationTest extends TestCase
     {
         [$actor, $input] = $this->fixture();
         $catalogue = $this->getJson('/api/v1/admin/contracts/standard-templates')->assertOk()->json('data');
-        self::assertSame(['work', 'construction', 'subcontract'], array_column($catalogue, 'code'));
+        self::assertSame(['construction', 'subcontract', 'household-repair', 'supply', 'design-survey'], array_column($catalogue, 'code'));
+        $legacyId = (string) \Illuminate\Support\Str::uuid();
+        $legacy = (array) DB::table('contract_library_versions')->where('item_id', $input['template']['template_id'])->firstOrFail();
+        unset($legacy['id']);
+        $legacy['item_id'] = $legacyId;
+        $legacy['request_key'] = 'most-standard:construction:template';
+        DB::table('contract_library_items')->insert(['id' => $legacyId, 'organization_id' => $actor->current_organization_id,
+            'kind' => 'template', 'creation_key' => $legacy['request_key'], 'creation_fingerprint' => $legacy['request_fingerprint'],
+            'created_at' => now(), 'updated_at' => now()]);
+        DB::table('contract_library_versions')->insert($legacy);
         $resolved = [];
         foreach ($catalogue as $standard) {
             $resolved = $this->postJson('/api/v1/admin/contracts/standard-templates/install', ['code' => $standard['code']])->assertOk()->json('data');
+            self::assertSame(2, $resolved['template_version']);
+            self::assertNotSame($legacyId, $resolved['template_id']);
             $this->postJson('/api/v1/admin/contracts/standard-templates/install', ['code' => $standard['code']])
                 ->assertOk()->assertJsonPath('data.template_id', $resolved['template_id']);
             $values = [];
@@ -158,12 +169,14 @@ final class ContractTemplateCardIntegrationTest extends TestCase
                 }
                 $values[$id] = match ($definition['type']) {
                     'money' => ['amount' => '123.45', 'currency' => 'RUB'],
-                    'date' => $definition['assignment']['field'] === 'start_date' ? '2026-10-01' : '2026-12-01',
+                    'date' => ($definition['assignment']['field'] ?? null) === 'start_date' ? '2026-10-01' : '2026-12-01',
+                    'choice' => 'included',
+                    'table' => [['id' => 'line-1', 'values' => ['name' => 'Согласованная позиция', 'unit' => 'шт.', 'quantity' => '1', 'price' => ['amount' => '123.45', 'currency' => 'RUB']]]],
                     default => 'Согласованное условие: '.$field['title'],
                 };
             }
             $payload = [...$input, 'number' => 'BASE-'.$standard['code'], 'template' => [
-                'template_id' => $resolved['template_id'], 'template_version' => 1, 'values' => $values,
+                'template_id' => $resolved['template_id'], 'template_version' => $resolved['template_version'], 'values' => $values,
             ]];
             $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $payload)->assertOk()->json('data');
             $payload['template']['source_hash'] = $prepared['source_hash'];
@@ -177,20 +190,38 @@ final class ContractTemplateCardIntegrationTest extends TestCase
             self::assertSame('Согласованное условие: Порядок и сроки оплаты', $contract->payment_terms);
             self::assertSame('123.45', $contract->getRawOriginal('total_amount'));
             self::assertSame($standard['contract_profile_code'], $contract->legalArchiveDocument()->firstOrFail()->type_profile_code);
+            if ($standard['code'] === 'supply') {
+                $fields = $contract->legalArchiveDocument()->firstOrFail()->structured_fields;
+                self::assertSame('Согласованное условие: Предмет договора', $fields['subject']);
+                self::assertSame('Согласованное условие: Порядок поставки и разгрузки', $fields['delivery_terms']);
+                self::assertSame($prepared['parties'][0]['legal_name'] ?: $prepared['parties'][0]['name'], $fields['buyer']);
+                self::assertSame($prepared['parties'][1]['legal_name'] ?: $prepared['parties'][1]['name'], $fields['supplier']);
+                self::assertEquals(123.45, $fields['price']);
+                $this->fakeRevisionStorage();
+                Organization::whereKey($actor->current_organization_id)->update(['name' => 'Новое имя после фиксации']);
+                Contractor::whereKey($input['contractor_id'])->update(['name' => 'Новый поставщик после фиксации']);
+                $revision = app(ContractBuilderInstanceService::class)->read($actor, (int) $actor->current_organization_id, (int) $contract->id, 1);
+                $archive = app(\App\Services\Contract\ContractRevisionLegalArchiveService::class)->prepare($actor, (int) $actor->current_organization_id, (int) $contract->id, 1, $revision['content_hash']);
+                self::assertSame('ready', $archive['binding']['status']);
+                $archived = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument::findOrFail($archive['binding']['document_id']);
+                foreach ($fields as $field => $value) self::assertEquals($value, $archived->structured_fields[$field]);
+            }
             $reopened = $this->getJson('/api/v1/admin/contracts/'.$saved['id'].'/template-card')->assertOk()->json('data');
             self::assertSame($prepared['card'], $reopened['revision']['card']);
-            $this->patchJson('/api/v1/admin/contract-library/'.$resolved['template_id'].'/archive', ['expected_version' => 1, 'archived' => true])->assertUnprocessable();
+            $this->patchJson('/api/v1/admin/contract-library/'.$resolved['template_id'].'/archive', ['expected_version' => $resolved['template_version'], 'archived' => true])->assertUnprocessable();
             $this->postJson('/api/v1/admin/contract-library/'.$resolved['template_id'].'/versions', [
-                'kind' => 'template', 'title' => 'Подмена', 'content' => ['document' => $resolved['document'], 'variables' => array_fill_keys(array_keys($resolved['definitions']), 1)],
-                'expected_version' => 1, 'request_key' => 'replace-base',
+                'kind' => 'template', 'title' => 'Подмена', 'content' => ['document' => $resolved['document'], 'variables' => array_fill_keys(array_keys($resolved['definitions']), $resolved['template_version'])],
+                'expected_version' => $resolved['template_version'], 'request_key' => 'replace-base',
             ])->assertUnprocessable();
         }
+        self::assertSame($legacy['content'], DB::table('contract_library_versions')->where('item_id', $legacyId)->where('version_number', 1)->value('content'));
+        app(ContractLibraryService::class)->resolveTemplate($actor, (int) $actor->current_organization_id, $legacyId, 1);
         $foreign = Organization::factory()->verified()->create();
         $other = User::factory()->create(['current_organization_id' => $foreign->id]);
         $otherResolved = app(\App\Services\Contract\ContractStandardTemplateService::class)->install($other, $foreign->id, 'subcontract');
         self::assertNotSame($resolved['template_id'], $otherResolved['template_id']);
         try {
-            app(ContractLibraryService::class)->resolveTemplate($other, $foreign->id, $resolved['template_id'], 1);
+            app(ContractLibraryService::class)->resolveTemplate($other, $foreign->id, $resolved['template_id'], $resolved['template_version']);
             self::fail('Foreign template was resolved');
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
             self::assertTrue(true);
@@ -213,10 +244,12 @@ final class ContractTemplateCardIntegrationTest extends TestCase
             $values[$id] = match ($definition['type']) {
                 'money' => ['amount' => '100', 'currency' => 'RUB'],
                 'date' => '2026-12-01',
+                'choice' => 'exempt',
+                'table' => [['id' => 'line-1', 'values' => ['name' => 'Монтаж', 'unit' => 'шт.', 'quantity' => '1', 'price' => ['amount' => '100', 'currency' => 'RUB']]]],
                 default => 'Согласовано сторонами',
             };
         }
-        $input['template'] = ['template_id' => $resolved['template_id'], 'template_version' => 1, 'values' => $values];
+        $input['template'] = ['template_id' => $resolved['template_id'], 'template_version' => $resolved['template_version'], 'values' => $values];
         $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
         $input['template']['source_hash'] = $prepared['source_hash'];
         $this->postJson('/api/v1/admin/contracts', [...$input, 'idempotency_key' => 'create-only'])->assertCreated();
@@ -279,9 +312,131 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         self::assertSame(2, $archive->versions()->count());
     }
 
+    public function test_rich_frozen_revision_uses_real_pdf_archive_and_docx_pipeline(): void
+    {
+        [$actor, $input] = $this->fixture(true, false, true);
+        $input['additional_parties'] = [['party_key' => '11111111-1111-4111-8111-111111111111', 'name' => 'Третий участник', 'role_label' => 'Гарант']];
+        $this->fakeRevisionStorage();
+        $contractId = $this->createTemplateContract($input);
+        $service = app(ContractBuilderInstanceService::class);
+        $revision = $service->read($actor, (int) $actor->current_organization_id, $contractId, 1);
+        $preview = $service->preview($actor, (int) $actor->current_organization_id, $contractId, 1);
+        self::assertStringContainsString('Спецификация изделия', $preview['html']);
+        self::assertStringContainsString('Проверенный колонтитул', $preview['html']);
+        $archiveService = app(\App\Services\Contract\ContractRevisionLegalArchiveService::class);
+        $archive = $archiveService->prepare($actor, (int) $actor->current_organization_id, $contractId, 1, $revision['content_hash']);
+        self::assertSame('ready', $archive['binding']['status']);
+        $binding = DB::table('contract_revision_legal_bindings')->where('revision_id', $revision['id'])->firstOrFail();
+        $pdf = \Illuminate\Support\Facades\Storage::disk('revision-tests')->get($binding->storage_path);
+        self::assertSame($binding->file_hash, hash('sha256', $pdf));
+        self::assertStringStartsWith('%PDF-', $pdf);
+        self::assertStringContainsString('/Subtype /Image', $pdf);
+        $text = (new \Smalot\PdfParser\Parser)->parseContent($pdf)->getText();
+        self::assertStringContainsString('Спецификация изделия', $text);
+        self::assertStringContainsString('Проверенный колонтитул', $text);
+        self::assertStringContainsString($revision['content_hash'], preg_replace('/\s+/u', '', $text));
+        $version = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion::findOrFail($binding->document_version_id);
+        self::assertSame($revision['content_hash'], $version->metadata['contract_content_hash']);
+        $again = $archiveService->prepare($actor, (int) $actor->current_organization_id, $contractId, 1, $revision['content_hash']);
+        self::assertSame($archive['binding']['document_version_id'], $again['binding']['document_version_id']);
+        self::assertSame(1, DB::table('contract_revision_legal_bindings')->count());
+        $parties = \App\BusinessModules\Features\LegalArchive\Models\LegalDocumentParty::where('document_version_id', $binding->document_version_id)->orderBy('id')->get();
+        self::assertCount(3, $parties);
+        self::assertSame('11111111-1111-4111-8111-111111111111', $parties[2]->snapshot['party_key']);
+        $signers = $parties->map(static fn ($party) => new \App\Services\LegalArchive\Signatures\SignerIdentity('party', $party->legal_name,
+            organizationId: $party->party_organization_id === null ? null : (int) $party->party_organization_id,
+            partyId: (int) $party->id, taxNumber: $party->tax_number, partyRole: $party->party_role,
+            registrationNumber: $party->registration_number, position: $party->representative_position, authorityBasis: $party->authority_basis))->all();
+        $archiveDocument = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument::findOrFail($binding->document_id);
+        $archiveDocument->forceFill(['approval_status' => 'approved', 'lifecycle_status' => 'approved'])->save();
+        $signatures = app(\App\Services\LegalArchive\Signatures\LegalDocumentSignatureService::class);
+        $firstSigner = new \App\Services\LegalArchive\Signatures\SignerIdentitySet([$signers[0]]);
+        $signatures->registerPaperOriginalForDocument($archiveDocument, $version, $actor, new \App\Services\LegalArchive\Signatures\PaperOriginalData(
+            new \DateTimeImmutable('-1 day'), $firstSigner, 'Архив проверки', 'builder-first-signer', authorityConfirmed: true,
+            expectedDocumentLockVersion: (int) $archiveDocument->lock_version));
+        self::assertSame('partially_signed', $archiveDocument->refresh()->signature_status);
+        self::assertSame('frozen', $version->refresh()->status);
+        $remaining = new \App\Services\LegalArchive\Signatures\SignerIdentitySet([$signers[1], $signers[2]]);
+        $signatureRequest = $signatures->createRequest($archiveDocument,
+            $version, $actor, 'paper', $remaining, 'builder-three-signers',
+            expectedDocumentLockVersion: (int) $archiveDocument->lock_version);
+        self::assertCount(2, $signatureRequest->signers);
+        self::assertSame('pending', $signatureRequest->status);
+        self::assertSame('partially_signed', $archiveDocument->refresh()->signature_status);
+        $response = $this->getJson('/api/v1/admin/legal-archive/documents/'.$archiveDocument->id)->assertOk()
+            ->assertJsonPath('data.requires_all_signature_parties', true)->assertJsonPath('data.signature_parties_available', true)
+            ->assertJsonCount(3, 'data.signature_parties')->assertJsonPath('data.signature_summary.required', 3)->assertJsonPath('data.signature_summary.completed', 1);
+        self::assertSame('party', $response->json('data.signature_parties.2.signer.kind'));
+        self::assertSame((int) $parties[2]->id, $response->json('data.signature_parties.2.signer.party_id'));
+        self::assertArrayNotHasKey('bank_details', $response->json('data.signature_parties.2.signer'));
+        $denied = \Mockery::mock(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class);
+        $denied->shouldReceive('authorize')->once()->andThrow(new \Illuminate\Auth\Access\AuthorizationException);
+        $private = (new \App\Services\LegalArchive\Signatures\LegalContractSignatureParticipants(DB::connection(), $denied))->forDocument($actor, $archiveDocument);
+        self::assertSame([], $private['signature_parties']);
+        self::assertFalse($private['signature_parties_available']);
+        $signatures->registerPaperOriginal($signatureRequest, $actor, new \App\Services\LegalArchive\Signatures\PaperOriginalData(
+            new \DateTimeImmutable('-1 day'), $remaining, 'Архив проверки', 'builder-remaining-signers', authorityConfirmed: true));
+        self::assertSame('signed', $archiveDocument->refresh()->signature_status);
+        self::assertSame('signed', $version->refresh()->status);
+        $this->getJson('/api/v1/admin/legal-archive/documents/'.$archiveDocument->id)->assertOk()->assertJsonPath('data.signature_summary.completed', 3);
+        $document = DB::table('contract_revision_documents')->sole();
+        self::assertTrue(app(\App\Services\Contract\ContractRevisionDocumentService::class)->generate((int) $document->id));
+        $document = DB::table('contract_revision_documents')->where('id', $document->id)->firstOrFail();
+        $file = tempnam(sys_get_temp_dir(), 'most-rich-archive-');
+        file_put_contents($file, \Illuminate\Support\Facades\Storage::disk('revision-tests')->get($document->storage_path));
+        try {
+            $zip = new \ZipArchive;
+            self::assertTrue($zip->open($file));
+            $xml = $zip->getFromName('word/document.xml');
+            self::assertStringContainsString('Спецификация изделия', $xml);
+            self::assertStringContainsString('Проверенный колонтитул', $xml);
+            self::assertStringContainsString($revision['content_hash'], strip_tags($xml));
+            self::assertTrue(count(array_filter(range(0, $zip->numFiles - 1), static fn (int $index): bool => str_starts_with((string) $zip->getNameIndex($index), 'word/media/'))) > 0);
+            $zip->close();
+        } finally { unlink($file); }
+    }
+
+    public function test_legacy_ready_docx_receives_frozen_parties_once_without_reading_live_requisites(): void
+    {
+        [$actor, $input] = $this->fixture(true);
+        $this->fakeRevisionStorage();
+        $contractId = $this->createTemplateContract($input);
+        $contract = Contract::findOrFail($contractId);
+        $document = $contract->legalArchiveDocument()->firstOrFail();
+        $generation = DB::table('contract_revision_documents')->sole();
+        $preview = app(ContractBuilderInstanceService::class)->preview($actor, (int) $actor->current_organization_id, $contractId, 1);
+        $bytes = app(\App\Services\Contract\ContractDocumentExporter::class)->render($preview['html'], 'docx');
+        $file = \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile::create([
+            'document_id' => $document->id, 'organization_id' => $document->organization_id, 'role' => 'primary', 'title' => $document->title,
+            'sort_order' => 0, 'is_required' => true,
+        ]);
+        $version = app(\App\Services\LegalArchive\Files\LegalDocumentFileService::class)->addVersion($file,
+            \Illuminate\Http\UploadedFile::fake()->createWithContent('legacy.docx', $bytes), new \App\Services\LegalArchive\Files\VersionInput(
+                uploadedByUserId: (int) $actor->id, makeCurrent: false,
+                metadata: ['source' => 'contract_revision', 'contract_id' => $contractId, 'contract_revision_id' => (int) $generation->revision_id, 'contract_content_hash' => $generation->content_hash],
+            ));
+        DB::table('contract_revision_documents')->where('id', $generation->id)->update([
+            'status' => 'ready', 'document_version_id' => $version->id, 'file_hash' => $version->content_hash, 'size' => strlen($bytes), 'updated_at' => now(),
+        ]);
+        self::assertSame(0, DB::table('legal_document_party_snapshot_sets')->count());
+        $contract->parties()->where('side', 'second')->update(['name' => 'Изменено после фиксации']);
+        $migration = require database_path('migrations/2026_10_11_176000_align_contract_archive_party_snapshots.php');
+        $migration->up();
+        self::assertSame(1, DB::table('legal_document_party_snapshot_sets')->where('document_version_id', $version->id)->count());
+        self::assertSame(2, DB::table('legal_document_parties')->where('document_version_id', $version->id)->count());
+        $snapshot = json_decode(DB::table('legal_document_parties')->where('document_version_id', $version->id)->where('party_role', 'contractor')->value('snapshot'), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame($preview['revision']['parties'][1]['name'], $snapshot['name']);
+        $migration->up();
+        self::assertSame(2, DB::table('legal_document_parties')->where('document_version_id', $version->id)->count());
+    }
+
     public function test_revision_docx_uses_existing_dossier_frozen_layout_and_idempotent_archive_version(): void
     {
         [$actor, $input] = $this->fixture(true);
+        $longName = str_repeat('Полное ', 60);
+        $input['additional_parties'] = [['party_key' => '11111111-1111-4111-8111-111111111111', 'name' => 'Поручитель',
+            'legal_name' => $longName, 'role_label' => 'Гарант', 'ogrn' => '0001234567890',
+            'requisites' => ['representative_position' => str_repeat('Д', 255), 'authority_basis' => 'Доверенность № 7']]];
         $this->fakeRevisionStorage();
         $contractId = $this->createTemplateContract($input);
         $contract = Contract::findOrFail($contractId);
@@ -313,6 +468,32 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         self::assertSame($id, $service->request((int) $row->revision_id, (int) $actor->id));
         self::assertSame(1, DB::table('contract_revision_documents')->count());
         self::assertSame('ready', $service->state($actor, (int) $actor->current_organization_id, $contractId, 1)['status']);
+        self::assertSame(0, DB::table('contract_revision_legal_bindings')->count());
+        $document->refresh()->forceFill(['approval_status' => 'approved', 'lifecycle_status' => 'approved'])->save();
+        $response = $this->getJson('/api/v1/admin/legal-archive/documents/'.$document->id)->assertOk()
+            ->assertJsonPath('data.requires_all_signature_parties', true)->assertJsonCount(3, 'data.signature_parties');
+        self::assertSame(trim($longName), $response->json('data.signature_parties.2.signer.name'));
+        self::assertSame('0001234567890', $response->json('data.signature_parties.2.signer.registration_number'));
+        $signers = $response->json('data.signature_parties');
+        $signatureService = app(\App\Services\LegalArchive\Signatures\LegalDocumentSignatureService::class);
+        $first = new \App\Services\LegalArchive\Signatures\SignerIdentitySet([\App\Services\LegalArchive\Signatures\SignerIdentity::fromArray($signers[0]['signer'])]);
+        $signatureService->registerPaperOriginalForDocument($document, $version, $actor, new \App\Services\LegalArchive\Signatures\PaperOriginalData(
+            new \DateTimeImmutable('-1 day'), $first, 'Архив DOCX', 'docx-first', authorityConfirmed: true,
+            expectedDocumentLockVersion: (int) $document->lock_version));
+        self::assertSame('partially_signed', $document->refresh()->signature_status);
+        self::assertSame('frozen', $version->refresh()->status);
+        $this->postJson('/api/v1/admin/legal-archive/documents/'.$document->id.'/signatures/paper-original', [
+            'lock_version' => (int) $document->lock_version, 'document_version_id' => (int) $version->id,
+            'idempotency_key' => 'docx-remaining', 'signed_at' => now()->subDay()->toDateTimeString(),
+            'storage_location' => 'Архив DOCX', 'authority_confirmed' => true,
+            'signers' => [$signers[2]['signer'], $signers[1]['signer']],
+        ])->assertSuccessful();
+        self::assertSame('signed', $document->refresh()->signature_status);
+        self::assertSame('signed', $version->refresh()->status);
+        self::assertSame(trim($longName), DB::table('legal_document_signatures')->where('document_id', $document->id)->orderByDesc('id')->value('signer_name'));
+        $migration = require database_path('migrations/2026_10_11_176000_align_contract_archive_party_snapshots.php');
+        try { $migration->down(); self::fail('Long immutable identity must prevent destructive rollback'); }
+        catch (\RuntimeException $error) { self::assertSame('contract_party_identity_requires_preservation', $error->getMessage()); }
         config()->set('legal-document-editor.editing_enabled', false);
         $access = $this->createMock(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class);
         $this->app->instance(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class, $access);
@@ -386,6 +567,156 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         $service->state($other, (int) $foreign->id, $contractId, 1);
     }
 
+    public function test_direct_contracts_create_without_project_preserve_roles_requisites_and_reject_foreign_sources(): void
+    {
+        [$actor, $input, $ids] = $this->fixture(false, true);
+        $projectInput = $input;
+        $input = [...$input, 'project_id' => null, 'contractor_id' => null, 'contract_side_type' => 'contract',
+            'direct_party' => ['name' => 'Иванов Иван', 'role_label' => 'Покупатель', 'own_role_label' => 'Продавец',
+                'requisites' => ['person_type' => 'individual', 'representative_name' => 'Иванов Иван', 'authority_kind' => 'law', 'settlement_account' => '001234567890']]];
+        foreach (['income', 'expense'] as $direction) {
+            $payload = [...$input, 'direction' => $direction, 'number' => 'DIRECT-'.$direction];
+            $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $payload)->assertOk()->json('data');
+            self::assertNull($prepared['values'][$ids['source']]);
+            $ownSide = $direction === 'income' ? 'second' : 'first';
+            $ownIndex = $direction === 'income' ? 1 : 0;
+            self::assertSame((int) $actor->current_organization_id, $prepared['parties'][$ownIndex]['linked_organization_id']);
+            $payload = [...$payload, 'idempotency_key' => 'direct-'.$direction, 'template' => [...$payload['template'], 'source_hash' => $prepared['source_hash']]];
+            $saved = $this->postJson('/api/v1/admin/contracts', $payload)->assertCreated()->json('data');
+            $this->postJson('/api/v1/admin/contracts', $payload)->assertOk()->assertJsonPath('data.id', $saved['id']);
+            $contract = Contract::findOrFail($saved['id']);
+            self::assertNull($contract->project_id);
+            self::assertNull($contract->contractor_id);
+            self::assertSame($direction, $contract->direct_direction);
+            self::assertSame('Продавец', $contract->parties()->where('side', $ownSide)->firstOrFail()->snapshot['role_label']);
+            $other = $contract->parties()->where('side', $ownSide === 'first' ? 'second' : 'first')->firstOrFail();
+            self::assertSame('001234567890', $other->snapshot['settlement_account']);
+            self::assertSame('individual', $other->snapshot['person_type']);
+            $revision = app(ContractBuilderInstanceService::class)->read($actor, (int) $actor->current_organization_id, (int) $contract->id, 1);
+            self::assertEquals($prepared['values'], $revision['values']);
+            self::assertSame('001234567890', $revision['parties'][1 - $ownIndex]['settlement_account']);
+            $this->putJson('/api/v1/admin/contracts/'.$contract->id, ['notes' => 'Сохранить прямые стороны'])->assertConflict();
+            self::assertEquals($input['direct_party'], $contract->refresh()->direct_party);
+        }
+        $plain = $input;
+        unset($plain['template']);
+        $plain = [...$plain, 'number' => 'DIRECT-CARD', 'direction' => 'expense', 'idempotency_key' => 'direct-card',
+            'base_amount' => 120.01, 'is_fixed_amount' => true];
+        $plainId = $this->postJson('/api/v1/admin/contracts', $plain)->assertCreated()->json('data.id');
+        $this->putJson('/api/v1/admin/contracts/'.$plainId, ['notes' => 'Прямые стороны сохраняются'])->assertOk();
+        self::assertEquals($input['direct_party'], Contract::findOrFail($plainId)->direct_party);
+        $updatedParty = [...$input['direct_party'], 'requisites' => ['settlement_account' => '009876543210', 'representative_name' => 'Иванов Иван']];
+        $this->putJson('/api/v1/admin/contracts/'.$plainId, ['direct_party' => $updatedParty])->assertOk();
+        self::assertSame('009876543210', Contract::findOrFail($plainId)->parties()->where('side', 'second')->firstOrFail()->snapshot['settlement_account']);
+        $this->putJson('/api/v1/admin/contracts/'.$plainId, ['direct_party' => ['name' => 'Новая внешняя сторона']])->assertOk();
+        $changedSnapshot = Contract::findOrFail($plainId)->parties()->where('side', 'second')->firstOrFail()->snapshot;
+        self::assertSame('Новая внешняя сторона', $changedSnapshot['name']);
+        self::assertArrayNotHasKey('settlement_account', $changedSnapshot);
+        self::assertArrayNotHasKey('representative_name', $changedSnapshot);
+        $this->putJson('/api/v1/admin/contracts/'.$plainId, ['direct_party' => null, 'direction' => 'expense',
+            'project_id' => $projectInput['project_id'], 'contractor_id' => $projectInput['contractor_id'], 'contract_side_type' => 'subcontract'])->assertOk();
+        self::assertNull(Contract::findOrFail($plainId)->direct_party);
+        self::assertNull(Contract::findOrFail($plainId)->direct_direction);
+        $free = [...$plain, 'number' => 'DIRECT-NDA', 'base_amount' => null, 'is_fixed_amount' => false,
+            'document_profile_code' => 'contract.confidentiality', 'idempotency_key' => 'direct-nda'];
+        $freeId = $this->postJson('/api/v1/admin/contracts', $free)->assertCreated()->json('data.id');
+        $freeContract = Contract::findOrFail($freeId);
+        self::assertFalse($freeContract->is_fixed_amount);
+        self::assertEquals(0, $freeContract->total_amount);
+        self::assertSame('restricted', $freeContract->legalArchiveDocument()->firstOrFail()->confidentiality_level);
+        $foreign = \App\Models\Counterparty::create(['organization_id' => Organization::factory()->verified()->create()->id,
+            'name' => 'Чужая запись', 'legal_name' => 'Чужая запись', 'is_active' => true]);
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', [...$input, 'direct_party' => ['counterparty_id' => (int) $foreign->id]])->assertNotFound();
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', [...$input, 'direct_party' => ['name' => 'Подмена', 'linked_organization_id' => 999]])->assertUnprocessable();
+    }
+
+    public function test_all_fourteen_profiles_create_frozen_direct_contracts_independently_of_project_hierarchy(): void
+    {
+        [$actor, $input] = $this->fixture(false, true);
+        $org = (int) $actor->current_organization_id;
+        $library = app(ContractLibraryService::class);
+        $basis = $library->read($actor, $org, $input['template']['template_id'], 1)['version']['content'];
+        $profileFields = [];
+        foreach (['subject' => 'Предмет договора', 'delivery_terms' => 'Условия передачи'] as $target => $title) {
+            $variable = $library->create($actor, $org, 'variable', $title, ['type' => 'text', 'required' => true, 'assignment' => ['target' => $target]], 'profile-field-'.$target);
+            $fieldId = $variable['item']['id']; $profileFields[$target] = $fieldId;
+            $library->publish($actor, $org, $fieldId, 1, 1);
+            $basis['variables'][$fieldId] = 1;
+            $basis['document']['content'][0]['content'][] = ['type' => 'paragraph', 'content' => [['type' => 'variable', 'attrs' => ['variableId' => $fieldId]]]];
+        }
+        $roles = [
+            'contract.supply' => ['Покупатель', 'Поставщик'], 'contract.services' => ['Заказчик', 'Исполнитель'],
+            'contract.lease' => ['Арендодатель', 'Арендатор'], 'contract.carriage' => ['Грузоотправитель', 'Перевозчик'],
+            'contract.agency' => ['Принципал', 'Агент'], 'contract.license' => ['Лицензиар', 'Лицензиат'],
+            'contract.confidentiality' => ['Передающая сторона', 'Получающая сторона'],
+        ];
+        $profiles = \App\Services\Contract\ContractDocumentProfiles::all();
+        self::assertCount(14, $profiles);
+        foreach ($profiles as $code => $profile) {
+            $template = $library->create($actor, $org, 'template', $profile['label'], [...$basis, 'contract_profile_code' => $code], 'profile-'.$code);
+            $id = $template['item']['id'];
+            $library->publish($actor, $org, $id, 1, 1);
+            [$ownRole, $otherRole] = $roles[$code] ?? ['Заказчик', 'Подрядчик'];
+            $payload = [...$input, 'project_id' => null, 'contractor_id' => null, 'contract_side_type' => 'contract',
+                'number' => 'PROFILE-'.$code, 'direction' => 'expense', 'idempotency_key' => 'profile-create-'.$code,
+                'direct_party' => ['name' => 'ИП Иванов', 'own_role_label' => $ownRole, 'role_label' => $otherRole,
+                    'requisites' => ['person_type' => 'sole_proprietor', 'authority_kind' => 'power_of_attorney',
+                        'power_of_attorney_number' => '42', 'power_of_attorney_date' => '2026-01-01', 'power_of_attorney_valid_until' => '2027-01-01', 'settlement_account' => '00123456789012345678']],
+                'template' => [...$input['template'], 'template_id' => $id, 'values' => [...$input['template']['values'],
+                    $profileFields['subject'] => 'Предмет: '.$profile['label'], $profileFields['delivery_terms'] => 'Передача по согласованной спецификации и акту приёмки']]];
+            $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $payload)->assertOk()->json('data');
+            $payload['template']['source_hash'] = $prepared['source_hash'];
+            $contractId = $this->postJson('/api/v1/admin/contracts', $payload)->assertCreated()->json('data.id');
+            $contract = Contract::findOrFail($contractId);
+            $revision = app(ContractBuilderInstanceService::class)->read($actor, $org, $contractId, 1);
+            self::assertSame($code, $revision['contract_profile_code']);
+            self::assertSame($code, $contract->legalArchiveDocument()->firstOrFail()->type_profile_code);
+            self::assertSame($otherRole, $revision['parties'][1]['role_label']);
+            self::assertSame('sole_proprietor', $revision['parties'][1]['person_type']);
+            self::assertSame('00123456789012345678', $revision['parties'][1]['settlement_account']);
+            self::assertSame('2027-01-01', $revision['parties'][1]['power_of_attorney_valid_until']);
+            self::assertNull($contract->project_id);
+            self::assertSame('120.01', $contract->total_amount);
+        }
+    }
+
+    public function test_multi_project_template_uses_all_sources_and_checks_every_project_permission(): void
+    {
+        [$actor, $input, $ids] = $this->fixture();
+        $other = Project::factory()->create(['organization_id' => $actor->current_organization_id]);
+        $first = Project::findOrFail($input['project_id']);
+        $input = [...$input, 'project_id' => null, 'is_multi_project' => true, 'project_ids' => [(int) $other->id, (int) $first->id]];
+        $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
+        self::assertSame($first->name.'; '.$other->name, $prepared['values'][$ids['source']]);
+        $denySecondProject = true;
+        app(AuthorizationService::class)->shouldReceive('can')->andReturnUsing(
+            static function ($user, string $permission, array $context = []) use (&$denySecondProject, $other): bool {
+                return ! $denySecondProject || $permission !== 'contracts.create' || ($context['project_id'] ?? null) !== (int) $other->id;
+            },
+        );
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertForbidden();
+        $directInput = [...$input, 'number' => 'DIRECT-MULTI', 'contract_side_type' => 'contract', 'contractor_id' => null, 'direct_party' => ['name' => 'Прямая сторона']];
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', $directInput)->assertForbidden();
+        $this->postJson('/api/v1/admin/contracts', [...$input, 'idempotency_key' => 'multi-denied',
+            'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]])->assertForbidden();
+        self::assertSame(0, Contract::where('number', $input['number'])->count());
+        $denySecondProject = false;
+        $directPrepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $directInput)->assertOk()->json('data');
+        $directId = $this->postJson('/api/v1/admin/contracts', [...$directInput, 'idempotency_key' => 'direct-multi-created',
+            'template' => [...$directInput['template'], 'source_hash' => $directPrepared['source_hash']]])->assertCreated()->json('data.id');
+        self::assertSame(2, Contract::findOrFail($directId)->projects()->count());
+        $saved = $this->postJson('/api/v1/admin/contracts', [...$input, 'idempotency_key' => 'multi-created',
+            'template' => [...$input['template'], 'source_hash' => $prepared['source_hash']]])->assertCreated()->json('data');
+        $contract = Contract::findOrFail($saved['id']);
+        self::assertTrue($contract->is_multi_project);
+        self::assertSame([(int) $first->id, (int) $other->id], $contract->projects()->orderBy('projects.id')->pluck('projects.id')->all());
+        $revision = app(ContractBuilderInstanceService::class)->read($actor, (int) $actor->current_organization_id, (int) $contract->id, 1);
+        self::assertEquals($prepared['values'], $revision['values']);
+        $foreign = Project::factory()->create();
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', [...$input, 'project_ids' => [(int) $first->id, (int) $foreign->id]])->assertForbidden();
+        $this->postJson('/api/v1/admin/contracts/template-card/prepare', [...$input, 'project_ids' => [(int) $first->id, (int) $first->id]])->assertUnprocessable();
+    }
+
     private function createTemplateContract(array $input): int
     {
         $prepared = $this->postJson('/api/v1/admin/contracts/template-card/prepare', $input)->assertOk()->json('data');
@@ -422,7 +753,8 @@ final class ContractTemplateCardIntegrationTest extends TestCase
     {
         [$actor] = $this->fixture();
         $rows = $this->getJson('/api/v1/admin/contract-library/system-fields')->assertOk()->json('data');
-        self::assertCount(19, $rows);
+        self::assertCount(423, $rows);
+        self::assertContains('party_20.role_label', array_column($rows, 'code'));
         $payload = ['code' => 'second_party.name'];
         $first = $this->postJson('/api/v1/admin/contract-library/system-fields/install', $payload)->assertOk()->json('data');
         $this->postJson('/api/v1/admin/contract-library/system-fields/install', $payload)->assertOk()->assertJsonPath('data.item.id', $first['item']['id']);
@@ -475,7 +807,7 @@ final class ContractTemplateCardIntegrationTest extends TestCase
         self::assertSame(0, Contract::where('number', $input['number'])->count());
     }
 
-    private function fixture(bool $positioned = false): array
+    private function fixture(bool $positioned = false, bool $contextOptional = false, bool $rich = false): array
     {
         $this->enableImmutableAuditWriter();
         \Illuminate\Support\Facades\Queue::fake([\App\Jobs\GenerateContractRevisionDocument::class]);
@@ -498,7 +830,7 @@ final class ContractTemplateCardIntegrationTest extends TestCase
             'custom' => ['type' => 'text', 'required' => true],
             'price' => ['type' => 'money', 'required' => true, 'constraints' => ['currency' => 'RUB'], 'assignment' => ['target' => 'price']],
             'end' => ['type' => 'date', 'required' => true, 'assignment' => ['target' => 'schedule', 'field' => 'end_date']],
-            'source' => ['type' => 'text', 'required' => true, 'source' => ['kind' => 'contract_context', 'field' => 'project.name']],
+            'source' => ['type' => 'text', 'required' => !$contextOptional, 'source' => ['kind' => 'contract_context', 'field' => 'project.name']],
         ];
         foreach ($definitions as $name => $definition) {
             $variable = $library->create($actor, $owner->id, 'variable', $name, $definition, 'variable-'.$name);
@@ -529,6 +861,19 @@ final class ContractTemplateCardIntegrationTest extends TestCase
                 'layout' => ['id' => 'card-block', 'x' => 10, 'y' => 15, 'width' => 150, 'minHeight' => 35,
                     'align' => 'left', 'firstLineIndent' => 5, 'lineHeight' => 1.5, 'spaceAfter' => 3],
             ]]]];
+        }
+        if ($rich) {
+            $raster = imagecreatetruecolor(2, 2);
+            ob_start(); imagepng($raster); $png = (string) ob_get_clean(); imagedestroy($raster);
+            $content['document']['attrs']['pageDecorations'] = ['header' => ['text' => 'Проверенный колонтитул', 'align' => 'left'],
+                'pageNumbers' => ['enabled' => true, 'position' => 'footer', 'align' => 'center', 'format' => 'current_total', 'startAt' => 1, 'hideFirst' => false]];
+            $content['document']['content'][] = ['type' => 'table', 'attrs' => ['columnWidths' => [40, 60],
+                'layout' => ['id' => 'rich-table', 'x' => 0, 'y' => 70, 'width' => 170, 'minHeight' => 0]], 'content' => [
+                    ['type' => 'tableRow', 'attrs' => ['header' => true], 'content' => array_map(static fn (string $text): array => ['type' => 'tableCell', 'content' => [['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => $text]]]]], ['Спецификация изделия', 'Количество'])],
+                    ['type' => 'tableRow', 'content' => array_map(static fn (string $text): array => ['type' => 'tableCell', 'content' => [['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => $text]]]]], ['Изделие', '25'])],
+                ]];
+            $content['document']['content'][] = ['type' => 'image', 'attrs' => ['src' => 'data:image/png;base64,'.base64_encode($png), 'alt' => 'Логотип', 'width' => 20, 'height' => 20,
+                'layout' => ['id' => 'rich-logo', 'x' => 0, 'y' => 110, 'width' => 20, 'minHeight' => 20]]];
         }
         $template = $library->create($actor, $owner->id, 'template', 'Карточка', $content, 'template');
         $library->publish($actor, $owner->id, $template['item']['id'], 1, 1);

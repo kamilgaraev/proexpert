@@ -6,6 +6,7 @@ return [
     'contract.work' => ['label' => 'Договор подряда', 'category' => 'contract', 'required_file_roles' => ['primary'], 'required_fields' => [], 'schema' => [], 'requires_signature' => true],
     'contract.construction' => ['label' => 'Договор строительного подряда', 'category' => 'contract', 'required_file_roles' => ['primary'], 'required_fields' => [], 'schema' => [], 'requires_signature' => true],
     'contract.subcontract' => ['label' => 'Договор субподряда', 'category' => 'contract', 'required_file_roles' => ['primary'], 'required_fields' => [], 'schema' => [], 'requires_signature' => true],
+    'contract.household-repair' => ['label' => 'Договор ремонта для физического лица', 'category' => 'contract', 'required_file_roles' => ['primary'], 'required_fields' => [], 'schema' => [], 'requires_signature' => true],
     'contract.supply' => [
         'label' => 'Договор поставки',
         'category' => 'contract',

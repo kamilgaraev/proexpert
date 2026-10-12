@@ -10,28 +10,34 @@ final class ContractPrintPlanValidator
 {
     public function validate(mixed $plan): void
     {
-        if (! is_array($plan) || array_diff(array_keys($plan), ['version', 'page', 'width', 'height', 'pages']) !== []
+        if (! is_array($plan) || array_diff(array_keys($plan), ['version', 'page', 'width', 'height', 'pages', 'pageDecorations', 'locale']) !== []
             || ($plan['version'] ?? null) !== 1 || ! is_array($plan['page'] ?? null)
             || ! is_array($plan['pages'] ?? null) || ! array_is_list($plan['pages']) || count($plan['pages']) < 1 || count($plan['pages']) > 501) {
             $this->invalid();
         }
         (new ContractDocumentLayoutValidator)->page(['version' => 1, 'page' => $plan['page'], 'grid' => ['size' => 5, 'snap' => true, 'visible' => true]]);
+        ContractDocumentLocale::validate($plan['locale'] ?? 'ru-RU');
+        if (array_key_exists('pageDecorations', $plan)) { (new ContractPageDecorations)->validate($plan['pageDecorations'], $plan['page']); }
         [$width, $height] = (new ContractDocumentPrintLayout)->size($plan['page']);
         if (! $this->number($plan['width'] ?? null, $width - .01, $width + .01) || ! $this->number($plan['height'] ?? null, $height - .01, $height + .01)) {
             $this->invalid();
         }
         $count = 0;
+        $imageCount = $imageBytes = 0;
         foreach ($plan['pages'] as $items) {
             if (! is_array($items) || ! array_is_list($items)) {
                 $this->invalid();
             }
             foreach ($items as $item) {
-                if (++$count > 100000 || ! is_array($item) || ! in_array($item['type'] ?? null, ['text', 'rect', 'anchor'], true)) {
+                if (++$count > 100000 || ! is_array($item) || ! in_array($item['type'] ?? null, ['text', 'rect', 'anchor', 'image'], true)) {
                     $this->invalid();
                 }
                 $keys = ['type', 'x', 'y', 'width', 'height'];
                 if ($item['type'] === 'text') {
-                    array_push($keys, 'text', 'fontFamily', 'fontSize', 'bold', 'italic', 'underline', 'strike', 'wordSpacing', 'letterSpacing', 'href');
+                    array_push($keys, 'text', 'fontFamily', 'fontSize', 'bold', 'italic', 'underline', 'strike', 'wordSpacing', 'letterSpacing', 'href', 'color');
+                    if (array_key_exists('color', $item) && (!is_string($item['color']) || preg_match('/^#[a-f0-9]{6}$/iD', $item['color']) !== 1)) {
+                        $this->invalid();
+                    }
                     if (! is_string($item['text'] ?? null) || strlen($item['text']) > 100000
                         || ! in_array($item['fontFamily'] ?? null, ['DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono', 'Most Contract'], true)
                         || ! $this->number($item['fontSize'] ?? null, 1, 72)
@@ -49,6 +55,13 @@ final class ContractPrintPlanValidator
                         || preg_match('~^(?:https?://|mailto:|#[A-Za-z0-9_-]+$)~i', $href) !== 1)) {
                         $this->invalid();
                     }
+                } elseif ($item['type'] === 'image') {
+                    array_push($keys, 'src', 'alt');
+                    $imageBytes += strlen(ContractInlineImage::bytes($item['src'] ?? null));
+                    if (++$imageCount > 1000 || $imageBytes > 2 * 1024 * 1024) {
+                        throw new ContractBuilderException('contracts.builder_image_budget', 422, [], 'document');
+                    }
+                    if (!is_string($item['alt'] ?? null) || mb_strlen($item['alt']) > 255) { $this->invalid(); }
                 } elseif ($item['type'] === 'anchor') {
                     $keys[] = 'name';
                     if (! is_string($item['name'] ?? null) || preg_match('/^[A-Za-z0-9_-]{1,550}$/D', $item['name']) !== 1) {
