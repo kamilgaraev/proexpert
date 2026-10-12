@@ -32,11 +32,16 @@ final readonly class RunEstimateComposer
     /** @return list<array<string, mixed>> */
     public function run(EstimateComposerInput $input): array
     {
-        $plan = $this->batches->plan($input);
         $limit = $this->allowance?->partLimit($input);
         if ($input->wireScope?->creditOperationId !== null && $this->allowance === null) {
             throw new InvalidArgumentException('estimate_composer_allowance_unavailable');
         }
+        if ($limit === 0) {
+            throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
+        }
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId, 'estimate_composition');
+        $plan = $this->batches->withWirePolicy($policy)->plan($input);
         if ($limit !== null && count($plan) > $limit) {
             throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
         }

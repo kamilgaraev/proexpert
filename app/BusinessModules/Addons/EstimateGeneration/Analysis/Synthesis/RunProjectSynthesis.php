@@ -39,8 +39,13 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         array $candidateQuestions,
     ): ProjectSynthesisSelection {
         $validated = $this->validator->validate(['links' => $candidateLinks, 'questions' => $candidateQuestions], $input);
-        $parts = (new ProjectSynthesisContextPlanner)->prepare($input, $validated['links'], $validated['questions'], $this->maxInputBytes);
         $limit = $this->allowance->partLimit($input);
+        if ($limit === 0) {
+            throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
+        }
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $input->organizationId, $input->projectId, $input->sessionId, $input->wireScope?->creditOperationId, 'project_synthesis');
+        $parts = (new ProjectSynthesisContextPlanner($policy))->prepare($input, $validated['links'], $validated['questions'], $this->maxInputBytes);
         if ($limit !== null && count($parts) > $limit) {
             throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
         }

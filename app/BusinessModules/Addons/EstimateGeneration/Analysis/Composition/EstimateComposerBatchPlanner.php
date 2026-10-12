@@ -11,7 +11,12 @@ use InvalidArgumentException;
 /** Plans every request before sending; never cuts records to fit a model context. */
 final readonly class EstimateComposerBatchPlanner
 {
-    public function __construct(private int $maxInputBytes = 524288, private int $candidatesPerBatch = 32) {}
+    public function __construct(private int $maxInputBytes = 524288, private int $candidatesPerBatch = 32, private ?array $wirePolicy = null) {}
+
+    public function withWirePolicy(?array $policy): self
+    {
+        return new self($this->maxInputBytes, $this->candidatesPerBatch, $policy);
+    }
 
     /** @return list<EstimateComposerInput> */
     public function plan(EstimateComposerInput $input): array
@@ -161,7 +166,7 @@ final readonly class EstimateComposerBatchPlanner
     {
         $content = CanonicalPipelineJson::encode(['project' => $input->canonicalPayload()]);
 
-        return strlen($content) <= $this->maxInputBytes && (new EstimatorTextPayloadBudget)->fits($content);
+        return strlen($content) <= $this->maxInputBytes && (new EstimatorTextPayloadBudget)->fits($content, $this->wirePolicy);
     }
 
     private function assertFits(EstimateComposerInput $input): void

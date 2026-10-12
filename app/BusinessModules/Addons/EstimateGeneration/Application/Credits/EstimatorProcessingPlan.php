@@ -60,6 +60,7 @@ final class EstimatorProcessingPlan
         }
 
         return ['contract_version' => 'estimator-processing-plan:v1', 'roles' => $roles,
+            'text_payload_policy' => \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture(),
             'maximum_calls' => $calls, 'maximum_provider_cost_micro_rub' => $maximum->toInt(),
             'raster_units' => $rasterUnits, 'work_item_limit' => $workItems, 'complex' => $complex, 'rerank' => $rerank,
             'audit_part_limit' => $kind === 'documents' || $kind === 'dialogue' ? 0
@@ -74,7 +75,13 @@ final class EstimatorProcessingPlan
         if ($inputCeiling < 1 || $outputCeiling < 1 || $calls < 1) {
             throw new DomainException('estimator_processing_plan_configuration_invalid');
         }
-        $cost = (new AiCostCalculator)->calculate($inputCeiling + 1024, 0, $outputCeiling, 0,
+        if (! $image) {
+            $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture();
+            $inputCeiling = min($inputCeiling + \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::SYSTEM_HEADROOM_BYTES,
+                $policy['maximum_serialized_input_bytes']);
+            $outputCeiling = min($outputCeiling, $policy['token_limits']['output_tokens']);
+        }
+        $cost = (new AiCostCalculator)->calculate($image ? $inputCeiling + 1024 : $inputCeiling, 0, $outputCeiling, 0,
             $image ? 1 : 0, 0, $tariff->toArray());
         if ($cost->pricingStatus !== 'available' || $cost->currency !== 'RUB' || $cost->amount === null) {
             throw new DomainException('estimator_processing_plan_price_unavailable');

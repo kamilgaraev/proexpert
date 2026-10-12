@@ -18,7 +18,7 @@ final readonly class ApplyComposerCorrectionCycle
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
     public function apply(EstimateAuditInput $root): array
     {
-        $parts = (new EstimateAuditContextPlanner)->prepare($root, $this->maximumPartBytes);
+        $limit = null;
         if ($root->wireScope?->creditOperationId !== null) {
             $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
                 ->where('organization_id', $root->organizationId)->where('project_id', $root->projectId)
@@ -32,9 +32,20 @@ final readonly class ApplyComposerCorrectionCycle
                 || ($limit > 0 && ! isset($plan['roles']['estimate_audit']))) {
                 throw new \InvalidArgumentException('estimate_audit_approved_plan_invalid');
             }
-            if (count($parts) > $limit) {
+            if ($limit === 0) {
                 throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
             }
+        }
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $root->organizationId, $root->projectId, $root->sessionId, $root->wireScope?->creditOperationId, 'estimate_audit');
+        $correctionPolicy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forOperation(
+            $root->organizationId, $root->projectId, $root->sessionId, $root->wireScope?->creditOperationId, 'estimate_composer_correction');
+        if ($policy !== null && $correctionPolicy !== null) {
+            $policy['maximum_serialized_input_bytes'] = min($policy['maximum_serialized_input_bytes'], $correctionPolicy['maximum_serialized_input_bytes']);
+        }
+        $parts = (new EstimateAuditContextPlanner($policy))->prepare($root, $this->maximumPartBytes);
+        if ($limit !== null && count($parts) > $limit) {
+            throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
         }
         if (count($parts) === 1) {
             return $this->applyPart($parts[0]['input']);

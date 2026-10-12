@@ -35,11 +35,20 @@ final class TimewebRerankWireClient implements RerankWireClient
             if (! is_array($scope) || ! is_array($identity)) {
                 throw new AiWireNotStarted('text_ai_wire_scope_required');
             }
+            // Caller options cannot override the server's frozen operation policy.
+            unset($options['estimate_generation_frozen_text_policy']);
+            $policy = EstimatorTextWirePolicy::forOperation((int) ($scope['organization_id'] ?? 0),
+                (int) ($scope['project_id'] ?? 0), (int) ($scope['session_id'] ?? 0),
+                is_string($scope['credit_operation_id'] ?? null) ? $scope['credit_operation_id'] : null,
+                (string) ($identity['operation'] ?? ''));
+            if ($policy !== null) {
+                $options['estimate_generation_frozen_text_policy'] = $policy;
+            }
             $payload = $this->payloadFactory->make($model, $messages, $options);
             $timeout = min(3600, max(1, (int) ($options['timeout'] ?? config('ai-assistant.llm.timeweb.timeout', 25))));
             $price = AiPriceSnapshot::fromArray((array) ($identity['price_snapshot'] ?? []));
             $reservation = (new AiCostCalculator)->calculate(
-                strlen(json_encode($payload['messages'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)) + count($payload['messages']) * 64,
+                EstimatorTextWirePolicy::serializedInputUpper($payload['messages']),
                 0, (int) $payload['max_completion_tokens'],
                 $price->reasoningMode === 'excluded_from_output' ? (int) $payload['max_completion_tokens'] : 0,
                 0, 0, $price->toArray(),

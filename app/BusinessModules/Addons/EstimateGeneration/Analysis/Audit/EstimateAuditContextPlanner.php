@@ -11,6 +11,8 @@ use InvalidArgumentException;
 /** Preserve all facts/evidence across parts, including facts not yet used by a work. */
 final class EstimateAuditContextPlanner
 {
+    public function __construct(private ?array $wirePolicy = null) {}
+
     public function prepare(EstimateAuditInput $root, int $maximumBytes): array
     {
         for ($size = EstimateAuditBatchPlanner::WORKS_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
@@ -194,7 +196,7 @@ final class EstimateAuditContextPlanner
     {
         $encoded = CanonicalPipelineJson::encode(['audit_input' => $payload]);
 
-        return strlen($encoded) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($encoded);
+        return strlen($encoded) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($encoded, $this->wirePolicy);
     }
 
     private function items(array $draft): array

@@ -19,7 +19,7 @@ final class EstimatorTextPayloadBudget
         }
     }
 
-    public function fits(string $content): bool
+    public function fits(string $content, ?array $policy = null): bool
     {
         // Large common manifests must be partitioned before expensive tokenization.
         if (strlen($content) > 196608) {
@@ -27,12 +27,19 @@ final class EstimatorTextPayloadBudget
         }
         try {
             self::guard($content);
-            (new TokenBudgetService)->prepare([
+            $messages = [
                 // Headroom exceeds the current server role prompts. The real
                 // adapter still checks its exact protected messages before wire.
                 ['role' => 'system', 'content' => str_repeat('context ', 1024)],
                 ['role' => 'user', 'content' => $content],
-            ], [], 'json');
+            ];
+            if ($policy !== null) {
+                $policy = EstimatorTextWirePolicy::validate($policy);
+                if (EstimatorTextWirePolicy::serializedInputUpper($messages) > $policy['maximum_serialized_input_bytes']) {
+                    return false;
+                }
+            }
+            (new TokenBudgetService)->prepare($messages, [], 'json', $policy['token_limits'] ?? null);
 
             return true;
         } catch (DomainException $exception) {

@@ -11,6 +11,8 @@ use InvalidArgumentException;
 /** Candidate coverage is complete; slices retain their full parent identity. */
 final class ProjectSynthesisContextPlanner
 {
+    public function __construct(private ?array $wirePolicy = null) {}
+
     public function prepare(ProjectSynthesisInput $root, array $links, array $questions, int $maximumBytes): array
     {
         for ($size = ProjectSynthesisBatchPlanner::CANDIDATES_PER_PART; $size >= 1; $size = intdiv($size, 2)) {
@@ -40,7 +42,7 @@ final class ProjectSynthesisContextPlanner
         $payload = json_encode(['project' => $input->canonicalPayload(), 'candidate_links' => $part['links'],
             'candidate_questions' => $part['questions']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        return strlen($payload) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($payload);
+        return strlen($payload) <= $maximumBytes && (new EstimatorTextPayloadBudget)->fits($payload, $this->wirePolicy);
     }
 
     private function slice(ProjectSynthesisInput $root, array $part): ProjectSynthesisInput
