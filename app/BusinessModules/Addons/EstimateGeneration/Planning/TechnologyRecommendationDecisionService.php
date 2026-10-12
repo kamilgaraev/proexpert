@@ -145,6 +145,58 @@ final readonly class TechnologyRecommendationDecisionService
         return $decision;
     }
 
+    public function reselect(User $actor, EstimateGenerationSession $session, ActorContext $context,
+        string $expectedFactId, string $expectedDecisionId, string $response, string $reason): Decision
+    {
+        $this->authorize($actor, $session, $context);
+        if (! $this->authorization->canCurrent($actor, 'estimate_generation.review', [
+            'organization_id' => $context->organizationId, 'project_id' => $context->projectId,
+        ])) {
+            throw new AuthorizationException(($this->translate)('estimate_generation.access_denied'));
+        }
+        $scope = [$context->organizationId, $context->projectId, (int) $session->getKey()];
+        $decisionId = 'decision:technology:'.hash('sha256', $context->idempotencyKey);
+        $replay = $this->models->decisions(...[...$scope, [$decisionId]])[0] ?? null;
+        if ($replay !== null) {
+            $fact = $replay->selectedFactId === null ? null : $this->models->fact(...[...$scope, $replay->selectedFactId]);
+            if (! $fact instanceof Fact || ! is_array($fact->value) || ($fact->value['system_id'] ?? null) !== $response
+                || ($fact->value['previous_fact_id'] ?? null) !== $expectedFactId
+                || ($fact->value['previous_decision_id'] ?? null) !== $expectedDecisionId
+                || $replay->actorId !== (string) $context->actorId || $replay->reason !== $reason) {
+                throw new InvalidArgumentException('Technology reselection replay differs from the accepted choice.');
+            }
+
+            return $replay;
+        }
+        $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001]);
+        $current = array_column($snapshot['snapshot']->facts, null, 'id')[$expectedFactId] ?? null;
+        $previous = $this->models->decisions(...[...$scope, [$expectedDecisionId]])[0] ?? null;
+        if (count($snapshot['snapshot']->facts) > 10000 || ! $current instanceof Fact
+            || $current->origin !== 'user_assumption' || $current->status !== 'confirmed' || ! is_array($current->value)
+            || ($current->value['kind'] ?? null) !== 'catalog_system' || ! $previous instanceof Decision
+            || $previous->selectedFactId !== $current->id || $previous->targetType !== 'fact'
+            || ($context->expectedSourceVersion !== null && $context->expectedSourceVersion !== $current->sourceVersion)
+            || ! in_array($current->id, array_column($this->models->currentFacts(...[...$scope, $current->entityId]), 'id'), true)) {
+            throw new InvalidArgumentException('Technology reselection target is stale.');
+        }
+        $original = $this->models->fact(...[...$scope, $previous->targetId]);
+        if (($current->value['system_id'] ?? null) === $response) {
+            throw new InvalidArgumentException('Technology reselection does not change the selected system.');
+        }
+        if (! $original instanceof Fact || $original->entityId !== $current->entityId || $original->type !== $current->type
+            || $original->sourceVersion !== $current->sourceVersion) {
+            throw new InvalidArgumentException('Technology reselection original target is outside the current scope.');
+        }
+        $recommendation = $this->recommendations->recommend($snapshot['snapshot'], $original, new OrganizationPreferenceContext($scope[0], []));
+        $value = [...$this->value($recommendation, $response, null), 'decision_key' => $recommendation->decisionKey,
+            'previous_fact_id' => $current->id, 'previous_decision_id' => $previous->id];
+        $decision = $this->decisions->applyTechnologyReselectionChoice(...[...$scope, $original->sourceVersion, $original->id,
+            $value, (string) $context->actorId, $reason, $decisionId, $current->id, $previous->id, $snapshot['token']]);
+        $this->reanalysis->trigger((int) $session->getKey(), $context);
+
+        return $decision;
+    }
+
     private function assertReplayMatches(
         Decision $decision,
         ActorContext $context,

@@ -12,7 +12,7 @@ use Illuminate\Database\DatabaseManager;
 use InvalidArgumentException;
 use JsonException;
 
-final readonly class EloquentProjectModelRepository implements ProjectModelRepository
+final readonly class EloquentProjectModelRepository implements ProjectModelRepository, TechnologyReselectionRepository
 {
     public function __construct(private DatabaseManager $database) {}
 
@@ -165,6 +165,20 @@ final readonly class EloquentProjectModelRepository implements ProjectModelRepos
             );
             if ($run === null || ! hash_equals($inputFingerprint, (string) $run->input_fingerprint)
                 || ! hash_equals($inputFingerprint, $capture['token'])) {
+                return false;
+            }
+            $this->applyDecision($decision, $selectedFact);
+
+            return true;
+        }, 3);
+    }
+
+    public function applyTechnologyReselection(Decision $decision, Fact $selectedFact, string $expectedFactId,
+        string $expectedDecisionId, string $inputFingerprint): bool
+    {
+        return $this->database->connection()->transaction(function () use ($decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint): bool {
+            $this->lockUnderstandingScope($decision->organizationId, $decision->projectId, $decision->sessionId);
+            if (! (new TechnologyReselectionInvariant)->matches($this, $decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint)) {
                 return false;
             }
             $this->applyDecision($decision, $selectedFact);

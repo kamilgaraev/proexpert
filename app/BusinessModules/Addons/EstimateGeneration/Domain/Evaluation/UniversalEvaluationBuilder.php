@@ -84,7 +84,19 @@ final readonly class UniversalEvaluationBuilder
         $coverage = $this->completeness->evaluate($snapshot, $policy['profile_id'] ?? 'construction',
             $policy['construction_type'] ?? 'new_construction', $entityScope, $positions, $decisions, $technologies);
         $requirements = $coverage['missing_requirements'];
+        if (($policy['required_technology_revision'] ?? 0) > ($policy['technology_revision'] ?? 0)) {
+            $requirements[] = ['section' => 'roofing', 'entity_id' => null, 'requirement' => 'technology_composition_refresh',
+                'reason' => 'technology_selection_changed'];
+            $questionCandidates[] = ['key' => 'technology:composition-refresh',
+                'question' => 'Выбранная технология изменилась. Получите предложение стоимости ИИ для обновления состава работ.',
+                'affected_position_keys' => array_column(array_filter($positions, static fn (array $position): bool => $position['section'] === 'roofing'), 'key'),
+                'correctness_blocker' => true, 'cost_blocker' => true, 'easy_to_answer' => true,
+                'next_action' => 'quote_composition_refresh', 'effect' => 'Новый состав будет подготовлен отдельно; текущие позиции и созданная смета сохранятся.'];
+        }
         foreach ($requirements as $requirement) {
+            if ($requirement['requirement'] === 'technology_composition_refresh') {
+                continue;
+            }
             $affected = array_values(array_column(array_filter($positions, static fn (array $position): bool => $position['section'] === $requirement['section'] && ($requirement['entity_id'] === null || $position['entity_id'] === $requirement['entity_id'])), 'key'));
             $questionCandidates[] = ['key' => 'requirement:'.$requirement['section'].':'.($requirement['entity_id'] ?? 'scope').':'.$requirement['requirement'],
                 'question' => 'Уточните основание для «'.$this->requirementName($requirement['requirement']).'» в разделе «'.$requirement['section'].'».',

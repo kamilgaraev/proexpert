@@ -17,7 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectMod
 use Closure;
 use InvalidArgumentException;
 
-final class InMemoryProjectModelRepository implements ProjectModelRepository
+final class InMemoryProjectModelRepository implements \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\TechnologyReselectionRepository, ProjectModelRepository
 {
     public ?int $lastSnapshotFactLimit = null;
 
@@ -223,6 +223,23 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 $decision->projectId,
                 $decision->sessionId,
             ))) {
+            return false;
+        }
+        $this->applyDecision($decision, $selectedFact);
+
+        return true;
+    }
+
+    public function applyTechnologyReselection(Decision $decision, Fact $selectedFact, string $expectedFactId,
+        string $expectedDecisionId, string $inputFingerprint): bool
+    {
+        if ($this->beforeTechnologyDecisionLock !== null) {
+            $hook = $this->beforeTechnologyDecisionLock;
+            $this->beforeTechnologyDecisionLock = null;
+            $hook();
+        }
+        if (! (new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\TechnologyReselectionInvariant)->matches($this,
+            $decision, $selectedFact, $expectedFactId, $expectedDecisionId, $inputFingerprint)) {
             return false;
         }
         $this->applyDecision($decision, $selectedFact);

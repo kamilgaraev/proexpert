@@ -55,7 +55,7 @@ final readonly class PipelineStagePayload
 
     private static function assertEvaluationPolicy(mixed $policy): void
     {
-        if (! is_array($policy) || array_diff(array_keys($policy), ['mode', 'price_policy', 'profile_id', 'selected_sections', 'construction_type', 'scope_selection', 'scenario_selections', 'currency_selections', 'contingency_selection']) !== []
+        if (! is_array($policy) || array_diff(array_keys($policy), ['mode', 'price_policy', 'profile_id', 'selected_sections', 'construction_type', 'scope_selection', 'scenario_selections', 'currency_selections', 'contingency_selection', 'technology_selections', 'technology_revision', 'required_technology_revision']) !== []
             || ! in_array($policy['mode'] ?? null, ['legacy', 'universal'], true)
             || ! in_array($policy['price_policy'] ?? null, ['normative', 'catalog', 'mixed'], true)
             || ! in_array($policy['profile_id'] ?? null, ['construction', 'renovation', 'industrial'], true)
@@ -66,7 +66,11 @@ final readonly class PipelineStagePayload
             || (isset($policy['currency_selections']) && (! is_array($policy['currency_selections']) || count($policy['currency_selections']) > 50
                 || strlen(CanonicalPipelineJson::encode($policy['currency_selections'])) > 65536))
             || (isset($policy['contingency_selection']) && (! is_array($policy['contingency_selection'])
-                || strlen(CanonicalPipelineJson::encode($policy['contingency_selection'])) > 8192))) {
+                || strlen(CanonicalPipelineJson::encode($policy['contingency_selection'])) > 8192))
+            || (isset($policy['technology_selections']) && (! is_array($policy['technology_selections']) || count($policy['technology_selections']) > 50
+                || strlen(CanonicalPipelineJson::encode($policy['technology_selections'])) > 65536))
+            || (isset($policy['technology_revision']) && (! is_int($policy['technology_revision']) || $policy['technology_revision'] < 0 || $policy['technology_revision'] > 10000))
+            || (isset($policy['required_technology_revision']) && (! is_int($policy['required_technology_revision']) || $policy['required_technology_revision'] < 0 || $policy['required_technology_revision'] > 10000))) {
             throw new InvalidArgumentException('evaluation_policy_contract_invalid');
         }
         foreach ($policy['selected_sections'] as $section) {

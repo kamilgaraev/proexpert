@@ -90,10 +90,12 @@ final readonly class RecalculateUniversalEvaluation
                 'scope_selection' => $payload['scope_selection'] ?? null,
                 'scenario_selections' => $payload['scenario_selections'] ?? null,
                 'currency_selections' => $payload['currency_selections'] ?? [],
-                'contingency_selection' => $payload['contingency_selection'] ?? null];
+                'contingency_selection' => $payload['contingency_selection'] ?? null,
+                'technology_selections' => $payload['technology_selections'] ?? [],
+                'required_technology_revision' => $payload['technology_selection_revision'] ?? 0];
             $draft = $this->arithmetic->recalculate($draft, $context, $snapshot, $decisions, $actor, $session);
             $draft['source_input_version'] = $version;
-            $draft['evaluation_result'] = $this->builder->build($draft, $snapshot, $decisions);
+            $draft['evaluation_result'] = $this->builder->build($draft, $snapshot, $decisions, $payload['technology_selections'] ?? []);
             $draft['is_complete'] = false;
             $draft['stage6_status'] = 'scenario_confirmation_required';
             $draft = $this->artifacts->seal($this->reviews->project($draft));
