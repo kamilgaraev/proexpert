@@ -85,8 +85,11 @@ final class DesignModelDerivative extends Model
     {
         $table = $query->getModel()->getTable();
         $metadata = $table.'.metadata';
+        $publicMetadata = $query->getQuery()->newQuery()
+            ->selectRaw("{$metadata} - 'coordinate_transformations' AS clean_metadata")
+            ->offset(0);
 
-        return $query->select([
+        return $query->joinLateral($publicMetadata, 'response_metadata')->select([
             $table.'.id',
             $table.'.organization_id',
             $table.'.project_id',
@@ -107,7 +110,7 @@ final class DesignModelDerivative extends Model
             $table.'.created_at',
             $table.'.updated_at',
         ])->selectRaw(
-            "CASE WHEN {$metadata} IS NULL THEN '{}'::jsonb WHEN jsonb_typeof({$metadata}->'ifc_metadata') = 'object' THEN jsonb_set({$metadata} - 'coordinate_transformations', '{ifc_metadata}', ({$metadata}->'ifc_metadata') - 'transformations') ELSE {$metadata} - 'coordinate_transformations' END as metadata"
+            "CASE WHEN response_metadata.clean_metadata IS NULL THEN '{}'::jsonb WHEN jsonb_typeof(response_metadata.clean_metadata->'ifc_metadata') = 'object' THEN response_metadata.clean_metadata #- '{ifc_metadata,transformations}' ELSE response_metadata.clean_metadata END as metadata"
         );
     }
 }

@@ -27,9 +27,10 @@ final class DesignViewerConverter
         ]);
     }
 
-    public static function isCurrent(DesignModelDerivative $derivative): bool
+    public static function isCurrent(DesignModelDerivative $derivative, ?array $metadata = null): bool
     {
-        $metadata = is_array($derivative->metadata) ? $derivative->metadata : [];
+        $metadata ??= $derivative->metadata;
+        $metadata = is_array($metadata) ? $metadata : [];
 
         return (int) ($metadata['converter_version'] ?? 0) >= self::version();
     }
@@ -52,13 +53,13 @@ final class DesignViewerConverter
         return $metadata;
     }
 
-    public static function isStale(DesignModelDerivative $derivative): bool
+    public static function isStale(DesignModelDerivative $derivative, ?array $metadata = null): bool
     {
         $status = $derivative->status instanceof BackedEnum
             ? $derivative->status->value
             : (string) $derivative->status;
 
-        return $status === DesignDerivativeStatusEnum::READY->value && !self::isCurrent($derivative);
+        return $status === DesignDerivativeStatusEnum::READY->value && ! self::isCurrent($derivative, $metadata);
     }
 
     public static function staleMetadata(array $metadata = []): array
