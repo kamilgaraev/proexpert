@@ -508,6 +508,29 @@ final class AssistantStructuredFactPresentationTest extends TestCase
         $this->assertStringNotContainsString('завтра', $result['text']);
     }
 
+    public function test_one_requested_contract_does_not_publish_other_contracts_or_project_budget(): void
+    {
+        $query = 'Что у нас по договорам на этом объекте? Выбери один и покажи номер, подрядчика, сроки и сумму с валютой.';
+        $project = $this->payload('project', ['name' => 'Проект', 'budget_amount' => '999999.00'], 52);
+        $first = $this->payload('contract', ['number' => 'FIRST-304', 'total_amount' => '120.00',
+            'start_date' => '2025-01-01', 'end_date' => '2025-12-31', 'contractor_id' => 227], 304);
+        $second = $this->payload('contract', ['number' => 'SECOND-298', 'total_amount' => '999.00',
+            'start_date' => '2025-01-01', 'end_date' => '2025-12-31', 'contractor_id' => 228], 298);
+        $party = $this->payload('contractor', ['name' => 'Текущий подрядчик'], 227);
+        $otherParty = $this->payload('contractor', ['name' => 'Другой подрядчик'], 228);
+        $result = (new AssistantStructuredFactVerifier)->guard($query, 'Найдены договоры.', [$project, $first, $second, $party, $otherParty]);
+        self::assertFalse($result['needs_clarification']);
+        self::assertStringContainsString('FIRST', $result['text']);
+        self::assertStringContainsString('Текущий подрядчик', $result['text']);
+        self::assertStringNotContainsString('SECOND', $result['text']);
+        self::assertStringNotContainsString('999999', $result['text']);
+        self::assertStringNotContainsString('Другой подрядчик', $result['text']);
+        self::assertSame(['contract', 'contractor'], array_column($result['source_refs'], 'entity_type'));
+        $plural = (new AssistantStructuredFactVerifier)->guard('Покажи сроки и суммы договоров.', '', [$first, $second]);
+        self::assertStringContainsString('FIRST', $plural['text']);
+        self::assertStringContainsString('SECOND', $plural['text']);
+    }
+
     private function payload(string $type, array $fields, int $id = 321, array $sourceExtras = []): array
     {
         $model = new class extends Model {};

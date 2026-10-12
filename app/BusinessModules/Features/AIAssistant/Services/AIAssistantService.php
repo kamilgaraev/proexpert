@@ -2105,9 +2105,6 @@ class AIAssistantService
                 if ($requestProjectScope->projectId === null) {
                     return $this->currentProjectScopeUnavailable('current_project_required');
                 }
-                if ($toolName === 'assistant_domain_search' && ($args['entity_type'] ?? null) === 'project') {
-                    return $this->currentProjectScopeUnavailable('current_project_requires_read');
-                }
                 if (isset($schema['properties']['project_id'])) {
                     $args['project_id'] = $requestProjectScope->projectId;
                 }
@@ -2336,6 +2333,11 @@ class AIAssistantService
 
     private function currentProjectScopeUnavailable(string $reason): array
     {
+        $requestId = $this->activeRequest?->request_id;
+        if (is_string($requestId) && \Illuminate\Support\Str::isUuid($requestId)) {
+            $this->logging->technical('ai.assistant.current_project_scope_unavailable', ['request_id' => $requestId,
+                'reason' => in_array($reason, ['current_project_required', 'current_project_scope_mismatch'], true) ? $reason : 'scope_unavailable'], 'notice');
+        }
         return ['status' => 'insufficient_data', 'reason' => $reason, 'needs_clarification' => true,
             'source_refs' => [], 'server_formatted_answer' => trans_message('ai_assistant_facts.live_proof_required')];
     }

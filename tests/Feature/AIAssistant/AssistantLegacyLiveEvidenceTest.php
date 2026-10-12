@@ -126,6 +126,27 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
         $this->assertFalse((new AssistantStructuredFactVerifier)->guard('Статус, срок и сумма договора?', 'Старые значения', $reads)['needs_clarification']);
     }
 
+    public function test_contract_currency_is_read_only_from_the_real_column_and_quiet_changes_invalidate_proof(): void
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasColumn('contracts', 'currency')) {
+            \Illuminate\Support\Facades\Schema::table('contracts', static fn ($table) => $table->string('currency', 3)->nullable());
+        }
+        $contract = $this->contract($this->project, 'CURRENCY');
+        $contract->updateQuietly(['currency' => 'EUR']);
+        $reads = $this->adapter->read('get_contract_snapshot', $this->contractSnapshot($contract, 'Подрядчик'), $this->actor, $this->organization->id);
+        $row = $reads[0]['structured_fact_evidence']['rows'][0];
+        self::assertSame('EUR', $row['fields']['currency']);
+        self::assertContains('currency', $row['source_ref']['checked_fields']);
+        $guard = new AssistantSourceReferenceGuard($this->app->make(AssistantDataAccessPolicy::class));
+        self::assertTrue($guard->fresh($this->actor, $this->organization->id, $reads[0]['source_refs']));
+        $timestamp = DB::table('contracts')->where('id', $contract->id)->value('updated_at');
+        DB::table('contracts')->where('id', $contract->id)->update(['currency' => 'USD']);
+        self::assertSame($timestamp, DB::table('contracts')->where('id', $contract->id)->value('updated_at'));
+        self::assertFalse($guard->fresh($this->actor, $this->organization->id, $reads[0]['source_refs']));
+        $current = $this->adapter->read('get_contract_snapshot', $this->contractSnapshot($contract, 'Подрядчик'), $this->actor, $this->organization->id);
+        self::assertSame('USD', $current[0]['structured_fact_evidence']['rows'][0]['fields']['currency']);
+    }
+
     public function test_contract_snapshot_nested_party_is_reread_from_current_contract_fk_without_copying_legacy_name(): void
     {
         $contract = $this->contract($this->project, 'NESTED_PARTY');
