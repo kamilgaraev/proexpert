@@ -81,6 +81,14 @@ final class SourceMoneyVatBasis
             }
         }
         $this->assertMoney($record['money']);
+        if (isset($record['money']['currency_conversion'])) {
+            $basis = $record['money']['currency_conversion'];
+            if (! is_array($basis) || ! BigDecimal::of($record['quantity'])->isEqualTo($basis['quantity'] ?? '-1')
+                || ($basis['source_snapshot']['source_reference'] ?? null) !== $record['source_reference']
+                || ($basis['source_snapshot']['source_hash'] ?? null) !== $record['source_hash']) {
+                throw new DomainException('source_money_currency_identity_changed');
+            }
+        }
     }
 
     private function assertMoney(array $money): void
@@ -102,6 +110,9 @@ final class SourceMoneyVatBasis
             if ($expected[$key] !== $money[$key]) {
                 throw new DomainException('source_money_tax_calculation_mismatch');
             }
+        }
+        if (isset($money['currency_conversion']) && CanonicalPipelineJson::encode($expected) !== CanonicalPipelineJson::encode($money)) {
+            throw new DomainException('source_money_currency_basis_mismatch');
         }
     }
 }

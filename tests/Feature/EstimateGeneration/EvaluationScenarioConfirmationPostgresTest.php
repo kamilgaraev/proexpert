@@ -200,7 +200,43 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
-    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100'): array
+    #[\PHPUnit\Framework\Attributes\DataProvider('foreignSourceCases')]
+    public function test_foreign_source_rounding_survives_confirmation_ordinary_publication_recalculation_and_export(string $mode, string $net, string $payable): void
+    {
+        [$actor, $session, , $input] = $this->fixture($mode, '0.03', 'USD');
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $session->refresh();
+        $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
+            (int) $session->id, (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
+            idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
+        $published = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class)->handle($command);
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame($net, $estimate->total_amount);
+        self::assertSame($payable, $estimate->total_amount_with_vat);
+        foreach ($estimate->items as $item) {
+            self::assertSame('USD', $item->metadata['generated_source_money']['money']['currency_conversion']['source_snapshot']['currency']);
+            self::assertSame('90', $item->metadata['generated_source_money']['money']['currency_conversion']['rate']['rub_per_unit']);
+        }
+        for ($iteration = 0; $iteration < 2; $iteration++) {
+            app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+            $estimate->refresh();
+            self::assertSame($net, $estimate->total_amount);
+            self::assertSame($payable, $estimate->total_amount_with_vat);
+            $export = (new \ReflectionMethod(\App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService::class, 'prepareTotalsData'))
+                ->invoke(app(\App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService::class), $estimate);
+            self::assertSame($payable, (string) \Brick\Math\BigDecimal::of((string) $export['total_amount_with_vat'])->toScale(2));
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public static function foreignSourceCases(): array
+    {
+        return [['included', '47.70', '56.70'], ['excluded', '56.70', '68.40']];
+    }
+
+    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100', string $currency = 'RUB'): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -213,7 +249,7 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $unit = MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Квадратный метр', 'short_name' => 'м²', 'type' => 'area']);
         $catalog = EstimatePositionCatalog::query()->create(['organization_id' => $organization->id, 'name' => 'Работы по полу', 'code' => 'P-'.Str::random(6),
             'item_type' => 'work', 'measurement_unit_id' => $unit->id, 'unit_price' => $unitPrice, 'is_active' => true, 'created_by_user_id' => $actor->id,
-            'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => $vatMode, 'vat_rate' => '20', 'delivery_included' => true]]);
+            'metadata' => ['currency' => $currency, 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => $vatMode, 'vat_rate' => '20', 'delivery_included' => true]]);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
             'status' => 'estimate_review_required', 'state_version' => 0,
             'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']]]);
@@ -246,6 +282,11 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
                 'state_version' => $session->fresh()->state_version, 'work_item_key' => $key,
                 'source_reference' => $source['source_reference'], 'source_hash' => $source['source_hash']]);
         }
+        if ($currency !== 'RUB') {
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationCurrencySelection::class)->handle($actor, $scope[1], $scope[2],
+                ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'from_currency' => $currency,
+                    'to_currency' => 'RUB', 'rub_per_unit' => '90', 'as_of_date' => '2026-10-12', 'rate_source_reference' => 'Курс договора']);
+        }
         $definitions = [];
         foreach (['minimum' => '12', 'base' => '20', 'maximum' => '30'] as $id => $value) {
             $definitions[] = ['id' => $id, 'basis' => 'Явно заданный пользователем сценарный объём без подтверждения размеров фотографии',
@@ -259,6 +300,9 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
             'requirements' => $revision['result']['missing_requirements'],
             'unpriced' => $revision['result']['scenarios'][1]['unpriced_positions'],
             'conditions' => $revision['result']['scenarios'][1]['price_conditions_unresolved'],
+            'tax_unknown' => $revision['result']['scenarios'][1]['tax_breakdown_unknown_positions'],
+            'currency_required' => $revision['result']['currency_conversion_required'],
+            'prices' => array_column($revision['result']['scenarios'][1]['positions'], 'price_snapshot'),
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
         $input = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
             'revision_id' => $revision['revision_id'], 'content_hash' => $revision['content_hash'], 'scenario_id' => 'base', 'assumptions_accepted' => true];

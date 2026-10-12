@@ -98,6 +98,17 @@ final class EstimateGenerationEvaluationController extends Controller
             $input['source_type'] ?? 'catalog', $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25)))->header('Cache-Control', 'private, no-store');
     }
 
+    public function currency(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationCurrencySelection $currencies): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'from_currency' => ['required', 'string', 'regex:/\A[A-Z]{3}\z/'], 'to_currency' => ['required', 'in:RUB'],
+            'rub_per_unit' => ['required', 'string', 'max:30'], 'as_of_date' => ['required', 'date_format:Y-m-d'],
+            'rate_source_reference' => ['required', 'string', 'max:240']]);
+
+        return AdminResponse::success($currencies->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
+    }
+
     public function price(Request $request, Project $project, EstimateGenerationSession $session, SaveEvaluationPriceSelection $prices): JsonResponse
     {
         $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],

@@ -59,7 +59,16 @@ final readonly class ResolveCommercialWorkPrice
         }
         $price['stale_accepted'] = ($selection['stale_accepted'] ?? false) === true;
 
-        return $this->units->convert($price, $workItem['unit'] ?? null);
+        $price = $this->units->convert($price, $workItem['unit'] ?? null);
+        if ($price === null) {
+            return null;
+        }
+        // Price verification may have loaded only its own decision; currency confirmation is a distinct fact.
+        if (($price['currency'] ?? null) !== 'RUB' && isset($session->input_payload['currency_selections'][$price['currency'] ?? ''])) {
+            [$snapshot, $decisions] = $this->proofContext($session);
+        }
+
+        return (new ConvertEvaluationCurrencySnapshot)->convert($price, $workItem, $session, $snapshot, $decisions);
     }
 
     public function proofContext(EstimateGenerationSession $session): array
@@ -94,6 +103,13 @@ final readonly class ResolveCommercialWorkPrice
             return null;
         }
 
-        return $this->units->convert($current, $item['unit'] ?? null);
+        $price = $this->units->convert($current, $item['unit'] ?? null);
+        if ($price === null) {
+            return null;
+        }
+        [$snapshot, $decisions] = isset($session->input_payload['currency_selections'][$price['currency'] ?? ''])
+            ? $this->proofContext($session) : [null, null];
+
+        return (new ConvertEvaluationCurrencySnapshot)->convert($price, $item, $session, $snapshot, $decisions);
     }
 }

@@ -14,6 +14,17 @@ final class EvaluationVatProjection
 {
     public function amount(string $quotedAmount, array $price): array
     {
+        if (isset($price['currency_conversion'])) {
+            if (! is_array($price['currency_conversion'])) {
+                throw new InvalidArgumentException('evaluation_currency_basis_invalid');
+            }
+            $money = (new EvaluationCurrencyConversion)->money($price['currency_conversion']);
+            if (! BigDecimal::of($quotedAmount)->isEqualTo($money['quoted_amount'])) {
+                throw new InvalidArgumentException('evaluation_currency_quoted_amount_changed');
+            }
+
+            return $money;
+        }
         $amount = BigDecimal::of($quotedAmount)->toScale(2, RoundingMode::Unnecessary);
         $mode = $price['vat_mode'] ?? null;
         if ($amount->isLessThan(0) || ! in_array($mode, ['included', 'excluded', 'not_applicable'], true)) {

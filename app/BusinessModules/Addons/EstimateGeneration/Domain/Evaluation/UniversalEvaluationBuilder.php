@@ -101,6 +101,7 @@ final readonly class UniversalEvaluationBuilder
             'profile_version' => $coverage['profile_version']];
         $scopeConfirmed = (new EvaluationSelectionVerifier)->accepted($snapshot, $decisions, $policy['scope_selection'] ?? null, 'evaluation_scope', $expectedScope);
         $scenarios = (new EvaluationScenarioSet)->project($positions, $assumptions, $snapshot, $decisions, $policy['scenario_selections'] ?? null);
+        $scenarios = (new EvaluationScenarioCurrencyProjector)->project($scenarios, $policy['currency_selections'] ?? [], $snapshot, $decisions);
         $result = $this->calculator->calculate($scenarios, $scope, $requirements, $scopeConfirmed);
 
         return [...$result, 'profile_id' => $coverage['profile_id'], 'profile_version' => $coverage['profile_version'],

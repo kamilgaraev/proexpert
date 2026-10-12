@@ -56,6 +56,16 @@ final class ScenarioEstimateCalculator
                 }
                 $quantity = $this->number($position['quantity'] ?? null);
                 $price = is_array($position['price_snapshot'] ?? null) ? $position['price_snapshot'] : null;
+                if ($quantity !== null && is_array($price['currency_conversion'] ?? null)) {
+                    // Scenario volumes are evaluated from the original source, not from a previously rounded tuple.
+                    $basis = $price['currency_conversion'];
+                    (new EvaluationCurrencyConversion)->sourceMoney($basis);
+                    $price = (new EvaluationCurrencyConversion)->snapshot($basis['source_snapshot'], (string) $quantity, $basis['rate']);
+                }
+                if ($quantity !== null && ($price['source_type'] ?? null) === 'supplier'
+                    && (! is_string($price['price_quantity'] ?? null) || ! $quantity->isEqualTo($price['price_quantity']))) {
+                    $price['applicable'] = false;
+                }
                 $unitPrice = $this->number($price['unit_price'] ?? null);
                 $currency = $price['currency'] ?? null;
                 $hasSourcePrice = $price !== null && $unitPrice !== null && ($price['verified'] ?? false) === true
@@ -88,6 +98,7 @@ final class ScenarioEstimateCalculator
                     $unknown[] = ['key' => $key, 'reason' => $status];
                 }
                 $positions[] = [...$position, 'quantity' => $quantity === null ? null : (string) $quantity,
+                    'price_snapshot' => $price,
                     'unit_price' => $hasSourcePrice ? (string) $unitPrice : null, 'total_cost' => $amount, 'pricing_status' => $status,
                     'money_breakdown' => $money];
             }

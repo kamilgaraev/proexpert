@@ -106,6 +106,60 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
         }
     }
 
+    public function test_confirmed_exchange_rate_is_free_replayable_and_requires_its_real_current_fact(): void
+    {
+        [$actor, $session, $catalog, $item] = $this->fixture();
+        $catalog->update(['unit_price' => '0.03', 'metadata' => [...$catalog->metadata, 'currency' => 'USD', 'vat_mode' => 'included', 'vat_rate' => '20']]);
+        $source = app(CataloguePriceSnapshotReader::class)->read((int) $session->organization_id, 'catalog:'.$catalog->id);
+        app(SaveEvaluationPriceSelection::class)->handle($actor, (int) $session->project_id, (int) $session->id,
+            ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'work_item_key' => $item['key'],
+                'source_reference' => $source['source_reference'], 'source_hash' => $source['source_hash']]);
+        $item['quantity'] = '100';
+        $resolver = app(ResolveCommercialWorkPrice::class);
+        self::assertSame('USD', $resolver->resolve($actor, $session->fresh(), $item)['currency']);
+        $request = ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version,
+            'from_currency' => 'USD', 'to_currency' => 'RUB', 'rub_per_unit' => '90', 'as_of_date' => '2026-10-12',
+            'rate_source_reference' => 'Курс по договору поставки'];
+        $service = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationCurrencySelection::class);
+        $beforeHash = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh());
+        $receipt = $service->handle($actor, (int) $session->project_id, (int) $session->id, $request);
+        self::assertEquals($receipt, $service->handle($actor, (int) $session->project_id, (int) $session->id, $request));
+        self::assertSame('0', $receipt['cost_units']);
+        self::assertNotSame($beforeHash, app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint::class)->fromSession($session->fresh()));
+        $price = $resolver->resolve($actor, $session->fresh(), $item);
+        self::assertSame('RUB', $price['currency']);
+        self::assertSame('USD', $price['currency_conversion']['source_snapshot']['currency']);
+        self::assertSame($source['source_hash'], $price['source_hash']);
+        $money = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\EvaluationCurrencyConversion)->money($price['currency_conversion']);
+        self::assertSame(['2.70', '0.00', '2.70'], [$money['net_amount'], $money['vat_amount'], $money['gross_amount']]);
+        $payload = $session->fresh()->input_payload;
+        $payload['currency_selections']['USD']['rub_per_unit'] = '91';
+        $session->update(['input_payload' => $payload]);
+        self::assertSame('USD', $resolver->resolve($actor, $session->fresh(), $item)['currency']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $session->organization_id)->count());
+    }
+
+    public function test_exchange_rate_rejects_conflicting_delivery_stale_state_and_revoked_actor(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $service = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationCurrencySelection::class);
+        $request = ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'from_currency' => 'USD', 'to_currency' => 'RUB',
+            'rub_per_unit' => '90', 'as_of_date' => '2026-10-12', 'rate_source_reference' => 'Курс договора'];
+        $service->handle($actor, (int) $session->project_id, (int) $session->id, $request);
+        foreach ([[...$request, 'rub_per_unit' => '91'], [...$request, 'request_id' => (string) Str::uuid()]] as $invalid) {
+            try {
+                $service->handle($actor, (int) $session->project_id, (int) $session->id, $invalid);
+                self::fail('Conflicting or stale currency confirmation was accepted.');
+            } catch (ValidationException|\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
+                self::assertSame(1, $session->fresh()->state_version);
+            }
+        }
+        $actor->update(['is_active' => false]);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $service->handle($actor, (int) $session->project_id, (int) $session->id, $request);
+    }
+
     private function fixture(): array
     {
         config(['estimate-generation.universal_enabled' => true]);
