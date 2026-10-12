@@ -54,6 +54,8 @@ final readonly class ConfirmedEvaluationDraftProjector
         if ($selection === null) {
             $this->reject();
         }
+        $frozen = (new SelectedEvaluationScenario)->select($result, $selection['scenario_id']);
+        (new LockEvaluationPriceSources)->lock($session, $frozen['scenario']['positions']);
         $version = 'sha256:'.$inputHash;
         $context = new PipelineContext($scope[2], $scope[0], $scope[1], (int) $session->state_version, $version, $session->status->value,
             generationAttemptId: $command->idempotencyKey ?? $row->operation_id, baseInputVersion: $version);

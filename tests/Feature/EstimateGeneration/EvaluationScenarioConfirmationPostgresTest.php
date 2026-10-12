@@ -151,6 +151,8 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         self::assertSame('review', $snapshot->recommendedStep);
         self::assertSame('0.63', $snapshot->evaluationConfirmation['total_by_currency']['RUB']);
         self::assertSame('0.63', $snapshot->estimateSummary['total_cost']);
+        // Cosmetic timestamps are not part of the accepted business price or its scenario identity.
+        $catalog->touch();
         $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
             (int) $session->id, (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
             idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);

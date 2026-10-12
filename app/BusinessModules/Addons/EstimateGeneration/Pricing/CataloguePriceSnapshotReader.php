@@ -61,7 +61,7 @@ final class CataloguePriceSnapshotReader
         $businessSource = $source;
         unset($businessSource['updated_at']);
 
-        return [...$source, 'source_type' => 'catalog', 'source_reference' => $reference, 'verified' => true,
+        return [...$businessSource, 'source_type' => 'catalog', 'source_reference' => $reference, 'verified' => true,
             'applicable' => $source['as_of_date'] !== null && $source['as_of_date'] <= $businessDate->format('Y-m-d')
                 && ($source['valid_until'] === null || $source['as_of_date'] <= $source['valid_until']),
             'stale' => $source['valid_until'] !== null && $source['valid_until'] < $businessDate->format('Y-m-d'), 'stale_accepted' => false,
