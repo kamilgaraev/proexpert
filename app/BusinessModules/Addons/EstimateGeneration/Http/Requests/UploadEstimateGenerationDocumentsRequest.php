@@ -20,6 +20,7 @@ class UploadEstimateGenerationDocumentsRequest extends FormRequest
     {
         return [
             'state_version' => ['required', 'integer', 'min:0'],
+            'request_id' => ['sometimes', 'required', 'uuid'],
             'files' => ['required', 'array', 'min:1', 'max:10'],
             'files.*' => ['file', 'max:204800', 'mimes:pdf,jpg,jpeg,png,xlsx,xls,dwg,dxf'],
         ];

@@ -32,6 +32,7 @@ class OcrDocumentStorageService
         UploadedFile $file,
         User $user,
         ?UnpublishedDocumentObjectBatch $batch = null,
+        ?UnpublishedDocumentObject $intent = null,
     ): EstimateGenerationDocument {
         $realPath = $file->getRealPath();
         $checksum = is_string($realPath) && $realPath !== ''
@@ -40,6 +41,11 @@ class OcrDocumentStorageService
 
         if (! is_string($checksum) || preg_match('/^[a-f0-9]{64}$/', $checksum) !== 1) {
             throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_read_failed');
+        }
+        if ($intent !== null && ($intent->organizationId !== (int) $session->organization_id
+            || $intent->projectId !== (int) $session->project_id || $intent->sessionId !== (int) $session->id
+            || ! hash_equals($intent->sha256, $checksum) || $intent->sizeBytes !== (int) $file->getSize())) {
+            throw new \InvalidArgumentException('document_upload_intent_source_changed');
         }
 
         $organization = $session->organization()->first();
@@ -59,6 +65,7 @@ class OcrDocumentStorageService
             $organization,
             privacyMode: true,
             onObjectPrepared: $prepared,
+            preparedFilename: $intent === null ? null : basename($intent->path),
         );
 
         if ($storagePath === false) {
@@ -66,6 +73,9 @@ class OcrDocumentStorageService
         }
         $prepared($storagePath);
         try {
+            if ($intent !== null && $storagePath !== $intent->path) {
+                throw new TypedFailureException(FailureCategory::Terminal, 'document_storage_integrity_failed');
+            }
             try {
                 $head = $this->fileService->describeHead($storagePath);
             } catch (Throwable $exception) {
@@ -109,6 +119,7 @@ class OcrDocumentStorageService
         EstimateGenerationDocument $source,
         User $user,
         ?UnpublishedDocumentObjectBatch $batch = null,
+        ?UnpublishedDocumentObject $intent = null,
     ): EstimateGenerationDocument {
         if (
             (int) $source->organization_id !== (int) $session->organization_id
@@ -134,7 +145,12 @@ class OcrDocumentStorageService
             throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_reuse_extension_invalid');
         }
 
-        $destinationPath = OrganizationStoragePath::forOrganization(
+        if ($intent !== null && ($intent->organizationId !== (int) $session->organization_id
+            || $intent->projectId !== (int) $session->project_id || $intent->sessionId !== (int) $session->id
+            || ! hash_equals($intent->sha256, (string) $source->checksum_sha256) || $intent->sizeBytes !== (int) $source->file_size_bytes)) {
+            throw new \InvalidArgumentException('document_reuse_intent_source_changed');
+        }
+        $destinationPath = $intent?->path ?? OrganizationStoragePath::forOrganization(
             (int) $session->organization_id,
             sprintf('estimate-generation/sessions/%d/documents/%s.%s', $session->id, Str::uuid(), $extension),
         );
@@ -147,6 +163,10 @@ class OcrDocumentStorageService
                 throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
             }
             if ($copy['path'] !== $destinationPath || (int) $source->file_size_bytes < 1 || $copy['size'] !== (int) $source->file_size_bytes) {
+                throw new TypedFailureException(FailureCategory::Terminal, 'document_storage_integrity_failed');
+            }
+            $verified = $this->fileService->describeCurrent($destinationPath, -(int) $source->file_size_bytes);
+            if ($verified['size'] !== (int) $source->file_size_bytes || ! hash_equals((string) $source->checksum_sha256, $verified['sha256'])) {
                 throw new TypedFailureException(FailureCategory::Terminal, 'document_storage_integrity_failed');
             }
 

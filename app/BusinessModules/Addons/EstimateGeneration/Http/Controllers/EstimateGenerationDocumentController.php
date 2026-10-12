@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ConfirmEstimateGenerationDocumentCost;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentAdmissionConflict;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentCostJournalReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentPageActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingControlConflict;
@@ -66,6 +67,7 @@ class EstimateGenerationDocumentController extends Controller
                 (int) $request->validated('state_version'),
                 $request->file('files', []),
                 $request->user(),
+                $request->validated('request_id'),
             );
             $result->documents->each(static fn (EstimateGenerationDocument $document) => $document->setRelation('session', $session));
             $this->costJournal->attach($result->documents);
@@ -76,7 +78,9 @@ class EstimateGenerationDocumentController extends Controller
             ], trans_message('estimate_generation.documents_uploaded'));
         } catch (AuthorizationException) {
             return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
-        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState|DocumentAdmissionConflict) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $exception) {
             Log::error('[EstimateGeneration] Failed to upload documents', [
@@ -120,6 +124,7 @@ class EstimateGenerationDocumentController extends Controller
                 (int) $request->validated('state_version'),
                 (int) $request->validated('source_session_id'),
                 $request->user(),
+                $request->validated('request_id'),
             );
             $result->documents->each(static fn (EstimateGenerationDocument $document) => $document->setRelation('session', $session));
             $this->costJournal->attach($result->documents);
@@ -132,7 +137,7 @@ class EstimateGenerationDocumentController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
         } catch (ValidationException $exception) {
             return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
-        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState|DocumentAdmissionConflict) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $exception) {
             Log::error('[EstimateGeneration] Failed to reuse documents', [

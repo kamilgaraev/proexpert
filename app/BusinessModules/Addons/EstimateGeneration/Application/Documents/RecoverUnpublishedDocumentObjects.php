@@ -14,6 +14,7 @@ final readonly class RecoverUnpublishedDocumentObjects
 
     public function handle(int $limit = 10): int
     {
+        app(DocumentAdmissionOperation::class)->recover($limit);
         $ids = DB::table(UnpublishedDocumentCleanupJournal::TABLE)->where('status', 'pending')->where('next_attempt_at', '<=', now())
             ->orderBy('id')->limit(min(100, max(1, $limit)))->pluck('id');
         $completed = 0;

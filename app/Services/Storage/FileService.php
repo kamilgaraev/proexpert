@@ -1000,7 +1000,14 @@ class FileService
         bool $respectRequestedVisibility = false,
         bool $privacyMode = false,
         ?\Closure $onObjectPrepared = null,
+        ?string $preparedFilename = null,
     ): string|false {
+        if ($preparedFilename !== null && ($existingPath !== null || $organization === null || ! $privacyMode
+            || $visibility !== 'private'
+            || preg_match('/\A[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.[a-zA-Z0-9]{1,12}\z/', $preparedFilename) !== 1
+            || pathinfo($preparedFilename, PATHINFO_EXTENSION) !== $file->getClientOriginalExtension())) {
+            throw new \InvalidArgumentException('prepared_upload_filename_invalid');
+        }
         $disk = $this->disk($organization);
 
         // Получаем организацию для формирования пути
@@ -1024,7 +1031,7 @@ class FileService
             }
         }
 
-        $filename = Str::uuid()->toString().'.'.$file->getClientOriginalExtension();
+        $filename = $preparedFilename ?? Str::uuid()->toString().'.'.$file->getClientOriginalExtension();
 
         // Формируем путь с префиксом организации: org-{id}/directory/filename
         $orgPrefix = $org ? "org-{$org->id}" : 'shared';

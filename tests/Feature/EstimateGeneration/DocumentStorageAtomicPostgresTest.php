@@ -91,8 +91,8 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationCanonica
         $this->storage();
         $checks = 0;
         $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
-        $authorization->expects(self::exactly(2))->method('authorize')->willReturnCallback(static function () use (&$checks): void {
-            if (++$checks === 2) {
+        $authorization->expects(self::exactly(3))->method('authorize')->willReturnCallback(static function () use (&$checks): void {
+            if (++$checks === 3) {
                 throw new AuthorizationException('revoked');
             }
         });
@@ -227,9 +227,13 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationCanonica
         $heads = 0;
         $copies = 0;
         $files = Mockery::mock(FileService::class);
-        $files->shouldReceive('upload')->andReturnUsing(function (UploadedFile $file) use (&$uploads): string {
+        $files->shouldReceive('upload')->andReturnUsing(function (UploadedFile $file, string $directory,
+            ?string $existingPath = null, string $visibility = 'public', ?Organization $organization = null,
+            bool $respectRequestedVisibility = false, bool $privacyMode = false, ?\Closure $onObjectPrepared = null,
+            ?string $preparedFilename = null) use (&$uploads): string {
             $uploads++;
-            $path = $this->targetPrefix.Str::uuid().'.pdf';
+            $path = $this->targetPrefix.($preparedFilename ?? Str::uuid().'.pdf');
+            $onObjectPrepared?->__invoke($path);
             $this->objects[$path] = (int) $file->getSize();
 
             return $path;
@@ -256,6 +260,7 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationCanonica
             return ['size' => $this->objects[$path], 'sha256' => hash('sha256', $body)];
         });
         $service = new OcrDocumentStorageService($files);
+        $this->app->instance(FileService::class, $files);
         $this->app->instance(OcrDocumentStorageService::class, $service);
         $sources = Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage::class);
         $sources->shouldReceive('open')->andReturnUsing(function (EstimateGenerationDocument $document, string $version) {
