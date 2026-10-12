@@ -358,6 +358,79 @@ final class JournalProjectContractAssignmentTest extends TestCase
         $this->approve($next, $user);
     }
 
+    #[\PHPUnit\Framework\Attributes\RunInSeparateProcess]
+    #[\PHPUnit\Framework\Attributes\PreserveGlobalState(false)]
+    public function test_competing_submissions_and_approvals_cannot_exceed_the_contract_quantity(): void
+    {
+        [$user, $project, $item, $first] = $this->fixture();
+        $entries = [];
+        foreach ([1, 2] as $number) {
+            $entries[] = $this->entry($user, $this->journal($user, $project), $item, [['quantity' => 7, 'contract_id' => $first->id]]);
+        }
+        DB::commit();
+        $connection = config('database.connections.pgsql');
+        $raceName = 'journal-quantity-'.bin2hex(random_bytes(5));
+        $environment = array_merge(getenv(), [
+            'APP_ENV' => 'testing', 'APP_KEY' => (string) config('app.key'),
+            'LOG_CHANNEL' => 'stderr', 'CACHE_STORE' => 'array', 'SESSION_DRIVER' => 'array',
+            'QUEUE_CONNECTION' => 'sync', 'MAIL_MAILER' => 'array',
+            'LEGAL_ARCHIVE_AUDIT_WRITER_SECRET' => (string) config('legal_archive.audit_writer_secret'),
+            'DB_CONNECTION' => 'pgsql', 'DB_HOST' => (string) $connection['host'],
+            'DB_PORT' => (string) $connection['port'], 'DB_DATABASE' => (string) $connection['database'],
+            'DB_USERNAME' => (string) $connection['username'], 'DB_PASSWORD' => (string) $connection['password'],
+            'MOST_RACE_NAME' => $raceName,
+        ]);
+        $workers = [];
+        DB::beginTransaction();
+        try {
+            Project::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+            foreach ($entries as $entry) {
+                $worker = new \Symfony\Component\Process\Process([
+                    PHP_BINARY, base_path('tests/Support/ConstructionJournal/approve_entry_worker.php'),
+                    (string) $entry->id, (string) $user->id,
+                ], base_path(), $environment, timeout: 45);
+                $worker->start();
+                $workers[] = $worker;
+            }
+            $deadline = microtime(true) + 20;
+            do {
+                DB::select('SELECT pg_stat_clear_snapshot()');
+                $waiting = DB::table('pg_stat_activity')->where('application_name', $raceName)->where('wait_event_type', 'Lock')->count();
+                if ($waiting === 2) {
+                    break;
+                }
+                foreach ($workers as $worker) {
+                    if (! $worker->isRunning()) {
+                        self::fail($worker->getErrorOutput().$worker->getOutput());
+                    }
+                }
+                usleep(20_000);
+            } while (microtime(true) < $deadline);
+            self::assertSame(2, $waiting);
+            DB::commit();
+            $results = [];
+            foreach ($workers as $worker) {
+                self::assertSame(0, $worker->wait(), $worker->getErrorOutput());
+                $results[] = json_decode($worker->getOutput(), true, 16, JSON_THROW_ON_ERROR);
+            }
+            self::assertCount(1, array_filter($results, static fn (array $result): bool => $result['success']), json_encode($results));
+            $entryIds = array_map(static fn (ConstructionJournalEntry $entry): int => $entry->id, $entries);
+            self::assertSame(1, ConstructionJournalEntry::query()->whereIn('id', $entryIds)->where('status', 'approved')->count());
+            self::assertSame(1, ConstructionJournalEntry::query()->whereIn('id', $entryIds)->where('status', 'draft')->count());
+            self::assertSame(7.0, (float) \App\Models\CompletedWork::query()->whereIn('journal_entry_id', $entryIds)->confirmed()->sum('quantity'));
+        } finally {
+            foreach ($workers as $worker) {
+                if ($worker->isRunning()) {
+                    $worker->stop();
+                }
+            }
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            DB::beginTransaction();
+        }
+    }
+
     private function externalFact(User $user, Project $project, EstimateItem $item, ?Contract $contract): void
     {
         \App\Models\CompletedWork::create([
