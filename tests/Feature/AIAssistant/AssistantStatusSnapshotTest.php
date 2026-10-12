@@ -409,6 +409,35 @@ final class AssistantStatusSnapshotTest extends TestCase
         Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
     }
 
+    public function test_document_hash_and_provenance_functions_preserve_relation_proof_and_reject_shadowing(): void
+    {
+        $sql = "SELECT encode(sha256(convert_to(u.text, 'UTF8')), 'hex'), CHAR_LENGTH(u.text), jsonb_exists(u.provenance, 'source') FROM public.ai_assistant_document_units u JOIN public.ai_assistant_documents d ON d.id = u.document_id";
+        $footprint = app(AssistantStatusSnapshotFootprint::class);
+        $proof = $footprint->capture(static fn () => DB::select($sql));
+        self::assertSame(['public.ai_assistant_document_units', 'public.ai_assistant_documents'], $proof['relations'], $proof['reason'] ?? '');
+        DB::statement('CREATE FUNCTION public.encode(bytea, text) RETURNS text LANGUAGE sql AS $$ SELECT count(*)::text FROM public.projects $$');
+        try {
+            $rejected = $footprint->capture(static fn () => DB::select($sql));
+            self::assertNull($rejected['relations']);
+            self::assertSame('unsupported_function:encode', $rejected['reason']);
+            $qualified = $footprint->capture(static fn () => DB::select(str_replace('encode(', 'pg_catalog.encode(', $sql)));
+            self::assertSame(['public.ai_assistant_document_units', 'public.ai_assistant_documents'], $qualified['relations']);
+        } finally { DB::statement('DROP FUNCTION public.encode(bytea, text)'); }
+    }
+
+    public function test_real_document_coverage_queries_have_proven_database_dependencies(): void
+    {
+        [$organization, $actor] = $this->scope();
+        $proof = app(AssistantStatusSnapshotFootprint::class)->capture(
+            static fn (): array => app(AssistantDocumentCoverageService::class)->coverage((int) $organization->id, $actor),
+        );
+        self::assertIsArray($proof['relations'], $proof['reason'] ?? '');
+        foreach (['public.ai_assistant_documents', 'public.ai_assistant_document_units', 'public.ai_rag_sources', 'public.ai_rag_chunks'] as $relation) {
+            self::assertContains($relation, $proof['relations']);
+        }
+        self::assertSame(0, $proof['value']['document_coverage']['total']);
+    }
+
     public function test_snapshot_refresh_diagnostics_only_emit_bounded_failure_reasons(): void
     {
         $events = [];

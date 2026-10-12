@@ -297,6 +297,10 @@ final readonly class ReportHttpAuthorizationOrchestrator
     private function transaction(Closure $callback): mixed
     {
         try {
+            if ($this->database->transactionLevel() > 0) {
+                return $callback();
+            }
+
             return $this->database->transaction(function () use ($callback): mixed {
                 $this->database->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\AIAssistant;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
 use App\BusinessModules\Features\AIAssistant\Exceptions\AssistantRequestDeadlineExceeded;
 use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantRequestExecutionContext;
@@ -80,6 +81,36 @@ final class AssistantReadonlyTransactionGuardTest extends TestCase
         } catch (QueryException $exception) {
             self::assertSame('57014', $exception->errorInfo[0]);
         }
+    }
+
+    public function test_report_authorization_reuses_lifecycle_transaction_after_its_locked_reads(): void
+    {
+        $this->activate();
+        DB::transaction(function (): void {
+            DB::select('SELECT id FROM assistant_report_guard_probe FOR UPDATE');
+            $orchestrator = app(ReportHttpAuthorizationOrchestrator::class);
+            $method = new \ReflectionMethod($orchestrator, 'transaction');
+            $result = $method->invoke($orchestrator, static fn (): array => [
+                DB::transactionLevel(), DB::selectOne('SHOW transaction_isolation')->transaction_isolation,
+                DB::selectOne('SHOW transaction_read_only')->transaction_read_only,
+            ]);
+            self::assertSame([1, 'read committed', 'off'], $result);
+            DB::statement('INSERT INTO assistant_report_guard_probe (id) VALUES (1)');
+        });
+        self::assertSame(1, DB::table('assistant_report_guard_probe')->count());
+    }
+
+    public function test_standalone_report_authorization_retains_its_readonly_snapshot(): void
+    {
+        $this->activate();
+        $orchestrator = app(ReportHttpAuthorizationOrchestrator::class);
+        $method = new \ReflectionMethod($orchestrator, 'transaction');
+        $result = $method->invoke($orchestrator, static fn (): array => [
+            DB::transactionLevel(), DB::selectOne('SHOW transaction_isolation')->transaction_isolation,
+            DB::selectOne('SHOW transaction_read_only')->transaction_read_only,
+        ]);
+        self::assertSame([1, 'repeatable read', 'on'], $result);
+        self::assertSame(0, DB::transactionLevel());
     }
 
     private function activate(): void
