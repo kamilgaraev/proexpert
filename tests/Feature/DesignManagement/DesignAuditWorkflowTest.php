@@ -73,12 +73,16 @@ final class DesignAuditWorkflowTest extends TestCase
 
     public function test_removed_last_document_does_not_reappear_in_approved_scope_or_release(): void
     {
-        [$actor, $package, $section, $artifact] = $this->fixture();
-        $revision = app(DesignCompositionService::class)->createRevision($package, $actor, ['composition' => ['sections' => [['code' => 'AR', 'title' => 'АР', 'required' => false, 'documents' => []]]]]);
+        [$actor, $package, $section, $artifact, $version] = $this->fixture();
+        $revision = app(DesignCompositionService::class)->createRevision($package, $actor, ['composition' => ['sections' => [
+            ['code' => 'AR', 'title' => 'АР', 'required' => false, 'documents' => []],
+            ['code' => 'ACTIVE', 'required' => false, 'documents' => [['document_code' => 'ACTIVE-01', 'required' => false]]],
+        ]]]);
+        $this->activeVersion($package, $version);
         app(DesignCompositionService::class)->approve($revision, $actor);
         $package = $package->fresh(['sections.artifacts.currentVersion', 'artifacts.currentVersion']);
         $scope = new \App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessScope($package);
-        $this->assertTrue($scope->artifacts()->isEmpty());
+        $this->assertFalse($scope->artifacts()->contains('id', $artifact->id));
         $this->assertFalse($artifact->fresh()->metadata['composition_active']);
         foreach (['submit_norm_control', 'submit_customer_review', 'approve', 'issue'] as $action) {
             $package = app(DesignWorkflowService::class)->transition($package, (int) $actor->id, $action);
@@ -93,18 +97,30 @@ final class DesignAuditWorkflowTest extends TestCase
     {
         [$actor, $package, $section, $artifact, $version] = $this->fixture();
         $composition = app(DesignCompositionService::class);
-        $revision = $composition->createRevision($package, $actor, ['composition' => ['sections' => [['code' => 'AR', 'required' => true, 'documents' => [['document_code' => 'AR-01', 'required' => true]]]]]]);
+        $revision = $composition->createRevision($package, $actor, ['composition' => ['sections' => [
+            ['code' => 'AR', 'required' => true, 'documents' => [['document_code' => 'AR-01', 'required' => true]]],
+            ['code' => 'ACTIVE', 'required' => false, 'documents' => [['document_code' => 'ACTIVE-01', 'required' => false]]],
+        ]]]);
+        $activeVersion = $this->activeVersion($package, $version);
         $composition->exclude($revision, $actor, ['item_key' => 'AR', 'reason' => 'Раздел исключён', 'expected_state_version' => 1]);
         $composition->approve($revision->fresh(), $actor, 2);
         foreach (['submit_norm_control', 'submit_customer_review', 'approve', 'issue'] as $action) {
             $package = app(DesignWorkflowService::class)->transition($package->fresh(), (int) $actor->id, $action);
         }
         $event = DesignWorkflowEvent::query()->where('package_id', $package->id)->where('action', 'issue')->sole();
-        $this->assertSame([], $event->metadata['artifact_version_ids']);
+        $this->assertSame([$activeVersion->id], $event->metadata['artifact_version_ids']);
         $package = app(DesignWorkflowService::class)->transition($package, (int) $actor->id, 'return_to_work', 'Историческое уточнение');
         $updated = app(DesignDocumentArtifactService::class)->replaceSheets($version->fresh(), (int) $actor->id, [['sheet_number' => '1', 'sheet_title' => 'Исторический лист']]);
         $this->assertSame('Исторический лист', $updated->sheets->sole()->sheet_title);
-        $this->assertSame([], app(DesignPackageIssueRegisterService::class)->build($package, $event->id, $actor)['sections']);
+        $this->assertSame(['ACTIVE'], array_column(app(DesignPackageIssueRegisterService::class)->build($package, $event->id, $actor)['sections'], 'code'));
+    }
+
+    private function activeVersion(DesignPackage $package, DesignArtifactVersion $source): DesignArtifactVersion
+    {
+        $artifact = $package->artifacts()->where('document_code', 'ACTIVE-01')->sole();
+        $version = $source->replicate();
+        $version->fill(['artifact_id' => $artifact->id, 'title' => $artifact->title, 'source_file_path' => 'org-'.$package->organization_id.'/active.pdf'])->save();
+        return $version;
     }
 
     private function fixture(): array

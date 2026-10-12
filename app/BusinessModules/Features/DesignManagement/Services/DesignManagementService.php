@@ -145,6 +145,7 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             ->when(! empty($filters['readiness_status']), function ($query) use ($filters): void {
                 $ready = static function ($checks) use ($filters): void {
                     $checks->whereRaw("design_completeness_checks.metadata->>'composition_revision_id' IS NOT DISTINCT FROM design_packages.composition_revision_id::text")
+                        ->whereRaw("design_completeness_checks.metadata->>'rule_count' = ?", [(string) app(DesignCompletenessService::class)->ruleCount()])
                         ->whereRaw("design_completeness_checks.metadata->>'completeness_invalidated_at' IS NOT DISTINCT FROM design_packages.metadata->>'completeness_invalidated_at'");
                     if ($filters['readiness_status'] !== 'not_checked') {
                         $checks->where('status', (string) $filters['readiness_status']);

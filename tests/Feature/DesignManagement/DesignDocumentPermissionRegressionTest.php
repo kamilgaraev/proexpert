@@ -77,6 +77,16 @@ final class DesignDocumentPermissionRegressionTest extends TestCase
         $actor = $this->context(['edit', 'review', 'approve']);
         [$package, $section] = $this->package($actor);
         $section->update(['required' => false, 'metadata' => ['documents' => []]]);
+        $artifact = $section->artifacts()->create([
+            'organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'package_id' => $package->id,
+            'artifact_type' => 'text_document', 'title' => 'Необязательный документ', 'document_code' => 'OPTIONAL-01',
+        ]);
+        $artifact->versions()->create([
+            'organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'title' => $artifact->title,
+            'version_number' => '1', 'revision' => '1', 'source_format' => 'pdf', 'file_format' => 'pdf',
+            'source_file_path' => 'org-'.$package->organization_id.'/optional.pdf', 'source_original_name' => 'optional.pdf',
+            'source_mime_type' => 'application/pdf', 'source_size_bytes' => 100, 'is_current' => true,
+        ]);
         $this->assertFalse(app(AuthorizationService::class)->can($actor->user, 'design-management.norm_control.run', ['organization_id' => $package->organization_id, 'project_id' => $package->project_id]));
         $service = app(DesignCompletenessService::class);
         $check = $service->runForWorkflow($package, (int) $actor->user->id, 'submit_norm_control');
