@@ -108,24 +108,26 @@ final class AssistantEstimatePositionReadService
         User $actor,
         int $perPage = self::CROSS_ESTIMATE_PAGE_SIZE,
         ?string $cursor = null,
+        ?string $priceSubject = null,
     ): array {
         $search = trim($search);
-        Validator::make(compact('search', 'organizationId', 'perPage', 'cursor'), [
+        Validator::make(compact('search', 'organizationId', 'perPage', 'cursor', 'priceSubject'), [
             'search' => ['required', 'string', 'max:200'],
             'organizationId' => ['required', 'integer', 'min:1'],
             'perPage' => ['required', 'integer', 'between:1,'.self::CROSS_ESTIMATE_PAGE_SIZE],
             'cursor' => ['nullable', 'string', 'max:2048'],
+            'priceSubject' => ['nullable', 'in:concrete_m3'],
         ])->validate();
         $searchTerms = AssistantEstimateCrossSearchIntent::normalizeSearchTerms($search);
         $exactCode = AssistantEstimateCrossSearchIntent::exactPositionCode($search);
 
-        return DB::transaction(function () use ($searchTerms, $exactCode, $organizationId, $actor, $perPage, $cursor): array {
+        return DB::transaction(function () use ($searchTerms, $exactCode, $organizationId, $actor, $perPage, $cursor, $priceSubject): array {
             if (DB::transactionLevel() === 1) {
                 DB::connection()->getPdo()->exec('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
             }
 
             return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use (
-                $searchTerms, $exactCode, $organizationId, $actor, $perPage, $cursor,
+                $searchTerms, $exactCode, $organizationId, $actor, $perPage, $cursor, $priceSubject,
             ): array {
                 if (! $this->access->canReadDomain($actor, $organizationId, 'estimates')
                     || ! $this->access->canCurrentPermission($actor, $organizationId, 'budget-estimates.finance.view')) {
@@ -142,7 +144,7 @@ final class AssistantEstimatePositionReadService
                         'search_complete' => false, 'has_more' => false, 'next_cursor' => null];
                 }
 
-                $searchIdentity = $exactCode === null ? (string) $searchTerms : 'code:'.$exactCode;
+                $searchIdentity = ($exactCode === null ? (string) $searchTerms : 'code:'.$exactCode).($priceSubject === null ? '' : '|price_subject:'.$priceSubject);
                 $afterPositionId = $this->decodeSearchCursor($cursor, $searchIdentity, $organizationId, $actor);
                 $estimateScope = $this->access->entityQuery($actor, $organizationId, 'estimate');
                 if ($estimateScope === null) {
@@ -160,8 +162,16 @@ final class AssistantEstimatePositionReadService
                         });
                     })
                     ->whereIn('estimates.id', $estimateScope->select('estimates.id'))
+                    ->when($priceSubject === 'concrete_m3', static function (Builder $items) use ($organizationId): void {
+                        $items->where('estimate_items.item_type', 'material')
+                            ->whereNotNull('estimate_items.unit_price')->where('estimate_items.unit_price', '>=', 0)
+                            ->whereRaw("estimate_items.name ~* '^[[:space:]]*(бетон\\M|бетоны\\M|смес[ьи][[:space:]]+бетонн[а-яё]*|БСТ\\M)'")
+                            ->whereHas('measurementUnit', static fn (Builder $units): Builder => $units->where('organization_id', $organizationId)
+                                ->whereIn(DB::raw('lower(btrim(short_name))'), ['м³', 'м3', 'm³', 'm3']));
+                    })
                     ->where('estimate_items.id', '>', $afterPositionId ?? 0)
-                    ->where(function (Builder $searchQuery) use ($searchTerms, $exactCode): void {
+                    ->where(function (Builder $searchQuery) use ($searchTerms, $exactCode, $priceSubject): void {
+                        if ($priceSubject === 'concrete_m3') { return; }
                         if ($exactCode !== null) {
                             $searchQuery->whereRaw('upper(estimate_items.normative_rate_code) = ?', [$exactCode]);
 

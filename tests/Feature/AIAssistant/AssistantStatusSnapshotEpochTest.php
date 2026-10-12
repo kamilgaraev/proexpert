@@ -424,6 +424,39 @@ final class AssistantStatusSnapshotEpochTest extends TestCase
         self::assertTrue($this->capture()['cacheable']);
     }
 
+    public function test_late_table_repair_restores_global_proof_without_replacing_existing_business_guards(): void
+    {
+        DB::statement('CREATE TABLE public.assistant_snapshot_late_table_test (id bigint PRIMARY KEY, payload text)');
+        DB::unprepared("CREATE FUNCTION public.assistant_snapshot_late_guard_test() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN IF NEW.payload = 'blocked' THEN RAISE EXCEPTION 'business_guard_test'; END IF; RETURN NEW; END; \$\$");
+        DB::statement('CREATE TRIGGER assistant_snapshot_late_existing_test BEFORE INSERT OR UPDATE ON public.assistant_snapshot_late_table_test FOR EACH ROW EXECUTE FUNCTION public.assistant_snapshot_late_guard_test()');
+        try {
+            self::assertFalse($this->capture()['cacheable']);
+            $existing = DB::selectOne("SELECT pg_get_triggerdef(oid) AS definition, tgenabled FROM pg_trigger WHERE tgrelid = 'public.assistant_snapshot_late_table_test'::regclass AND tgname = 'assistant_snapshot_late_existing_test'");
+            $repair = require base_path('database/migrations/2026_10_12_210000_complete_assistant_snapshot_mutation_tracking.php');
+            $repair->up();
+            $repair->up();
+            self::assertTrue($this->capture()['cacheable']);
+            self::assertEquals($existing, DB::selectOne("SELECT pg_get_triggerdef(oid) AS definition, tgenabled FROM pg_trigger WHERE tgrelid = 'public.assistant_snapshot_late_table_test'::regclass AND tgname = 'assistant_snapshot_late_existing_test'"));
+            foreach (["INSERT INTO public.assistant_snapshot_late_table_test VALUES (1, 'original')", "UPDATE public.assistant_snapshot_late_table_test SET payload = 'changed'", 'DELETE FROM public.assistant_snapshot_late_table_test', 'TRUNCATE public.assistant_snapshot_late_table_test'] as $statement) {
+                $state = $this->readOnly(fn (): array => $this->epoch->capture(['public.assistant_snapshot_late_table_test']));
+                self::assertTrue($state['cacheable']);
+                DB::statement($statement);
+                self::assertFalse($this->valid($state));
+            }
+            try {
+                DB::statement("INSERT INTO public.assistant_snapshot_late_table_test VALUES (2, 'blocked')");
+                self::fail('Existing business write protection must remain active');
+            } catch (\Illuminate\Database\QueryException $exception) {
+                self::assertStringContainsString('business_guard_test', $exception->getMessage());
+            }
+            $repair->down();
+            self::assertTrue($this->capture()['cacheable']);
+        } finally {
+            DB::statement('DROP TABLE public.assistant_snapshot_late_table_test');
+            DB::statement('DROP FUNCTION public.assistant_snapshot_late_guard_test()');
+        }
+    }
+
     public function test_schema_fingerprint_preserves_escaped_identifiers_and_policy_changes(): void
     {
         $table = 'public.assistant_snapshot_epoch_unrelated_test';

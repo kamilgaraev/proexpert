@@ -33,4 +33,17 @@ final class AssistantRequiredProjectReadTest extends TestCase
     {
         return ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
     }
+
+    public function test_concrete_unit_price_read_binds_material_and_unit_without_requiring_a_project_selector(): void
+    {
+        foreach (['Найди в любой нашей смете, сколько стоит куб бетона.', 'Почём куб бетона у нас в сметах?', 'Покажи цена за м3 бетона в нашей смете'] as $query) {
+            $read = AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $query]]);
+            self::assertSame('search_estimate_positions', $read['name']);
+            self::assertSame('concrete_m3', $read['arguments']['price_subject']);
+            self::assertSame('бетон', $read['arguments']['query']);
+        }
+        foreach (['Сколько стоит куб бетона и тонна арматуры?', 'Сколько стоит куб бетона В25?', 'Сколько стоит куб бетона в смете №17?', 'Сколько стоит куб бетона на текущем объекте?'] as $query) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan(['request' => ['message' => $query]]));
+        }
+    }
 }

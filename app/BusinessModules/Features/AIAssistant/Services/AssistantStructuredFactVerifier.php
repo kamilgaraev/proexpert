@@ -10,6 +10,9 @@ final class AssistantStructuredFactVerifier
 {
     public function guard(string $query, string $text, array $toolResults = [], array $requestScope = []): array
     {
+        if (\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query) !== null) {
+            return $this->verifiedConcreteUnitPrice($query, $text, $toolResults);
+        }
         if (AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
             return $this->verifiedProjectExpenses($query, $text, $toolResults, $requestScope);
         }
@@ -37,6 +40,9 @@ final class AssistantStructuredFactVerifier
 
     public function confirmedResults(array $toolResults, ?string $query = null, array $requestScope = []): array
     {
+        if ($query !== null && \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query) !== null) {
+            return $this->verifiedConcreteUnitPrice($query, '', $toolResults);
+        }
         if ($query !== null && AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
             return $this->verifiedProjectExpenses($query, '', $toolResults, $requestScope);
         }
@@ -44,6 +50,24 @@ final class AssistantStructuredFactVerifier
             return $this->verifiedCount($query, '', $toolResults, $requestScope);
         }
         return $this->verifiedResults(null, '', $toolResults, $query);
+    }
+
+    private function verifiedConcreteUnitPrice(string $query, string $text, array $toolResults): array
+    {
+        foreach ($toolResults as $result) {
+            $evidence = is_array($result) ? ($result['structured_fact_evidence'] ?? null) : null;
+            if (! is_array($result) || ($result['price_subject'] ?? null) !== 'concrete_m3' || ! is_array($evidence) || ! $this->trusted($evidence)) { continue; }
+            $prices = array_values(array_filter($evidence['rows'], static fn (array $row): bool => $row['entity_type'] === 'estimate_item'
+                && \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::isConcreteCubicPosition($row['fields'])
+                && is_string($row['fields']['unit_price'] ?? null) && preg_match('/^\d+(?:\.\d+)?$/D', $row['fields']['unit_price']) === 1));
+            if ($prices === []) { continue; }
+            $rows = array_merge(array_values(array_filter($evidence['rows'], static fn (array $row): bool => $row['entity_type'] === 'estimate')), $prices);
+            $answer = AssistantStructuredFactFormatter::presentation($rows, $query);
+            return ['text' => $answer, 'validation_status' => 'partial', 'source_refs' => array_column($rows, 'source_ref'),
+                'replaced' => $text !== $answer, 'needs_clarification' => false, 'structured_evidence_truncated' => ($result['has_more'] ?? false) === true];
+        }
+        return ['text' => trans_message('ai_assistant_facts.live_proof_required'), 'validation_status' => 'partial', 'source_refs' => [],
+            'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
     }
 
     private function verifiedProjectExpenses(string $query, string $text, array $toolResults, array $requestScope): array

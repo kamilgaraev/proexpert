@@ -10,9 +10,10 @@ final readonly class AssistantRequiredProjectRead
 {
     public static function fromPlan(array $plan): ?array
     {
+        $query = (string) ($plan['request']['message'] ?? '');
+        if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         if (! $scope->requested || $scope->projectId === null) { return null; }
-        $query = (string) ($plan['request']['message'] ?? '');
         if (($arguments = AssistantDomainSearchCountEvidence::overdueCountArguments($query, $scope->projectId)) !== null) {
             return ['name' => 'assistant_domain_search', 'arguments' => $arguments + ['limit' => 1, 'cursor' => null, 'fields' => null]];
         }
