@@ -7,8 +7,6 @@ namespace App\Services\Contract;
 use App\Exceptions\ContractBuilderException;
 use DOMDocument;
 use DOMElement;
-use Dompdf\Dompdf;
-use Dompdf\Options;
 use PhpOffice\PhpWord\Element\AbstractContainer;
 use PhpOffice\PhpWord\IOFactory;
 use PhpOffice\PhpWord\PhpWord;
@@ -70,12 +68,7 @@ final class ContractDocumentExporter
 
     private function pdf(string $html): string
     {
-        $options = new Options;
-        $options->setIsRemoteEnabled(false);
-        $options->setIsPhpEnabled(false);
-        $options->setIsJavascriptEnabled(false);
-        $options->setDefaultFont('DejaVu Sans');
-        $pdf = new Dompdf($options);
+        $pdf = ContractDocumentFonts::pdf(ContractDocumentFonts::families($html));
         $pdf->setPaper('A4');
         $locale = preg_match('/lang="(ru-RU|en-GB|en-US|de-DE|fr-FR)"/', $html, $localeMatch) === 1 ? $localeMatch[1] : 'ru-RU';
         $pdf->loadHtml('<!doctype html><html lang="'.$locale.'" dir="ltr"><head><meta charset="UTF-8"><style>'
@@ -95,7 +88,7 @@ final class ContractDocumentExporter
             $pair = explode(':', $part, 2);
             $value = trim($pair[1] ?? '');
             $valid = match (trim($pair[0])) {
-                'font-family' => in_array($value, ["'DejaVu Sans'", "'DejaVu Serif'", "'DejaVu Sans Mono'"], true),
+                'font-family' => in_array($value, array_merge(array_map(static fn (string $family): string => "'".$family."'", ContractFontCatalog::FAMILIES), array_map(ContractFontCatalog::css(...), ContractFontCatalog::FAMILIES)), true),
                 'font-size' => preg_match('/^\d+(?:\.\d+)?pt$/D', $value) === 1 && (float) $value >= 8 && (float) $value <= 72,
                 'color' => preg_match('/^#[0-9a-fA-F]{6}$/D', $value) === 1,
                 'text-align' => in_array($value, ['left', 'right', 'center', 'justify'], true),
@@ -110,6 +103,7 @@ final class ContractDocumentExporter
 
     private function docx(DOMDocument $document): string
     {
+        (new ContractWordGlyphFallback)->apply($document);
         $word = new PhpWord;
         $locale = 'ru-RU';
         foreach ($document->getElementsByTagName('*') as $element) { if ($element->hasAttribute('lang')) { $locale = ContractDocumentLocale::validate($element->getAttribute('lang')); break; } }
@@ -148,6 +142,7 @@ final class ContractDocumentExporter
         try {
             \PhpOffice\PhpWord\Settings::setOutputEscapingEnabled(true);
             IOFactory::createWriter($word, 'Word2007')->save($path);
+            (new ContractPositionedWordPackage)->finish($path, [], false);
             $bytes = file_get_contents($path);
             if ($bytes === false) {
                 throw new ContractBuilderException('contracts.builder_export_failed', 503);

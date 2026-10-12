@@ -16,7 +16,7 @@ final class ContractPositionedWordPackage
 
     private const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
-    public function finish(string $path, array $imageDescriptions = []): void
+    public function finish(string $path, array $imageDescriptions = [], bool $positioned = true): void
     {
         $zip = new ZipArchive;
         if ($zip->open($path) !== true) {
@@ -28,14 +28,14 @@ final class ContractPositionedWordPackage
             $query->registerNamespace('w', self::W);
             $query->registerNamespace('v', 'urn:schemas-microsoft-com:vml');
             (new ContractWordDrawingShapes)->replaceTextBoxes($document);
-            foreach ($query->query('//v:imagedata') as $index => $image) {
+            foreach ($positioned ? $query->query('//v:imagedata') : [] as $index => $image) {
                 $description = $imageDescriptions[$index] ?? '';
                 $image->setAttributeNS('urn:schemas-microsoft-com:office:office', 'o:title', $description);
                 if ($image->parentNode instanceof DOMElement) { $image->parentNode->setAttribute('alt', $description); }
             }
             $body = $query->query('/w:document/w:body')->item(0);
             $anchor = null;
-            foreach (iterator_to_array($body->childNodes) as $node) {
+            foreach ($positioned ? iterator_to_array($body->childNodes) : [] as $node) {
                 if (! $node instanceof DOMElement) {
                     continue;
                 }
@@ -62,12 +62,19 @@ final class ContractPositionedWordPackage
                 $body->removeChild($node);
             }
             $zip->addFromString('word/document.xml', $document->saveXML());
+            $usedFonts = $query->query('//w:rFonts/@w:ascii | //w:rFonts/@w:hAnsi | //w:rFonts/@w:cs | //w:rFonts/@w:eastAsia');
             $fonts = $this->read($zip, 'word/fontTable.xml');
             $query = new DOMXPath($fonts);
             $query->registerNamespace('w', self::W);
             $relations = new DOMDocument('1.0', 'UTF-8');
             $root = $relations->appendChild($relations->createElementNS('http://schemas.openxmlformats.org/package/2006/relationships', 'Relationships'));
-            $families = ['DejaVu Sans' => 'sans', 'DejaVu Serif' => 'serif', 'DejaVu Sans Mono' => 'mono'];
+            $families = ['DejaVu Sans' => 'sans'];
+            foreach ($usedFonts as $registered) {
+                $name = $registered->nodeValue;
+                if (in_array($name, ContractFontCatalog::FAMILIES, true)) $families[$name] = match ($name) {
+                    'DejaVu Sans' => 'sans', 'DejaVu Serif' => 'serif', 'DejaVu Sans Mono' => 'mono', default => 'font'.substr(hash('sha256', $name), 0, 12),
+                };
+            }
             $variants = ['regular' => 'Regular', 'bold' => 'Bold', 'italic' => 'Italic', 'bolditalic' => 'BoldItalic'];
             foreach ($families as $familyName => $slug) {
                 $font = $query->query('/w:fonts/w:font[@w:name="'.$familyName.'"]')->item(0);
@@ -88,7 +95,7 @@ final class ContractPositionedWordPackage
                     $embed->setAttributeNS(self::R, 'r:id', $id);
                     $embed->setAttributeNS(self::W, 'w:fontKey', '{00000000-0000-0000-0000-000000000000}');
                     $font->appendChild($embed);
-                    $zip->addFromString('word/fonts/'.$file, ContractDocumentFonts::bytes($variant, $familyName));
+                    if (!$zip->addFile(ContractDocumentFonts::path($variant, $familyName), 'word/fonts/'.$file)) throw new ContractBuilderException('contracts.builder_export_failed', 503);
                 }
             }
             $zip->addFromString('word/fontTable.xml', $fonts->saveXML());

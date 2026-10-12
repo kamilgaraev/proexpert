@@ -15,6 +15,49 @@ use Tests\TestCase;
 
 final class ContractLibraryApiTest extends TestCase
 {
+    public function test_configurable_presentation_preserves_source_and_calculated_money_values(): void
+    {
+        $this->withoutMiddleware();
+        $owner = Organization::factory()->create();
+        $actor = User::factory()->create(['current_organization_id' => $owner->id]);
+        $this->actingAs($actor, 'api_admin');
+        Event::listen(RouteMatched::class, static function (RouteMatched $event): void {
+            $event->request->attributes->set('current_organization_id', $event->request->user()?->current_organization_id);
+        });
+        $authorization = \Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $library = new ContractLibraryService($authorization);
+        $name = $library->create($actor, $owner->id, 'variable', 'Полное название', ['type' => 'text',
+            'display' => ['presentation' => ['format' => 'organization_full']]], 'name');
+        $money = $library->create($actor, $owner->id, 'variable', 'Цена', ['type' => 'money'], 'money');
+        $nameId = $name['item']['id'];
+        $moneyId = $money['item']['id'];
+        $words = $library->create($actor, $owner->id, 'variable', 'Цена в тексте', ['type' => 'money',
+            'source' => ['kind' => 'formula', 'expression' => ['kind' => 'reference', 'variable_id' => $moneyId]],
+            'display' => ['presentation' => ['format' => 'money_number_words', 'minor_units' => 'words', 'letter_case' => 'lower', 'prefix' => 'Цена: ', 'suffix' => '.']]], 'words');
+        $wordsId = $words['item']['id'];
+        foreach ([$nameId, $moneyId, $wordsId] as $id) $library->publish($actor, $owner->id, $id, 1, 1);
+        $template = $library->create($actor, $owner->id, 'template', 'Представления', [
+            'document' => ['type' => 'doc', 'content' => [['type' => 'paragraph', 'content' => [
+                ['type' => 'variable', 'attrs' => ['variableId' => $nameId]], ['type' => 'text', 'text' => ' '],
+                ['type' => 'variable', 'attrs' => ['variableId' => $wordsId]],
+            ]]]], 'variables' => [$nameId => 1, $moneyId => 1, $wordsId => 1],
+        ], 'template');
+        $library->publish($actor, $owner->id, $template['item']['id'], 1, 1);
+        $url = '/api/v1/admin/contract-library/'.$template['item']['id'].'/versions/1/calculate';
+        $values = [$nameId => 'ООО «Иван»', $moneyId => ['amount' => '1234.56', 'currency' => 'RUB']];
+        $before = \Illuminate\Support\Facades\DB::table('contract_builder_revisions')->count();
+        $data = $this->postJson($url, ['values' => $values])->assertOk()->json('data');
+        self::assertSame($values[$nameId], $data['values'][$nameId]);
+        self::assertSame($values[$moneyId], $data['values'][$wordsId]);
+        self::assertStringContainsString('Общество с ограниченной ответственностью «Иван»', $data['html']);
+        self::assertStringContainsString('Цена: 1'."\u{00A0}".'234,56'."\u{00A0}".'₽ (одна тысяча двести тридцать четыре рубля пятьдесят шесть копеек).', $data['html']);
+        $values[$moneyId]['amount'] = '1234.567';
+        $this->postJson($url, ['values' => $values])->assertUnprocessable()->assertJsonValidationErrors('values.'.$wordsId);
+        self::assertSame($before, \Illuminate\Support\Facades\DB::table('contract_builder_revisions')->count());
+    }
+
     public function test_calculation_returns_preview_and_field_errors_without_creating_a_revision(): void
     {
         $this->withoutMiddleware();
@@ -49,7 +92,7 @@ final class ContractLibraryApiTest extends TestCase
         $before = \Illuminate\Support\Facades\DB::table('contract_builder_revisions')->count();
         $result = $this->postJson($url, ['values' => [$inputId => '2']])->assertOk()->assertJsonPath('data.values.'.$computedId, '50.01')->json('data');
         self::assertSame(['template_id', 'template_version', 'values', 'html'], array_keys($result));
-        self::assertStringContainsString('50.01', $result['html']);
+        self::assertStringContainsString('50,01', $result['html']);
         self::assertSame($result, $this->postJson($url, ['values' => [$inputId => '2']])->assertOk()->json('data'));
         $this->postJson($url, ['values' => []])->assertUnprocessable()->assertJsonValidationErrors('values.'.$inputId);
         $this->postJson($url, ['values' => [$inputId => '0']])->assertUnprocessable()->assertJsonValidationErrors('values.'.$computedId);
@@ -244,7 +287,8 @@ final class ContractLibraryApiTest extends TestCase
         $variableDefinition = [
             'type' => 'money', 'required' => false,
             'constraints' => ['min' => '0', 'max' => '15000000000', 'scale' => 2, 'currency' => 'RUB'],
-            'source' => ['kind' => 'manual'], 'display' => ['group' => 'Общие', 'hint' => 'Цена договора'],
+            'source' => ['kind' => 'manual'], 'display' => ['group' => 'Общие', 'hint' => 'Цена договора',
+                'presentation' => ['format' => 'money_number_words', 'minor_units' => 'words', 'prefix' => 'Стоимость: ', 'suffix' => '.']],
             'assignment' => ['target' => 'price'],
         ];
         $payload = ['kind' => 'variable', 'title' => 'Цена', 'content' => $variableDefinition, 'request_key' => 'create'];
@@ -252,6 +296,8 @@ final class ContractLibraryApiTest extends TestCase
             ->assertJsonPath('data.version.status', 'draft')
             ->assertJsonPath('data.version.content.constraints.max', '15000000000')
             ->assertJsonPath('data.version.content.constraints.currency', 'RUB')
+            ->assertJsonPath('data.version.content.display.presentation.format', 'money_number_words')
+            ->assertJsonPath('data.version.content.display.presentation.minor_units', 'words')
             ->assertJsonPath('data.version.content.assignment.target', 'price')->json('data');
         self::assertArrayNotHasKey('creation_key', $created['item']);
         self::assertArrayNotHasKey('request_fingerprint', $created['version']);

@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace App\Services\Contract;
 
 use App\Exceptions\ContractBuilderException;
-use Dompdf\Dompdf;
-use Dompdf\Options;
 use PhpOffice\PhpWord\IOFactory;
 use PhpOffice\PhpWord\PhpWord;
 use PhpOffice\PhpWord\Settings;
@@ -20,11 +18,9 @@ final class ContractPositionedExporter
 
     private function pdf(array $plan): string
     {
-        $options = new Options;
-        $options->setIsRemoteEnabled(false);
-        $options->setIsPhpEnabled(false);
-        $options->setIsJavascriptEnabled(false);
-        $pdf = new Dompdf($options);
+        $families = [];
+        foreach ($plan['pages'] as $items) foreach ($items as $item) if ($item['type'] === 'text') $families[] = $item['fontFamily'];
+        $pdf = ContractDocumentFonts::pdf($families);
         $pdf->setPaper([0, 0, $plan['width'], $plan['height']]);
         $pdf->loadHtml('<html><body></body></html>');
         $pdf->render();
@@ -44,7 +40,8 @@ final class ContractPositionedExporter
                     $canvas->image($item['src'], $item['x'], $item['y'], $item['width'], $item['height']);
                 } else {
                     $family = $item['fontFamily'] === 'Most Contract' ? 'DejaVu Sans' : $item['fontFamily'];
-                    $font = $metrics->getFont($family, ($item['bold'] ? 'bold' : '').($item['italic'] ? 'italic' : '') ?: 'normal');
+                    $subtype = $item['bold'] && $item['italic'] ? 'bold_italic' : ($item['bold'] ? 'bold' : ($item['italic'] ? 'italic' : 'normal'));
+                    $font = $metrics->getFont($family, $subtype);
                     $hex = $item['color'] ?? '#172033';
                     $color = array_map(static fn (int $offset): float => hexdec(substr($hex, $offset, 2)) / 255, [1, 3, 5]);
                     $canvas->text($item['x'], $item['y'], $item['text'], $font, $item['fontSize'], $color, $item['wordSpacing'], $item['letterSpacing']);

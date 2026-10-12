@@ -1,0 +1,506 @@
+{
+  "families": [
+    {
+      "name": "Liberation Sans",
+      "source": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+      "files": {
+        "regular": {
+          "name": "LiberationSans-Regular.ttf",
+          "sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "LiberationSans-Bold.ttf",
+          "sha256": "788abee4c806d660e8aee46689dd8540cd4bb98da03dcc9d171ce3efd99a9173",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "LiberationSans-Italic.ttf",
+          "sha256": "e5bae5c4cde31f22142753855f4f8fb86da6ff39955ed3c0a11248b0d16948b0",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "LiberationSans-BoldItalic.ttf",
+          "sha256": "698da70fc191cc5f33ad4d6d3fe830fe4624b898ea2e3169955928b7c491f1ee",
+          "has_ruble": false
+        }
+      }
+    },
+    {
+      "name": "Liberation Serif",
+      "source": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+      "files": {
+        "regular": {
+          "name": "LiberationSerif-Regular.ttf",
+          "sha256": "058ea80864aef09a23f45cbec2bb5400bc3dfbdea01c3f10538a21fcb497fb74",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "LiberationSerif-Bold.ttf",
+          "sha256": "d754ba427cfe0bca54ae052384baa8f842da5bd6550ad4da024ac441e7a7d5ce",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "LiberationSerif-Italic.ttf",
+          "sha256": "0e3dea9f8d613e006ccfa62201f33e265d19167bd0907725c3e145368b04fc2e",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "LiberationSerif-BoldItalic.ttf",
+          "sha256": "f17db8af71e24d2066b587546021d4f0b296be389512b658dec3c09affeb11a7",
+          "has_ruble": false
+        }
+      }
+    },
+    {
+      "name": "Liberation Mono",
+      "source": "https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz",
+      "files": {
+        "regular": {
+          "name": "LiberationMono-Regular.ttf",
+          "sha256": "f2b83c763e8afd21709333370bed4774337fae82267937e2b5aea7e2fbd922c1",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "LiberationMono-Bold.ttf",
+          "sha256": "bd62a0672d0b9b6710b01df434c80ad54fa5f0835207eb7b17b7a761463067bb",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "LiberationMono-Italic.ttf",
+          "sha256": "605c01c711b44480a7508d349dfbf3264e81fa43d69e61cfa7d10b86e764c4d1",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "LiberationMono-BoldItalic.ttf",
+          "sha256": "79451f3c09fe25116098853b7a2ca6e2436220ccc11af022979adbcf195be130",
+          "has_ruble": false
+        }
+      }
+    },
+    {
+      "name": "Carlito",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/carlito",
+      "files": {
+        "regular": {
+          "name": "Carlito-Regular.ttf",
+          "sha256": "f6418f708baede9789daef5d458c0f53d2a888af9820e8062934e504fedc6595",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "Carlito-Bold.ttf",
+          "sha256": "bb5d20f79b82599ec72983597437373a80f2d2085fa91fc144fd74e876a594db",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "Carlito-Italic.ttf",
+          "sha256": "0b019225e58d702bfedcbd35c21696769f8ee115cb6343f84c2f240312450d1c",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "Carlito-BoldItalic.ttf",
+          "sha256": "b32928186c119599e03ca6a1ffc680fdcb7fac95772f4b95d989cf6cd3861517",
+          "has_ruble": false
+        }
+      }
+    },
+    {
+      "name": "Lato",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/lato",
+      "files": {
+        "regular": {
+          "name": "Lato-Regular.ttf",
+          "sha256": "d636e4683231f931eda222d588e944d082bfd3bdba02f928bee461c0f185b251",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "Lato-Bold.ttf",
+          "sha256": "8a0aace75d33794eece4b28187bfc1df0bbd2888b5d8a56e01788c8d65d16be1",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "Lato-Italic.ttf",
+          "sha256": "e399c44efe1387100531d26c7e4800c5d12251b890d6654a3098c7c679cb1786",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "Lato-BoldItalic.ttf",
+          "sha256": "62c1b7f0d2e74b45960154c3520efc337b553db0961bfdc950d5618334596cc8",
+          "has_ruble": false
+        }
+      }
+    },
+    {
+      "name": "PT Sans",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/ptsans",
+      "files": {
+        "regular": {
+          "name": "PTSans-Regular.ttf",
+          "sha256": "9cc831490532009bae2b3ce0d39c62adfc889060beb421593bfd9d2396d0f10a",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "PTSans-Bold.ttf",
+          "sha256": "3128bd5ecf01816e59a23d54c57a7a6b14615b07db53ff277c77376010265b05",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "PTSans-Italic.ttf",
+          "sha256": "5a90fe2d0cd798700935240580bdcc12c0ffc9102c0c7163b3418e13bc21debd",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "PTSans-BoldItalic.ttf",
+          "sha256": "81ac221cdd02bccfa679c74adb122478e9d092e65a722e31ca11469961483785",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "PT Serif",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/ptserif",
+      "files": {
+        "regular": {
+          "name": "PTSerif-Regular.ttf",
+          "sha256": "a4951fade06ff8f09b7673aa81ffb65a8cd409e24d3289a6dc670bc4dda2557a",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "PTSerif-Bold.ttf",
+          "sha256": "038ba7336bd7ea14f12ad155bed51a4345cac5153275d521dec3ba04021c526e",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "PTSerif-Italic.ttf",
+          "sha256": "f57e95ff9dc85691a3b2e193f2028db36f6663939a46c0fc4f286d618b80b7ce",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "PTSerif-BoldItalic.ttf",
+          "sha256": "f003788ba08981eb0988b3557a6f224a53dab49c20e283e8b74d5af3c466f8be",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Roboto",
+      "original_name": "Roboto",
+      "label": "Roboto",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/roboto",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "Roboto-Regular.ttf",
+          "sha256": "3c2d5c96955f3d72964488075e5df5b80e0d145828aba25bbf3d055a18fc8b99",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "Roboto-Bold.ttf",
+          "sha256": "ed7f44a4fa063fae55a218c46bd685d57e007211b4a2f8c2ee8f8edc5f1d9523",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "Roboto-Italic.ttf",
+          "sha256": "ffb4d1f7df2a895379e7fb5831dc460f3969238dc05a9cff8b21c12d33a324ba",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "Roboto-BoldItalic.ttf",
+          "sha256": "a1936d4482294c56a92fbbdf5beb98deb1e550eabd5cff22daf18af57db26228",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Open Sans",
+      "original_name": "Open Sans",
+      "label": "Open Sans",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/opensans",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "OpenSans-Regular.ttf",
+          "sha256": "e709b93a8a5ec608af80ef7e1bfdaf6e1f53254aa58ee69267ecd2fd7d2f2131",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "OpenSans-Bold.ttf",
+          "sha256": "d86a05cedf2cc1cc4514e296c3a2682c3514afb6b684957a0b8851fc28e891ab",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "OpenSans-Italic.ttf",
+          "sha256": "66309fa4c33c4d6631d9a1c51431804de9774ce760f3d04dcd226a567b8eb58e",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "OpenSans-BoldItalic.ttf",
+          "sha256": "57f4af83dbb185b390c37101528d20b281a985a2c9908fa5f9f662717108ffda",
+          "has_ruble": false
+        }
+      }
+    },
+    {
+      "name": "Montserrat",
+      "original_name": "Montserrat",
+      "label": "Montserrat",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/montserrat",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "Montserrat-Regular.ttf",
+          "sha256": "4d9083d0454678c3515e98caad94fd06c4505949a89e1c2f7c1e00441aacb6d1",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "Montserrat-Bold.ttf",
+          "sha256": "cd0aea08d0da8b6af6371ea8feb70fd7bd861875cf5fad70e1c787aca4483832",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "Montserrat-Italic.ttf",
+          "sha256": "d95c37df551a39d44078b52e8c11a0c45c19068200de3b999e17082a82b2d94f",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "Montserrat-BoldItalic.ttf",
+          "sha256": "09277c0b7a194a0fe662482b48942c5d8c74ece008619d8352d42670d50e66f7",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Noto Sans",
+      "original_name": "Noto Sans",
+      "label": "Noto Sans",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/notosans",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "NotoSans-Regular.ttf",
+          "sha256": "499455c7b1baa29db9552c639cb8c76f40fd9f0566ee7b7e773fe083cb51e42c",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "NotoSans-Bold.ttf",
+          "sha256": "3ef3f49699bc25c43cf195f64780b3b872372b3856f4e3d043a12d5ccc1226d1",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "NotoSans-Italic.ttf",
+          "sha256": "8b3d6cb7f9cebd90f9b77f38ba9d4ba241172610acff26bc98f55dc6e1764523",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "NotoSans-BoldItalic.ttf",
+          "sha256": "aa4be50c0fdf33b98c904c412572ca51f4567c802af072e4f3abfeb84bc2837f",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Noto Serif",
+      "original_name": "Noto Serif",
+      "label": "Noto Serif",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/notoserif",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "NotoSerif-Regular.ttf",
+          "sha256": "b27dca3460057051c75875285038a2ed7cf47ff8bd0587535c60c4920e622f60",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "NotoSerif-Bold.ttf",
+          "sha256": "576e12d8cc36b82869d25ca49a823cae0690f0e713e1916cc3e5ad8692942d28",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "NotoSerif-Italic.ttf",
+          "sha256": "e94ea43b7d2343c538a639db96bd79e3d80492bb90a9d9f83e4dfb8b6b4530d8",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "NotoSerif-BoldItalic.ttf",
+          "sha256": "f9509cc2e3444b28ae43f47a2236c963cc7e8992ad3d9d9addef25f07909477e",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Fira Sans",
+      "original_name": "Fira Sans",
+      "label": "Fira Sans",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/firasans",
+      "static_instances": false,
+      "files": {
+        "regular": {
+          "name": "FiraSans-Regular.ttf",
+          "sha256": "c29556a2719bf613ef3d5e070e40d903a8965d9c081beca1375dc1e6e0f93c23",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "FiraSans-Bold.ttf",
+          "sha256": "a4d8e149ecdd4874a0726eb0af894488b3b31c423d6b0017c8f415ed1b795b45",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "FiraSans-Italic.ttf",
+          "sha256": "a4204f9a8029c1c55daa5385ac95936f74abea3e232770f1fb2862a19d1dfa13",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "FiraSans-BoldItalic.ttf",
+          "sha256": "1b96c16db9819bcaa9d588068bb397bb6e977c4874965d3d50d789a1943757eb",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Rubik",
+      "original_name": "Rubik",
+      "label": "Rubik",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/rubik",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "Rubik-Regular.ttf",
+          "sha256": "7efcb44ab514498dc88106bada14287de16ef56fb4e74bd184030b79a1d89d89",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "Rubik-Bold.ttf",
+          "sha256": "64542334f1b7b5bc1f80b53de200797ae5b8033c5f91eb97230b1b287b819797",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "Rubik-Italic.ttf",
+          "sha256": "74037a4e92b7dcc7c27b3d08af3d89b76b6ed4dadee6a36dfc1ae0eb58db7463",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "Rubik-BoldItalic.ttf",
+          "sha256": "e848cb3719e31010e8a61c9a60350069acc4549617d980d6490e985eb56db4cb",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "MOST Source Sans 3",
+      "original_name": "Source Sans 3",
+      "label": "Source Sans 3 (МОСТ)",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/sourcesans3",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "MOSTSourceSans3-Regular.ttf",
+          "sha256": "214a63c51401b2659a28cfe7144251ce8a3f48eb3907161b1e92344f06e5c1d6",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "MOSTSourceSans3-Bold.ttf",
+          "sha256": "414e524089cc72193ce9c054521b7fe29de853d550fc661a45e8559293b41114",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "MOSTSourceSans3-Italic.ttf",
+          "sha256": "6c5a67d1795343579bdd4058f9e5bea01e740407f8d7761df666091c20643442",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "MOSTSourceSans3-BoldItalic.ttf",
+          "sha256": "ea93a29583fc9af462ec62989b7408c94743f005bee78542fa0994cc07f3f59a",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "Source Serif 4",
+      "original_name": "Source Serif 4",
+      "label": "Source Serif 4",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/sourceserif4",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "SourceSerif4-Regular.ttf",
+          "sha256": "756d64eafa743b102cd80513bf1d9af39d894ec55f2fc835dba1b86ce0a71d3b",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "SourceSerif4-Bold.ttf",
+          "sha256": "49d5e98faa4003888c74d242cbf357cfda72355c20b7eef523259cb8cd38d3ab",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "SourceSerif4-Italic.ttf",
+          "sha256": "05e6acdba894a2497f02855c4d8198dd04f57315a3de082034d839559008b3a3",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "SourceSerif4-BoldItalic.ttf",
+          "sha256": "366c98c26c636c2e9b61f118b29691cd14554cf849804aced5f0d849d7b333e3",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "MOST Lora",
+      "original_name": "Lora",
+      "label": "Lora (МОСТ)",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/lora",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "MOSTLora-Regular.ttf",
+          "sha256": "a076f9f1afee4b5664c190bfdbdfed8033faa27923118ceeace632dfe7d3b0c4",
+          "has_ruble": true
+        },
+        "bold": {
+          "name": "MOSTLora-Bold.ttf",
+          "sha256": "40983d0f16a5a375d23bb8384c32ffb805e77f1105d61d1dc1449605cbf3378c",
+          "has_ruble": true
+        },
+        "italic": {
+          "name": "MOSTLora-Italic.ttf",
+          "sha256": "e891c2256c333122ad8e65a8dbec0fb0101ae6c2e818a1a10987a275cc9674ec",
+          "has_ruble": true
+        },
+        "bolditalic": {
+          "name": "MOSTLora-BoldItalic.ttf",
+          "sha256": "c4edae7febf585a179cd8561d3f1854e6aa93b4b08b07e72b6c33360c6f5b6a2",
+          "has_ruble": true
+        }
+      }
+    },
+    {
+      "name": "MOST Playfair Display",
+      "original_name": "Playfair Display",
+      "label": "Playfair Display (МОСТ)",
+      "source": "https://github.com/google/fonts/tree/bd8f81ddb5c74d5c8897b36ad88b440266245103/ofl/playfairdisplay",
+      "static_instances": true,
+      "files": {
+        "regular": {
+          "name": "MOSTPlayfairDisplay-Regular.ttf",
+          "sha256": "a4bcbc62241fc5b80a72a0b65ce9dab324e9e6d600cc8ab9a976aa34b9c63530",
+          "has_ruble": false
+        },
+        "bold": {
+          "name": "MOSTPlayfairDisplay-Bold.ttf",
+          "sha256": "250bfe0b2a8013adf8580b66c4296ef461882d1e484326264b3982fb4a3b9379",
+          "has_ruble": false
+        },
+        "italic": {
+          "name": "MOSTPlayfairDisplay-Italic.ttf",
+          "sha256": "f27c0a0562d74d3a4d1d91eac873ed017d11fd52112a59d47dd3fbacde4f3d07",
+          "has_ruble": false
+        },
+        "bolditalic": {
+          "name": "MOSTPlayfairDisplay-BoldItalic.ttf",
+          "sha256": "fd4c8bad2e288d1240783feb4ccbd5ac01ea8a9f7b3f69aa2ed6dc65fc5decf9",
+          "has_ruble": false
+        }
+      }
+    }
+  ],
+  "google_revision": "bd8f81ddb5c74d5c8897b36ad88b440266245103"
+}

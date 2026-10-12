@@ -76,7 +76,7 @@ final class ContractDocumentLayoutValidator
                 $this->number($block[$field] ?? null, $min, $max);
             }
         }
-        if ((array_key_exists('fontFamily', $block) && ! in_array($block['fontFamily'], ['DejaVu Sans', 'DejaVu Serif', 'DejaVu Sans Mono', 'Most Contract'], true))
+        if ((array_key_exists('fontFamily', $block) && ! in_array($block['fontFamily'], ContractTypography::FONTS, true))
             || (array_key_exists('breakBefore', $block) && ! is_bool($block['breakBefore']))
             || (array_key_exists('keepWithNext', $block) && ! is_bool($block['keepWithNext']))
             || (array_key_exists('align', $block) && ! in_array($block['align'], ['left', 'center', 'right', 'justify'], true))) {
