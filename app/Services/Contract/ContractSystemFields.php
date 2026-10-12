@@ -10,7 +10,7 @@ final class ContractSystemFields
 {
     public function catalogue(): array
     {
-        $codes = ['contract.number', 'contract.date', 'project.name'];
+        $codes = ['contract.number', 'contract.date', 'contract.total_amount', 'project.name'];
         foreach (['first_party', 'second_party', ...array_map(static fn (int $number): string => 'party_'.$number, range(3, 20))] as $party) {
             foreach ([...['name', 'legal_name', 'inn', 'kpp', 'ogrn', 'legal_address', 'email', 'phone', 'role_label'], ...array_keys(ContractPartyRequisites::LABELS)] as $field) {
                 $codes[] = $party.'.'.$field;

@@ -19,6 +19,53 @@ use Tests\TestCase;
 final class ContractBuilderDraftTest extends TestCase
 {
     use \Tests\Support\EnablesImmutableAuditWriter;
+    public function test_current_contract_price_is_automatic_readonly_frozen_and_refreshable(): void
+    {
+        [$actor, , $contract] = $this->fixture(deferInstance: true);
+        $organizationId = (int) $actor->current_organization_id;
+        $contract->update(['total_amount' => '1234.56', 'currency' => 'USD']);
+        $library = app(ContractLibraryService::class);
+        $price = $library->create($actor, $organizationId, 'variable', 'Цена текущего договора', ['type' => 'money',
+            'source' => ['kind' => 'contract_context', 'field' => 'contract.total_amount'],
+            'display' => ['presentation' => ['format' => 'money_number_words']]], 'current-price');
+        $priceId = $price['item']['id'];
+        $library->publish($actor, $organizationId, $priceId, 1, 1);
+        $template = $library->create($actor, $organizationId, 'template', 'Цена в тексте', [
+            'document' => ['type' => 'doc', 'content' => [['type' => 'paragraph', 'content' => [['type' => 'variable', 'attrs' => ['variableId' => $priceId]]]]]],
+            'variables' => [$priceId => 1],
+        ], 'current-price-template');
+        $library->publish($actor, $organizationId, $template['item']['id'], 1, 1);
+        $revision = app(ContractBuilderInstanceService::class)->create($actor, $organizationId, $contract->id, $template['item']['id'], 1, [], 'current-price-instance');
+        self::assertSame(['amount' => '1234.56', 'currency' => 'USD'], $revision['values'][$priceId]);
+        $html = (new \App\Services\Contract\ContractDocumentRenderer)->render($revision['document'], $revision['definitions'], $revision['values']);
+        self::assertStringContainsString('Одна тысяча двести тридцать четыре доллара США 56 центов', $html);
+        $service = app(ContractBuilderDraftService::class);
+        $draft = $service->save($actor, $organizationId, $contract->id, 1, 0, $revision['document'], [], 'current-price-draft');
+        try {
+            $service->save($actor, $organizationId, $contract->id, 1, 1, $revision['document'], [$priceId => ['amount' => '1', 'currency' => 'RUB']], 'forged-current-price');
+            self::fail('Client replaced server-owned price');
+        } catch (\App\Exceptions\ContractBuilderException $error) { self::assertSame(422, $error->getCode()); }
+        $contract->update(['total_amount' => '2000.02', 'currency' => 'EUR']);
+        $saved = $service->save($actor, $organizationId, $contract->id, 1, 1, $revision['document'], [], 'current-price-frozen');
+        self::assertSame($draft['values'][$priceId], $saved['values'][$priceId]);
+        $preview = $service->sourceChanges($actor, $organizationId, $contract->id);
+        self::assertArrayHasKey($priceId, array_column($preview['changes'], null, 'reference'));
+        $contract->update(['total_amount' => '2000.03']);
+        try {
+            $service->save($actor, $organizationId, $contract->id, 1, $saved['version'], $revision['document'], [], 'current-price-stale', $preview['source_hash']);
+            self::fail('Stale price preview accepted');
+        } catch (\App\Exceptions\ContractBuilderException $error) { self::assertSame(409, $error->getCode()); }
+        $preview = $service->sourceChanges($actor, $organizationId, $contract->id);
+        $updated = $service->save($actor, $organizationId, $contract->id, 1, $saved['version'], $revision['document'], [], 'current-price-refresh', $preview['source_hash']);
+        self::assertSame(['amount' => '2000.03', 'currency' => 'EUR'], $updated['values'][$priceId]);
+        self::assertSame($revision, app(ContractBuilderInstanceService::class)->read($actor, $organizationId, $contract->id, 1));
+        $foreign = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id]);
+        try {
+            $service->sourceChanges($foreign, (int) $foreign->current_organization_id, $contract->id);
+            self::fail('Foreign organization read current price');
+        } catch (\Illuminate\Auth\Access\AuthorizationException|\Illuminate\Database\Eloquent\ModelNotFoundException) { self::assertTrue(true); }
+    }
+
     public function test_proposal_review_freezes_comments_and_requires_disputed_clause_decision(): void
     {
         [$actor, $other, $contract, $field, , $base] = $this->fixture();

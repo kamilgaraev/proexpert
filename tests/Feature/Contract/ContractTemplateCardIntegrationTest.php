@@ -19,6 +19,32 @@ use Tests\TestCase;
 
 final class ContractTemplateCardIntegrationTest extends TestCase
 {
+    public function test_current_price_template_explains_missing_saved_contract_before_creation(): void
+    {
+        [$actor, $input] = $this->fixture();
+        $organizationId = (int) $actor->current_organization_id;
+        $library = app(ContractLibraryService::class);
+        $price = $library->create($actor, $organizationId, 'variable', 'Цена текущего договора', ['type' => 'money',
+            'source' => ['kind' => 'contract_context', 'field' => 'contract.total_amount']], 'current-price');
+        $priceId = $price['item']['id'];
+        $library->publish($actor, $organizationId, $priceId, 1, 1);
+        $template = $library->create($actor, $organizationId, 'template', 'Текущая цена', [
+            'document' => ['type' => 'doc', 'content' => [['type' => 'paragraph', 'content' => [['type' => 'variable', 'attrs' => ['variableId' => $priceId]]]]]],
+            'variables' => [$priceId => 1],
+        ], 'current-price-template');
+        $library->publish($actor, $organizationId, $template['item']['id'], 1, 1);
+        $input['template'] = ['template_id' => $template['item']['id'], 'template_version' => 1, 'values' => []];
+        $before = Contract::count();
+        try {
+            app(ContractTemplateCardService::class)->prepare($actor, $organizationId, $input);
+            self::fail('Unsaved current price accepted');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame('contracts.current_price_requires_contract', $error->messageKey());
+            self::assertSame(422, $error->getCode());
+        }
+        self::assertSame($before, Contract::count());
+    }
+
     use \Tests\Support\EnablesImmutableAuditWriter;
 
     public function test_template_card_save_replay_read_sources_and_private_revision_are_consistent(): void

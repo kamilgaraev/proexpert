@@ -10,6 +10,7 @@ final class ContractContextSourceFields
 {
     public static function type(string $field): ?string
     {
+        if ($field === 'contract.total_amount') return 'money';
         if (preg_match('/^party_(?:[3-9]|1[0-9]|20)\.(.+)$/D', $field, $extra) === 1) { return self::type('first_party.'.$extra[1]); }
         if ($field === 'contract.date') {
             return 'date';
@@ -32,7 +33,8 @@ final class ContractContextSourceFields
 
         return self::withParties([
             'project' => ['name' => $contract->is_multi_project ? ($contract->projects()->orderBy('projects.id')->pluck('projects.name')->implode('; ') ?: null) : $contract->project?->name],
-            'contract' => ['number' => $contract->number, 'date' => $contract->date?->toDateString()],
+            'contract' => ['number' => $contract->number, 'date' => $contract->date?->toDateString(),
+                'total_amount' => $contract->total_amount, 'currency' => strtoupper($contract->currency ?: 'RUB')],
             'first_party' => $parties->has('first') ? ContractPartyRequisites::snapshot($parties->get('first')->toArray()) : [],
             'second_party' => $parties->has('second') ? ContractPartyRequisites::snapshot($parties->get('second')->toArray()) : [],
         ], $rows->map(static fn ($party): array => ContractPartyRequisites::snapshot($party->toArray()))->values()->all());
@@ -47,13 +49,16 @@ final class ContractContextSourceFields
         return $context;
     }
 
-    public static function value(array $context, string $field): ?string
+    public static function value(array $context, string $field): string|array|null
     {
         if (self::type($field) === null) {
             return null;
         }
         [$entity, $attribute] = explode('.', $field, 2);
         $value = $context[$entity][$attribute] ?? null;
+        if ($field === 'contract.total_amount') {
+            return $value === null ? null : ['amount' => (string) $value, 'currency' => $context['contract']['currency'] ?? 'RUB'];
+        }
 
         return ContractPartyRequisites::display($attribute, $value === null ? null : (string) $value);
     }
