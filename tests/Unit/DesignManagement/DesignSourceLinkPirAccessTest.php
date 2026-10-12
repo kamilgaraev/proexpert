@@ -25,7 +25,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization->shouldNotReceive('can');
         $access = Mockery::mock(AccessController::class);
         $access->shouldNotReceive('hasModuleAccess');
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
         $link = new DesignSourceLink([
             'organization_id' => 7, 'project_id' => 12, 'source_version_id' => 18,
             'source_snapshot' => ['title' => 'АР. План', 'revision' => 'R01',
@@ -45,7 +45,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization->shouldNotReceive('can');
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(7, 'design-management')->andReturnFalse();
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
         $link = new DesignSourceLink(['organization_id' => 7, 'project_id' => 12, 'source_version_id' => 18, 'source_sheet_id' => 4, 'source_snapshot' => ['title' => 'АР. План', 'revision' => 'R01'], 'target_snapshot' => ['type' => 'completed_work', 'label' => 'Кладка']]);
         $version = new DesignArtifactVersion(['title' => 'АР. План', 'revision' => 'R01']);
         $version->setAttribute('id', 18);
@@ -66,7 +66,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $permission, array $scope): bool => $permission === 'design-management.models.view' && $scope === ['organization_id' => 7, 'project_id' => 12])->andReturnTrue();
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(7, 'design-management')->andReturnTrue();
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
         $link = new DesignSourceLink(['organization_id' => 7, 'project_id' => 12, 'source_version_id' => 18, 'source_snapshot' => ['title' => 'АР. План', 'revision' => 'R01'], 'target_snapshot' => ['type' => 'completed_work', 'label' => 'Кладка']]);
         $version = new DesignArtifactVersion(['organization_id' => 7, 'project_id' => 12, 'title' => 'АР. План', 'revision' => 'R01']);
         $package = new DesignPackage(['organization_id' => 7, 'project_id' => 12]);
@@ -90,7 +90,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $right): bool => $right === $permission)->andReturnFalse();
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(7, 'design-management')->andReturnTrue();
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
         $link = new DesignSourceLink([
             'organization_id' => 7, 'project_id' => 12, 'source_version_id' => 18, 'source_element_id' => 17,
             'source_snapshot' => ['title' => 'Исторический план', 'revision' => 'R01', 'element' => ['global_id' => 'private-id']],
@@ -119,7 +119,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $permission): bool => $permission === 'completed_works.view')->andReturnTrue();
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(7, 'workflow-management')->andReturnTrue();
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
 
         $this->invoke($service, 'authorizeTargetRead', [new User(['id' => 3]), 'completed_work', 7, 12]);
     }
@@ -130,7 +130,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization->shouldReceive('can')->once()->andReturnFalse();
         $access = Mockery::mock(AccessController::class);
         $access->shouldNotReceive('hasModuleAccess');
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
 
         $this->expectException(DomainException::class);
         $this->invoke($service, 'authorizeTargetRead', [new User(['id' => 3]), 'completed_work', 7, 12]);
@@ -141,7 +141,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
         $authorization = Mockery::mock(AuthorizationService::class);
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(7, 'design-management')->andReturnFalse();
-        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
 
         $this->expectException(DomainException::class);
         $this->invoke($service, 'requirePirAccess', [7]);

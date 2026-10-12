@@ -579,7 +579,7 @@ final class DesignManagementApiTest extends TestCase
         $this->mock(AuthorizationService::class, static function (MockInterface $mock): void {
             $mock->shouldReceive('can')->andReturnUsing(static fn (User $actor, string $permission): bool => $permission !== 'design-management.documents.view');
         });
-        $restrictedService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class), app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $restrictedService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class), app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
         try {
             $restrictedService->sourceContext($context->user, $context->organization->id, $documentLink['id']);
             $this->fail('The document viewing permission must be checked separately');
@@ -590,7 +590,7 @@ final class DesignManagementApiTest extends TestCase
         $this->mock(AccessController::class, static function (MockInterface $mock): void {
             $mock->shouldReceive('hasModuleAccess')->andReturnUsing(static fn (int $organizationId, string $module): bool => $module !== 'design-management');
         });
-        $inactiveService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class), app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $inactiveService = new DesignSourceLinkService(app(AuthorizationService::class), app(AccessController::class), app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class), app(\App\Services\CompletedWork\CompletedWorkScopeResolver::class), app(\App\Services\Project\ProjectContextService::class));
         try {
             $inactiveService->sourceContext($context->user, $context->organization->id, $documentLink['id']);
             $this->fail('PIR access must be checked when opening a linked source');
@@ -1048,6 +1048,119 @@ final class DesignManagementApiTest extends TestCase
         }
         $this->assertSame([], $service->linksForSource($context->user, $context->organization->id, $version->id));
         $this->assertSame([], $service->reviewsForSource($context->user, $context->organization->id, $version->id));
+    }
+
+    public function test_completed_work_target_links_are_readable_by_a_shared_project_participant(): void
+    {
+        [, $participant, , $work, $link] = $this->sharedCompletedWorkLink();
+
+        $this->withHeaders($participant->authHeaders())
+            ->getJson("/api/v1/admin/design-management/source-links/targets/completed_work/{$work->id}")
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $link['id'])
+            ->assertJsonPath('data.0.source.available', false)
+            ->assertJsonPath('data.0.source_version_id', null)
+            ->assertJsonPath('data.0.source_sheet_id', null)
+            ->assertJsonPath('data.0.source_element_id', null)
+            ->assertJsonMissingPath('data.0.source.source_file_path')
+            ->assertJsonMissingPath('data.0.source.id');
+    }
+
+    public function test_completed_work_target_links_reject_an_unrelated_organization(): void
+    {
+        [, , , $work] = $this->sharedCompletedWorkLink();
+        $stranger = AdminApiTestContext::create(roleSlug: 'project_manager');
+
+        $this->withHeaders($stranger->authHeaders())
+            ->getJson("/api/v1/admin/design-management/source-links/targets/completed_work/{$work->id}")
+            ->assertUnprocessable();
+    }
+
+    public function test_completed_work_target_links_reject_an_unassigned_project_participant(): void
+    {
+        [, $participant, $project, $work] = $this->sharedCompletedWorkLink();
+        $project->users()->updateExistingPivot($participant->user->id, ['is_active' => false]);
+
+        $this->withHeaders($participant->authHeaders())
+            ->getJson("/api/v1/admin/design-management/source-links/targets/completed_work/{$work->id}")
+            ->assertUnprocessable();
+    }
+
+    public function test_completed_work_target_links_recheck_the_participant_read_permission(): void
+    {
+        [, $participant, , $work] = $this->sharedCompletedWorkLink();
+        $this->allowAdminAccess(['completed_works.view']);
+        $this->app->forgetInstance(DesignSourceLinkService::class);
+
+        $this->withHeaders($participant->authHeaders())
+            ->getJson("/api/v1/admin/design-management/source-links/targets/completed_work/{$work->id}")
+            ->assertUnprocessable();
+    }
+
+    public function test_completed_work_target_links_reject_an_inactive_project_participant(): void
+    {
+        [, $participant, $project, $work] = $this->sharedCompletedWorkLink();
+        $project->organizations()->updateExistingPivot($participant->organization->id, ['is_active' => false]);
+
+        $this->withHeaders($participant->authHeaders())
+            ->getJson("/api/v1/admin/design-management/source-links/targets/completed_work/{$work->id}")
+            ->assertUnprocessable();
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('completedWorkParticipantRoles')]
+    public function test_completed_work_target_links_limit_contractors_to_their_own_work(string $role): void
+    {
+        [$owner, $participant, , $work] = $this->sharedCompletedWorkLink($role);
+        $contractor = \App\Models\Contractor::query()->create([
+            'organization_id' => $owner->organization->id,
+            'source_organization_id' => $participant->organization->id,
+            'name' => 'Подрядчик работы',
+        ]);
+        $work->update(['contractor_id' => $contractor->id]);
+        $endpoint = "/api/v1/admin/design-management/source-links/targets/completed_work/{$work->id}";
+
+        $this->withHeaders($participant->authHeaders())->getJson($endpoint)->assertOk();
+
+        $contractor->update(['source_organization_id' => $owner->organization->id]);
+        $this->withHeaders($participant->authHeaders())->getJson($endpoint)->assertUnprocessable();
+    }
+
+    public static function completedWorkParticipantRoles(): array
+    {
+        return [['contractor'], ['subcontractor']];
+    }
+
+    private function sharedCompletedWorkLink(string $role = 'general_contractor'): array
+    {
+        \Illuminate\Support\Facades\Http::fake(['nominatim.openstreetmap.org/*' => \Illuminate\Support\Facades\Http::response([], 200)]);
+        $owner = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $participant = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $participant->organization->users()->updateExistingPivot($participant->user->id, ['project_access_mode' => 'assigned_projects']);
+        $project = Project::factory()->create(['organization_id' => $owner->organization->id]);
+        $project->organizations()->attach($participant->organization->id, [
+            'role' => 'contractor', 'role_new' => $role, 'is_active' => true,
+            'added_by_user_id' => $owner->user->id,
+        ]);
+        $project->users()->attach($participant->user->id, ['role' => 'member', 'is_active' => true]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess(['workflow-management']);
+        $package = DesignPackage::query()->create([
+            'organization_id' => $owner->organization->id, 'project_id' => $project->id,
+            'created_by' => $owner->user->id, 'updated_by' => $owner->user->id,
+            'title' => 'Комплект общего проекта', 'status' => 'draft', 'metadata' => [],
+        ]);
+        $source = $this->storedVersion($package, $owner->user);
+        $work = \App\Models\CompletedWork::query()->create([
+            'organization_id' => $owner->organization->id, 'project_id' => $project->id,
+            'user_id' => $owner->user->id, 'quantity' => 1, 'completed_quantity' => 1,
+            'price' => 500, 'total_amount' => 500, 'completion_date' => '2026-10-11',
+            'description' => 'Работа общего проекта', 'status' => 'confirmed',
+        ]);
+        $link = app(DesignSourceLinkService::class)->create($owner->user, $owner->organization->id, [
+            'source_version_id' => $source->id, 'target_type' => 'completed_work', 'target_id' => $work->id,
+        ]);
+
+        return [$owner, $participant, $project, $work, $link];
     }
 
     public function test_target_links_recheck_the_current_source_and_its_parents(): void
