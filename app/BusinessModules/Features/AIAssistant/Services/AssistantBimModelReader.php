@@ -233,6 +233,7 @@ final readonly class AssistantBimModelReader
 
         return ['status' => $models === [] ? 'empty' : 'success', 'models' => $models, 'comparison' => $comparison, 'bim_evidence' => $receipt,
             'source_refs' => $references, 'fetched_at' => $fetchedAt, 'validation_status' => 'verified',
+            'server_summary_answer' => $this->summary($models, $filters, $tooMany),
             'needs_clarification' => $models === [] || $tooMany || ($comparison !== null && $comparison['status'] !== 'complete'),
             'server_formatted_answer' => $this->format($models, $filters, $tooMany).($comparison === null ? '' : "\n\n".trans_message(
                 $comparison['status'] === 'complete' ? 'ai_assistant_bim.comparison' : 'ai_assistant_bim.comparison_unavailable', $comparison['counts'] ?? [])).$this->formatComparison($comparison)];
@@ -462,12 +463,42 @@ final readonly class AssistantBimModelReader
             + (in_array($type, ['design_artifact_version', 'design_ifc_model_element', 'design_model_derivative'], true) ? ['bim_projection' => 'engineering_index'] : []);
     }
 
+    private function summary(array $models, array $filters, bool $tooMany): string
+    {
+        $complete = $models !== [] && ! $tooMany && ($filters['compare_version_id'] ?? null) === null;
+        $sum = 0;
+        $projects = [];
+        $versions = [];
+        $lines = [];
+        foreach ($models as $model) {
+            $count = $model['semantic_matching_count'] ?? null;
+            $covered = is_int($count) && $count >= 0 && ($model['scan_complete'] ?? false)
+                && ($model['index_coverage']['status'] ?? null) === 'complete'
+                && ($model['semantic_coverage']['status'] ?? null) === 'complete';
+            $complete = $complete && $covered;
+            if ($covered && $sum <= PHP_INT_MAX - $count) { $sum += $count; } else { $complete = false; }
+            $project = $model['version']['project_id'] ?? null;
+            $version = $model['version']['id'] ?? null;
+            if (! is_int($project) || ! is_int($version)) { $complete = false; }
+            $projects[(string) $project] = true;
+            $versions[(string) $version] = true;
+            $name = $model['source_scope']['artifact']['title'] ?? $model['version']['title'] ?? '';
+            $lines[] = trans_message($covered ? 'ai_assistant_bim.model_matching_count' : 'ai_assistant_bim.model_count_unproven',
+                ['name' => $this->text((string) $name), 'count' => $count]);
+        }
+        if ($complete && count($projects) === 1 && count($versions) === count($models)) {
+            array_unshift($lines, trans_message('ai_assistant_bim.matching_total', ['count' => $sum]));
+        }
+        return implode("\n", $lines);
+    }
+
     private function format(array $models, array $filters, bool $tooMany): string
     {
         if ($models === []) {
             return trans_message('ai_assistant_bim.model_not_found');
         }
-        $lines = [trans_message(count($models) > 1 ? 'ai_assistant_bim.multiple_models' : 'ai_assistant_bim.answer_header')];
+        $lines = [$this->summary($models, $filters, $tooMany),
+            trans_message(count($models) > 1 ? 'ai_assistant_bim.multiple_models' : 'ai_assistant_bim.answer_header')];
         foreach ($models as $model) {
             $version = $model['version'];
             $lines[] = trans_message('ai_assistant_bim.model_line', ['name' => $this->text($version['title'] ?: $version['source_original_name']),
@@ -497,9 +528,10 @@ final readonly class AssistantBimModelReader
                 $lines[] = trans_message('ai_assistant_bim.elements_unavailable');
                 continue;
             }
-            if ($model['total'] !== null && $filters['element_query'] !== null && $filters['element_query'] !== '') {
+            $elementQuery = $filters['element_query'] ?: ($filters['equipment_kind'] ?? null);
+            if ($model['total'] !== null && $elementQuery !== null && $elementQuery !== '') {
                 $lines[] = trans_message($model['total'] === 0 ? 'ai_assistant_bim.elements_not_found' : 'ai_assistant_bim.matches',
-                    ['query' => $this->text($filters['element_query']), 'count' => $model['total']]);
+                    ['query' => $this->text($elementQuery), 'count' => $model['total']]);
             }
             $categories = array_map(fn (array $row): string => $this->categoryLabel($row['category']).': '.$row['count'], array_slice($model['categories'], 0, 100));
             $lines[] = trans_message('ai_assistant_bim.categories', ['categories' => implode('; ', $categories)]);

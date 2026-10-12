@@ -122,6 +122,11 @@ final class AssistantDomainReadService
                         throw new AccessDeniedHttpException();
                     }
                     $query->whereIn($table.'.schedule_id', $schedules->where('project_schedules.project_id', $projectId)->select('project_schedules.id'));
+                } elseif ($entityType === 'project') {
+                    if (! $this->access->canReadEntity($actor, $organizationId, 'project', $projectId)) {
+                        throw new AccessDeniedHttpException();
+                    }
+                    $query->where($query->getModel()->getQualifiedKeyName(), $projectId);
                 } else {
                     if (! \Illuminate\Support\Facades\Schema::hasColumn($table, 'project_id')) {
                         throw ValidationException::withMessages(['project_id' => ['unsupported_project_filter']]);

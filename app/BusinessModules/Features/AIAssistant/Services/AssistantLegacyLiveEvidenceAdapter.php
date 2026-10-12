@@ -60,6 +60,7 @@ final class AssistantLegacyLiveEvidenceAdapter
                 }
                 if ($type === 'contract') {
                     $returnedFields[] = 'contractor_id';
+                    $returnedFields[] = 'currency';
                 }
                 $fields = array_values(array_intersect($returnedFields, $this->catalog->definition($domain)?->fields ?? []));
                 if ($fields === []) {

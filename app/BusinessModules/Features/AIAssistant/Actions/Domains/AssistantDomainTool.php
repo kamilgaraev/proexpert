@@ -25,7 +25,7 @@ abstract class AssistantDomainTool implements AIToolInterface
     public function getDescription(): string
     {
         return match ($this->operation()) {
-            'search' => 'Поиск доступных сущностей МОСТ по текущим данным. Возвращает проверенные идентификаторы и ссылки на источники.',
+            'search' => 'Поиск текущих доступных записей. Полный count — result_window.total; limit ограничивает список. Для просроченных задач: domain=schedule, entity_type=schedule_task, predicate=overdue, query="", проверенный project_id.',
             'read' => 'Чтение текущих полей доступной сущности МОСТ по проверенному идентификатору.',
             default => 'Получение ссылки на доступную сущность МОСТ по проверенному идентификатору.',
         };

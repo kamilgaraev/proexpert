@@ -55,6 +55,22 @@ final class AssistantDomainToolsTest extends TestCase
         $this->assertSame('/projects/'.$visible->id, $result['results'][0]['navigation']['url']);
     }
 
+    public function test_project_lookup_uses_its_primary_key_for_verified_current_scope_and_rejects_hidden_scope(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $visible = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'Текущий объект', 'is_archived' => false]);
+        $other = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'Другой объект', 'is_archived' => false]);
+        $hidden = Project::factory()->create(['organization_id' => $organization->id, 'name' => 'Скрытый объект', 'is_archived' => false]);
+        foreach ([$visible, $other] as $project) { $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']); }
+        $result = $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => '',
+            'project_id' => $visible->id, 'fields' => ['id', 'name']], $actor, $organization->id);
+        self::assertSame([$visible->id], array_column($result['results'], 'id'));
+        self::assertSame(1, $result['result_window']['total']);
+        $this->expectException(AccessDeniedHttpException::class);
+        $this->reader->execute('search', ['domain' => 'projects', 'entity_type' => 'project', 'query' => '',
+            'project_id' => $hidden->id], $actor, $organization->id);
+    }
+
     public function test_project_search_reports_acl_scoped_result_window_and_checked_title(): void
     {
         [$organization, $actor] = $this->actor();

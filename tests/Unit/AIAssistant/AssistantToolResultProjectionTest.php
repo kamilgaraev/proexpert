@@ -152,6 +152,52 @@ final class AssistantToolResultProjectionTest extends TestCase
         foreach ($view['live_entity_reads'] as $nested) { self::assertArrayNotHasKey('live_entity_reads', $nested); }
     }
 
+    public function test_bim_provider_preserves_full_counts_without_repeating_all_examples_and_private_receipts(): void
+    {
+        $element = ['id' => 1, 'express_id' => 100, 'name' => 'Установка', 'category' => 'IFCBUILDINGELEMENTPROXY',
+            'equipment_kind' => 'air_conditioner', 'properties' => array_fill(0, 100, str_repeat('x', 255)),
+            '_source_field_identity' => 'private-marker'];
+        $model = ['version' => ['id' => 15, 'project_id' => 52, 'title' => 'АС', 'source_file_path' => 'private-marker'],
+            'semantic_matching_count' => 588, 'total' => 588, 'scan_complete' => true, 'has_more' => true, 'next_offset' => 20,
+            'index_coverage' => ['status' => 'complete'], 'semantic_coverage' => ['status' => 'complete'],
+            'elements' => array_fill(0, 20, $element), '_fingerprint' => 'private-marker'];
+        $result = ['status' => 'success', 'validation_status' => 'verified', 'server_summary_answer' => 'Всего: 836.',
+            'server_formatted_answer' => str_repeat('Подробности ', 4000), 'models' => [$model],
+            'bim_evidence' => ['filters' => ['include_properties' => false, 'equipment_kind' => 'air_conditioner'], 'version' => 'private-marker'],
+            'source_refs' => [['source_version' => 'private-marker']]];
+        $view = AssistantToolResultProjection::forProvider('get_bim_model_elements', $result);
+        self::assertSame('Всего: 836.', $view['server_formatted_answer']);
+        self::assertSame(588, $view['models'][0]['semantic_matching_count']);
+        self::assertSame(20, $view['models'][0]['next_offset']);
+        self::assertSame(20, $view['models'][0]['available_page_elements']);
+        self::assertTrue($view['models'][0]['examples_truncated']);
+        self::assertCount(1, $view['models'][0]['elements']);
+        self::assertStringNotContainsString('private-marker', json_encode($view, JSON_THROW_ON_ERROR));
+        self::assertLessThan(4096, strlen(json_encode($view, JSON_THROW_ON_ERROR)));
+        self::assertCount(20, $result['models'][0]['elements']);
+        $result['bim_evidence']['filters']['include_properties'] = true;
+        self::assertCount(8, AssistantToolResultProjection::forProvider('get_bim_model_elements', $result)['models'][0]['elements'][0]['properties']);
+    }
+
+    public function test_bim_projection_preserves_requested_properties_links_and_property_changes(): void
+    {
+        $result = ['status' => 'success', 'bim_evidence' => ['filters' => ['property_name' => 'CoolingCapacity',
+            'include_properties' => false, 'include_estimate_links' => true]], 'models' => [[
+                'elements' => [['id' => 1, 'classifications' => ['AIRHANDLER'], 'properties' => ['CoolingCapacity' => 330],
+                    'estimate_links' => [['estimate_id' => 5, 'estimate_item_id' => 6, 'name' => 'Монтаж', '_source_field_identity' => 'private-marker']]]],
+                'estimate_link_coverage' => 'page_limited']], 'comparison' => ['status' => 'complete', 'changes' => [[
+                    'kind' => 'changed', 'global_id' => 'ahu', 'before' => ['name' => 'AHU', 'properties' => ['CoolingCapacity' => 330]],
+                    'after' => ['name' => 'AHU', 'properties' => ['CoolingCapacity' => 400]], '_source_field_identity' => 'private-marker']]]];
+        $view = AssistantToolResultProjection::forProvider('get_bim_model_elements', $result);
+        self::assertSame(330, $view['models'][0]['elements'][0]['properties']['CoolingCapacity']);
+        self::assertSame(5, $view['models'][0]['elements'][0]['estimate_links'][0]['estimate_id']);
+        self::assertSame('page_limited', $view['models'][0]['estimate_link_coverage']);
+        self::assertSame(330, $view['comparison']['changes'][0]['before']['properties']['CoolingCapacity']);
+        self::assertSame(400, $view['comparison']['changes'][0]['after']['properties']['CoolingCapacity']);
+        self::assertSame(['AIRHANDLER'], $view['models'][0]['elements'][0]['classifications']);
+        self::assertStringNotContainsString('private-marker', json_encode($view, JSON_THROW_ON_ERROR));
+    }
+
     private function liveRead(string $type, int $id, array $fields): array
     {
         $model = new class extends Model {};

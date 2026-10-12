@@ -227,6 +227,8 @@ final class AssistantStructuredFactVerifier
         }
         if ($selectedRows !== null) {
             $rows = $selectedRows;
+        } else {
+            $rows = $this->singleContractRows($presentationQuery ?? $query, $rows);
         }
         if ($rows === [] || ($query !== null && ! $this->requestedFactsPresent($query, $rows))) {
             if ($query !== null && AssistantFactIntentClassifier::isMoneyOnly($query) && ! AssistantFactIntentClassifier::requiresUnitPrice($query)) {
@@ -309,6 +311,38 @@ final class AssistantStructuredFactVerifier
         return ['text' => $payload['server_formatted_facts'], 'validation_status' => 'partial',
             'source_refs' => $payload['structured_fact_evidence']['source_refs'], 'replaced' => $text !== $payload['server_formatted_facts'],
             'needs_clarification' => false, 'structured_evidence_truncated' => $truncated];
+    }
+
+    private function singleContractRows(?string $query, array $rows): array
+    {
+        if ($query === null || preg_match('/(?<!\pL)договор[а-яё]*(?!\pL)/iu', $query) !== 1
+            || preg_match('/(?<!\pL)(?:выбер[а-яё]*|покаж[а-яё]*|найд[а-яё]*|возьм[а-яё]*)\s+од(?:ин|ного|ному|ном)(?!\pL)|(?<!\pL)од(?:ин|ного|ному|ном)\s+договор/iu', $query) !== 1
+            || preg_match('/(?:по\s+одному|кажд[а-яё]*|один\s+и\s+другой|од(?:ин|ного|ному|ном)\s+(?:подрядчик|проект|объект|плат[её]ж|сч[её]т|акт|смет))/iu', $query) === 1) { return $rows; }
+        $candidates = [];
+        foreach ($rows as $row) {
+            if (($row['entity_type'] ?? null) === 'contract') { $candidates[(string) $row['entity_id']][] = $row; }
+        }
+        $selected = [];
+        foreach ($candidates as $candidate) {
+            if ($this->requestedFactsPresent($query, $candidate)) { $selected = $candidate; break; }
+        }
+        if ($selected === []) { return []; }
+        $parties = [];
+        foreach ($selected as $row) {
+            $id = $row['fields']['contractor_id'] ?? null;
+            if (isset($row['source_ref']['organization_id']) && (is_int($id) || is_string($id))
+                && in_array('contractor_id', $row['source_ref']['checked_fields'] ?? [], true)) {
+                $parties[(string) $row['source_ref']['organization_id'].'|'.(string) $id] = true;
+            }
+        }
+        foreach ($rows as $row) {
+            if (($row['entity_type'] ?? null) === 'contractor'
+                && isset($row['source_ref']['organization_id'])
+                && isset($parties[(string) $row['source_ref']['organization_id'].'|'.(string) $row['entity_id']])) {
+                $selected[] = $row;
+            }
+        }
+        return $selected;
     }
 
     private function requestedFactsPresent(string $query, array $rows): bool

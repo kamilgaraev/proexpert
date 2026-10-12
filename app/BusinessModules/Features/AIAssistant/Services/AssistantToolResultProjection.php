@@ -23,7 +23,76 @@ final class AssistantToolResultProjection
             return array_intersect_key($result, array_flip(['status', 'stock', 'quantity_scope', 'server_formatted_answer', 'validation_status', 'error', 'reason']));
         }
         if ($toolName === 'get_bim_model_elements') {
-            return array_intersect_key($result, array_flip(['status', 'server_formatted_answer', 'needs_clarification', 'validation_status', 'error', 'reason']));
+            $view = array_intersect_key($result, array_flip(['status', 'needs_clarification', 'validation_status', 'error', 'reason']));
+            $view['server_formatted_answer'] = $result['server_summary_answer'] ?? null;
+            $filters = $result['bim_evidence']['filters'] ?? [];
+            $view['filters'] = array_intersect_key($filters, array_flip(['equipment_kind', 'element_query', 'material_query',
+                'classification_query', 'storey_query', 'property_name', 'property_value', 'quantity_name', 'offset', 'limit']));
+            $view['models'] = [];
+            foreach (array_slice($result['models'] ?? [], 0, 5) as $model) {
+                $projected = array_intersect_key($model, array_flip(['source_scope', 'index_coverage', 'semantic_coverage',
+                    'semantic_matching_count', 'total', 'has_more', 'next_offset', 'scan_complete', 'estimate_link_coverage']));
+                $projected['version'] = array_intersect_key($model['version'] ?? [], array_flip(['id', 'project_id', 'artifact_id',
+                    'title', 'version_number', 'source_original_name', 'is_current']));
+                $projected['categories'] = array_slice($model['categories'] ?? [], 0, 20);
+                $projected['categories_truncated'] = count($model['categories'] ?? []) > 20;
+                $projected['quantity_totals'] = array_slice($model['quantity_totals'] ?? [], 0, 20);
+                $projected['elements'] = [];
+                foreach (array_slice($model['elements'] ?? [], 0, 1) as $element) {
+                    $example = array_intersect_key($element, array_flip(['id', 'express_id', 'global_id', 'category', 'name',
+                        'equipment_kind', 'attributes', 'materials', 'classifications', 'quantities', 'quantity_units']));
+                    if (($filters['include_properties'] ?? false) || ! empty($filters['property_name'])) {
+                        $properties = $element['properties'] ?? [];
+                        $requested = $filters['property_name'] ?? null;
+                        if (is_string($requested) && $requested !== '') {
+                            $preferred = array_filter($properties, static fn ($key): bool => mb_stripos((string) $key, $requested) !== false, ARRAY_FILTER_USE_KEY);
+                            $properties = $preferred + $properties;
+                        }
+                        $example['properties'] = array_slice($properties, 0, 8, true);
+                        $example['properties_truncated'] = count($properties) > 8;
+                    }
+                    if ($filters['include_estimate_links'] ?? false) {
+                        $example['estimate_links'] = [];
+                        foreach (array_slice($element['estimate_links'] ?? [], 0, 3) as $link) {
+                            $safeLink = array_intersect_key($link, array_flip(['link_id', 'revision', 'source_version_id', 'source_element_id',
+                                'status', 'estimate_id', 'estimate_item_id', 'name']));
+                            if (is_array($link['target'] ?? null)) {
+                                $safeLink['target'] = array_intersect_key($link['target'], array_flip(['entity_type', 'id', 'estimate_id',
+                                    'position_number', 'name', 'measurement_unit_id', 'quantity', 'unit_price', 'total_amount', 'currency']));
+                            }
+                            $example['estimate_links'][] = $safeLink;
+                        }
+                        $example['estimate_links_truncated'] = count($element['estimate_links'] ?? []) > 3;
+                    }
+                    $projected['elements'][] = $example;
+                }
+                $projected['available_page_elements'] = count($model['elements'] ?? []);
+                $projected['examples_truncated'] = $projected['available_page_elements'] > count($projected['elements']);
+                $view['models'][] = $projected;
+            }
+            if (is_array($result['comparison'] ?? null)) {
+                $view['comparison'] = array_intersect_key($result['comparison'], array_flip(['status', 'counts', 'identity_complete',
+                    'has_more', 'before_version_id', 'after_version_id']));
+                foreach (array_slice($result['comparison']['changes'] ?? [], 0, 3) as $change) {
+                    $projected = array_intersect_key($change, array_flip(['global_id', 'kind']));
+                    $beforeProperties = $change['before']['properties'] ?? [];
+                    $afterProperties = $change['after']['properties'] ?? [];
+                    $changedProperties = array_filter(array_unique([...array_keys($beforeProperties), ...array_keys($afterProperties)]),
+                        static fn ($key): bool => ($beforeProperties[$key] ?? null) !== ($afterProperties[$key] ?? null));
+                    foreach (['before', 'after'] as $side) {
+                        if (is_array($change[$side] ?? null)) {
+                            $projected[$side] = array_intersect_key($change[$side], array_flip(['name', 'category', 'attributes',
+                                'materials', 'quantities', 'quantity_units', 'classifications']));
+                            $projected[$side]['properties'] = array_intersect_key($change[$side]['properties'] ?? [],
+                                array_flip(array_slice($changedProperties, 0, 8)));
+                        }
+                    }
+                    $projected['property_changes_truncated'] = count($changedProperties) > 8;
+                    $view['comparison']['changes'][] = $projected;
+                }
+                $view['comparison']['changes_truncated'] = count($result['comparison']['changes'] ?? []) > 3;
+            }
+            return $view;
         }
         $view = $result;
         if (is_array($result['live_entity_reads'] ?? null)) {
