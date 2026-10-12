@@ -17,6 +17,7 @@ use App\Services\LegalArchive\CanonicalJson;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\Profiles\LegalDocumentTypeProfileService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowTemplateService;
+use App\Services\LegalArchive\Workflow\LegalWorkflowRoleOptions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,15 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
         private readonly LegalWorkflowTemplateService $templates,
         private readonly LegalDocumentTypeProfileService $profiles,
     ) {}
+
+    public function workflowRoleOptions(Request $request, LegalWorkflowRoleOptions $options): JsonResponse
+    {
+        try {
+            return AdminResponse::success($options->forOrganization($this->actor($request), $this->organizationId($request)));
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'workflow-role-options');
+        }
+    }
 
     public function dictionaries(Request $request): JsonResponse
     {

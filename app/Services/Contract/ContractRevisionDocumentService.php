@@ -140,11 +140,12 @@ final class ContractRevisionDocumentService
                     DB::table('contract_revision_documents')->where('id', $row->id)->where('attempt_token', $ownedToken)->where('status', 'processing')
                         ->update(['lease_until' => now()->addMinutes(3), 'updated_at' => now()]);
                 },
-                completionCallback: function (LegalArchiveDocumentVersion $version, string $ownedToken) use ($row, $document): void {
+                completionCallback: function (LegalArchiveDocumentVersion $version, string $ownedToken) use ($row, $document, $revision): void {
                     $this->assertOwned($row, $document, $ownedToken);
                     if ($version->processing_status !== 'ready' || (int) $version->document_id !== (int) $row->document_id) {
                         throw new RuntimeException('contract_document_version_not_ready');
                     }
+                    ContractRevisionArchiveParties::attach($document, $version, json_decode($revision->parties, true, flags: JSON_THROW_ON_ERROR), (int) $row->created_by);
                     DB::table('contract_revision_documents')->where('id', $row->id)->update([
                         'status' => 'ready', 'document_version_id' => $version->id, 'last_error' => null, 'attempt_token' => null, 'lease_until' => null, 'updated_at' => now(),
                     ]);

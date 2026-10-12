@@ -43,7 +43,7 @@ final class ContractBuilderInstanceService
         }
         $contract = Contract::findOrFail($contractId);
         $parties = $contract->parties()->get();
-        $canCreate = $contract->getRawOriginal('status') === 'draft' && $parties->count() === 2
+        $canCreate = $contract->getRawOriginal('status') === 'draft' && $parties->count() >= 2 && $parties->count() <= 20
             && $parties->contains('linked_organization_id', $organizationId)
             && in_array($contract->getRawOriginal('contract_side_type'), ['general_contract', 'contract', 'subcontract'], true)
             && $this->authorization->can($actor, 'contracts.edit', ['organization_id' => $organizationId])
@@ -110,7 +110,7 @@ final class ContractBuilderInstanceService
                     'fingerprint' => $adoption['fingerprint'], 'basis' => $adoption['basis'], 'baseline' => $this->json($baseline), 'created_at' => now(),
                 ]);
             }
-            if (($adoption === null && $contract->getRawOriginal('status') !== 'draft') || $parties->count() !== 2
+            if (($adoption === null && $contract->getRawOriginal('status') !== 'draft') || $parties->count() < 2 || $parties->count() > 20
                 || !in_array($contract->getRawOriginal('contract_side_type'), ['general_contract', 'contract', 'subcontract'], true)) {
                 $this->invalid();
             }
@@ -121,14 +121,15 @@ final class ContractBuilderInstanceService
             $entitySnapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId, $types, $values);
             $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, null, ContractContextSourceFields::forContract($contract));
             $resolvedValues = (new ContractFormulaEngine($this->values))->calculate($types, $values, ContractEntityCatalog::accessible($entitySnapshots), static fn (string $id): mixed => $sourceValues[$id]);
-            (new ContractDocumentRenderer)->render($resolved['document'], $definitions, $resolvedValues, $entitySnapshots);
+            (new ContractRevisionTermsCompiler)->compile([
+                'document' => $resolved['document'], 'definitions' => $definitions,
+                'values' => $resolvedValues, 'entity_snapshots' => $entitySnapshots,
+            ]);
             $snapshot = [
                 'document' => $resolved['document'], 'definitions' => (object) $definitions, 'values' => (object) $resolvedValues,
                 'blocks' => (object) $resolved['blocks'],
                 'entity_snapshots' => (object) $entitySnapshots,
-                'parties' => $parties->map(fn ($party): array => $party->only([
-                    'side', 'role', 'linked_organization_id', 'name', 'legal_name', 'inn', 'kpp', 'ogrn', 'legal_address', 'email', 'phone',
-                ]))->all(),
+                'parties' => $parties->map(fn ($party): array => ContractPartyRequisites::snapshot($party->toArray()))->all(),
                 'attachments' => [],
             ];
             $instanceId = DB::table('contract_builder_instances')->insertGetId([
@@ -160,6 +161,7 @@ final class ContractBuilderInstanceService
             return [
                 'id' => $revision->id, 'contract_id' => $contractId, 'revision_number' => $revision->revision_number,
                 'base_revision_id' => $revision->base_revision_id, 'template_version_id' => $revision->template_version_id,
+                'contract_profile_code' => ContractDocumentProfiles::fromVersion($revision->template_version_id === null ? null : (int) $revision->template_version_id, json_decode($revision->parties, true, 512, JSON_THROW_ON_ERROR)),
                 'author_organization_id' => $revision->author_organization_id, 'created_by' => $revision->created_by,
                 'created_at' => $revision->created_at, 'content_hash' => $revision->content_hash,
                 'document' => json_decode($revision->document, true, 512, JSON_THROW_ON_ERROR),
@@ -179,7 +181,7 @@ final class ContractBuilderInstanceService
 
         return [
             'revision' => $revision,
-            'html' => (new ContractDocumentRenderer)->render($revision['document'], $revision['definitions'], $revision['values'], $revision['entity_snapshots']),
+            'html' => (new ContractRevisionDocumentRenderer)->renderData($revision),
         ];
     }
 

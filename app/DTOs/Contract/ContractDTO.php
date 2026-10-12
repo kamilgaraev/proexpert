@@ -46,6 +46,9 @@ class ContractDTO
         public readonly string $currency = 'RUB',
         public readonly ?int $superior_organization_id = null,
         public readonly ?string $direction = null,
+        public readonly array $party_details = [],
+        public readonly array $additional_parties = [],
+        public readonly ?array $direct_party = null,
     ) {}
 
     public function toArray(): array
@@ -84,6 +87,8 @@ class ContractDTO
             'contract_category' => $this->contract_category,
             'contract_side_type' => $this->contract_side_type?->value,
             'superior_organization_id' => $this->superior_organization_id,
+            'direct_party' => $this->direct_party,
+            'direct_direction' => $this->direct_party === null ? null : $this->direction,
         ];
     }
 

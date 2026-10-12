@@ -182,6 +182,8 @@ class ContractResource extends JsonResource
             'contract_side_type' => $this->contract_side_type?->value,
             'superior_organization_id' => $this->superior_organization_id,
             'direction' => $contractSide['direction'] ?? 'expense',
+            'direct_party' => $this->direct_party,
+            'direct_direction' => $this->direct_direction,
             'direction_label' => $contractSide['direction_label'] ?? 'Расходный',
             'is_income' => (bool) ($contractSide['is_income'] ?? false),
             'is_expense' => (bool) ($contractSide['is_expense'] ?? true),

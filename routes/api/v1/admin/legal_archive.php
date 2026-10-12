@@ -26,6 +26,8 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->middleware('authorize:legal_archive.settings.manage')->whereUuid('documentTypeProfile')->name('type-profiles.update');
     Route::get('workflow-templates', [LegalArchiveSettingsController::class, 'workflowTemplates'])
         ->middleware('authorize:legal_archive.view')->name('workflow-templates.index');
+    Route::get('workflow-role-options', [LegalArchiveSettingsController::class, 'workflowRoleOptions'])
+        ->middleware('authorize:legal_archive.settings.manage')->name('workflow-role-options');
     Route::post('workflow-templates', [LegalArchiveSettingsController::class, 'storeWorkflowTemplate'])
         ->middleware('authorize:legal_archive.settings.manage')->name('workflow-templates.store');
     Route::get('workflow-templates/{legalWorkflowTemplate}', [LegalArchiveSettingsController::class, 'showWorkflowTemplate'])

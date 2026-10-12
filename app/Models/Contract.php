@@ -65,6 +65,8 @@ class Contract extends Model
         'is_self_execution',
         'legal_archive_document_id',
         'dossier_creation_key',
+        'direct_party',
+        'direct_direction',
     ];
 
     protected $casts = [
@@ -90,6 +92,7 @@ class Contract extends Model
         'is_fixed_amount' => 'boolean',
         'is_multi_project' => 'boolean',
         'is_self_execution' => 'boolean',
+        'direct_party' => 'array',
     ];
 
     public function organization(): BelongsTo

@@ -22,7 +22,7 @@ final class ContractVariableValueValidator
     {
         if ($value === null) {
             if ($definition['required'] ?? false) {
-                $this->invalid($path);
+                $this->invalid($path, 'Заполните обязательное поле.');
             }
 
             return null;
@@ -32,7 +32,7 @@ final class ContractVariableValueValidator
         if ($type === 'text') {
             if (!is_string($value) || mb_strlen($value) > ($constraints['max_length'] ?? 100000)
                 || (($definition['required'] ?? false) && trim($value) === '')) {
-                $this->invalid($path);
+                $this->invalid($path, !is_string($value) ? 'Введите текст. Числовые идентификаторы, например ИНН, храните как текст.' : 'Введите непустой текст длиной не больше '.($constraints['max_length'] ?? 100000).' символов.');
             }
         } elseif (in_array($type, ['number', 'percentage'], true)) {
             $this->number($value, $constraints, $path);
@@ -40,28 +40,28 @@ final class ContractVariableValueValidator
             if (!is_array($value) || array_diff(array_keys($value), ['amount', 'currency']) !== []
                 || !is_string($value['currency'] ?? null) || preg_match('/^[A-Z]{3}$/D', $value['currency']) !== 1
                 || (isset($constraints['currency']) && $constraints['currency'] !== $value['currency'])) {
-                $this->invalid($path);
+                $this->invalid($path, 'Укажите сумму и валюту'.(isset($constraints['currency']) ? ' '.$constraints['currency'] : ' в формате из трёх букв, например RUB').'.');
             }
             $this->number($value['amount'] ?? null, $constraints, $path.'.amount');
         } elseif ($type === 'date') {
             if (!$this->definitions->date($value)
                 || (isset($constraints['min']) && strcmp($value, $constraints['min']) < 0)
                 || (isset($constraints['max']) && strcmp($value, $constraints['max']) > 0)) {
-                $this->invalid($path);
+                $this->invalid($path, 'Выберите корректную дату'.(isset($constraints['min']) ? ' не раньше '.$constraints['min'] : '').(isset($constraints['max']) ? ' не позже '.$constraints['max'] : '').'.');
             }
         } elseif ($type === 'boolean') {
             if (!is_bool($value)) {
-                $this->invalid($path);
+                $this->invalid($path, 'Выберите «Да» или «Нет».');
             }
         } elseif ($type === 'choice') {
             if (!is_string($value) || !in_array($value, array_column($definition['options'], 'id'), true)) {
-                $this->invalid($path);
+                $this->invalid($path, 'Выберите один из доступных вариантов. Прежний вариант мог быть удалён из определения поля.');
             }
         } elseif ($type === 'entity') {
             if (!is_array($value) || array_diff(array_keys($value), ['type', 'id']) !== []
                 || ($value['type'] ?? null) !== $definition['entity_type'] || !is_int($value['id'] ?? null) || $value['id'] < 1
                 || $entityAccessible === null || $entityAccessible($value['type'], $value['id']) !== true) {
-                $this->invalid($path);
+                $this->invalid($path, 'Выберите доступную запись из списка вашей организации. У записи могли измениться права доступа.');
             }
         } elseif ($type === 'table') {
             if (!is_array($value) || !array_is_list($value)
@@ -89,19 +89,21 @@ final class ContractVariableValueValidator
     private function number(mixed $value, array $constraints, string $path): void
     {
         if (!$this->definitions->decimal($value)) {
-            $this->invalid($path);
+            $this->invalid($path, 'Введите число с точкой в качестве десятичного разделителя, без пробелов и единиц измерения.');
         }
         $text = (string) $value;
         $fraction = explode('.', $text, 2)[1] ?? '';
         if (strlen($fraction) > ($constraints['scale'] ?? 12)
             || (isset($constraints['min']) && $this->definitions->compareDecimals($text, (string) $constraints['min']) < 0)
             || (isset($constraints['max']) && $this->definitions->compareDecimals($text, (string) $constraints['max']) > 0)) {
-            $this->invalid($path);
+            $this->invalid($path, 'Допустимо не больше '.($constraints['scale'] ?? 12).' знаков после точки'.(isset($constraints['min']) ? '; минимум '.$constraints['min'] : '').(isset($constraints['max']) ? '; максимум '.$constraints['max'] : '').'.');
         }
     }
 
-    private function invalid(string $path): never
+    private function invalid(string $path, string $reason = 'Проверьте структуру таблицы, обязательные ячейки и количество строк.'): never
     {
-        throw new ContractBuilderException('contracts.variable_value_invalid', 422, ['field' => $path]);
+        preg_match('/^value\.(\d+)/', $path, $row);
+        $prefix = isset($row[1]) ? 'Строка '.((int) $row[1] + 1).': ' : '';
+        throw new ContractBuilderException('contracts.variable_value_explained', 422, ['reason' => $prefix.$reason]);
     }
 }

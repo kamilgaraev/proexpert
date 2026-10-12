@@ -12,7 +12,6 @@ use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Exceptions\ContractBuilderException;
 use App\Models\Contract;
 use App\Models\Organization;
-use App\Models\Project;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -25,12 +24,18 @@ final class ContractTemplateCardService
         if ($parties['reason'] !== null || $parties['first_party'] === null || $parties['second_party'] === null) {
             throw new ContractBuilderException('contracts.template_parties_required', 422);
         }
+        $allParties = [['side' => 'first', ...$parties['first_party']], ['side' => 'second', ...$parties['second_party']]];
+        $allParties = ContractPartyRequisites::mergeParties([...$allParties,
+            ...ContractAdditionalParties::resolve($organizationId, $input['additional_parties'] ?? [], $allParties),
+        ], $input['party_details'] ?? []);
+        [$parties['first_party'], $parties['second_party']] = $allParties;
         $context = [
-            'project' => ['name' => Project::findOrFail($input['project_id'])->name],
+            'project' => ['name' => $parties['projects'] === [] ? null : implode('; ', array_column($parties['projects'], 'name'))],
             'contract' => ['number' => $input['number'] ?? null, 'date' => $input['date'] ?? null],
             'first_party' => $parties['first_party'], 'second_party' => $parties['second_party'],
         ];
         $template = $input['template'];
+        $context = ContractContextSourceFields::withParties($context, $allParties);
         $resolved = app(ContractLibraryService::class)->resolveTemplate($actor, $organizationId, $template['template_id'], $template['template_version']);
         $resolved['contract_profile_code'] ??= 'contract.work';
         $context['contract']['profile_code'] = $resolved['contract_profile_code'];
@@ -42,16 +47,20 @@ final class ContractTemplateCardService
         if (($input['resolve_only'] ?? false) === true) {
             return [...$resolved, 'values' => $sources + $values, 'entity_snapshots' => $snapshots,
                 'template_id' => $template['template_id'], 'template_version' => $template['template_version'],
-                'parties' => [$parties['first_party'], $parties['second_party']],
+                'parties' => $allParties,
                 'card' => null, 'html' => null, 'source_hash' => $this->fingerprint([$context, $sources, $snapshots])];
         }
         $calculated = (new ContractFormulaEngine)->calculate($types, $values, ContractEntityCatalog::accessible($snapshots), static fn (string $id): mixed => $sources[$id]);
-        $revision = [...$resolved, 'values' => $calculated, 'entity_snapshots' => $snapshots];
+        $revision = [...$resolved, 'values' => $calculated, 'entity_snapshots' => $snapshots, 'parties' => $allParties];
         $compiled = (new ContractRevisionTermsCompiler)->compile($revision);
+        (new \App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator)->validate(
+            (new \App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry)->find($organizationId, $resolved['contract_profile_code']),
+            (new ContractRevisionDocumentRenderer)->profileMetadata($revision, $compiled['terms']),
+        );
 
         return [
             ...$revision, 'template_id' => $template['template_id'], 'template_version' => $template['template_version'],
-            'parties' => [$parties['first_party'], $parties['second_party']],
+            'parties' => $allParties,
             'card' => $compiled,
             'source_hash' => $this->fingerprint([$context, $sources, $snapshots]),
             'html' => (new ContractDocumentRenderer)->render($resolved['document'], $resolved['definitions'], $calculated, $snapshots),
@@ -80,12 +89,17 @@ final class ContractTemplateCardService
             || !app(AuthorizationService::class)->can($actor, 'contracts.create', ['organization_id' => $organizationId])) {
             throw new AuthorizationException;
         }
-        if ($input->contract->is_multi_project || $input->contract->is_self_execution
+        if ($input->contract->is_self_execution
             || !in_array($input->contract->contract_side_type?->value, ['general_contract', 'contract', 'subcontract'], true)
             || !empty($input->contract->advance_payments) || ($input->contract->actual_advance_amount ?? 0) != 0) {
             throw new ContractBuilderException('contracts.template_card_invalid', 422);
         }
-        $fingerprint = $this->fingerprint([get_object_vars($input->contract), $input->documentTitle, $input->profileCode,
+        $fingerprintAttributes = get_object_vars($input->contract);
+        if ($fingerprintAttributes['direct_party'] === null) unset($fingerprintAttributes['direct_party']);
+        foreach (['party_details', 'additional_parties'] as $field) {
+            if ($fingerprintAttributes[$field] === []) unset($fingerprintAttributes[$field]);
+        }
+        $fingerprint = $this->fingerprint([$fingerprintAttributes, $input->documentTitle, $input->profileCode,
             $input->documentMetadata, $input->confidentialityLevel, $template]);
 
         return DB::transaction(function () use ($actor, $organizationId, $input, $template, $fingerprint): ContractDossierCreationResult {
@@ -128,7 +142,7 @@ final class ContractTemplateCardService
             }
             $result = app(ContractDossierCreationService::class)->create($organizationId, $actor, new ContractDossierCreationInput(
                 new ContractDTO(...$attributes), $input->idempotencyKey, $input->documentTitle, $prepared['contract_profile_code'],
-                $input->documentMetadata, $input->confidentialityLevel,
+                [...$input->documentMetadata, ...(new ContractRevisionDocumentRenderer)->profileMetadata($prepared, $terms)], $input->confidentialityLevel,
             ));
             $contract = $result->contract;
             if ($result->replayed) {

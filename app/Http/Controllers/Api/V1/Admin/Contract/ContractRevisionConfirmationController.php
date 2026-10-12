@@ -19,7 +19,7 @@ final class ContractRevisionConfirmationController extends Controller
         $data = $request->validated();
 
         return AdminResponse::success($service->confirm($request->user(), (int) $request->attributes->get('current_organization_id'), $contract, $revision,
-            $data['content_hash'], $data['request_key'], ['basis' => $data['basis'], 'asset_id' => (int) $data['asset_id'], 'side' => $data['side']]));
+            $data['content_hash'], $data['request_key'], ['basis' => $data['basis'], 'asset_id' => (int) $data['asset_id'], ...array_intersect_key($data, array_flip(['side', 'party_key']))]));
     }
 
     public function show(Request $request, int $contract, int $revision, ContractRevisionConfirmationService $service): JsonResponse

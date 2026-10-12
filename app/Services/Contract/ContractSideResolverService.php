@@ -37,8 +37,8 @@ class ContractSideResolverService
             );
             $direction = $isSecondParty ? 'income' : 'expense';
 
-            $firstRoleLabel = $contract->firstParty->role?->label();
-            $secondRoleLabel = $contract->secondParty->role?->label();
+            $firstRoleLabel = $contract->firstParty->snapshot['role_label'] ?? $contract->firstParty->role?->label();
+            $secondRoleLabel = $contract->secondParty->snapshot['role_label'] ?? $contract->secondParty->role?->label();
             $dynamicLabel = ($firstRoleLabel && $secondRoleLabel) ? "{$firstRoleLabel} — {$secondRoleLabel}" : null;
 
             return [

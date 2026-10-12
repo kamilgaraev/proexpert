@@ -115,9 +115,13 @@ final class ContractSupplementaryLegalArchiveService
                                 'organization_id' => $binding->organization_id, 'document_id' => $archive->id,
                                 'document_version_id' => $version->id, 'snapshot_set_id' => $snapshot->id,
                                 'party_organization_id' => $party['linked_organization_id'],
-                                'party_role' => $party['side'] === 'first' ? 'customer' : 'contractor',
+                                'party_role' => $party['side'] === 'first' ? 'customer' : ($party['side'] === 'second' ? 'contractor' : 'other'),
                                 'legal_name' => $party['legal_name'] ?? $party['name'], 'tax_number' => $party['inn'] ?? null,
                                 'registration_number' => $party['ogrn'] ?? null, 'legal_address' => $party['legal_address'] ?? null,
+                                'bank_details' => array_intersect_key($party, array_flip(['bank_name', 'bank_bic', 'settlement_account', 'correspondent_account'])),
+                                'representative_name' => $party['representative_name'] ?? null,
+                                'representative_position' => $party['representative_position'] ?? null,
+                                'authority_basis' => $party['authority_basis'] ?? null,
                                 'data_source' => ($party['linked_organization_id'] ?? null) === null ? 'manual' : 'organization', 'snapshot' => $party,
                             ]);
                         }

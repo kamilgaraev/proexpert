@@ -61,7 +61,7 @@ final class ContractProposalController extends Controller
         $data = $request->validated();
         $result = $service->decide($request->user(), (int) $request->attributes->get('current_organization_id'), $contract, $proposal,
             (int) $data['expected_version'], $data['decision'], $data['reason'] ?? '', $data['request_key'],
-            ['basis' => $data['basis'], 'asset_id' => (int) $data['asset_id']]);
+            ['basis' => $data['basis'], 'asset_id' => (int) $data['asset_id'], ...(isset($data['party_key']) ? ['party_key' => $data['party_key']] : [])]);
 
         return AdminResponse::success((new ContractProposalResource($result))->resolve($request));
     }

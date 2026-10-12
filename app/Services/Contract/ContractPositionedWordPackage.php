@@ -16,7 +16,7 @@ final class ContractPositionedWordPackage
 
     private const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
-    public function finish(string $path): void
+    public function finish(string $path, array $imageDescriptions = []): void
     {
         $zip = new ZipArchive;
         if ($zip->open($path) !== true) {
@@ -26,6 +26,13 @@ final class ContractPositionedWordPackage
             $document = $this->read($zip, 'word/document.xml');
             $query = new DOMXPath($document);
             $query->registerNamespace('w', self::W);
+            $query->registerNamespace('v', 'urn:schemas-microsoft-com:vml');
+            (new ContractWordDrawingShapes)->replaceTextBoxes($document);
+            foreach ($query->query('//v:imagedata') as $index => $image) {
+                $description = $imageDescriptions[$index] ?? '';
+                $image->setAttributeNS('urn:schemas-microsoft-com:office:office', 'o:title', $description);
+                if ($image->parentNode instanceof DOMElement) { $image->parentNode->setAttribute('alt', $description); }
+            }
             $body = $query->query('/w:document/w:body')->item(0);
             $anchor = null;
             foreach (iterator_to_array($body->childNodes) as $node) {

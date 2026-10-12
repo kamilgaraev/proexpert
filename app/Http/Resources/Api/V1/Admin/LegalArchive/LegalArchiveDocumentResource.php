@@ -158,6 +158,7 @@ final class LegalArchiveDocumentResource extends JsonResource
             ],
             'structured_fields' => $this->structured_fields ?? [],
             'metadata' => $this->metadata ?? [],
+            ...($this->resource->getAttribute('api_contract_signature_participants') ?? []),
             'created_by_user_id' => $this->created_by_user_id,
             'updated_by_user_id' => $this->updated_by_user_id,
             'created_at' => $this->created_at?->toISOString(),

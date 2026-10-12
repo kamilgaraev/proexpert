@@ -6,8 +6,6 @@ namespace App\Services\Contract;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
-use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentParty;
-use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentPartySnapshotSet;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\ContractBuilderException;
 use App\Models\Contract;
@@ -36,6 +34,11 @@ final class ContractRevisionLegalArchiveService
         if (!$this->canPrepare($actor, $organizationId)) {
             throw new AuthorizationException;
         }
+        $profileMetadata = (new ContractRevisionDocumentRenderer)->profileMetadata($revisionData);
+        (new \App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator)->validate(
+            (new \App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry)->find($organizationId, $revisionData['contract_profile_code']),
+            $profileMetadata,
+        );
         $binding = DB::transaction(function () use ($actor, $organizationId, $contractId, $number, $hash): object {
             Contract::whereKey($contractId)->lockForUpdate()->firstOrFail();
             $preview = $this->instances->preview($actor, $organizationId, $contractId, $number);
@@ -52,12 +55,7 @@ final class ContractRevisionLegalArchiveService
             if ((int) $current !== $revision['id']) {
                 throw new ContractBuilderException('contracts.confirmation_conflict', 409);
             }
-            $manifest = '<section><h2>'.e(trans_message('contracts.revision_bundle_manifest')).'</h2><p>'.e($hash).'</p><ul>';
-            foreach ($revision['attachments'] as $asset) {
-                $manifest .= '<li>'.e($asset['name']).' — '.e($asset['sha256']).'</li>';
-            }
-            $manifest .= '</ul></section>';
-            $bytes = (new ContractDocumentExporter)->render($preview['html'].$manifest, 'pdf');
+            $bytes = (new ContractDocumentExporter)->render($preview['html'], 'pdf');
             $fileHash = hash('sha256', $bytes);
             $organization = Organization::findOrFail($organizationId);
             $filename = 'contract-'.$contractId.'-revision-'.$number.'.pdf';
@@ -91,12 +89,13 @@ final class ContractRevisionLegalArchiveService
                 if ($temporary === false || file_put_contents($temporary, $bytes) !== strlen($bytes)) {
                     throw new \RuntimeException('contract_revision_bundle_temporary_file');
                 }
-                $metadata = ['contract_id' => $contractId, 'contract_revision_id' => (int) $binding->revision_id,
+                $metadata = [...$profileMetadata,
+                    'contract_id' => $contractId, 'contract_revision_id' => (int) $binding->revision_id,
                     'contract_content_hash' => $binding->content_hash, 'contract_revision_binding_id' => (int) $binding->id];
                 $document = $this->publisher->publish($organizationId, (int) $binding->created_by, [
                     'title' => $binding->title, 'document_type' => 'contract', 'status' => 'draft',
-                    'type_profile_code' => in_array('subcontractor', array_column($revisionData['parties'], 'role'), true) ? 'contract.subcontract' : 'contract.work',
-                    'confidentiality_level' => 'internal', 'direction' => 'internal',
+                    'type_profile_code' => $revisionData['contract_profile_code'] ?? ContractDocumentProfiles::fromVersion($revisionData['template_version_id'] === null ? null : (int) $revisionData['template_version_id'], $revisionData['parties']),
+                    'confidentiality_level' => ContractDocumentProfiles::all()[$revisionData['contract_profile_code'] ?? 'contract.work']['confidentiality_level'] ?? 'internal', 'direction' => 'internal',
                     'metadata' => $metadata, 'version_metadata' => $metadata,
                     'create_operation_key' => 'contract-revision-'.$binding->revision_id.'-org-'.$organizationId,
                 ], new UploadedFile($temporary, $binding->filename, 'application/pdf', null, true));
@@ -108,23 +107,7 @@ final class ContractRevisionLegalArchiveService
                         throw new \RuntimeException('contract_revision_binding_conflict');
                     }
                     LegalArchiveDocument::whereKey($document->id)->lockForUpdate()->firstOrFail();
-                    $snapshot = LegalDocumentPartySnapshotSet::where('document_version_id', $version->id)->first();
-                    if ($snapshot === null) {
-                        $snapshot = LegalDocumentPartySnapshotSet::create([
-                            'organization_id' => $binding->organization_id, 'document_id' => $document->id, 'document_version_id' => $version->id,
-                            'captured_at' => now(), 'captured_by_user_id' => $binding->created_by,
-                        ]);
-                        foreach ($revisionData['parties'] as $party) {
-                            LegalDocumentParty::create([
-                                'organization_id' => $binding->organization_id, 'document_id' => $document->id,
-                                'document_version_id' => $version->id, 'snapshot_set_id' => $snapshot->id,
-                                'party_organization_id' => $party['linked_organization_id'], 'party_role' => $party['side'] === 'first' ? 'customer' : 'contractor',
-                                'legal_name' => $party['legal_name'] ?: $party['name'], 'tax_number' => $party['inn'],
-                                'registration_number' => $party['ogrn'], 'legal_address' => $party['legal_address'],
-                                'data_source' => $party['linked_organization_id'] === null ? 'manual' : 'organization', 'snapshot' => $party,
-                            ]);
-                        }
-                    }
+                    ContractRevisionArchiveParties::attach($document, $version, $revisionData['parties'], (int) $binding->created_by);
                     DB::table('contract_revision_legal_bindings')->where('id', $binding->id)->update([
                         'document_id' => $document->id, 'document_version_id' => $version->id, 'last_error' => null, 'updated_at' => now(),
                     ]);

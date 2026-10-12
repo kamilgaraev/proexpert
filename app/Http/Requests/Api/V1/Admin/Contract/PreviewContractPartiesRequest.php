@@ -18,7 +18,11 @@ final class PreviewContractPartiesRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'project_id' => ['required', 'integer', 'min:1'],
+            'project_id' => ['nullable', 'integer', 'min:1'],
+            'is_multi_project' => ['sometimes', 'boolean'],
+            'project_ids' => ['nullable', 'array', 'list', 'max:50'],
+            'project_ids.*' => ['integer', 'min:1', 'distinct'],
+            'direct_party' => ['nullable', 'array', 'max:12'],
             'contract_side_type' => ['required', Rule::enum(ContractSideTypeEnum::class)],
             'direction' => ['required', Rule::in(['income', 'expense'])],
             'superior_organization_id' => ['nullable', 'integer', 'min:1'],

@@ -33,11 +33,11 @@ final class ContractStandardTemplateService
             $ids = [];
             foreach ($fields as $name => $definition) {
                 (new ContractVariableDefinitionValidator)->validate($definition);
-                $ids[$name] = $this->materialize($actor, $organizationId, $code.':field:'.$name, 'variable', trans_message('contract_templates.labels.'.$name), $definition);
+                $ids[$name] = $this->materialize($actor, $organizationId, 'v'.ContractStandardTemplates::VERSION.':'.$code.':field:'.$name, 'variable', trans_message('contract_templates.labels.'.$name), $definition, ContractStandardTemplates::VERSION);
             }
             $content = $this->templates->content($code, $ids);
             (new ContractDocumentValidator)->validate($content, null, true);
-            $id = $this->materialize($actor, $organizationId, $code.':template', 'template', trans_message('contract_templates.'.$code.'.title'), $content);
+            $id = $this->materialize($actor, $organizationId, 'v'.ContractStandardTemplates::VERSION.':'.$code.':template', 'template', trans_message('contract_templates.'.$code.'.title'), $content, ContractStandardTemplates::VERSION);
             $resolved = app(ContractLibraryService::class)->resolveTemplate($actor, $organizationId, $id, ContractStandardTemplates::VERSION);
 
             return ['template_id' => $id, 'template_version' => ContractStandardTemplates::VERSION, ...$resolved];
@@ -62,11 +62,11 @@ final class ContractStandardTemplateService
             $id = $this->materialize($actor, $organizationId, 'context:field:'.$code, 'variable',
                 trans_message('contract_system_fields.'.str_replace('.', '_', $code)), $definition);
 
-            return app(ContractLibraryService::class)->read($actor, $organizationId, $id, ContractStandardTemplates::VERSION);
+            return app(ContractLibraryService::class)->read($actor, $organizationId, $id, 1);
         });
     }
 
-    private function materialize(User $actor, int $organizationId, string $identity, string $kind, string $title, array $content): string
+    private function materialize(User $actor, int $organizationId, string $identity, string $kind, string $title, array $content, int $version = 1): string
     {
         $key = ContractStandardTemplates::PREFIX.$identity;
         $fingerprint = hash('sha256', json_encode([$kind, $title, $content], JSON_THROW_ON_ERROR));
@@ -85,7 +85,7 @@ final class ContractStandardTemplateService
             'created_at' => now(), 'updated_at' => now(),
         ]);
         DB::table('contract_library_versions')->insert([
-            'item_id' => $id, 'organization_id' => $organizationId, 'version_number' => ContractStandardTemplates::VERSION,
+            'item_id' => $id, 'organization_id' => $organizationId, 'version_number' => $version,
             'title' => $title, 'content' => json_encode($content, JSON_THROW_ON_ERROR), 'created_by' => $actor->id,
             'created_at' => now(), 'request_key' => $key, 'request_fingerprint' => $fingerprint,
             'status' => 'published', 'published_by' => $actor->id, 'published_at' => now(),

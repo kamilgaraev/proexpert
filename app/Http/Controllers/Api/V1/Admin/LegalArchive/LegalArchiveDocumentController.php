@@ -220,6 +220,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 $this->editorAvailability->currentVersionEditable($found),
             );
             $found->setAttribute('api_editing_blocker', $this->editorAvailability->documentMutationBlocker($found));
+            $found->setAttribute('api_contract_signature_participants', app(\App\Services\LegalArchive\Signatures\LegalContractSignatureParticipants::class)->forDocument($actor, $found));
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),

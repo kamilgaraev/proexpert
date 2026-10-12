@@ -17,7 +17,7 @@ final class RegisterLegalArchiveOriginalRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
+        $rules = [
             'lock_version' => ['required', 'integer', 'min:0'],
             'method' => ['required', 'string', Rule::in(['paper', 'external_electronic'])],
             'idempotency_key' => ['required', 'string', 'max:191'],
@@ -27,12 +27,13 @@ final class RegisterLegalArchiveOriginalRequest extends FormRequest
             'file' => ['required_if:method,external_electronic', 'file', 'max:20480'],
             'signers' => ['required', 'array', 'min:1', 'max:20'],
             'signers.*.kind' => ['required', 'string'],
-            'signers.*.name' => ['required', 'string', 'max:255'],
+            'signers.*.name' => ['required', 'string', 'max:512'],
             'signers.*.user_id' => ['nullable', 'integer', 'min:1'],
             'signers.*.organization_id' => ['nullable', 'integer', 'min:1'],
             'signers.*.party_id' => ['nullable', 'integer', 'min:1'],
             'signers.*.role_slug' => ['nullable', 'string', 'max:191'],
             'signers.*.tax_number' => ['nullable', 'string', 'max:32'],
+            'signers.*.registration_number' => ['nullable', 'string', 'max:64'],
             'signers.*.position' => ['nullable', 'string', 'max:255'],
             'signers.*.party_role' => ['nullable', 'string', 'max:64'],
             'signers.*.authority_basis' => ['nullable', 'string', 'max:512'],
@@ -59,6 +60,10 @@ final class RegisterLegalArchiveOriginalRequest extends FormRequest
             'evidence.user_agent_hash' => ['nullable', 'regex:/^[a-f0-9]{64}$/'],
             'provider_metadata' => ['sometimes', 'array'],
         ];
+        foreach ((array) $this->input('signers', []) as $index => $signer) {
+            if (!is_array($signer) || ($signer['kind'] ?? null) !== 'party') $rules['signers.'.$index.'.name'] = ['required', 'string', 'max:255'];
+        }
+        return $rules;
     }
 
     public function withValidator(Validator $validator): void

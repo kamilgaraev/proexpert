@@ -31,12 +31,13 @@ final class ContractSupplementaryConfirmationService
             throw new ContractBuilderException('contracts.confirmation_input_invalid', 422);
         }
         if ($external !== null && (!is_string($external['basis'] ?? null) || trim($external['basis']) === '' || mb_strlen($external['basis']) > 2000
-            || !is_int($external['asset_id'] ?? null) || $external['asset_id'] < 1 || !in_array($external['side'] ?? null, ['first', 'second'], true))) {
+            || !is_int($external['asset_id'] ?? null) || $external['asset_id'] < 1)) {
             throw new ContractBuilderException('contracts.confirmation_input_invalid', 422);
         }
+        $externalPartyKey = $external === null ? null : ContractRevisionParties::externalKey($external);
         $fingerprint = hash('sha256', json_encode([$actor->id, $documentId, $hash, $external], JSON_THROW_ON_ERROR));
 
-        return DB::transaction(function () use ($actor, $organizationId, $contractId, $documentId, $hash, $key, $fingerprint, $external): array {
+        return DB::transaction(function () use ($actor, $organizationId, $contractId, $documentId, $hash, $key, $fingerprint, $external, $externalPartyKey): array {
             Contract::whereKey($contractId)->lockForUpdate()->firstOrFail();
             $this->views->find($actor, $organizationId, $contractId);
             $document = DB::table('contract_supplementary_documents')->where('contract_id', $contractId)->where('id', $documentId)->lockForUpdate()->firstOrFail();
@@ -46,12 +47,14 @@ final class ContractSupplementaryConfirmationService
                 throw new AuthorizationException;
             }
             $side = $own[0]['side'];
+            $partyKey = ContractRevisionParties::key($own[0]);
             if ($external !== null) {
-                $target = array_values(array_filter($parties, static fn (array $party): bool => $party['side'] === $external['side'] && ($party['linked_organization_id'] ?? null) === null));
-                if (count($target) !== 1 || $external['side'] === $side) {
+                $target = array_values(array_filter($parties, static fn (array $party): bool => ContractRevisionParties::key($party) === $externalPartyKey && ($party['linked_organization_id'] ?? null) === null));
+                if (count($target) !== 1 || $externalPartyKey === $partyKey) {
                     throw new AuthorizationException;
                 }
-                $side = $external['side'];
+                $side = $target[0]['side'] ?? null;
+                $partyKey = $externalPartyKey;
             }
             $existing = DB::table('contract_supplementary_confirmations')->where('document_id', $document->id)
                 ->where('recorded_organization_id', $organizationId)->where('request_key', $key)->first();
@@ -70,7 +73,7 @@ final class ContractSupplementaryConfirmationService
                 json_decode($document->entity_snapshots, true, 512, JSON_THROW_ON_ERROR)
             );
             if ($document->status !== 'draft' || !hash_equals($document->content_hash, $hash)
-                || DB::table('contract_supplementary_confirmations')->where('document_id', $document->id)->where('side', $side)->exists()) {
+                || DB::table('contract_supplementary_confirmations')->where('document_id', $document->id)->where('party_key', $partyKey)->exists()) {
                 throw new ContractBuilderException('contracts.confirmation_conflict', 409);
             }
             if ($changes === []) {
@@ -78,7 +81,7 @@ final class ContractSupplementaryConfirmationService
             }
             $proof = $external === null ? null : app(ContractBuilderAssetService::class)->evidence($actor, $organizationId, $contractId, $external['asset_id']);
             $id = DB::table('contract_supplementary_confirmations')->insertGetId([
-                'document_id' => $document->id, 'side' => $side,
+                'document_id' => $document->id, 'side' => $side, 'party_key' => $partyKey,
                 'party_organization_id' => $external === null ? $organizationId : null,
                 'recorded_organization_id' => $organizationId, 'created_by' => $actor->id,
                 'kind' => $external === null ? 'connected' : 'external', 'content_hash' => $hash,
@@ -99,16 +102,16 @@ final class ContractSupplementaryConfirmationService
             ->map(fn (object $row): array => $this->present($row))->all();
         $parties = json_decode($document->parties, true, 512, JSON_THROW_ON_ERROR);
         $own = array_values(array_filter($parties, static fn (array $party): bool => (int) ($party['linked_organization_id'] ?? 0) === $organizationId));
-        $externalSides = array_values(array_filter($parties, static fn (array $party): bool => ($party['linked_organization_id'] ?? null) === null && !in_array($party['side'], array_column($items, 'side'), true)));
+        $externalSides = array_values(array_filter($parties, static fn (array $party): bool => ($party['linked_organization_id'] ?? null) === null && !in_array(ContractRevisionParties::key($party), array_column($items, 'party_key'), true)));
         $editable = $document->status === 'draft';
 
         return [
             'document_id' => (int) $document->id, 'content_hash' => $document->content_hash,
-            'items' => $items, 'fully_confirmed' => count($items) === 2,
+            'items' => $items, 'fully_confirmed' => ContractRevisionParties::confirmed($parties, $items, $document->content_hash),
             'external_sides' => $editable && count($own) === 1
                 && $this->authorization->can($actor, 'contracts.revisions.record_external', ['organization_id' => $organizationId])
-                    ? array_column($externalSides, 'side') : [],
-            'can_confirm' => $editable && count($own) === 1 && !in_array($own[0]['side'], array_column($items, 'side'), true)
+                    ? array_map(ContractRevisionParties::key(...), $externalSides) : [],
+            'can_confirm' => $editable && count($own) === 1 && !in_array(ContractRevisionParties::key($own[0]), array_column($items, 'party_key'), true)
                 && $this->authorization->can($actor, 'contracts.revisions.confirm', ['organization_id' => $organizationId]),
         ];
     }
@@ -116,7 +119,7 @@ final class ContractSupplementaryConfirmationService
     private function present(object $row): array
     {
         return [
-            'id' => (int) $row->id, 'document_id' => (int) $row->document_id, 'side' => $row->side,
+            'id' => (int) $row->id, 'document_id' => (int) $row->document_id, 'side' => $row->side, 'party_key' => $row->party_key,
             'party_organization_id' => $row->party_organization_id, 'recorded_organization_id' => (int) $row->recorded_organization_id,
             'created_by' => (int) $row->created_by, 'created_at' => $row->created_at, 'kind' => $row->kind,
             'content_hash' => $row->content_hash, 'basis' => $row->basis,

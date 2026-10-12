@@ -19,6 +19,261 @@ use Tests\TestCase;
 final class ContractBuilderDraftTest extends TestCase
 {
     use \Tests\Support\EnablesImmutableAuditWriter;
+    public function test_proposal_review_freezes_comments_and_requires_disputed_clause_decision(): void
+    {
+        [$actor, $other, $contract, $field, , $base] = $this->fixture();
+        $organizationId = (int) $actor->current_organization_id;
+        $otherOrganizationId = (int) $other->current_organization_id;
+        $document = ['type' => 'doc', 'content' => [['type' => 'clause', 'attrs' => ['id' => 'price'], 'content' => $base['document']['content']]]];
+        $drafts = app(ContractBuilderDraftService::class);
+        $drafts->save($actor, $organizationId, $contract->id, 1, 0, $document, [$field => 'Изменённая цена'], 'review-draft');
+        $proposals = app(\App\Services\Contract\ContractProposalService::class);
+        $proposal = $proposals->create($actor, $organizationId, $contract->id, 1, 1, 'Уточнение стоимости', 'review-proposal');
+        $review = app(\App\Services\Contract\ContractProposalReviewService::class);
+        $state = $review->read($other, $otherOrganizationId, $contract->id, $proposal['id']);
+        self::assertSame($proposal['content_hash'], $state['content_hash']);
+        self::assertStringContainsString('Общие условия', $state['diff']['text']['before']);
+        self::assertSame('Изменённая цена', $state['diff']['values'][0]['after_display']);
+        $input = ['content_hash' => $proposal['content_hash'], 'request_key' => 'review-comment', 'clause_id' => 'price', 'blocking' => true, 'body' => 'Проверьте обоснование стоимости.'];
+        $comment = $review->comment($other, $otherOrganizationId, $contract->id, $proposal['id'], $input);
+        self::assertEquals($comment, $review->comment($other, $otherOrganizationId, $contract->id, $proposal['id'], $input));
+        try { DB::transaction(function () use ($comment): void { $forged = $comment; unset($forged['id']); DB::table('contract_proposal_comments')->insert([...$forged, 'request_key' => 'forged-comment', 'content_hash' => str_repeat('0', 64)]); }); self::fail('Wrong hash inserted into review'); }
+        catch (\Illuminate\Database\QueryException $exception) { self::assertStringContainsString('contract_proposal_review_target_invalid', $exception->getMessage()); }
+        foreach ([['request_key' => 'unknown-clause', 'clause_id' => 'absent'], ['request_key' => 'bad-hash', 'content_hash' => str_repeat('0', 64)], ['body' => 'Подмена комментария']] as $invalid) {
+            try { $review->comment($other, $otherOrganizationId, $contract->id, $proposal['id'], [...$input, ...$invalid]); self::fail('Invalid review accepted'); }
+            catch (\Illuminate\Validation\ValidationException|\App\Exceptions\ContractBuilderException) { self::assertSame(1, DB::table('contract_proposal_comments')->count()); }
+        }
+        try { $proposals->decide($other, $otherOrganizationId, $contract->id, $proposal['id'], 1, 'accepted', '', 'before-clause'); self::fail('Disputed clause bypassed'); }
+        catch (\Illuminate\Validation\ValidationException $exception) { self::assertArrayHasKey('decision', $exception->errors()); }
+        try { DB::transaction(function () use ($proposal, $other, $otherOrganizationId): void { DB::table('contract_builder_proposal_recipients')->where('proposal_id', $proposal['id'])->update([
+            'status' => 'accepted', 'decided_by' => $other->id, 'decision_organization_id' => $otherOrganizationId, 'decision_kind' => 'connected',
+            'decision_key' => 'direct-bypass', 'decision_fingerprint' => str_repeat('0', 64), 'decided_at' => now(),
+        ]); }); self::fail('Database bypassed disputed clause'); }
+        catch (\Illuminate\Database\QueryException $exception) { self::assertStringContainsString('contract_proposal_clause_decisions_incomplete', $exception->getMessage()); }
+        $decisionInput = ['content_hash' => $proposal['content_hash'], 'request_key' => 'clause-accept', 'clause_id' => 'price', 'decision' => 'accepted', 'reason' => 'Расчёт проверен'];
+        try { $review->decideClause($actor, $organizationId, $contract->id, $proposal['id'], $decisionInput); self::fail('Author decided own clause'); }
+        catch (\Illuminate\Auth\Access\AuthorizationException) { self::assertSame(0, DB::table('contract_proposal_clause_decisions')->count()); }
+        $decision = $review->decideClause($other, $otherOrganizationId, $contract->id, $proposal['id'], $decisionInput);
+        self::assertEquals($decision, $review->decideClause($other, $otherOrganizationId, $contract->id, $proposal['id'], $decisionInput));
+        $drafts->save($actor, $organizationId, $contract->id, 1, 1, $document, [$field => 'Поздняя приватная правка'], 'review-later');
+        self::assertSame('Изменённая цена', $review->read($other, $otherOrganizationId, $contract->id, $proposal['id'])['diff']['values'][0]['after_display']);
+        foreach (['contract_proposal_comments', 'contract_proposal_clause_decisions'] as $table) {
+            foreach (['update', 'delete'] as $operation) {
+                try { DB::transaction(function () use ($table, $operation): void { $query = DB::table($table); $operation === 'update' ? $query->update(['content_hash' => str_repeat('0', 64)]) : $query->delete(); }); self::fail('Review history changed'); }
+                catch (\Illuminate\Database\QueryException $exception) { self::assertStringContainsString('contract_proposal_review_immutable', $exception->getMessage()); }
+            }
+        }
+        $accepted = $proposals->decide($other, $otherOrganizationId, $contract->id, $proposal['id'], 1, 'accepted', 'Спорный пункт принят', 'after-clause');
+        self::assertSame('accepted', $accepted['status']);
+        self::assertSame(2, DB::table('contract_builder_revisions')->count());
+        self::assertSame($base, app(ContractBuilderInstanceService::class)->read($actor, $organizationId, $contract->id, 1));
+    }
+
+    public function test_proposal_review_requires_external_clause_evidence_from_the_author_organization(): void
+    {
+        $partyKey = '11111111-1111-4111-8111-111111111111';
+        [$actor, $other, $contract, $field, , $base] = $this->fixture(additional: [['party_key' => $partyKey, 'name' => 'Поручитель']]);
+        $organizationId = (int) $actor->current_organization_id;
+        $document = ['type' => 'doc', 'content' => [['type' => 'clause', 'attrs' => ['id' => 'warranty'], 'content' => $base['document']['content']]]];
+        app(ContractBuilderDraftService::class)->save($actor, $organizationId, $contract->id, 1, 0, $document, [$field => 'Гарантия поручителя'], 'external-review-draft');
+        $proposals = app(\App\Services\Contract\ContractProposalService::class);
+        $proposal = $proposals->create($actor, $organizationId, $contract->id, 1, 1, 'Уточнена гарантия', 'external-review-proposal');
+        $review = app(\App\Services\Contract\ContractProposalReviewService::class);
+        $review->comment($actor, $organizationId, $contract->id, $proposal['id'], ['content_hash' => $proposal['content_hash'], 'request_key' => 'external-dispute',
+            'clause_id' => 'warranty', 'blocking' => true, 'body' => 'Нужно решение поручителя по гарантии.']);
+        $decision = ['content_hash' => $proposal['content_hash'], 'request_key' => 'external-clause', 'party_key' => $partyKey, 'clause_id' => 'warranty',
+            'decision' => 'accepted', 'reason' => 'Гарантия подтверждена'];
+        try { $review->decideClause($actor, $organizationId, $contract->id, $proposal['id'], $decision, true); self::fail('External evidence omitted'); }
+        catch (\Illuminate\Validation\ValidationException $exception) { self::assertArrayHasKey('basis', $exception->errors()); }
+        $this->fakeBuilderStorage();
+        $asset = app(\App\Services\Contract\ContractBuilderAssetService::class)->upload($actor, $organizationId, $contract->id,
+            \Illuminate\Http\UploadedFile::fake()->createWithContent('Решение.txt', 'Поручитель согласен с гарантией'), 'evidence', 'external-clause-proof');
+        $decision = [...$decision, 'basis' => 'Решение подписано поручителем', 'asset_id' => $asset['id']];
+        try { $review->decideClause($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], $decision, true); self::fail('Recipient recorded external review'); }
+        catch (\Illuminate\Auth\Access\AuthorizationException) { self::assertSame(0, DB::table('contract_proposal_clause_decisions')->count()); }
+        $record = $review->decideClause($actor, $organizationId, $contract->id, $proposal['id'], $decision, true);
+        self::assertSame($proposal['content_hash'], $record['content_hash']);
+        self::assertEquals($record, $review->decideClause($actor, $organizationId, $contract->id, $proposal['id'], $decision, true));
+        self::assertSame($asset['id'], $review->read($actor, $organizationId, $contract->id, $proposal['id'])['decisions'][0]['proof']['id']);
+        $review->decideClause($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], [...$decision, 'request_key' => 'connected-clause', 'basis' => null, 'asset_id' => null], false);
+        $partial = $proposals->decide($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], 1, 'accepted', 'Гарантия принята', 'connected-review-accept');
+        self::assertSame('pending', $partial['status']);
+        $accepted = $proposals->decide($actor, $organizationId, $contract->id, $proposal['id'], 2, 'accepted', 'Решение поручителя', 'external-review-accept', ['party_key' => $partyKey, 'basis' => $decision['basis'], 'asset_id' => $asset['id']]);
+        self::assertSame('accepted', $accepted['status']);
+        self::assertSame(2, DB::table('contract_builder_revisions')->count());
+    }
+
+    public function test_three_party_proposal_waits_for_each_recipient_and_retries_without_duplicate_revision(): void
+    {
+        $key = '11111111-1111-4111-8111-111111111111';
+        [$actor, $other, $contract, $field, , $base] = $this->fixture(additional: [['party_key' => $key, 'name' => 'Поручитель']]);
+        $organizationId = (int) $actor->current_organization_id;
+        $drafts = app(ContractBuilderDraftService::class);
+        $proposals = app(\App\Services\Contract\ContractProposalService::class);
+        $drafts->save($actor, $organizationId, $contract->id, 1, 0, $base['document'], [$field => 'Новые условия'], 'three-draft');
+        $proposal = $proposals->create($actor, $organizationId, $contract->id, 1, 1, 'Обновлены условия', 'three-proposal');
+        self::assertCount(2, $proposal['recipients']);
+        $partial = $proposals->decide($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], 1, 'accepted', 'Согласовано', 'second-accept');
+        self::assertSame('pending', $partial['status']);
+        self::assertSame(2, $partial['version']);
+        self::assertSame(1, DB::table('contract_builder_revisions')->count());
+        self::assertEquals($partial, $proposals->decide($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], 1, 'accepted', 'Согласовано', 'second-accept'));
+        $this->fakeBuilderStorage();
+        $asset = app(\App\Services\Contract\ContractBuilderAssetService::class)->upload($actor, $organizationId, $contract->id,
+            \Illuminate\Http\UploadedFile::fake()->createWithContent('Решение.txt', 'Приняты новые условия'), 'evidence', 'proposal-third-proof');
+        $external = ['party_key' => $key, 'basis' => 'Подписанное решение поручителя', 'asset_id' => $asset['id']];
+        $accepted = $proposals->decide($actor, $organizationId, $contract->id, $proposal['id'], 2, 'accepted', 'Решение поручителя', 'third-accept', $external);
+        self::assertSame('accepted', $accepted['status']);
+        self::assertSame(['accepted', 'accepted'], array_column($accepted['recipients'], 'status'));
+        self::assertSame($key, $accepted['recipients'][1]['party_key']);
+        self::assertEquals($asset, $accepted['recipients'][1]['decision_proof']);
+        self::assertSame(2, DB::table('contract_builder_revisions')->count());
+        self::assertEquals($accepted, $proposals->decide($actor, $organizationId, $contract->id, $proposal['id'], 2, 'accepted', 'Решение поручителя', 'third-accept', $external));
+        self::assertEquals($accepted, $proposals->decide($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], 1, 'accepted', 'Согласовано', 'second-accept'));
+        $final = app(ContractBuilderInstanceService::class)->read($other, (int) $other->current_organization_id, $contract->id, 2);
+        self::assertCount(3, $final['parties']);
+        self::assertSame('Новые условия', $final['values'][$field]);
+        self::assertSame($base, app(ContractBuilderInstanceService::class)->read($actor, $organizationId, $contract->id, 1));
+    }
+
+    public function test_linked_additional_party_receives_proposal_and_foreign_counterparty_is_rejected(): void
+    {
+        [$actor, $other, $contract, $field, $template, $legacy] = $this->fixture(deferInstance: true);
+        $organizationId = (int) $actor->current_organization_id;
+        $third = Organization::factory()->create();
+        $recipient = User::factory()->create(['current_organization_id' => $third->id]);
+        $key = '11111111-1111-4111-8111-111111111111';
+        $counterparty = \App\Models\Counterparty::create(['organization_id' => $organizationId, 'linked_organization_id' => $third->id,
+            'name' => 'Инвестор', 'is_active' => true, 'bank_details' => ['settlement_account' => '00123456789012345678']]);
+        \App\Services\Contract\ContractAdditionalParties::apply($contract, $organizationId, [['party_key' => $key, 'counterparty_id' => $counterparty->id, 'role_label' => 'Инвестор']]);
+        app(ContractOrganizationViewService::class)->synchronizeNewContract($contract);
+        $base = app(ContractBuilderInstanceService::class)->create($actor, $organizationId, $contract->id, $template, 1, $legacy['values'], 'linked-instance');
+        self::assertSame('00123456789012345678', $base['parties'][2]['settlement_account']);
+        app(ContractBuilderDraftService::class)->save($actor, $organizationId, $contract->id, 1, 0, $base['document'], [$field => 'Для трёх организаций'], 'linked-draft');
+        $proposals = app(\App\Services\Contract\ContractProposalService::class);
+        $proposal = $proposals->create($actor, $organizationId, $contract->id, 1, 1, '', 'linked-proposal');
+        self::assertSame($proposal['id'], $proposals->listing($recipient, $third->id, $contract->id)['items'][0]['id']);
+        self::assertSame($proposal['id'], $proposals->show($recipient, $third->id, $contract->id, $proposal['id'])['id']);
+        $partial = $proposals->decide($recipient, $third->id, $contract->id, $proposal['id'], 1, 'accepted', '', 'investor-accept');
+        self::assertSame('pending', $partial['status']);
+        $rejected = $proposals->decide($other, (int) $other->current_organization_id, $contract->id, $proposal['id'], 2, 'rejected', 'Не согласованы сроки', 'linked-reject');
+        self::assertSame('rejected', $rejected['status']);
+        self::assertSame(1, DB::table('contract_builder_revisions')->count());
+        $foreign = \App\Models\Counterparty::create(['organization_id' => $third->id, 'name' => 'Чужой контрагент', 'is_active' => true]);
+        try { \App\Services\Contract\ContractAdditionalParties::resolve($organizationId, [['party_key' => '22222222-2222-4222-8222-222222222222', 'counterparty_id' => $foreign->id]], $base['parties']); self::fail('Foreign counterparty accepted'); }
+        catch (\Illuminate\Database\Eloquent\ModelNotFoundException) { self::assertSame(3, $contract->parties()->count()); }
+    }
+
+    public function test_three_party_revision_requires_every_confirmation_before_activation(): void
+    {
+        $key = '11111111-1111-4111-8111-111111111111';
+        [$actor, $other, $contract, , , $revision] = $this->fixture(additional: [['party_key' => $key, 'name' => 'Поручитель', 'role_label' => 'Поручитель', 'requisites' => ['representative_name' => 'Петров Пётр Петрович']]]);
+        self::assertCount(3, $revision['parties']);
+        self::assertSame($key, $revision['parties'][2]['party_key']);
+        self::assertSame('Поручитель', \App\Services\Contract\ContractContextSourceFields::value(\App\Services\Contract\ContractContextSourceFields::forContract($contract), 'party_3.name'));
+        $confirmations = app(\App\Services\Contract\ContractRevisionConfirmationService::class);
+        foreach ([$actor, $other] as $participant) { $confirmations->confirm($participant, (int) $participant->current_organization_id, $contract->id, 1, $revision['content_hash'], 'party-'.$participant->id); }
+        $state = $confirmations->state($actor, (int) $actor->current_organization_id, $contract->id, 1);
+        self::assertFalse($state['fully_confirmed']);
+        self::assertSame([$key], $state['external_sides']);
+        self::assertFalse(app(\App\Services\Contract\ContractRevisionActivationService::class)->state($actor, (int) $actor->current_organization_id, $contract->id)['can_activate']);
+        $this->fakeBuilderStorage();
+        $asset = app(\App\Services\Contract\ContractBuilderAssetService::class)->upload($actor, (int) $actor->current_organization_id, $contract->id,
+            \Illuminate\Http\UploadedFile::fake()->createWithContent('Подтверждение.txt', 'Решение поручителя'), 'evidence', 'third-proof');
+        $external = ['party_key' => $key, 'basis' => 'Подписанный документ поручителя', 'asset_id' => $asset['id']];
+        $confirmation = $confirmations->confirm($actor, (int) $actor->current_organization_id, $contract->id, 1, $revision['content_hash'], 'third-confirm', $external);
+        self::assertNull($confirmation['side']);
+        self::assertSame($key, $confirmation['party_key']);
+        self::assertEquals($confirmation, $confirmations->confirm($actor, (int) $actor->current_organization_id, $contract->id, 1, $revision['content_hash'], 'third-confirm', $external));
+        self::assertTrue($confirmations->state($actor, (int) $actor->current_organization_id, $contract->id, 1)['fully_confirmed']);
+        self::assertTrue(app(\App\Services\Contract\ContractRevisionActivationService::class)->state($actor, (int) $actor->current_organization_id, $contract->id)['can_activate']);
+        try { $confirmations->confirm($actor, (int) $actor->current_organization_id, $contract->id, 1, $revision['content_hash'], 'duplicate-third', $external); self::fail('Duplicate third party confirmation'); }
+        catch (\App\Exceptions\ContractBuilderException $exception) { self::assertSame(409, $exception->getCode()); }
+        self::assertSame(3, DB::table('contract_revision_confirmations')->count());
+        self::assertSame(1, DB::table('contract_builder_revisions')->count());
+    }
+
+    public function test_private_party_requisites_and_context_values_are_frozen_together(): void
+    {
+        [$actor, $other, $contract, $variableId, , $original] = $this->fixture();
+        $organizationId = (int) $actor->current_organization_id;
+        $library = app(ContractLibraryService::class);
+        $account = $library->create($actor, $organizationId, 'variable', 'Счёт заказчика', [
+            'type' => 'text', 'source' => ['kind' => 'contract_context', 'field' => 'first_party.settlement_account'],
+        ], 'party-account');
+        $accountId = $account['item']['id'];
+        $library->publish($actor, $organizationId, $accountId, 1, 1);
+        $expiry = $library->create($actor, $organizationId, 'variable', 'Срок доверенности', [
+            'type' => 'date', 'source' => ['kind' => 'contract_context', 'field' => 'first_party.power_of_attorney_valid_until'],
+        ], 'party-expiry');
+        $expiryId = $expiry['item']['id'];
+        $library->publish($actor, $organizationId, $expiryId, 1, 1);
+        $details = ['first' => ['bank_name' => 'Банк договора', 'bank_bic' => '044525225', 'settlement_account' => '00123456789012345678',
+            'representative_name' => 'Иванов Иван Иванович', 'representative_position' => 'Представитель',
+            'authority_kind' => 'power_of_attorney', 'authority_basis' => 'Доверенность № 7', 'power_of_attorney_number' => '7',
+            'power_of_attorney_date' => '2026-01-01', 'power_of_attorney_valid_until' => '2027-01-01']];
+        $document = ['type' => 'doc', 'content' => [['type' => 'paragraph', 'content' => [
+            ['type' => 'variable', 'attrs' => ['variableId' => $accountId]], ['type' => 'text', 'text' => ' / '],
+            ['type' => 'variable', 'attrs' => ['variableId' => $expiryId]],
+        ]]]];
+        $service = app(ContractBuilderDraftService::class);
+        $draft = $service->save($actor, $organizationId, $contract->id, 1, 0, $document, [$variableId => 'Условие'], 'party-draft',
+            references: [$variableId => 1, $accountId => 1, $expiryId => 1], partyDetails: $details);
+        self::assertSame('00123456789012345678', $draft['values'][$accountId]);
+        self::assertSame('2027-01-01', $draft['values'][$expiryId]);
+        self::assertSame('Иванов Иван Иванович', $draft['parties'][0]['representative_name']);
+        self::assertSame($original, app(ContractBuilderInstanceService::class)->read($other, (int) $other->current_organization_id, $contract->id, 1));
+        self::assertArrayNotHasKey('representative_name', $contract->parties()->where('side', 'first')->firstOrFail()->snapshot);
+        self::assertStringContainsString('00123456789012345678', $service->preview($actor, $organizationId, $contract->id)['html']);
+        foreach ([['first' => ['power_of_attorney_valid_until' => '2025-01-01']], ['first' => ['linked_organization_id' => $other->current_organization_id]], ['foreign' => ['bank_name' => 'Банк']]] as $index => $invalid) {
+            try { $service->save($actor, $organizationId, $contract->id, 1, 1, $document, [$variableId => 'Правка'], 'party-invalid-'.$index, partyDetails: $invalid); self::fail('Invalid party requisites accepted'); }
+            catch (\Illuminate\Validation\ValidationException $exception) {
+                self::assertStringStartsWith('party_details.', array_key_first($exception->errors()));
+                self::assertSame(1, DB::table('contract_builder_drafts')->where('id', $draft['id'])->value('version'));
+            }
+        }
+        $proposal = app(\App\Services\Contract\ContractProposalService::class)->create($actor, $organizationId, $contract->id, 1, 1, 'Обновлены полномочия', 'party-proposal');
+        self::assertEquals($draft['parties'], $proposal['content']['parties']);
+    }
+
+    public function test_private_draft_can_add_published_fields_and_sections_without_changing_shared_template(): void
+    {
+        [$actor, $other, $contract, $variableId, $templateId, $original] = $this->fixture();
+        $organizationId = (int) $actor->current_organization_id;
+        $library = app(ContractLibraryService::class);
+        $field = $library->create($actor, $organizationId, 'variable', 'Дополнительная гарантия', ['type' => 'boolean', 'required' => true], 'draft-new-boolean');
+        $fieldId = $field['item']['id'];
+        $library->publish($actor, $organizationId, $fieldId, 1, 1);
+        $sectionContent = ['document' => ['type' => 'doc', 'content' => [['type' => 'conditional', 'attrs' => ['variableId' => $fieldId], 'content' => [
+            ['type' => 'clause', 'attrs' => ['id' => 'extra-warranty'], 'content' => [['type' => 'paragraph', 'content' => [['type' => 'text', 'text' => 'Дополнительная гарантия результата']]]]],
+        ]]]], 'variables' => [$fieldId => 1]];
+        $block = $library->create($actor, $organizationId, 'block', 'Гарантия', $sectionContent, 'draft-new-block');
+        $blockId = $block['item']['id'];
+        $library->publish($actor, $organizationId, $blockId, 1, 1);
+        $document = $original['document'];
+        $document['content'][] = ['type' => 'blockReference', 'attrs' => ['blockId' => $blockId, 'version' => 1, 'instanceId' => 'extra']];
+        $service = app(ContractBuilderDraftService::class);
+        $resolved = $service->resolveContent($actor, $organizationId, $contract->id, 1, ['document' => $document, 'variables' => [$variableId => 1]]);
+        self::assertArrayHasKey($fieldId, $resolved['definitions']);
+        self::assertSame('conditional', $resolved['document']['content'][1]['type']);
+        $references = [$variableId => 1, $fieldId => 1];
+        $blockReferences = array_map(static fn (array $block): array => ['id' => $block['id'], 'version' => $block['version']], $resolved['blocks']);
+        $values = [$variableId => 'Изменённое условие', $fieldId => true];
+        $draft = $service->save($actor, $organizationId, $contract->id, 1, 0, $resolved['document'], $values, 'draft-with-fields', references: $references, blockReferences: $blockReferences);
+        self::assertSame($field['version']['id'], $draft['definitions'][$fieldId]['version_id']);
+        self::assertSame($blockId, $draft['blocks']['extra']['id']);
+        self::assertEquals($draft, $service->save($actor, $organizationId, $contract->id, 1, 0, $resolved['document'], $values, 'draft-with-fields', references: $references, blockReferences: $blockReferences));
+        self::assertNull($service->read($other, (int) $other->current_organization_id, $contract->id));
+        self::assertSame($original, app(ContractBuilderInstanceService::class)->read($actor, $organizationId, $contract->id, 1));
+        self::assertSame($original['document'], $library->read($actor, $organizationId, $templateId, 1)['version']['content']['document']);
+        $foreign = $library->create($other, (int) $other->current_organization_id, 'variable', 'Чужое поле', ['type' => 'text'], 'foreign-field');
+        $foreignId = $foreign['item']['id'];
+        $library->publish($other, (int) $other->current_organization_id, $foreignId, 1, 1);
+        try { $service->save($actor, $organizationId, $contract->id, 1, 1, $draft['document'], $values, 'foreign', references: [...$references, $foreignId => 1]); self::fail('Foreign library reference accepted'); }
+        catch (\Illuminate\Database\Eloquent\ModelNotFoundException) { self::assertSame(1, DB::table('contract_builder_drafts')->where('id', $draft['id'])->value('version')); }
+        self::assertSame(1, DB::table('contract_builder_revisions')->count());
+    }
+
     public function test_draft_http_validates_version_and_returns_private_typed_maps(): void
     {
         [$actor, $other, $contract, $variableId, , $revision] = $this->fixture();
@@ -896,6 +1151,10 @@ final class ContractBuilderDraftTest extends TestCase
         $activationService = app(\App\Services\Contract\ContractRevisionActivationService::class);
         $date = now()->addDays(10)->toDateString();
         $activation = $activationService->schedule($actor, $actor->current_organization_id, $contract->id, 1, $revision['content_hash'], null, $date, 'Договор подписан', 'activate-first');
+        $scheduledState = $activationService->state($actor, $actor->current_organization_id, $contract->id);
+        self::assertFalse($scheduledState['can_activate']);
+        self::assertSame('scheduled', $scheduledState['activation_blocker']['code']);
+        self::assertStringContainsString($date, $scheduledState['activation_blocker']['message']);
         $applications = app(\App\Services\Contract\ContractRevisionApplicationService::class);
         self::assertSame('scheduled', $applications->applyDue($activation['id'])['status']);
         self::assertSame('100.00', $contract->refresh()->total_amount);
@@ -917,11 +1176,16 @@ final class ContractBuilderDraftTest extends TestCase
         self::assertSame('100.00', $contract->refresh()->total_amount);
         self::assertSame(0, \App\Models\Specification::where('builder_revision_id', $revision['id'])->count());
         self::assertSame('failed', $activationService->state($actor, $actor->current_organization_id, $contract->id)['items'][0]['status']);
+        self::assertSame('failed', $activationService->state($actor, $actor->current_organization_id, $contract->id)['activation_blocker']['code']);
         $applied = $applications->retry($actor, $actor->current_organization_id, $contract->id, $activation['id']);
         self::assertSame('applied', $applied['status']);
         self::assertSame(2, $applied['attempts']);
         self::assertSame('120.00', $contract->refresh()->total_amount);
         self::assertSame('active', $contract->getRawOriginal('status'));
+        $effectiveState = $activationService->state($actor, $actor->current_organization_id, $contract->id);
+        self::assertFalse($effectiveState['can_activate']);
+        self::assertSame('already_effective', $effectiveState['activation_blocker']['code']);
+        self::assertSame('Эта редакция уже действует.', $effectiveState['activation_blocker']['message']);
         self::assertSame(1, $contract->specifications()->count());
         self::assertSame('work-1', $contract->activeSpecification()->scope_items[0]['id']);
         self::assertSame(['works'], $contract->activeSpecification()->scope_items[0]['clause_ids']);
@@ -1185,6 +1449,24 @@ final class ContractBuilderDraftTest extends TestCase
         $this->app->instance(\App\Services\Storage\FileService::class, $files);
     }
 
+    public function test_asset_download_does_not_report_success_without_a_storage_url(): void
+    {
+        [$actor, , $contract] = $this->fixture();
+        $this->fakeBuilderStorage();
+        $assets = app(\App\Services\Contract\ContractBuilderAssetService::class);
+        $asset = $assets->upload($actor, $actor->current_organization_id, $contract->id, \Illuminate\Http\UploadedFile::fake()->createWithContent('Приложение.txt', 'Условия'), 'attachment', 'null-url-upload');
+        $files = \Mockery::mock(\App\Services\Storage\FileService::class);
+        $files->shouldReceive('temporaryUrl')->once()->andReturn(null);
+        $this->app->instance(\App\Services\Storage\FileService::class, $files);
+        try {
+            app(\App\Services\Contract\ContractBuilderAssetService::class)->download($actor, $actor->current_organization_id, $contract->id, $asset['id']);
+            self::fail('Null storage URL must not be a successful download');
+        } catch (\App\Exceptions\ContractBuilderException $error) {
+            self::assertSame(503, $error->getCode());
+            self::assertSame('contracts.builder_asset_storage_failed', $error->messageKey());
+        }
+    }
+
     private function paymentFact(User $actor, Contract $contract, string $amount): \App\BusinessModules\Core\Payments\Models\PaymentTransaction
     {
         $document = \App\BusinessModules\Core\Payments\Models\PaymentDocument::create([
@@ -1201,7 +1483,7 @@ final class ContractBuilderDraftTest extends TestCase
         ]);
     }
 
-    private function fixture(bool $entity = false, bool $source = false, bool $external = false, bool $application = false, bool $legacy = false): array
+    private function fixture(bool $entity = false, bool $source = false, bool $external = false, bool $application = false, bool $legacy = false, array $additional = [], bool $deferInstance = false): array
     {
         $authorization = \Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('can')->andReturn(true);
@@ -1221,6 +1503,7 @@ final class ContractBuilderDraftTest extends TestCase
         foreach ([['first', 'contractor', $owner], ['second', 'subcontractor', $executor]] as [$side, $role, $organization]) {
             $contract->parties()->create(['side' => $side, 'role' => $role, 'linked_organization_id' => $external && $side === 'second' ? null : $organization->id, 'name' => $organization->name, 'snapshot' => []]);
         }
+        \App\Services\Contract\ContractAdditionalParties::apply($contract, $owner->id, $additional);
         app(ContractOrganizationViewService::class)->synchronizeNewContract($contract);
         $library = app(ContractLibraryService::class);
         $definition = $entity ? ['type' => 'entity', 'entity_type' => 'project', 'required' => true] : ['type' => 'text', 'required' => true];
@@ -1274,7 +1557,7 @@ final class ContractBuilderDraftTest extends TestCase
         if ($application) {
             $value = ['amount' => '120', 'currency' => 'RUB'];
         }
-        $revision = $legacy ? ['values' => [$variableId => $value, ...$applicationValues]]
+        $revision = $legacy || $deferInstance ? ['values' => [$variableId => $value, ...$applicationValues]]
             : app(ContractBuilderInstanceService::class)->create($actor, $owner->id, $contract->id, $templateId, 1, [$variableId => $value, ...$applicationValues], 'instance');
 
         return [$actor, $other, $contract, $variableId, $templateId, $revision];

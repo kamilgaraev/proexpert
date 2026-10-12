@@ -51,7 +51,7 @@ final class ContractRevisionActivationService
                 || (int) $instance->current_revision_id !== (int) $revision['id'] || !hash_equals($revision['content_hash'], $hash)
                 || $effectiveId === (int) $revision['id'] || $date < now()->toDateString()
                 || DB::table('contract_revision_activations')->where('instance_id', $instance->id)->whereIn('status', ['scheduled', 'failed'])->exists()
-                || DB::table('contract_revision_confirmations')->where('revision_id', $revision['id'])->where('content_hash', $hash)->distinct()->count('side') !== 2) {
+                || !ContractRevisionParties::confirmed($revision['parties'], DB::table('contract_revision_confirmations')->where('revision_id', $revision['id'])->get()->all(), $hash)) {
                 $this->conflict();
             }
             $plan = $this->compiler->compile($revision);
@@ -83,13 +83,23 @@ final class ContractRevisionActivationService
             static fn (array $party): bool => (int) ($party['linked_organization_id'] ?? 0) === $organizationId);
         $allowed = (int) $actor->current_organization_id === $organizationId && count($own) === 1
             && $this->authorization->can($actor, 'contracts.revisions.activate', ['organization_id' => $organizationId]);
+        $parties = json_decode($revision->parties, true, 512, JSON_THROW_ON_ERROR);
+        $confirmed = ContractRevisionParties::confirmed($parties, DB::table('contract_revision_confirmations')->where('revision_id', $revision->id)->get()->all(), $revision->content_hash);
+        $blocker = match (true) {
+            (int) $instance->effective_revision_id === (int) $revision->id => ['code' => 'already_effective', 'message' => trans_message('contracts.activation_already_effective')],
+            !$allowed => ['code' => 'permission', 'message' => trans_message('contracts.activation_permission')],
+            $pending !== null && $pending->status === 'failed' => ['code' => 'failed', 'message' => $this->errorMessage($pending->last_error) ?? trans_message('contracts.revision_application_failed')],
+            $pending !== null => ['code' => 'scheduled', 'message' => trans_message('contracts.activation_scheduled', ['date' => $pending->effective_date]), 'effective_date' => $pending->effective_date],
+            !ContractBuilderWorkflow::canRevise($view->contract, $instance) => ['code' => 'status', 'message' => trans_message('contracts.activation_status')],
+            !$confirmed => ['code' => 'confirmations', 'message' => trans_message('contracts.activation_confirmations')],
+            default => null,
+        };
 
         return ['effective_revision_id' => $instance->effective_revision_id === null ? null : (int) $instance->effective_revision_id,
             'can_view_payment_plans' => $this->authorization->can($actor, 'payments.schedule.view', ['organization_id' => $organizationId]),
             'current_revision_id' => (int) $revision->id, 'content_hash' => $revision->content_hash,
-            'can_activate' => $allowed && $pending === null && ContractBuilderWorkflow::canRevise($view->contract, $instance)
-                && (int) $instance->effective_revision_id !== (int) $revision->id
-                && DB::table('contract_revision_confirmations')->where('revision_id', $revision->id)->where('content_hash', $revision->content_hash)->distinct()->count('side') === 2,
+            'can_activate' => $blocker === null,
+            'activation_blocker' => $blocker,
             'can_retry' => $allowed && $pending !== null && $pending->effective_date <= now()->toDateString(),
             'can_cancel' => $allowed && $pending !== null,
             'items' => $items->map(fn (object $row): array => $this->present($row, false))->all()];
@@ -161,6 +171,13 @@ final class ContractRevisionActivationService
         });
     }
 
+    private function errorMessage(?string $code): ?string
+    {
+        if ($code === null) return null;
+        $message = trans_message($code);
+        return $message === $code ? trans_message('contracts.revision_application_failed') : $message;
+    }
+
     public function present(object $row, bool $includePlan = true): array
     {
         $result = ['id' => (int) $row->id, 'revision_id' => (int) $row->revision_id,
@@ -168,7 +185,7 @@ final class ContractRevisionActivationService
             'organization_id' => (int) $row->organization_id, 'created_by' => (int) $row->created_by,
             'content_hash' => $row->content_hash, 'basis' => $row->basis, 'effective_date' => $row->effective_date,
             'status' => $row->status, 'attempts' => (int) $row->attempts, 'last_error' => $row->last_error,
-            'error_message' => $row->last_error === null ? null : trans_message($row->last_error),
+            'error_message' => $this->errorMessage($row->last_error),
             'applied_at' => $row->applied_at, 'created_at' => $row->created_at,
             'cancelled_at' => $row->cancelled_at, 'cancellation_basis' => $row->cancellation_basis];
         if ($includePlan) {

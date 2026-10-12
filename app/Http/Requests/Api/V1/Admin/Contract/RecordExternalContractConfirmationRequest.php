@@ -14,6 +14,8 @@ final class RecordExternalContractConfirmationRequest extends FormRequest
     public function rules(): array
     {
         return ['content_hash' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/D'], 'request_key' => ['required', 'string', 'max:191'],
-            'side' => ['required', Rule::in(['first', 'second'])], 'basis' => ['required', 'string', 'max:2000'], 'asset_id' => ['required', 'integer', 'min:1']];
+            'side' => ['required_without:party_key', Rule::in(['first', 'second'])],
+            'party_key' => ['required_without:side', 'string', 'max:36'],
+            'basis' => ['required', 'string', 'max:2000'], 'asset_id' => ['required', 'integer', 'min:1']];
     }
 }

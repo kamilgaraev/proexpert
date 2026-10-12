@@ -80,7 +80,7 @@ final class ContractSupplementaryDocumentController extends Controller
         return AdminResponse::success($service->confirm(
             $request->user(), (int) $request->attributes->get('current_organization_id'), $contract, $document,
             $data['content_hash'], $data['request_key'],
-            ['basis' => $data['basis'], 'asset_id' => (int) $data['asset_id'], 'side' => $data['side']]
+            ['basis' => $data['basis'], 'asset_id' => (int) $data['asset_id'], ...array_intersect_key($data, array_flip(['side', 'party_key']))]
         ));
     }
 

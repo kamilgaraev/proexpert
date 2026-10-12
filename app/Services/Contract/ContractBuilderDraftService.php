@@ -31,7 +31,7 @@ final class ContractBuilderDraftService
         });
     }
 
-    public function save(User $actor, int $organizationId, int $contractId, int $baseRevision, int $expectedVersion, array $document, array $values, string $key, ?string $sourceRefreshHash = null, ?array $attachmentIds = null, ?array $templateUpdate = null): array
+    public function save(User $actor, int $organizationId, int $contractId, int $baseRevision, int $expectedVersion, array $document, array $values, string $key, ?string $sourceRefreshHash = null, ?array $attachmentIds = null, ?array $templateUpdate = null, ?array $references = null, ?array $blockReferences = null, ?array $partyDetails = null): array
     {
         if ((int) $actor->current_organization_id !== $organizationId
             || !$this->authorization->can($actor, 'contracts.edit', ['organization_id' => $organizationId])) {
@@ -41,6 +41,9 @@ final class ContractBuilderDraftService
         if ($templateUpdate !== null) {
             $payload[] = $templateUpdate;
         }
+        if ($references !== null) { $payload[] = ['variables' => (object) $references]; }
+        if ($blockReferences !== null) { $payload[] = ['block_references' => (object) $blockReferences]; }
+        if ($partyDetails !== null) { $payload[] = ['party_details' => (object) $partyDetails]; }
         if ($sourceRefreshHash !== null) {
             if (preg_match('/^[a-f0-9]{64}$/D', $sourceRefreshHash) !== 1) {
                 throw new ContractBuilderException('contracts.builder_input_invalid', 422);
@@ -57,7 +60,7 @@ final class ContractBuilderDraftService
         }
         $fingerprint = $templateUpdate['request_fingerprint'] ?? hash('sha256', $request);
 
-        return DB::transaction(function () use ($actor, $organizationId, $contractId, $baseRevision, $expectedVersion, $document, $values, $key, $fingerprint, $sourceRefreshHash, $attachmentIds, $templateUpdate): array {
+        return DB::transaction(function () use ($actor, $organizationId, $contractId, $baseRevision, $expectedVersion, $document, $values, $key, $fingerprint, $sourceRefreshHash, $attachmentIds, $templateUpdate, $references, $blockReferences, $partyDetails): array {
             $contract = Contract::whereKey($contractId)->lockForUpdate()->firstOrFail();
             $this->views->find($actor, $organizationId, $contractId);
             if (!$contract->parties()->where('linked_organization_id', $organizationId)->exists()) {
@@ -83,8 +86,20 @@ final class ContractBuilderDraftService
                 $this->conflict();
             }
             $sourceBasis = $draft !== null && (int) $draft->base_revision_id === (int) $base->id ? $draft : $base;
+            $parties = json_decode($sourceBasis->parties ?? $base->parties, true, 512, JSON_THROW_ON_ERROR);
+            if ($partyDetails !== null) { $parties = ContractPartyRequisites::mergeParties($parties, $partyDetails); }
             $definitions = $templateUpdate['definitions'] ?? json_decode($sourceBasis->definitions ?? $base->definitions, true, 512, JSON_THROW_ON_ERROR);
             $blocks = $templateUpdate['blocks'] ?? json_decode($sourceBasis->blocks ?? $base->blocks, true, 512, JSON_THROW_ON_ERROR);
+            if ($blockReferences !== null) {
+                $blocks = app(ContractLibraryService::class)->resolveInstanceBlocks($actor, $organizationId, $blockReferences, $blocks);
+            }
+            if ($references !== null) {
+                $resolvedContent = app(ContractLibraryService::class)->resolveInstanceContent($actor, $organizationId, ['document' => $document, 'variables' => $references], $definitions, $blocks);
+                $document = $resolvedContent['document'];
+                $definitions = $resolvedContent['definitions'];
+                $blocks = [...$blocks, ...$resolvedContent['blocks']];
+            }
+            if (count($blocks) > 200) { throw new ContractBuilderException('contracts.builder_input_invalid', 422); }
             $templateVersionId = $templateUpdate['template_version_id'] ?? $sourceBasis->template_version_id ?? $base->template_version_id;
             $types = array_column($definitions, 'definition', 'id');
             $attachments = json_decode($sourceBasis->attachments ?? $base->attachments, true, 512, JSON_THROW_ON_ERROR);
@@ -98,7 +113,13 @@ final class ContractBuilderDraftService
             }
             $entitySnapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId, $types, $values, $frozen);
             $frozenValues = $sourceRefreshHash === null ? json_decode($sourceBasis->values, true, 512, JSON_THROW_ON_ERROR) : null;
-            if ($templateUpdate !== null && $frozenValues !== null) {
+            if ($partyDetails !== null && $frozenValues !== null) {
+                foreach ($definitions as $id => $field) {
+                    if (($field['definition']['source']['kind'] ?? null) === 'contract_context'
+                        && preg_match('/^(first_party|second_party|party_(?:[3-9]|1[0-9]|20))\./', $field['definition']['source']['field'] ?? '') === 1) { unset($frozenValues[$id]); }
+                }
+            }
+            if (($templateUpdate !== null || $references !== null) && $frozenValues !== null) {
                 $previousDefinitions = json_decode($sourceBasis->definitions ?? $base->definitions, true, 512, JSON_THROW_ON_ERROR);
                 foreach (array_keys($frozenValues) as $id) {
                     if (($previousDefinitions[$id]['definition']['source'] ?? null) !== ($definitions[$id]['definition']['source'] ?? null)) {
@@ -106,7 +127,8 @@ final class ContractBuilderDraftService
                     }
                 }
             }
-            $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, $frozenValues, ContractContextSourceFields::forContract($contract));
+            $context = ContractContextSourceFields::withParties(ContractContextSourceFields::forContract($contract), $parties);
+            $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId, $types, $values, $frozenValues, $context);
             if ($sourceRefreshHash !== null && !hash_equals($sourceRefreshHash, $this->sourceHash($entitySnapshots, $sourceValues))) {
                 $this->conflict();
             }
@@ -120,6 +142,7 @@ final class ContractBuilderDraftService
                 'document' => $this->json($document), 'values' => $this->json((object) $resolved),
                 'entity_snapshots' => $this->json((object) $entitySnapshots),
                 'attachments' => $this->json($attachments),
+                'parties' => $this->json($parties),
                 'updated_by' => $actor->id, 'updated_at' => now(),
             ];
             if ($draft === null) {
@@ -141,6 +164,18 @@ final class ContractBuilderDraftService
         });
     }
 
+    public function resolveContent(User $actor, int $organizationId, int $contractId, int $baseRevision, array $content): array
+    {
+        if ((int) $actor->current_organization_id !== $organizationId || !$this->authorization->can($actor, 'contracts.edit', ['organization_id' => $organizationId])) { throw new AuthorizationException; }
+        return DB::transaction(function () use ($actor, $organizationId, $contractId, $baseRevision, $content): array {
+            $base = $this->instances->read($actor, $organizationId, $contractId, $baseRevision);
+            if (!DB::table('contract_builder_instances')->where('contract_id', $contractId)->where('current_revision_id', $base['id'])->exists()) { $this->conflict(); }
+            $draft = $this->read($actor, $organizationId, $contractId);
+            $basis = $draft !== null && $draft['base_revision'] === $baseRevision ? $draft : $base;
+            return app(ContractLibraryService::class)->resolveInstanceContent($actor, $organizationId, $content, $basis['definitions'], $basis['blocks']);
+        });
+    }
+
     public function sourceChanges(User $actor, int $organizationId, int $contractId): array
     {
         if ((int) $actor->current_organization_id !== $organizationId
@@ -154,7 +189,7 @@ final class ContractBuilderDraftService
         $snapshots = app(ContractEntityCatalog::class)->snapshots($actor, $organizationId,
             array_column($draft['definitions'], 'definition', 'id'), $draft['values']);
         $sourceValues = app(ContractEntityCatalog::class)->sourceValues($actor, $organizationId,
-            array_column($draft['definitions'], 'definition', 'id'), $draft['values'], null, ContractContextSourceFields::forContract(Contract::findOrFail($contractId)));
+            array_column($draft['definitions'], 'definition', 'id'), $draft['values'], null, ContractContextSourceFields::withParties(ContractContextSourceFields::forContract(Contract::findOrFail($contractId)), $draft['parties']));
         $types = array_column($draft['definitions'], 'definition', 'id');
         $input = array_filter($draft['values'], static fn (string $id): bool => ($types[$id]['source']['kind'] ?? 'manual') === 'manual', ARRAY_FILTER_USE_KEY);
         $updatedValues = (new ContractFormulaEngine)->calculate($types, $input, ContractEntityCatalog::accessible($snapshots), static fn (string $id): mixed => $sourceValues[$id]);
@@ -205,7 +240,7 @@ final class ContractBuilderDraftService
             'entity_snapshots' => json_decode($draft->entity_snapshots, true, 512, JSON_THROW_ON_ERROR),
             'definitions' => $draft->definitions === null ? $revision['definitions'] : json_decode($draft->definitions, true, 512, JSON_THROW_ON_ERROR),
             'blocks' => $draft->blocks === null ? $revision['blocks'] : json_decode($draft->blocks, true, 512, JSON_THROW_ON_ERROR),
-            'parties' => $revision['parties'], 'attachments' => $draft->attachments === null ? $revision['attachments'] : json_decode($draft->attachments, true, 512, JSON_THROW_ON_ERROR),
+            'parties' => $draft->parties === null ? $revision['parties'] : json_decode($draft->parties, true, 512, JSON_THROW_ON_ERROR), 'attachments' => $draft->attachments === null ? $revision['attachments'] : json_decode($draft->attachments, true, 512, JSON_THROW_ON_ERROR),
         ];
     }
 

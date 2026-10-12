@@ -18,7 +18,15 @@ final class PrepareContractTemplateCardRequest extends FormRequest
     {
         return [
             'resolve_only' => ['sometimes', 'boolean'],
-            'project_id' => ['required', 'integer', 'min:1'],
+            'party_details' => ['sometimes', 'array', 'max:20'],
+            'party_details.*' => ['array'],
+            'additional_parties' => ['sometimes', 'array', 'list', 'max:18'],
+            'additional_parties.*' => ['array'],
+            'project_id' => ['nullable', 'integer', 'min:1'],
+            'is_multi_project' => ['sometimes', 'boolean'],
+            'project_ids' => ['sometimes', 'nullable', 'array', 'list', 'max:50'],
+            'project_ids.*' => ['integer', 'min:1', 'distinct'],
+            'direct_party' => ['sometimes', 'nullable', 'array', 'max:12'],
             'contract_side_type' => ['required', Rule::in(['general_contract', 'contract', 'subcontract'])],
             'direction' => ['required', Rule::in(['income', 'expense'])],
             'superior_organization_id' => ['nullable', 'integer', 'min:1'],

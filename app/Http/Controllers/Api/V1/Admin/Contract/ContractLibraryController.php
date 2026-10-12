@@ -13,11 +13,22 @@ use App\Http\Resources\Api\V1\Admin\Contract\ContractLibraryResource;
 use App\Http\Resources\Api\V1\Admin\Contract\ResolvedContractTemplateResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\Contract\ContractLibraryService;
+use App\Services\Contract\ContractDocumentProfiles;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 final class ContractLibraryController extends Controller
 {
+    public function typeProfiles(): JsonResponse
+    {
+        $profiles = [];
+        foreach (ContractDocumentProfiles::all() as $code => $profile) {
+            $profiles[] = ['code' => $code, 'name' => $profile['label'], 'category' => 'contract', 'is_active' => true, 'is_standard' => true];
+        }
+
+        return AdminResponse::success($profiles);
+    }
+
     public function calculate(\App\Http\Requests\Api\V1\Admin\Contract\CalculateContractTemplateRequest $request, string $libraryItem, int $libraryVersion, ContractLibraryService $service): JsonResponse
     {
         $result = $service->calculateTemplate($request->user(), (int) $request->attributes->get('current_organization_id'), $libraryItem, $libraryVersion, $request->validated('values'));

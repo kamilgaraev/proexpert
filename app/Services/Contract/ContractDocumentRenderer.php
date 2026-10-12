@@ -8,8 +8,11 @@ use App\Exceptions\ContractBuilderException;
 
 final class ContractDocumentRenderer
 {
+    private string $locale = 'ru-RU';
+
     public function render(array $document, array $definitions, array $values, array $entitySnapshots = []): string
     {
+        $this->locale = ContractDocumentLocale::validate($document['attrs']['locale'] ?? 'ru-RU');
         $types = array_column($definitions, 'definition', 'id');
         $versions = array_column($definitions, 'version', 'id');
         (new ContractDocumentValidator)->validate(['document' => $document, 'variables' => $versions], $types);
@@ -93,6 +96,17 @@ final class ContractDocumentRenderer
         };
         $number($resolved);
         $layout = $resolved['attrs']['layout'] ?? null;
+        $decorations = $resolved['attrs']['pageDecorations'] ?? null;
+        $imageCount = $imageBytes = 0;
+        $countImages = function (array $node) use (&$countImages, &$imageCount, &$imageBytes): void {
+            if ($node['type'] === 'image') {
+                $imageBytes += strlen(ContractInlineImage::bytes($node['attrs']['src']));
+                if (++$imageCount > 20 || $imageBytes > 2 * 1024 * 1024) { throw new ContractBuilderException('contracts.builder_image_invalid', 422); }
+            }
+            foreach ($node['content'] ?? [] as $child) { $countImages($child); }
+        };
+        $countImages($resolved);
+        if ($layout === null && ($decorations !== null || $imageCount > 0)) { $layout = ContractPageDecorations::defaultLayout(); }
         if ($layout !== null) {
             $bottom = 0;
             $blocks = [];
@@ -103,7 +117,7 @@ final class ContractDocumentRenderer
                 $bottom = $geometry['y'] + max(14, $geometry['minHeight']) + 4;
                 $blocks[] = $this->printBlock($node, $geometry, $numbers);
             }
-            $html = (new ContractDocumentPrintLayout)->render($layout, $blocks);
+            $html = (new ContractDocumentPrintLayout)->render($layout, $blocks, $decorations, $this->locale);
         } else {
             $html = $this->html($resolved, $numbers);
         }
@@ -116,6 +130,32 @@ final class ContractDocumentRenderer
 
     private function printBlock(array $node, array $geometry, array $numbers): array
     {
+        $fit = function (array $item, float $available) use (&$fit): array {
+            if ($item['type'] === 'image' && $item['attrs']['width'] > $available) {
+                $item['attrs']['height'] *= $available / $item['attrs']['width'];
+                $item['attrs']['width'] = $available;
+            }
+            if ($item['type'] === 'table') {
+                $rows = $item['content'];
+                $columns = count($item['attrs']['columnWidths'] ?? []) ?: max(array_map(static fn (array $row): int => array_sum(array_map(static fn (array $cell): int => $cell['attrs']['colspan'] ?? 1, $row['content'])), $rows));
+                $widths = $item['attrs']['columnWidths'] ?? array_fill(0, $columns, 100 / $columns);
+                $occupied = [];
+                foreach ($rows as $rowIndex => $row) {
+                    $column = 0;
+                    foreach ($row['content'] as $cellIndex => $cell) {
+                        while (($occupied[$column] ?? -1) >= $rowIndex) { $column++; }
+                        $span = $cell['attrs']['colspan'] ?? 1;
+                        $width = $available * array_sum(array_slice($widths, $column, $span)) / 100;
+                        $rows[$rowIndex]['content'][$cellIndex] = $fit($cell, max(.5, $width - 11 / ContractDocumentPrintMeasure::PT_PER_MM));
+                        for ($offset = 0; $offset < $span; $offset++) { $occupied[$column + $offset] = $rowIndex + ($cell['attrs']['rowspan'] ?? 1) - 1; }
+                        $column += $span;
+                    }
+                }
+                $item['content'] = $rows;
+            } elseif (isset($item['content'])) { $item['content'] = array_map(static fn (array $child): array => $fit($child, $available), $item['content']); }
+            return $item;
+        };
+        $node = $fit($node, (float) $geometry['width']);
         $block = ['layout' => $geometry, 'html' => $this->html($node, $numbers)];
         if ($node['type'] !== 'group') {
             return $block;
@@ -136,13 +176,21 @@ final class ContractDocumentRenderer
         $attrs = $node['attrs'] ?? [];
         $layout = $attrs['layout'] ?? [];
         $typography = array_replace($inheritedTypography, array_intersect_key($layout, ['fontFamily' => true, 'fontSize' => true]));
+        $typography = array_replace($typography, $attrs['format'] ?? []);
         if ($node['type'] === 'text') {
             $text = $this->escape($node['text']);
             foreach ($node['marks'] ?? [] as $mark) {
                 $tag = match ($mark['type']) {
                     'bold' => 'strong', 'italic' => 'em', 'underline' => 'u', 'strike' => 's', 'link' => 'a',
+                    'textStyle' => 'span', 'superscript' => 'sup', 'subscript' => 'sub',
                 };
                 $link = $mark['type'] === 'link' ? ' href="'.$this->escape($mark['attrs']['href']).'" rel="noopener noreferrer"' : '';
+                if ($mark['type'] === 'textStyle') {
+                    $markStyle = $mark['attrs'];
+                    $link = ' style="'.$this->escape(ContractTypography::style($markStyle)).'"'
+                        .(isset($markStyle['fontFamily']) ? ' data-contract-font="'.$this->escape($markStyle['fontFamily']).'"' : '')
+                        .(isset($markStyle['color']) ? ' data-contract-color="'.$this->escape($markStyle['color']).'"' : '');
+                }
                 $text = '<'.$tag.$link.'>'.$text.'</'.$tag.'>';
             }
 
@@ -150,6 +198,9 @@ final class ContractDocumentRenderer
         }
         if ($node['type'] === 'hardBreak') {
             return '<br>';
+        }
+        if ($node['type'] === 'image') {
+            return '<img src="'.$this->escape($attrs['src']).'" alt="'.$this->escape($attrs['alt']).'" style="width:'.$attrs['width'].'mm;height:'.$attrs['height'].'mm">';
         }
         if ($node['type'] === 'clauseReference') {
             if (! isset($numbers[$attrs['target']])) {
@@ -167,18 +218,21 @@ final class ContractDocumentRenderer
         };
         $attributes = '';
         if ($node['type'] === 'doc') {
-            $attributes = ' class="contract-document"';
+            $attributes = ' class="contract-document" lang="'.$this->locale.'" dir="ltr"';
         } elseif ($node['type'] === 'clause') {
             $attributes = ' id="clause-'.$this->escape($attrs['id']).'"';
             $numberStyle = $this->typographyStyle($typography);
-            $number = '<p class="contract-clause-number"'.($numberStyle !== '' ? ' style="'.$numberStyle.'"' : '').'>'.$numbers[$attrs['id']].'.</p>';
+            $number = '<p class="contract-clause-number"'.($numberStyle !== '' ? ' style="'.$this->escape($numberStyle).'"' : '').'>'.$numbers[$attrs['id']].'.</p>';
             if (($attrs['textPlacement'] ?? 'inline') === 'inline' && ($node['content'][0]['type'] ?? null) === 'paragraph') {
                 $first = $node['content'][0];
                 $inline = implode('', array_map(fn (array $child): string => $this->html($child, $numbers, $typography), $first['content'] ?? []));
                 $rest = array_slice($node['content'], 1);
-                $paragraphTypography = array_replace($typography, array_intersect_key($first['attrs']['layout'] ?? [], ['fontFamily' => true, 'fontSize' => true]));
+                $paragraphTypography = array_replace($typography, array_intersect_key($first['attrs']['layout'] ?? [], ['fontFamily' => true, 'fontSize' => true]), $first['attrs']['format'] ?? []);
                 $paragraphStyle = $this->typographyStyle($paragraphTypography);
-                $children = '<p'.($paragraphStyle !== '' ? ' style="'.$paragraphStyle.'"' : '').'><strong class="contract-clause-number">'.$numbers[$attrs['id']].'. </strong>'.$inline.'</p>'
+                $children = '<p'.($paragraphStyle !== '' ? ' style="'.$this->escape($paragraphStyle).'"' : '')
+                    .(isset($paragraphTypography['fontFamily']) ? ' data-contract-font="'.$this->escape($paragraphTypography['fontFamily']).'"' : '')
+                    .(isset($paragraphTypography['color']) ? ' data-contract-color="'.$this->escape($paragraphTypography['color']).'"' : '')
+                    .'><strong class="contract-clause-number">'.$numbers[$attrs['id']].'. </strong>'.$inline.'</p>'
                     .implode('', array_map(fn (array $child): string => $this->html($child, $numbers, $typography), $rest));
             } else {
                 $children = $number.$children;
@@ -187,6 +241,18 @@ final class ContractDocumentRenderer
             $attributes = ' start="'.($attrs['start'] ?? 1).'"';
         } elseif ($node['type'] === 'tableCell') {
             $attributes = ' colspan="'.($attrs['colspan'] ?? 1).'" rowspan="'.($attrs['rowspan'] ?? 1).'"';
+        } elseif ($node['type'] === 'tableRow' && ($attrs['header'] ?? false)) {
+            $attributes = ' data-contract-repeat-header="1"';
+        } elseif ($node['type'] === 'table') {
+            $header = $body = '';
+            foreach ($node['content'] as $row) {
+                if ($row['attrs']['header'] ?? false) { $header .= $this->html($row, $numbers, $typography); }
+                else { $body .= $this->html($row, $numbers, $typography); }
+            }
+            $children = ($header === '' ? '' : '<thead>'.$header.'</thead>').'<tbody>'.$body.'</tbody>';
+            if (isset($attrs['columnWidths'])) {
+                $children = '<colgroup>'.implode('', array_map(static fn ($width): string => '<col style="width:'.$width.'%">', $attrs['columnWidths'])).'</colgroup>'.$children;
+            }
         }
 
         if (in_array($node['type'], ['paragraph', 'heading', 'clause', 'group', 'conditional', 'table', 'orderedList', 'bulletList'], true)
@@ -197,7 +263,9 @@ final class ContractDocumentRenderer
             }
             $style = $this->typographyStyle($styleTypography);
             if ($style !== '') {
-                $attributes .= ' style="'.$style.'"';
+                $attributes .= ' style="'.$this->escape($style).'"'
+                    .(isset($styleTypography['fontFamily']) ? ' data-contract-font="'.$this->escape($styleTypography['fontFamily']).'"' : '')
+                    .(isset($styleTypography['color']) ? ' data-contract-color="'.$this->escape($styleTypography['color']).'"' : '');
             }
         }
 
@@ -209,53 +277,33 @@ final class ContractDocumentRenderer
         if ($typography === []) {
             return '';
         }
-        $font = match ($typography['fontFamily'] ?? 'Most Contract') {
-            'DejaVu Serif' => '"DejaVu Serif",serif',
-            'DejaVu Sans Mono' => '"DejaVu Sans Mono",monospace',
-            default => '"DejaVu Sans",sans-serif',
-        };
-
-        return 'font-family:'.$font.';'.(isset($typography['fontSize']) ? 'font-size:'.$typography['fontSize'].'pt;' : '');
+        return ContractTypography::style($typography);
     }
 
-    public function formatValue(array $definition, mixed $value, array $entitySnapshots = []): string
+    public function formatValue(array $definition, mixed $value, array $entitySnapshots = [], string $locale = 'ru-RU'): string
     {
-        return $this->format($definition, $value, $entitySnapshots);
+        return $this->format($definition, $value, $entitySnapshots, ContractDocumentLocale::validate($locale));
     }
 
-    private function format(array $definition, mixed $value, array $entitySnapshots): string
+    private function format(array $definition, mixed $value, array $entitySnapshots, ?string $locale = null): string
     {
         if ($value === null) {
             return '';
         }
 
+        $locale ??= $this->locale;
         return match ($definition['type']) {
             'text' => (string) $value,
-            'number' => $this->decimal((string) $value),
-            'money' => $this->decimal($value['amount'], true)."\u{00A0}".($value['currency'] === 'RUB' ? '₽' : $value['currency']),
-            'percentage' => $this->decimal((string) $value)."\u{00A0}%",
-            'boolean' => trans_message($value ? 'contracts.variable_true' : 'contracts.variable_false'),
-            'date' => implode('.', array_reverse(explode('-', $value))),
+            'number' => ContractDocumentLocale::decimal((string) $value, false, $locale),
+            'money' => ContractDocumentLocale::decimal($value['amount'], true, $locale)."\u{00A0}".($value['currency'] === 'RUB' && $locale === 'ru-RU' ? '₽' : $value['currency']),
+            'percentage' => ContractDocumentLocale::decimal((string) $value, false, $locale)."\u{00A0}%",
+            'boolean' => ContractDocumentLocale::boolean($value, $locale),
+            'date' => ContractDocumentLocale::date($value, $locale),
             'choice' => array_column($definition['options'], 'label', 'id')[$value],
             'entity' => $entitySnapshots[$value['type'].':'.$value['id']]['label'],
             'table' => json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             default => $this->invalid(),
         };
-    }
-
-    private function decimal(string $value, bool $money = false): string
-    {
-        if (! preg_match('/^(-?)(\d+)(?:\.(\d+))?$/D', $value, $parts)) {
-            return $value;
-        }
-
-        $fraction = rtrim($parts[3] ?? '', '0');
-        if ($money) {
-            $fraction = str_pad($fraction, 2, '0');
-        }
-        $integer = preg_replace('/\B(?=(\d{3})+(?!\d))/', "\u{00A0}", $parts[2]);
-
-        return $parts[1].$integer.($fraction !== '' ? ','.$fraction : '');
     }
 
     private function escape(string $text): string
