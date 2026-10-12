@@ -122,4 +122,76 @@ final class AssistantBimIndexProjectionTest extends TestCase
         self::assertSame('air_conditioner', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'name' => 'Кронштейн кондиционера',
             'properties' => ['_ifc' => ['type_predefined_type' => 'AIRCONDITIONINGUNIT']]])['equipment_kind']);
     }
+
+    public function test_real_engineering_label_aliases_identify_vrf_and_split_units_without_brand_or_material_inference(): void
+    {
+        $projection = new AssistantBimIndexProjection;
+        foreach (['GP_Наименование', 'ADSK_Наименование', 'Наименование'] as $alias) {
+            $row = $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'name' => '(ME)_HVAC_Family:TYPE-01:element',
+                'properties' => ['_ifc' => ['schema_version' => 2, 'type_predefined_type' => 'NOTDEFINED'],
+                    'Идентификация' => [$alias => 'Наружный блок мультизональной системы Qх=68.0Вт, Qт=75.0кВт,380-415/3/50'],
+                    'Прочее' => ['Категория' => 'Оборудование'], 'materials' => ['Корпус кондиционера', 'Решетка кондиционера']]]);
+            self::assertSame('air_conditioner', $row['equipment_kind'], $alias);
+            self::assertArrayHasKey('Идентификация.'.$alias, $row['properties']);
+        }
+        $indoor = $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'name' => '(ME)_HVAC_Family:TYPE-02:element',
+            'properties' => ['Идентификация' => ['GP_Наименование' => "Сплит-система Qх=5100Вт, Qт=5200Вт, U=220/1/50, N=1,6кВт в\r\nкомплекте пульт дистанционного управления"],
+                'materials' => ['Белый пластик']]]);
+        self::assertSame('air_conditioner', $indoor['equipment_kind']);
+        foreach (['Внутренний блок VRF', 'Наружный блок VRV', 'Наружный блок мульти-сплит системы'] as $label) {
+            self::assertSame('air_conditioner', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY',
+                'properties' => ['Идентификация' => ['Наименование' => $label]]])['equipment_kind']);
+        }
+    }
+
+    public function test_hvac_descriptions_never_classify_room_or_accessories_and_materials_or_cooling_alone_are_insufficient(): void
+    {
+        $projection = new AssistantBimIndexProjection;
+        foreach (['Кронштейн наружного блока мультизональной системы', 'Решетка внутреннего блока VRF', 'Трубопровод наружного блока VRV'] as $label) {
+            self::assertSame('unknown', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY',
+                'properties' => ['Идентификация' => ['GP_Наименование' => $label]]])['equipment_kind'], $label);
+        }
+        foreach (['IFCSPACE', 'IFCWALL', 'IFCDUCTSEGMENT'] as $category) {
+            self::assertSame('unknown', $projection->element(['category' => $category,
+                'properties' => ['Идентификация' => ['GP_Наименование' => 'Наружный блок мультизональной системы']]])['equipment_kind']);
+        }
+        self::assertSame('unknown', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY',
+            'properties' => ['Прочее' => ['Категория' => 'Помещения'],
+                'Идентификация' => ['GP_Наименование' => 'Помещение с кондиционером', 'CoolingCapacity' => 3500]]])['equipment_kind']);
+        self::assertSame('unknown', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'name' => 'Объект',
+            'properties' => ['Идентификация' => ['CoolingCapacity' => 3500, 'HeatingCapacity' => 4000],
+                'materials' => ['Корпус кондиционера', 'Решетка кондиционера']]])['equipment_kind']);
+    }
+
+    public function test_raw_room_category_remains_authoritative_after_the_hundred_display_properties(): void
+    {
+        $properties = [];
+        for ($index = 0; $index < 110; $index++) {
+            $properties['Pset_'.$index] = ['Width' => $index];
+        }
+        $properties['Прочее'] = ['Категория' => 'Помещения'];
+        $row = (new AssistantBimIndexProjection)->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'name' => 'Кондиционер', 'properties' => $properties]);
+        self::assertCount(100, $row['properties']);
+        self::assertArrayNotHasKey('Прочее.Категория', $row['properties']);
+        self::assertSame('unknown', $row['equipment_kind']);
+    }
+
+    public function test_raw_closed_identity_after_display_limit_still_classifies_without_exposing_extra_or_private_fields(): void
+    {
+        $properties = [];
+        for ($index = 0; $index < 110; $index++) {
+            $properties['Pset_'.$index] = ['Width' => $index];
+        }
+        $properties['Идентификация'] = ['GP_Наименование' => 'Наружный блок мультизональной системы', 'ContactEmail' => 'private@example.org'];
+        $projection = new AssistantBimIndexProjection;
+        $row = $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'name' => 'TYPE-01', 'properties' => $properties]);
+        self::assertCount(100, $row['properties']);
+        self::assertArrayNotHasKey('Идентификация.GP_Наименование', $row['properties']);
+        self::assertSame('air_conditioner', $row['equipment_kind']);
+        self::assertStringNotContainsString('private@example.org', json_encode($row, JSON_THROW_ON_ERROR));
+        $properties['Идентификация']['GP_Наименование'] = 'Кронштейн наружного блока мультизональной системы';
+        self::assertSame('unknown', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'properties' => $properties])['equipment_kind']);
+        $properties['Идентификация']['GP_Наименование'] = 'Кондиционер https://private.test';
+        self::assertSame('unknown', $projection->element(['category' => 'IFCBUILDINGELEMENTPROXY', 'properties' => $properties])['equipment_kind']);
+    }
 }

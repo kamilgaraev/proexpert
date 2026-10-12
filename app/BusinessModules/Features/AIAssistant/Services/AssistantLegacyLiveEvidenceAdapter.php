@@ -58,6 +58,9 @@ final class AssistantLegacyLiveEvidenceAdapter
                 if ($type === 'purchase_request' && isset($record['currency'])) {
                     $returnedFields[] = 'budget_currency';
                 }
+                if ($type === 'contract') {
+                    $returnedFields[] = 'contractor_id';
+                }
                 $fields = array_values(array_intersect($returnedFields, $this->catalog->definition($domain)?->fields ?? []));
                 if ($fields === []) {
                     continue;
@@ -70,6 +73,25 @@ final class AssistantLegacyLiveEvidenceAdapter
                 }
                 if (isset($read['structured_fact_evidence'], $read['server_formatted_facts'])) {
                     $evidence[] = $read;
+                    if ($type === 'contract') {
+                        $contractorId = $read['results'][0]['fields']['contractor_id'] ?? null;
+                        if (is_string($contractorId) && preg_match('/^[1-9][0-9]*$/D', $contractorId) === 1) {
+                            $contractorId = filter_var($contractorId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                        }
+                        $partyKey = 'contractor:'.$contractorId;
+                        if (is_int($contractorId) && $contractorId > 0 && ! isset($seen[$partyKey])
+                            && count($seen) < AssistantStructuredFactFormatter::MAX_ROWS) {
+                            try {
+                                $party = $this->reader->execute('read', ['domain' => 'core_catalog', 'entity_type' => 'contractor',
+                                    'id' => $contractorId, 'fields' => ['id', 'name']], $actor, $organizationId);
+                                if (isset($party['structured_fact_evidence'], $party['server_formatted_facts'])) {
+                                    $seen[$partyKey] = true;
+                                    $evidence[] = $party;
+                                }
+                            } catch (AccessDeniedHttpException|ValidationException) {
+                            }
+                        }
+                    }
                 }
             }
         }

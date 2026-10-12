@@ -62,6 +62,19 @@ final class AssistantBimIndexPredicateTest extends TestCase
         self::assertStringNotContainsString("'IFCWALL'", $sql);
     }
 
+    public function test_sql_vrf_identity_uses_closed_engineering_aliases_and_shared_accessory_and_room_vetoes(): void
+    {
+        $scope = $this->scope();
+        (new AssistantBimIndexPredicate)->apply($scope, ['equipment_kind' => 'air_conditioner'], []);
+        $sql = $scope->toSql();
+        self::assertStringContainsString('GP_Наименование|ADSK_Наименование|Наименование', $sql);
+        self::assertStringContainsString('{Прочее,Категория}', $sql);
+        self::assertStringContainsString(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimIndexProjection::airConditionerUnitPattern(), $sql);
+        self::assertStringContainsString(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimIndexProjection::airConditionerUnitReferencePattern(), $sql);
+        self::assertStringContainsString('assistant_equipment_identity', $sql);
+        self::assertSame(['air_conditioner'], $scope->getBindings());
+    }
+
     private function scope(): Builder
     {
         $connection = new PostgresConnection(null);

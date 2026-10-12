@@ -682,15 +682,25 @@ final class AssistantRequestLifecycle
             ? app(AssistantRequestExecutionContext::class)
             : null;
         $checkpoint = $execution === null ? null : fn (): int => $execution->remainingMilliseconds();
-        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint);
-        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint);
+        $requestId = $response['message']['metadata']['request_id'] ?? null;
+        $requestId = is_string($requestId) && Str::isUuid($requestId) ? $requestId : null;
+        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId);
+        $this->assertResponseReferences($refs, $actor, $organizationId, $checkpoint, $requestId);
     }
 
-    private function assertResponseReferences(array $refs, User $actor, int $organizationId, ?callable $checkpoint): void
+    private function assertResponseReferences(array $refs, User $actor, int $organizationId, ?callable $checkpoint, ?string $requestId): void
     {
-        $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId): void {
-            foreach ($refs as $ref) {
+        $this->dataAccess->withCurrentChecks($actor, $organizationId, function () use ($refs, $actor, $organizationId, $requestId): void {
+            foreach ($refs as $index => $ref) {
                 if (!is_array($ref) || !$this->dataAccess->canReadReference($actor, $organizationId, $ref)) {
+                    $type = is_array($ref) ? ($ref['entity_type'] ?? null) : null;
+                    Log::notice('ai.assistant.response_source_access_denied', [
+                        'request_id' => $requestId, 'reason' => 'source_ref_denied', 'reference_index' => is_int($index) ? $index : null,
+                        'entity_type' => is_string($type) && preg_match('/^[a-z0-9_.-]{1,80}$/D', $type) ? $type : null,
+                        'has_checked_fields' => is_array($ref) && is_array($ref['checked_fields'] ?? null),
+                        'has_source_field_identity' => is_array($ref) && isset($ref['source_field_identity']),
+                        'has_source_version' => is_array($ref) && isset($ref['source_version']),
+                    ]);
                     throw new AuthorizationException(trans_message('ai_assistant.sources_access_revoked'));
                 }
             }
