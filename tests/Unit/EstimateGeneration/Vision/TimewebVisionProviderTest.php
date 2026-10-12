@@ -1635,6 +1635,37 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function provider_excludes_unrelated_and_nested_private_metadata_and_preserves_replay(): void
+    {
+        Http::fake(fn () => Http::response($this->response()));
+        $input = $this->input(nativeReferences: ['cad:object:2F'], auxiliaryText: 'Экспликация помещений', auxiliaryMetadata: [
+            'storage_url' => 'https://private.example.test/signed-canary',
+            'actor_email' => 'private-canary@example.test',
+            'ledger' => ['secret' => 'ledger-canary'],
+            'representation_status' => 'available', 'geometry_status' => 'not_applicable',
+            'capabilities' => ['page_render' => 'available', 'storage_url' => 'nested-canary'],
+            'source_bounds' => [0, 0, 100, 200], 'native_text_truncated' => false,
+        ]);
+        $first = $this->provider()->analyze($input);
+        $replay = $this->provider()->analyze($input);
+        self::assertSame($first->toArray(), $replay->toArray());
+        Http::assertSentCount(1);
+        Http::assertSent(static function ($request): bool {
+            $wire = (string) $request['messages'][1]['content'][0]['text'];
+            $context = json_decode($wire, true, 16, JSON_THROW_ON_ERROR);
+
+            return ! str_contains($wire, 'canary')
+                && ! str_contains($wire, 'example.test')
+                && $context['native_reference_registry'] === ['cad:object:2F']
+                && $context['auxiliary_text'] === 'Экспликация помещений'
+                && $context['data_policy_version'] === \App\BusinessModules\Addons\EstimateGeneration\Vision\VisionOutboundDataPolicy::VERSION
+                && $context['auxiliary_metadata']['capabilities'] === ['page_render' => 'available']
+                && $context['auxiliary_metadata']['source_bounds'] === [0, 0, 100, 200];
+        });
+        self::assertSame('private-canary@example.test', $input->auxiliaryMetadata['actor_email']);
+    }
+
+    #[Test]
     public function registry_above_provider_capacity_requires_review_before_http(): void
     {
         $references = array_map(static fn (int $index): string => 'cad:object:'.$index, range(1, 2001));

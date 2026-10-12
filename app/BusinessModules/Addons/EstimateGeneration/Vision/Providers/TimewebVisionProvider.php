@@ -31,6 +31,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\PhysicalAttempt\VisionP
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\ProjectSheetAnalysisValidator;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\RoleVisionResponseCanonicalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\VisionOutboundDataPolicy;
 use DateTimeImmutable;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Arr;
@@ -104,9 +105,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 : self::effectiveMaxElements();
             $maxFacts = ($observerProfile !== null || $arbitration || $geometryExpert) ? min($maxElements, 64) : $maxElements;
             if ($arbitration) {
-                $contractHash = 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.ArbitrationInputBuilder::PROMPT_CONTRACT);
+                $contractHash = 'sha256:'.hash('sha256', self::arbitrationSystemPrompt().'|'.ArbitrationInputBuilder::PROMPT_CONTRACT.'|'.VisionOutboundDataPolicy::VERSION);
             } elseif ($geometryExpert) {
-                $contractHash = 'sha256:'.hash('sha256', self::geometryExpertSystemPrompt().'|geometry-expert:v1');
+                $contractHash = 'sha256:'.hash('sha256', self::geometryExpertSystemPrompt().'|geometry-expert:v1|'.VisionOutboundDataPolicy::VERSION);
             } elseif ($observerProfile === null) {
                 $contractHash = self::promptHash(
                     $maxElements,
@@ -756,6 +757,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     ? ArbitrationInputBuilder::PROMPT_CONTRACT
                     : ($geometryExpert ? 'geometry-expert:v1' : ($observerProfile?->promptContractVersion() ?? self::PROMPT_VERSION)),
                 'contract_sha256' => $contractHash,
+                'data_policy_version' => VisionOutboundDataPolicy::VERSION,
                 'evidence_locator' => [
                     'page_id' => $input->pageId,
                     'page_number' => $input->pageNumber,
@@ -767,7 +769,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 'role_contract' => self::roleContract($input->sheetRole),
                 'native_reference_registry' => $input->nativeReferences,
                 'auxiliary_text' => $input->auxiliaryText,
-                'auxiliary_metadata' => $input->auxiliaryMetadata,
+                'auxiliary_metadata' => VisionOutboundDataPolicy::metadata($input->auxiliaryMetadata, $arbitration, $geometryExpert),
                 ...($observerProfile === null ? [] : [
                     'observer_profile' => $observerProfile->value,
                     'observer_role' => $observerProfile->role()->value,
@@ -1150,7 +1152,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
 
         $prompt = self::systemPrompt($effectiveMax, $effectiveFacts, $sheetRole);
 
-        return 'sha256:'.hash('sha256', $prompt.'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space),sheet_role,role_contract,native_reference_registry');
+        return 'sha256:'.hash('sha256', $prompt.'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space),sheet_role,role_contract,native_reference_registry|'.VisionOutboundDataPolicy::VERSION);
     }
 
     private static function roleContract(string $role): string
