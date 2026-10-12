@@ -9,16 +9,17 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignIfcToFragmentsConverterContract;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
-use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignIfcToFragmentsConverterContract;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConversionResult;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Project;
 use App\Services\Storage\FileService;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use RuntimeException;
 use Tests\Support\AdminApiTestContext;
@@ -108,6 +109,87 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertSame('failed', $derivative->refresh()->metadata['index_upgrade']['status']);
         $this->assertSame('ready', $derivative->status->value);
         $this->assertSame($published, $derivative->derivative_file_path);
+        $this->assertSame('published', $derivative->metadata['generation']);
+    }
+
+    public function test_upgrade_progress_preserves_each_heartbeat_without_rewriting_unchanged_metadata(): void
+    {
+        Bus::fake();
+        $this->travelTo(now()->startOfSecond());
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $transformations = array_map(static fn (int $id): array => [
+            'matrix' => array_fill(0, 16, $id / 1000),
+            'origin' => ['x' => $id, 'y' => -$id, 'z' => 0],
+        ], range(1, 20_000));
+        $metadata = $derivative->metadata;
+        $metadata['ifc_metadata'] = ['transformations' => $transformations];
+        $derivative->forceFill(['metadata' => $metadata])->save();
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $derivative->refresh();
+        $generation = $derivative->metadata['index_upgrade']['generation'];
+        $transformationsHash = hash('sha256', json_encode($derivative->metadata['ifc_metadata']['transformations'], JSON_THROW_ON_ERROR));
+        $method = new \ReflectionMethod($service, 'markProcessing');
+        $updates = [];
+
+        DB::enableQueryLog();
+        try {
+            foreach ([[45, 'converting'], [45, 'converting'], [40, 'converting'], [45, 'indexing'], [100, 'indexing'], [150, 'indexing']] as [$percent, $stage]) {
+                $this->travel(1)->seconds();
+                DB::flushQueryLog();
+                $method->invoke($service, $derivative, $percent, $stage);
+                foreach (DB::getQueryLog() as $query) {
+                    if (str_starts_with($query['query'], 'update "design_model_derivatives"')) {
+                        $updates[] = $query['query'];
+                    }
+                }
+                $this->assertTrue($derivative->updated_at->equalTo(now()));
+                $this->assertSame($generation, $derivative->metadata['index_upgrade']['generation']);
+            }
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+            $this->travelBack();
+        }
+
+        $this->assertCount(6, $updates);
+        $this->assertCount(3, array_filter($updates, static fn (string $sql): bool => str_contains($sql, 'set "metadata" =')));
+        $this->assertCount(3, array_filter($updates, static fn (string $sql): bool => str_contains($sql, 'set "updated_at" =')));
+        $this->assertSame('processing', $derivative->metadata['index_upgrade']['status']);
+        $this->assertSame('indexing', $derivative->metadata['index_upgrade']['stage']);
+        $this->assertSame(99, $derivative->metadata['index_upgrade']['progress_percent']);
+        $this->assertSame($transformationsHash, hash('sha256', json_encode($derivative->metadata['ifc_metadata']['transformations'], JSON_THROW_ON_ERROR)));
+        $this->assertSame('published', $derivative->metadata['generation']);
+        $this->assertSame('ready', $derivative->status->value);
+    }
+
+    public function test_unchanged_upgrade_progress_still_rejects_a_superseded_generation(): void
+    {
+        Bus::fake();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $version = $this->storedVersion($this->package($context, $project), $context->user->id);
+        $derivative = $this->legacyReadyDerivative($version, (int) $context->user->id);
+        $service = $this->app->make(DesignModelViewerPreparationService::class);
+        $this->assertTrue($service->queueIndexUpgrade($derivative));
+        $method = new \ReflectionMethod($service, 'markProcessing');
+        $method->invoke($service, $derivative->refresh(), 45, 'converting');
+        $metadata = $derivative->metadata;
+        $metadata['index_upgrade']['generation'] = 'replacement-generation';
+        DesignModelDerivative::query()->whereKey($derivative->id)->update(['metadata' => json_encode($metadata, JSON_THROW_ON_ERROR)]);
+
+        try {
+            $method->invoke($service, $derivative, 45, 'converting');
+            $this->fail('Unchanged progress from a superseded generation was accepted.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('BIM preparation generation was superseded.', $exception->getMessage());
+        }
+
+        $this->assertSame($metadata, $derivative->refresh()->metadata);
+        $this->assertSame('ready', $derivative->status->value);
         $this->assertSame('published', $derivative->metadata['generation']);
     }
 
@@ -213,7 +295,7 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
             $mock->shouldReceive('convert')->once()->andReturnUsing(static function (string $source, string $target): DesignViewerConversionResult {
                 file_put_contents($target, 'fragment binary');
-                file_put_contents($target.'.ifc-index.ndjson', '{"express_id":42,"properties":{"_ifc":{"schema_version":2}}}' ."\n");
+                file_put_contents($target.'.ifc-index.ndjson', '{"express_id":42,"properties":{"_ifc":{"schema_version":2}}}'."\n");
 
                 return DesignViewerConversionResult::fromPayload(['metrics' => [
                     'local_id_count' => 1, 'sample_count' => 1, 'representation_count' => 1,
@@ -607,7 +689,7 @@ final class PrepareDesignModelViewerJobTest extends TestCase
             $mock->shouldReceive('disk')->andReturn($serviceDisk)->byDefault();
             $mock->shouldReceive('temporaryUrl')->andReturnUsing(
                 static fn (?string $path, int $minutes = 5, mixed $organization = null): ?string => $path
-                    ? 'https://files.example.test/' . ltrim($path, '/')
+                    ? 'https://files.example.test/'.ltrim($path, '/')
                     : null
             )->byDefault();
         });
