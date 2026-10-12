@@ -86,10 +86,26 @@ final readonly class ResolveCommercialWorkPrice
         return [$snapshot, $ids === [] ? [] : $this->models->decisionsForSelectedFacts(...[...$scope, $ids])];
     }
 
+    public function resolveAutomatic(EstimateGenerationSession $session, array $item, ?ProjectModelSnapshot $snapshot = null, ?array $decisions = null): ?array
+    {
+        if (($session->input_payload['evaluation_mode'] ?? null) !== 'universal'
+            || ! in_array($session->input_payload['price_policy'] ?? null, ['catalog', 'mixed'], true)
+            || isset($session->input_payload['price_selections'][$item['key'] ?? ''])) {
+            return null;
+        }
+        $price = (new ResolveAutomaticCommercialPrice($this->catalog, $this->units))->resolve((int) $session->organization_id, $item);
+
+        return $price === null ? null : (new ConvertEvaluationCurrencySnapshot)->convert($price, $item, $session, $snapshot, $decisions);
+    }
+
     /** An automatic source must still match its immutable business snapshot; model amounts are ignored. */
     public function resolveFrozen(User|SystemAdmin $actor, EstimateGenerationSession $session, array $item): ?array
     {
         $frozen = $item['commercial_price_snapshot'] ?? null;
+        if (is_array($frozen) && ($frozen['selection_mode'] ?? null) === 'automatic_exact_name'
+            && ! (new AutomaticCommercialPriceMatcher)->frozenBasisMatches($frozen, $item)) {
+            return null;
+        }
         $reference = is_array($frozen) ? ($frozen['source_reference'] ?? null) : null;
         if (! is_string($reference) || ! is_string($frozen['source_hash'] ?? null)
             || preg_match('/\A(?:(?:catalog|work_type):[1-9][0-9]*|supplier:[1-9][0-9]*:[1-9][0-9]*)\z/', $reference) !== 1) {
@@ -106,6 +122,12 @@ final readonly class ResolveCommercialWorkPrice
         $price = $this->units->convert($current, $item['unit'] ?? null);
         if ($price === null) {
             return null;
+        }
+        if (($frozen['selection_mode'] ?? null) === 'automatic_exact_name') {
+            if (! (new AutomaticCommercialPriceMatcher)->matches($price, $item)) {
+                return null;
+            }
+            $price = [...$price, 'selection_mode' => 'automatic_exact_name', 'automatic_selection_basis' => $frozen['automatic_selection_basis']];
         }
         [$snapshot, $decisions] = isset($session->input_payload['currency_selections'][$price['currency'] ?? ''])
             ? $this->proofContext($session) : [null, null];

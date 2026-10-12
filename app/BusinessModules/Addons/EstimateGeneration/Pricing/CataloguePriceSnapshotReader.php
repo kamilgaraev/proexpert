@@ -46,6 +46,10 @@ final class CataloguePriceSnapshotReader
             'delivery_included' => is_bool($metadata['delivery_included'] ?? null) ? $metadata['delivery_included'] : null,
             'updated_at' => $record->updated_at?->toISOString(),
             'item_type' => $catalog ? (string) $record->item_type : 'work'];
+        if (is_string($metadata['technology_package_id'] ?? null) && trim($metadata['technology_package_id']) !== '') {
+            // Optional source semantics participate in its immutable business hash.
+            $source['technology_package_id'] = $metadata['technology_package_id'];
+        }
 
         $missing = array_keys(array_filter(array_intersect_key($source, array_flip(['currency', 'as_of_date', 'region', 'vat_mode', 'delivery_included'])), static fn ($value): bool => $value === null));
         if ($source['delivery_included'] === false) {

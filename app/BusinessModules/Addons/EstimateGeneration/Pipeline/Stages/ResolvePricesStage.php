@@ -57,6 +57,9 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
                 if ($universal && $session !== null && $actor !== null) {
                     foreach ($items as $itemIndex => $item) {
                         $selected = $policy === 'normative' ? null : $this->commercialPrices?->resolve($actor, $session, $item, ...$priceProof);
+                        if ($selected === null && $policy !== 'normative' && ! isset($session->input_payload['price_selections'][$item['key'] ?? ''])) {
+                            $selected = $this->commercialPrices?->resolveAutomatic($session, $item, ...$priceProof);
+                        }
                         if ($selected !== null) {
                             $items[$itemIndex]['commercial_price_snapshot'] = $selected;
                             $items[$itemIndex]['price_snapshot'] = null;

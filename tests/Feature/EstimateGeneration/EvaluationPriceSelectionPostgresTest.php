@@ -187,6 +187,81 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
         $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
     }
 
+    public function test_automatic_catalog_rate_is_exact_scoped_and_keeps_unknown_volume_and_totals(): void
+    {
+        [$actor, $session, $catalog, $item] = $this->fixture();
+        $item['unit_price'] = '999999';
+        $resolver = app(ResolveCommercialWorkPrice::class);
+        $price = $resolver->resolveAutomatic($session, $item);
+        self::assertNotNull($price);
+        self::assertSame('10.0000', $price['unit_price']);
+        self::assertSame('m2', $price['unit']);
+        self::assertSame('automatic_exact_name', $price['selection_mode']);
+        self::assertNull($item['quantity']);
+        self::assertArrayNotHasKey('total_cost', $price);
+        self::assertSame('catalog:'.$catalog->id, $price['source_reference']);
+        self::assertSame([], $session->fresh()->input_payload['price_selections'] ?? []);
+        self::assertSame([], app(ProjectModelRepository::class)->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id)->facts);
+        $frozenItem = [...$item, 'commercial_price_snapshot' => $price];
+        self::assertNotNull($resolver->resolveFrozen($actor, $session, $frozenItem));
+        self::assertNull($resolver->resolveFrozen($actor, $session, [...$frozenItem, 'name' => 'Отделка стен']));
+        $catalog->update(['unit_price' => '2000']);
+        self::assertNull($resolver->resolveFrozen($actor, $session, $frozenItem));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_automatic_price_never_replaces_an_explicit_selection_or_chooses_between_ambiguous_sources(): void
+    {
+        [, $session, $catalog, $item] = $this->fixture();
+        $copy = $catalog->replicate();
+        $copy->code = 'COPY-'.Str::random(6);
+        $copy->save();
+        $resolver = app(ResolveCommercialWorkPrice::class);
+        self::assertNull($resolver->resolveAutomatic($session, $item));
+        $copy->update(['is_active' => false]);
+        self::assertNotNull($resolver->resolveAutomatic($session, $item));
+        $payload = $session->input_payload;
+        $payload['price_selections'][$item['key']] = ['source_reference' => 'catalog:999999', 'source_hash' => str_repeat('a', 64)];
+        $session->update(['input_payload' => $payload]);
+        self::assertNull($resolver->resolveAutomatic($session->fresh(), $item));
+    }
+
+    public function test_real_pricing_stage_publishes_a_verified_unit_rate_without_a_volume_or_model_price(): void
+    {
+        [, $session, , $item] = $this->fixture();
+        $session->update(['status' => 'generating']);
+        $data = ['regional_context' => [], 'supplementary_materials' => [],
+            'evaluation_policy' => ['mode' => 'universal', 'price_policy' => 'catalog', 'profile_id' => 'construction', 'selected_sections' => ['finishing']],
+            'local_estimates' => [['key' => 'finishing', 'sections' => [['key' => 'floor', 'work_items' => [[...$item, 'item_type' => 'priced_work', 'unit_price' => '999999']]]]]]];
+        $base = 'sha256:'.str_repeat('a', 64);
+        $attempt = (string) Str::uuid();
+        $identity = [(int) $session->id, (int) $session->organization_id, (int) $session->project_id, 0, $base, 'generating'];
+        $factory = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory(
+            new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore,
+            \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph::standard());
+        $stage = \App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::AssembleResources;
+        $prior = $factory->make(new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext(...$identity,
+            generationAttemptId: $attempt, baseInputVersion: $base, stage: $stage, dependencyVersions: ['match_normatives' => $base]), $stage, $data);
+        $context = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext(...$identity,
+            priorOutputs: new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs([$stage->value => $prior->output], [$stage->value => $data]),
+            generationAttemptId: $attempt, baseInputVersion: $base,
+            stage: \App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::ResolvePrices,
+            dependencyVersions: [$stage->value => $prior->output->version]);
+        $pricing = new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ResolvePricesStage(
+            app(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService::class), $factory,
+            app(ResolveCommercialWorkPrice::class), app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class));
+        $output = $pricing->execute($context)->transientData;
+        $result = (new \App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation\UniversalEvaluationBuilder)
+            ->build($output, app(ProjectModelRepository::class)->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id));
+        $position = $result['scenarios'][0]['positions'][0];
+        self::assertSame('10.0000', $position['unit_price']);
+        self::assertNull($position['quantity']);
+        self::assertNull($position['total_cost']);
+        self::assertSame('automatic_exact_name', $position['price_snapshot']['selection_mode']);
+        self::assertFalse($result['can_confirm_for_apply']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     private function fixture(): array
     {
         config(['estimate-generation.universal_enabled' => true]);
