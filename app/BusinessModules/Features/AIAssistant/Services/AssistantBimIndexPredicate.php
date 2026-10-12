@@ -74,7 +74,7 @@ final class AssistantBimIndexPredicate
 
     private function engineering(bool $identityOnly = false): string
     {
-        $leaves = $this->leaves().($identityOnly ? " AND p.key ~* '^(PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|Марка|Модель)$'" : '');
+        $leaves = $this->leaves().($identityOnly ? " AND p.key ~* '^(PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|GP_Наименование|ADSK_Наименование|Наименование|Марка|Модель)$'" : '');
         return '(COALESCE(('.str_replace('SELECT 1', "SELECT string_agg(left(p.value #>> '{}', 255), ' ')", $leaves)."), ''))";
     }
 
@@ -90,9 +90,14 @@ final class AssistantBimIndexPredicate
         $table = self::TABLE;
         $generic = implode(', ', array_map(static fn (string $category): string => "'{$category}'", AssistantBimIndexProjection::genericEquipmentCategories()));
         $case = "CASE WHEN upper({$table}.category) = 'IFCFAN' THEN 'fan' WHEN upper({$table}.category) = 'IFCPUMP' THEN 'pump' WHEN upper({$table}.category) = 'IFCBOILER' THEN 'boiler' WHEN upper({$table}.category) = 'IFCCHILLER' THEN 'chiller' WHEN COALESCE(upper({$table}.category), '') NOT IN ({$generic}) THEN 'unknown'";
+        $room = str_replace("'", "''", AssistantBimIndexProjection::roomCategoryPattern());
+        $case .= " WHEN trim(COALESCE({$table}.properties #>> '{Прочее,Категория}', '')) ~* '{$room}' THEN 'unknown'";
         $enum = "upper(trim(COALESCE({$table}.properties #>> '{_ifc,predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR upper(trim(COALESCE({$table}.properties #>> '{_ifc,type_predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR EXISTS (".$this->leaves()." AND p.key ~* '^PredefinedType$' AND upper(trim(p.value #>> '{}')) = 'AIRCONDITIONINGUNIT')";
         $case .= " WHEN ({$enum}) THEN 'air_conditioner'";
         foreach ([$text, "COALESCE({$table}.name, '')"] as $source) {
+            $unit = str_replace("'", "''", AssistantBimIndexProjection::airConditionerUnitPattern());
+            $unitReference = str_replace("'", "''", AssistantBimIndexProjection::airConditionerUnitReferencePattern());
+            $case .= " WHEN {$source} ~* '{$unit}' AND {$source} !~* '{$unitReference}' THEN 'air_conditioner'";
             foreach (['air_conditioner', 'fan', 'pump', 'boiler', 'chiller'] as $kind) {
                 $pattern = str_replace("'", "''", AssistantBimIndexProjection::equipmentPattern($kind));
                 $reference = str_replace("'", "''", AssistantBimIndexProjection::equipmentReferencePattern($kind));

@@ -6,16 +6,12 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 final class AssistantBimIndexProjection
 {
-    private const PROPERTY_NAMES = '/^(?:PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Manufacturer|Material|SystemName|SystemType|Reference|IsExternal|LoadBearing|FireRating|AcousticRating|ThermalTransmittance|CoolingCapacity|HeatingCapacity|NominalCoolingCapacity|NominalHeatingCapacity|AirFlowRate|NominalAirFlowRate|Power|NominalPower|Voltage|Frequency|Efficiency|Width|Height|Length|Thickness|Diameter|Area|Volume|Weight|Count|NetArea|GrossArea|NetVolume|GrossVolume|NetWeight|GrossWeight|NetSideArea|GrossSideArea|CrossSectionArea|OuterSurfaceArea|NetSurfaceArea|GrossSurfaceArea|Perimeter|Depth|Тип|ТипОбъекта|ТипСистемы|НаименованиеСистемы|Марка|Модель|Производитель|Материал|Мощность|Холодопроизводительность|Теплопроизводительность|РасходВоздуха|Ширина|Высота|Длина|Толщина|Диаметр|Площадь|Объем|Объём|Масса|Количество)$/iu';
+    private const PROPERTY_NAMES = '/^(?:PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Manufacturer|Material|SystemName|SystemType|Reference|IsExternal|LoadBearing|FireRating|AcousticRating|ThermalTransmittance|CoolingCapacity|HeatingCapacity|NominalCoolingCapacity|NominalHeatingCapacity|AirFlowRate|NominalAirFlowRate|Power|NominalPower|Voltage|Frequency|Efficiency|Width|Height|Length|Thickness|Diameter|Area|Volume|Weight|Count|NetArea|GrossArea|NetVolume|GrossVolume|NetWeight|GrossWeight|NetSideArea|GrossSideArea|CrossSectionArea|OuterSurfaceArea|NetSurfaceArea|GrossSurfaceArea|Perimeter|Depth|Тип|ТипОбъекта|ТипСистемы|НаименованиеСистемы|GP_Наименование|ADSK_Наименование|Наименование|Категория|Марка|Модель|Производитель|Материал|Мощность|Холодопроизводительность|Теплопроизводительность|РасходВоздуха|Ширина|Высота|Длина|Толщина|Диаметр|Площадь|Объем|Объём|Масса|Количество)$/iu';
 
     public function element(array $row): array
     {
         $result = array_intersect_key($row, array_flip(['id', 'project_id', 'version_id', 'derivative_id', 'express_id', 'global_id', 'category', 'name', 'updated_at']));
         $raw = is_array($row['properties'] ?? null) ? $row['properties'] : [];
-        $result['properties'] = $this->engineering($raw);
-        $result['quantities'] = $this->engineering(is_array($raw['quantities'] ?? null) ? $raw['quantities'] : []);
-        $result['materials'] = $this->labels($raw['materials'] ?? []);
-        $result['classifications'] = $this->labels($row['classifications'] ?? []);
         $attributes = is_array($raw['_ifc'] ?? null) ? $raw['_ifc'] : [];
         $result['index_schema_version'] = ($attributes['schema_version'] ?? null) === 2 ? 2 : null;
         $result['semantic_coverage'] = $result['index_schema_version'] === 2 ? 'schema2' : 'unproven';
@@ -28,7 +24,11 @@ final class AssistantBimIndexProjection
             'type_object_type' => $this->scalar($attributes['type_object_type'] ?? null),
             'storey' => $this->scalar(is_array($attributes['storey'] ?? null) ? $attributes['storey']['name'] ?? null : $attributes['storey'] ?? null),
         ], static fn ($value): bool => $value !== null);
-        $result['equipment_kind'] = $this->equipment($result);
+        $result['equipment_kind'] = $this->equipment($result, $raw, $row['classifications'] ?? []);
+        $result['properties'] = $this->engineering($raw);
+        $result['quantities'] = $this->engineering(is_array($raw['quantities'] ?? null) ? $raw['quantities'] : []);
+        $result['materials'] = $this->labels($raw['materials'] ?? []);
+        $result['classifications'] = $this->labels($row['classifications'] ?? []);
         $result['quantity_units'] = [];
         foreach (is_array($raw['quantity_units'] ?? null) ? array_slice($raw['quantity_units'], 0, 100, true) : [] as $path => $descriptor) {
             if (is_string($path) && is_array($descriptor) && isset($result['quantities'][$path])) {
@@ -257,12 +257,49 @@ final class AssistantBimIndexProjection
 
     public static function equipmentReferencePattern(string $kind): string
     {
-        $separator = '[[:space:][:punct:]«»]';
-        $accessories = '(?:(?:кронштейн|трубопровод|подставк|креплен|отверст|опор|рам|панел|корпус|кожух|реш[её]тк|воздуховод|кабел|канал|шахт|патрубок|патрубк|заглушк|муфт|фланец|фланц|изоляци)[[:alpha:]]*|brackets?|pipes?|stands?|mounts?|mountings?|openings?|supports?|frames?|panels?|housings?|covers?|grilles?|ducts?|cables?)';
-        return '(?:^|[^[:alnum:]])(?:(?:для|к|под|for|to|under)'.$separator.'*|'.$accessories.$separator.'+(?:[[:alpha:]][[:alnum:]_-]*'.$separator.'+){0,3})'.self::equipmentWord($kind).'(?:$|[^[:alnum:]])';
+        return self::equipmentReferencePrefix().self::equipmentWord($kind).'(?:$|[^[:alnum:]])';
     }
 
-    private function equipment(array $row): string
+    private static function equipmentReferencePrefix(): string
+    {
+        $separator = '[[:space:][:punct:]«»]';
+        $accessories = '(?:(?:кронштейн|трубопровод|подставк|креплен|отверст|опор|рам|панел|корпус|кожух|реш[её]тк|воздуховод|кабел|канал|шахт|патрубок|патрубк|заглушк|муфт|фланец|фланц|изоляци)[[:alpha:]]*|brackets?|pipes?|stands?|mounts?|mountings?|openings?|supports?|frames?|panels?|housings?|covers?|grilles?|ducts?|cables?)';
+        return '(?:^|[^[:alnum:]])(?:(?:для|к|под|for|to|under)'.$separator.'*|'.$accessories.$separator.'+(?:[[:alpha:]][[:alnum:]_-]*'.$separator.'+){0,3})';
+    }
+
+    private static function airConditionerUnitWord(): string
+    {
+        return '(?:(?:наружн[[:alpha:]]*|внутренн[[:alpha:]]*)[[:space:]_-]+блок[[:alpha:]]*|(?:outdoor|indoor)[[:space:]_-]+units?)[[:space:][:punct:]«»]+(?:[[:alpha:]][[:alnum:]_-]*[[:space:]]+){0,2}(?:мульти[ -]?зональн[[:alpha:]]*|multi[ -]?zone[[:alpha:]]*|vrf|vrv|сплит[ -]?систем[[:alpha:]]*|split[ -]?systems?|кондиционер[[:alpha:]]*|air[ -]?condition[[:alpha:]]*)';
+    }
+
+    public static function airConditionerUnitPattern(): string
+    {
+        return '(?:^|[^[:alnum:]])'.self::airConditionerUnitWord().'(?:$|[^[:alnum:]])';
+    }
+
+    public static function airConditionerUnitReferencePattern(): string
+    {
+        return self::equipmentReferencePrefix().self::airConditionerUnitWord().'(?:$|[^[:alnum:]])';
+    }
+
+    public static function roomCategoryPattern(): string
+    {
+        return '^(?:помещени[ея]|rooms?|spaces?)$';
+    }
+
+    private function classifierIdentity(array $values): \Generator
+    {
+        foreach ($values as $key => $value) {
+            if (is_array($value)) {
+                yield from $this->classifierIdentity($value);
+            } elseif (is_string($key) && preg_match('/^(?:PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|GP_Наименование|ADSK_Наименование|Наименование|Марка|Модель)$/iu', $key) === 1
+                && ($safe = $this->scalar($value)) !== null) {
+                yield ['key' => $key, 'value' => $safe];
+            }
+        }
+    }
+
+    private function equipment(array $row, array $raw, mixed $rawClassifications): string
     {
         $category = strtoupper($row['category'] ?? '');
         $direct = ['IFCFAN' => 'fan', 'IFCPUMP' => 'pump', 'IFCBOILER' => 'boiler', 'IFCCHILLER' => 'chiller'];
@@ -272,15 +309,34 @@ final class AssistantBimIndexProjection
         if (! in_array($category, self::genericEquipmentCategories(), true)) {
             return 'unknown';
         }
-        $identity = array_filter($row['properties'], static fn (string $path): bool => preg_match('/(?:^|\.)(?:PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|Марка|Модель)$/iu', $path) === 1, ARRAY_FILTER_USE_KEY);
-        $enumValues = [$row['attributes']['predefined_type'] ?? '', $row['attributes']['type_predefined_type'] ?? '',
-            ...array_values(array_filter($identity, static fn (string $path): bool => preg_match('/(?:^|\.)PredefinedType$/iu', $path) === 1, ARRAY_FILTER_USE_KEY))];
+        $room = is_array($raw['Прочее'] ?? null) ? $raw['Прочее']['Категория'] ?? null : null;
+        if (is_string($room) && preg_match('/'.self::roomCategoryPattern().'/iu', trim($room, ' ')) === 1) {
+            return 'unknown';
+        }
+        $identity = [];
+        $enumValues = [$row['attributes']['predefined_type'] ?? '', $row['attributes']['type_predefined_type'] ?? ''];
+        foreach ($this->classifierIdentity($raw) as $field) {
+            $identity[] = $field['value'];
+            if (strcasecmp($field['key'], 'PredefinedType') === 0) {
+                $enumValues[] = $field['value'];
+            }
+        }
         if (array_filter($enumValues, static fn ($value): bool => is_string($value) && strtoupper(trim($value)) === 'AIRCONDITIONINGUNIT') !== []) {
             return 'air_conditioner';
         }
-        $text = implode(' ', [...array_values($identity),
-            ...array_values(array_diff_key($row['attributes'], array_flip(['storey', 'description']))), ...$row['classifications']]);
+        $classifications = [];
+        foreach (is_array($rawClassifications) && array_is_list($rawClassifications) ? $rawClassifications : [] as $value) {
+            if (($safe = $this->scalar($value)) !== null) {
+                $classifications[] = $safe;
+            }
+        }
+        $text = implode(' ', [...$identity,
+            ...array_values(array_diff_key($row['attributes'], array_flip(['storey', 'description']))), ...$classifications]);
         foreach ([$text, $row['name'] ?? ''] as $source) {
+            if (preg_match('/'.self::airConditionerUnitPattern().'/iu', $source) === 1
+                && preg_match('/'.self::airConditionerUnitReferencePattern().'/iu', $source) !== 1) {
+                return 'air_conditioner';
+            }
             foreach (['air_conditioner', 'fan', 'pump', 'boiler', 'chiller'] as $kind) {
                 if (preg_match('/'.self::equipmentPattern($kind).'/iu', $source) === 1
                     && preg_match('/'.self::equipmentReferencePattern($kind).'/iu', $source) !== 1) {

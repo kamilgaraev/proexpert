@@ -5,10 +5,15 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantPresentationPlanner;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter;
+use Illuminate\Database\Eloquent\Model;
 use PHPUnit\Framework\TestCase;
 
 final class AssistantToolResultProjectionTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     public function test_only_equal_reference_context_is_shared_without_losing_distinct_scope(): void
     {
         $references = [
@@ -104,5 +109,60 @@ final class AssistantToolResultProjectionTest extends TestCase
         self::assertArrayNotHasKey('checked_fields', $view['source_refs'][0]);
         self::assertArrayNotHasKey('required_permissions', $view['source_refs'][0]);
         self::assertSame(str_repeat('b', 64), $result['structured_fact_evidence']['version']);
+    }
+
+    public function test_contract_snapshot_nested_current_contract_and_party_advertise_stable_presentation_sets_without_private_proof(): void
+    {
+        $contract = $this->liveRead('contract', 10, ['number' => 'ТЕСТ', 'subject' => 'Текущий предмет',
+            'start_date' => '2026-01-01', 'end_date' => '2026-12-31', 'total_amount' => '1234.50', 'contractor_id' => 20]);
+        $party = $this->liveRead('contractor', 20, ['id' => 20, 'name' => 'Текущий подрядчик']);
+        $snapshot = ['status' => 'success', 'contracts' => [['contract' => ['id' => 10], 'contractor' => ['id' => 20]]],
+            'live_entity_reads' => [$contract, $party]];
+        $view = AssistantToolResultProjection::forProvider('get_contract_snapshot', $snapshot);
+
+        self::assertCount(2, $view['live_entity_reads']);
+        foreach ([$contract, $party] as $index => $read) {
+            $nested = $view['live_entity_reads'][$index];
+            self::assertSame(AssistantPresentationPlanner::providerView($read), $nested['presentation_contract']);
+            self::assertSame('r01', $nested['results'][0]['presentation_ref']);
+            self::assertSame($read['results'][0]['fields'], $nested['results'][0]['fields']);
+            self::assertArrayNotHasKey('rows', $nested['structured_fact_evidence']);
+            self::assertArrayNotHasKey('source_field_identity', $nested['source_refs'][0]);
+        }
+        self::assertContains('currency', $view['live_entity_reads'][0]['presentation_contract']['fields']);
+        self::assertSame(20, $view['live_entity_reads'][0]['results'][0]['fields']['contractor_id']);
+        self::assertContains('name', $view['live_entity_reads'][1]['presentation_contract']['fields']);
+        $encoded = json_encode($view, JSON_THROW_ON_ERROR);
+        foreach (['private-proof-marker', 'checked_fields', 'required_permissions', 'source_field_identity', '_search_count_proof'] as $private) {
+            self::assertStringNotContainsString($private, $encoded);
+        }
+        self::assertSame('private-proof-marker', $snapshot['live_entity_reads'][0]['source_refs'][0]['source_field_identity']);
+    }
+
+    public function test_nested_live_reads_are_bounded_and_invalid_or_recursive_payload_is_not_exposed(): void
+    {
+        $read = $this->liveRead('contract', 10, ['number' => 'ТЕСТ']);
+        $read['live_entity_reads'] = [['private-proof-marker' => 'private-proof-marker']];
+        $invalid = ['results' => [], 'source_refs' => [], 'private_payload' => 'private-proof-marker'];
+        $view = AssistantToolResultProjection::forProvider('get_contract_snapshot', ['live_entity_reads' =>
+            array_merge([$invalid], array_fill(0, 30, $read))]);
+
+        self::assertCount(AssistantStructuredFactFormatter::MAX_ROWS - 1, $view['live_entity_reads']);
+        self::assertStringNotContainsString('private-proof-marker', json_encode($view, JSON_THROW_ON_ERROR));
+        foreach ($view['live_entity_reads'] as $nested) { self::assertArrayNotHasKey('live_entity_reads', $nested); }
+    }
+
+    private function liveRead(string $type, int $id, array $fields): array
+    {
+        $model = new class extends Model {};
+        $model->setRawAttributes(['id' => $id] + $fields, true);
+        $reference = ['entity_type' => $type, 'entity_id' => $id, 'organization_id' => 15, 'content_scope' => 'structured',
+            'checked_fields' => array_keys($fields), 'source_version' => 'private-proof-marker', 'source_field_identity' => 'private-proof-marker',
+            'required_permissions' => ['contractors.view'], 'fetched_at' => '2026-10-12T08:00:00Z',
+            '_search_count_proof' => 'private-proof-marker'];
+        $row = AssistantStructuredFactFormatter::row($model, $type, array_keys($fields), $reference);
+
+        return ['results' => [['entity_type' => $type, 'id' => $id, 'fields' => $fields]], 'source_refs' => [$reference]]
+            + AssistantStructuredFactFormatter::payload([$row], $reference['fetched_at']);
     }
 }

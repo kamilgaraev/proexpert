@@ -26,6 +26,15 @@ final class AssistantToolResultProjection
             return array_intersect_key($result, array_flip(['status', 'server_formatted_answer', 'needs_clarification', 'validation_status', 'error', 'reason']));
         }
         $view = $result;
+        if (is_array($result['live_entity_reads'] ?? null)) {
+            $view['live_entity_reads'] = [];
+            foreach (array_slice($result['live_entity_reads'], 0, AssistantStructuredFactFormatter::MAX_ROWS) as $read) {
+                if (! is_array($read) || ! is_array($read['results'] ?? null) || ! is_array($read['source_refs'] ?? null)
+                    || AssistantPresentationPlanner::providerView($read) === null) { continue; }
+                unset($read['live_entity_reads']);
+                $view['live_entity_reads'][] = self::forProvider('assistant_domain_read', $read);
+            }
+        }
         if (is_array($view['rag_context']['sources'] ?? null)) {
             $view['rag_context']['sources'] = array_map(self::reference(...), $view['rag_context']['sources']);
         }

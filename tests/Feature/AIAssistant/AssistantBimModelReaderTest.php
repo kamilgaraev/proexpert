@@ -578,6 +578,72 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertFalse($this->reader->hasCurrentScopedAlias($this->fixture->member, $this->fixture->organization->id, $this->project->id, 'Севгу'));
     }
 
+    public function test_engineering_hvac_label_aliases_match_real_units_and_never_rooms_accessories_or_materials_alone(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $rows = [
+            ['IFCBUILDINGELEMENTPROXY', 'TYPE-OUTDOOR', 'GP_Наименование', 'Наружный блок мультизональной системы Qх=68.0Вт, Qт=75.0кВт,380-415/3/50', 'Оборудование'],
+            ['IFCBUILDINGELEMENTPROXY', 'TYPE-INDOOR', 'GP_Наименование', "Сплит-система Qх=5100Вт, Qт=5200Вт, U=220/1/50, N=1,6кВт в\r\nкомплекте пульт дистанционного управления", 'Оборудование'],
+            ['IFCBUILDINGELEMENTPROXY', 'TYPE-VRF', 'ADSK_Наименование', 'Внутренний блок VRF', 'Оборудование'],
+            ['IFCFLOWTERMINAL', 'TYPE-VRV', 'Наименование', 'Наружный блок VRV', 'Оборудование'],
+            ['IFCBUILDINGELEMENTPROXY', 'ACCESSORY-BRACKET', 'GP_Наименование', 'Кронштейн наружного блока мультизональной системы', 'Оборудование'],
+            ['IFCBUILDINGELEMENTPROXY', 'ACCESSORY-GRILLE', 'GP_Наименование', 'Решетка внутреннего блока VRF', 'Оборудование'],
+            ['IFCSPACE', 'ROOM-TYPED', 'GP_Наименование', 'Наружный блок мультизональной системы', 'Помещения'],
+            ['IFCBUILDINGELEMENTPROXY', 'ROOM-PROXY', 'GP_Наименование', 'Помещение с кондиционером', 'Помещения'],
+            ['IFCBUILDINGELEMENTPROXY', 'MATERIALS-ONLY', 'GP_Наименование', 'Объект', 'Оборудование'],
+        ];
+        $derivative = $this->readyIndex($version, count($rows));
+        foreach ($rows as [$category, $name, $alias, $label, $revitCategory]) {
+            $this->element($version, $category, $name)->updateQuietly(['derivative_id' => $derivative->id,
+                'properties' => ['_ifc' => ['schema_version' => 2, 'type_predefined_type' => 'NOTDEFINED'],
+                    'Идентификация' => [$alias => $label, 'CoolingCapacity' => 3500],
+                    'Прочее' => ['Категория' => $revitCategory], 'materials' => ['Корпус кондиционера', 'Решетка кондиционера'],
+                    'private' => 'private-secret']]);
+        }
+        $result = $this->read(['equipment_kind' => 'air_conditioner', 'limit' => 1, 'include_properties' => true]);
+        self::assertSame(4, $result['models'][0]['total']);
+        self::assertSame(4, $result['models'][0]['semantic_matching_count']);
+        self::assertCount(1, $result['models'][0]['elements']);
+        self::assertArrayHasKey('Идентификация.GP_Наименование', $result['models'][0]['elements'][0]['properties']);
+        self::assertStringNotContainsString('private-secret', json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $kinds = array_column($this->read([])['models'][0]['elements'], 'equipment_kind', 'name');
+        foreach (['TYPE-OUTDOOR', 'TYPE-INDOOR', 'TYPE-VRF', 'TYPE-VRV'] as $name) {
+            self::assertSame('air_conditioner', $kinds[$name]);
+        }
+        foreach (['ACCESSORY-BRACKET', 'ACCESSORY-GRILLE', 'ROOM-TYPED', 'ROOM-PROXY', 'MATERIALS-ONLY'] as $name) {
+            self::assertSame('unknown', $kinds[$name]);
+        }
+    }
+
+    public function test_raw_room_and_identity_classification_match_sql_after_the_display_property_limit(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 2);
+        $base = [];
+        for ($index = 0; $index < 110; $index++) {
+            $base['Pset_'.$index] = ['Width' => $index];
+        }
+        $base['_ifc'] = ['schema_version' => 2];
+        $room = $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'Кондиционер');
+        $room->updateQuietly(['derivative_id' => $derivative->id, 'properties' => $base + ['Прочее' => ['Категория' => 'Помещения']]]);
+        $device = $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'TYPE-OUTDOOR');
+        $device->updateQuietly(['derivative_id' => $derivative->id,
+            'properties' => $base + ['Идентификация' => ['GP_Наименование' => 'Наружный блок мультизональной системы']]]);
+        $page = $this->read(['include_properties' => true]);
+        self::assertSame(2, $page['models'][0]['total']);
+        $elements = array_column($page['models'][0]['elements'], null, 'name');
+        self::assertSame('unknown', $elements['Кондиционер']['equipment_kind']);
+        self::assertSame('air_conditioner', $elements['TYPE-OUTDOOR']['equipment_kind']);
+        foreach ($elements as $element) {
+            self::assertCount(100, $element['properties']);
+        }
+        $matches = $this->read(['equipment_kind' => 'air_conditioner', 'include_properties' => true]);
+        self::assertSame(1, $matches['models'][0]['total']);
+        self::assertSame(1, $matches['models'][0]['semantic_matching_count']);
+        self::assertSame('TYPE-OUTDOOR', $matches['models'][0]['elements'][0]['name']);
+        self::assertSame('air_conditioner', $matches['models'][0]['elements'][0]['equipment_kind']);
+    }
+
     private function readyIndex(DesignArtifactVersion $version, int $count, array $units = []): DesignModelDerivative
     {
         $units = array_map(static fn (array $unit): array => $unit + ['source' => 'project_units_in_context'], $units);

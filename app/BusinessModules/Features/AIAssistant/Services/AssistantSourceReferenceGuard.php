@@ -88,6 +88,7 @@ class AssistantSourceReferenceGuard
             $query = $type === 'assistant_document' ? AIAssistantDocument::query()->where('organization_id', $organizationId)
                 : ($engineeringReference ? $this->policy->engineeringEntityQuery($actor, $organizationId, $type)
                     : $this->policy->entityQuery($actor, $organizationId, $type));
+            $allowed = [];
             if ($engineeringReference && $query !== null) {
                 $allowed = array_map(static fn (string $column): string => substr($column, strrpos($column, '.') + 1), $query->getQuery()->columns ?? []);
                 if (! is_array($reference['checked_fields'] ?? null) || array_diff($reference['checked_fields'], $allowed) !== []) { return false; }
@@ -95,6 +96,9 @@ class AssistantSourceReferenceGuard
             if ($query !== null && ($reference['content_scope'] ?? null) === 'structured') {
                 $table = $query->getModel()->getTable();
                 $columns = $this->columns[$table] ??= \Illuminate\Support\Facades\Schema::getColumnListing($table);
+                $safeColumns = $engineeringReference ? $allowed : (AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? $columns);
+                $columns = array_values(array_intersect($columns, $safeColumns));
+                if (array_diff($reference['checked_fields'] ?? [], $columns) !== []) { return false; }
                 $selected = array_values(array_intersect([$query->getModel()->getKeyName(), 'updated_at', ...($reference['checked_fields'] ?? [])], $columns));
                 $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $selected));
             }

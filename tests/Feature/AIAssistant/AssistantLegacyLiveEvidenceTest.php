@@ -13,6 +13,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AssistantDataAccessPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantLegacyLiveEvidenceAdapter;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -29,6 +30,7 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
+use Illuminate\Support\Facades\DB;
 use Mockery;
 use Tests\TestCase;
 
@@ -37,6 +39,7 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
     private AssistantLegacyLiveEvidenceAdapter $adapter;
     private bool $permissions = true;
     private bool $financialPermissions = true;
+    private bool $contractorPermissions = true;
     private Organization $organization;
     private User $actor;
     private Project $project;
@@ -46,10 +49,11 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
         parent::setUp();
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions
+            && ($this->contractorPermissions || $permission !== 'contractors.view')
             && ($this->financialPermissions || ! in_array($permission, ['finance.view', 'finance.view_project_budget'], true)));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $modules = Mockery::mock(OrganizationEntitlementService::class);
-        $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['project-management', 'contract-management', 'schedule-management', 'procurement', 'site-requests', 'users'])
+        $modules->shouldReceive('getEffectiveModules')->andReturn(collect(['project-management', 'contract-management', 'catalog-management', 'schedule-management', 'procurement', 'site-requests', 'users'])
             ->map(static fn (string $slug): object => (object) ['slug' => $slug]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService, $modules);
         $this->app->instance(AssistantDataAccessPolicy::class, $policy);
@@ -122,6 +126,71 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
         $this->assertFalse((new AssistantStructuredFactVerifier)->guard('Статус, срок и сумма договора?', 'Старые значения', $reads)['needs_clarification']);
     }
 
+    public function test_contract_snapshot_nested_party_is_reread_from_current_contract_fk_without_copying_legacy_name(): void
+    {
+        $contract = $this->contract($this->project, 'NESTED_PARTY');
+        $party = Contractor::query()->findOrFail($contract->contractor_id);
+        $party->updateQuietly(['name' => 'Текущее название подрядчика']);
+        $reads = $this->adapter->read('get_contract_snapshot', $this->contractSnapshot($contract, 'Старое имя DTO'), $this->actor, $this->organization->id);
+
+        self::assertCount(2, $reads);
+        $contractRow = $reads[0]['structured_fact_evidence']['rows'][0];
+        $partyRow = $reads[1]['structured_fact_evidence']['rows'][0];
+        self::assertSame($party->id, $contractRow['fields']['contractor_id']);
+        self::assertContains('contractor_id', $contractRow['source_ref']['checked_fields']);
+        self::assertArrayHasKey('source_field_identity', $contractRow['source_ref']);
+        self::assertArrayNotHasKey('contractor_name', $contractRow['fields']);
+        self::assertSame('contractor', $partyRow['entity_type']);
+        self::assertSame($party->id, $partyRow['entity_id']);
+        self::assertSame('Текущее название подрядчика', $partyRow['fields']['name']);
+        self::assertSame(['id', 'name'], $partyRow['source_ref']['checked_fields']);
+        self::assertContains('contractors.view', $partyRow['source_ref']['required_permissions']);
+        self::assertStringNotContainsString('Старое имя DTO', json_encode($reads, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    public function test_denied_or_foreign_contract_party_keeps_primary_contract_proof_without_disclosing_party_name(): void
+    {
+        $contract = $this->contract($this->project, 'DENIED_PARTY');
+        $this->contractorPermissions = false;
+        $denied = $this->adapter->read('get_contract_snapshot', $this->contractSnapshot($contract, 'Не раскрывать имя'), $this->actor, $this->organization->id);
+        self::assertCount(1, $denied);
+        self::assertSame('contract', $denied[0]['structured_fact_evidence']['rows'][0]['entity_type']);
+        self::assertStringNotContainsString('Не раскрывать имя', json_encode($denied, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+        $this->contractorPermissions = true;
+        $foreignOrganization = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $foreign = Contractor::withoutEvents(fn () => Contractor::query()->create(['organization_id' => $foreignOrganization->id, 'name' => 'Чужой подрядчик']));
+        DB::table('contracts')->where('id', $contract->id)->update(['contractor_id' => $foreign->id]);
+        $reads = $this->adapter->read('get_contract_snapshot', $this->contractSnapshot($contract, 'Чужой подрядчик'), $this->actor, $this->organization->id);
+        self::assertCount(1, $reads);
+        self::assertSame($foreign->id, $reads[0]['structured_fact_evidence']['rows'][0]['fields']['contractor_id']);
+        self::assertStringNotContainsString('Чужой подрядчик', json_encode($reads, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    public function test_current_party_fk_and_name_changes_in_the_same_timestamp_invalidate_combined_proof(): void
+    {
+        $contract = $this->contract($this->project, 'CHANGED_PARTY');
+        $snapshot = $this->contractSnapshot($contract, 'Snapshot name');
+        $guard = new AssistantSourceReferenceGuard($this->app->make(AssistantDataAccessPolicy::class));
+        $reads = $this->adapter->read('get_contract_snapshot', $snapshot, $this->actor, $this->organization->id);
+        $references = array_merge(...array_map(static fn (array $read): array => $read['source_refs'], $reads));
+        self::assertTrue($guard->fresh($this->actor, $this->organization->id, $references));
+        $replacement = Contractor::withoutEvents(fn () => Contractor::query()->create(['organization_id' => $this->organization->id, 'name' => 'Новый подрядчик']));
+        $contractTimestamp = DB::table('contracts')->where('id', $contract->id)->value('updated_at');
+        self::assertNotNull($contractTimestamp);
+        DB::table('contracts')->where('id', $contract->id)->update(['contractor_id' => $replacement->id]);
+        self::assertSame($contractTimestamp, DB::table('contracts')->where('id', $contract->id)->value('updated_at'));
+        self::assertFalse($guard->fresh($this->actor, $this->organization->id, $references));
+        $current = $this->adapter->read('get_contract_snapshot', $snapshot, $this->actor, $this->organization->id);
+        self::assertSame($replacement->id, $current[1]['structured_fact_evidence']['rows'][0]['entity_id']);
+        $currentRefs = array_merge(...array_map(static fn (array $read): array => $read['source_refs'], $current));
+        self::assertTrue($guard->fresh($this->actor, $this->organization->id, $currentRefs));
+        $partyTimestamp = DB::table('contractors')->where('id', $replacement->id)->value('updated_at');
+        self::assertNotNull($partyTimestamp);
+        DB::table('contractors')->where('id', $replacement->id)->update(['name' => 'Новое имя без смены времени']);
+        self::assertSame($partyTimestamp, DB::table('contractors')->where('id', $replacement->id)->value('updated_at'));
+        self::assertFalse($guard->fresh($this->actor, $this->organization->id, $currentRefs));
+    }
+
     public function test_schedule_snapshot_rereads_quantities_and_status(): void
     {
         $schedule = ProjectSchedule::withoutEvents(fn () => ProjectSchedule::query()->create(['organization_id' => $this->organization->id,
@@ -137,7 +206,7 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
         $this->assertSame('in_progress', $fields['status']);
         $this->assertSame('1234.5678', $fields['quantity']);
         $this->assertSame('0.0000', $fields['completed_quantity']);
-        $this->assertFalse((new AssistantStructuredFactVerifier)->guard('Статус и количество задачи?', 'Завершена', $reads)['needs_clarification']);
+        $this->assertFalse((new AssistantStructuredFactVerifier)->guard('Статус и объём выполнения задачи?', 'Завершена', $reads)['needs_clarification']);
     }
 
     public function test_procurement_snapshot_filters_orders_by_project_and_proves_individual_rows(): void
@@ -242,6 +311,17 @@ final class AssistantLegacyLiveEvidenceTest extends TestCase
             'order_date' => '2026-09-01', 'delivery_date' => '2026-12-01', 'status' => 'confirmed', 'total_amount' => '1234567890123.17']));
 
         return [$request, $order];
+    }
+
+    private function contractSnapshot(Contract $contract, string $legacyPartyName): array
+    {
+        return ['status' => 'success', 'contracts' => [[
+            'contract' => ['id' => $contract->id, 'number' => $contract->number, 'date' => $contract->date,
+                'subject' => $contract->subject, 'status' => $contract->status, 'total_amount' => 1.0,
+                'planned_advance' => 2.0, 'actual_advance' => 3.0, 'start_date' => '2000-01-01', 'end_date' => '2000-01-02'],
+            'contractor' => ['id' => $contract->contractor_id, 'name' => $legacyPartyName],
+            'project' => ['id' => $this->project->id, 'name' => 'Snapshot project'], 'financial' => [],
+        ]]];
     }
 
     private function contract(Project $project, string $suffix): Contract
