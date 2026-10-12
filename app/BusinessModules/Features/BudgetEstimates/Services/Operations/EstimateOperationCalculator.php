@@ -178,7 +178,7 @@ final class EstimateOperationCalculator
                 $row['target_key'] = $target;
             } else {
                 $differentPricesOnly = ! $reprice && count($candidates) > 0 && count($exact) === 0
-                    && count(array_filter($candidates, fn (array $candidate): bool => $this->signature($row) !== null && $this->signature($row) === $this->signature($candidate))) > 0;
+                    && count(array_filter($candidates, fn (array $candidate): bool => $this->signature($row) !== null && $this->signature($row) === $this->signature($candidate) && Decimal::compare($this->unitPrice($row['node']), $this->unitPrice($candidate['node'])) !== 0)) > 0;
                 if ($candidates !== [] && $decision === null && ! $differentPricesOnly) {
                     $row['conflicts'][] = $this->conflict('match:'.$key, 'match_required', $candidates);
                 }
@@ -530,6 +530,7 @@ final class EstimateOperationCalculator
             $attrs['applied_coefficients'], $attrs['custom_resources'],
             array_map(fn (array $r): array => [$r['resource_type'], $r['material_id'], $r['measurement_unit_id'], $r['name'], $r['quantity_per_unit'], $includePrice ? $r['unit_price'] : null], $node['resources']),
             $children, $includePrice ? $this->unitPrice($node) : null,
+            $includePrice ? array_map(fn (string $field): mixed => $attrs[$field] ?? null, ['base_unit_price', 'price_index', 'materials_index', 'machinery_index', 'labor_index']) : null,
             $includePrice && Decimal::compare((string) ($attrs['quantity_total'] ?? '0'), '0') > 0
                 ? array_map(fn (string $field): string => Decimal::divide((string) ($attrs[$field] ?? '0'), (string) $attrs['quantity_total'], 8), ['total_amount', 'overhead_amount', 'profit_amount', 'equipment_cost']) : null,
         ];
