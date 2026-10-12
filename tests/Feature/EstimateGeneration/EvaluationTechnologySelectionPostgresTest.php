@@ -48,6 +48,13 @@ final class EvaluationTechnologySelectionPostgresTest extends EstimateGeneration
             'decision_key' => $recommendation['decision_key'], 'system_id' => 'pitched_roof.metal_tile', 'reason' => 'Подтверждённый вариант комплектации кровли'];
         $before = $session->fresh()->draft_payload;
         $service = app(SaveEvaluationTechnologySelection::class);
+        try {
+            $service->handle($actor, (int) $session->project_id, (int) $session->id, [...$input, 'reason' => str_repeat('Я', 501)]);
+            self::fail('An oversized UTF-8 decision reason was accepted.');
+        } catch (ValidationException) {
+            self::assertSame(0, $session->fresh()->state_version);
+            self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
         $first = $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
         $replay = $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
         self::assertSame(CanonicalPipelineJson::encode($first), CanonicalPipelineJson::encode($replay));

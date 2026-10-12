@@ -33,7 +33,7 @@ final readonly class SaveEvaluationTechnologySelection
                 || ! is_string($input['current_decision_id'] ?? null) || mb_strlen($input['current_decision_id']) > 191))
             || ! is_string($input['system_id'] ?? null) || mb_strlen($input['system_id']) > 160
             || in_array($input['system_id'], ['other', 'leave_unresolved'], true)
-            || ! is_string($input['reason'] ?? null) || trim($input['reason']) === '' || mb_strlen($input['reason']) > 1000) {
+            || ! is_string($input['reason'] ?? null) || trim($input['reason']) === '' || strlen($input['reason']) > 1000) {
             throw ValidationException::withMessages(['technology' => trans_message('estimate_evaluation.technology_request_invalid')]);
         }
 

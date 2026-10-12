@@ -31,6 +31,9 @@ final readonly class GetEvaluationTechnologies
         $scope = [(int) $session->organization_id, $projectId, $sessionId];
         $current = $this->models->currentTechnologyRecommendations(...$scope);
         $snapshot = $this->models->snapshotForPlanning(...[...$scope, 10001]);
+        if (count($snapshot['snapshot']->facts) > 10000) {
+            throw ValidationException::withMessages(['technology' => trans_message('estimate_evaluation.technology_fact_limit')]);
+        }
         $fresh = $current !== null && ($current['is_current'] ?? false) === true
             && count($snapshot['snapshot']->facts) <= 10000 && hash_equals((string) $current['input_fingerprint'], $snapshot['token']);
         $recommendations = [];
