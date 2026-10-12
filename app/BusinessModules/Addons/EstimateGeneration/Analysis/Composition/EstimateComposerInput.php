@@ -29,6 +29,7 @@ final readonly class EstimateComposerInput
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
         public ?string $batchKey = null,
+        public ?array $contextManifest = null,
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -38,6 +39,8 @@ final readonly class EstimateComposerInput
             || ! array_is_list($decisions) || count($decisions) > 2000
             || ! array_is_list($candidates) || count($candidates) > 10000
             || ($batchKey !== null && preg_match('/^[a-f0-9]{64}$/D', $batchKey) !== 1)
+            || ($contextManifest !== null && (! is_string($contextManifest['parent_input_fingerprint'] ?? null)
+                || preg_match('/^[a-f0-9]{64}$/D', $contextManifest['parent_input_fingerprint']) !== 1))
             || ($facts === [] && $derivedQuantities === [] && $candidates === [])
             || ! array_is_list($missingDocuments) || count($missingDocuments) > 200) {
             throw new InvalidArgumentException('estimate_composer_input_invalid');
@@ -97,6 +100,9 @@ final readonly class EstimateComposerInput
         ];
         if ($this->batchKey !== null) {
             $payload['batch_key'] = $this->batchKey;
+        }
+        if ($this->contextManifest !== null) {
+            $payload['context_manifest'] = $this->contextManifest;
         }
 
         return $payload;

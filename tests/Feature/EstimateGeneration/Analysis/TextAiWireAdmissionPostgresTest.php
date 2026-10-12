@@ -519,7 +519,7 @@ final class TextAiWireAdmissionPostgresTest extends EstimateGenerationApplicatio
         return new RunEstimateComposer(new EloquentAiRoleRunRepository(DB::connection(), 180), new TimewebEstimateComposerModel(
             $wire, new EloquentAiUsageStore(new AiCostCalculator, DB::connection()), $prices,
             'openai/gpt-6-luna', 100000, 4096, 30, new DurableAiPhysicalResponseStore(DB::connection()),
-        ), 'openai/gpt-6-luna');
+        ), 'openai/gpt-6-luna', allowance: new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EloquentEstimateComposerAllowance);
     }
 
     private function wire(): TimewebRerankWireClient

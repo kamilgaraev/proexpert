@@ -26,12 +26,20 @@ final readonly class RunEstimateComposer
         private EstimateComposerModel $model,
         private string $modelName,
         private EstimateComposerBatchPlanner $batches = new EstimateComposerBatchPlanner,
+        private ?EstimateComposerAllowance $allowance = null,
     ) {}
 
     /** @return list<array<string, mixed>> */
     public function run(EstimateComposerInput $input): array
     {
         $plan = $this->batches->plan($input);
+        $limit = $this->allowance?->partLimit($input);
+        if ($input->wireScope?->creditOperationId !== null && $this->allowance === null) {
+            throw new InvalidArgumentException('estimate_composer_allowance_unavailable');
+        }
+        if ($limit !== null && count($plan) > $limit) {
+            throw new InvalidArgumentException('estimate_composer_parts_exceed_approved_plan');
+        }
         if (count($plan) === 1) {
             return $this->runBatch($plan[0]);
         }

@@ -23,6 +23,77 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[\PHPUnit\Framework\Attributes\DataProvider('composerPartApprovals')]
+    public function test_actual_composer_preflights_all_parts_against_the_original_reserve_and_replays(bool $approved): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        config(['estimate-generation.estimate_composer.max_input_bytes' => 5000,
+            'ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
+            'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['selected_sections' => $approved ? ['finishing', 'roofing'] : ['finishing']]]);
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:composer-parts');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $operationId = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $operationId, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session, 0, $operationId, $quote['quote_id'], 'generation'));
+        $facts = $candidates = [];
+        foreach ([1, 2] as $id) {
+            $facts[] = ['id' => 'fact:'.$id, 'entity_id' => 'room:'.$id, 'value' => str_repeat('word ', 500), 'status' => 'confirmed'];
+            $candidates[] = ['candidate_id' => 'candidate:'.$id, 'work_key' => 'work:'.$id, 'name' => 'Работа '.$id,
+                'unit' => null, 'quantity' => null, 'quantity_formula' => null,
+                'source_fact_ids' => ['fact:'.$id], 'technology_package_candidate' => null];
+        }
+        $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInput(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), $facts, [], [], $candidates, [],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::PROMPT_CONTRACT,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $operationId));
+        $history = [];
+        $response = new \GuzzleHttp\Psr7\Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'id' => 'chatcmpl-composer-parts', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+            'choices' => [['index' => 0, 'finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => '{"work_intents":[]}']]],
+            'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 50, 'total_tokens' => 150],
+        ], JSON_THROW_ON_ERROR));
+        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler([$response, $response]));
+        $handler->push(\GuzzleHttp\Middleware::history($history));
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient(
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebChatCompletionPayloadFactory::class),
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard::class),
+                app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
+                httpClient: new \GuzzleHttp\Client(['handler' => $handler])));
+        $composer = app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer::class);
+        if (! $approved) {
+            try {
+                $composer->run($input);
+                self::fail('Composer sent a part beyond the approved operation.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_composer_parts_exceed_approved_plan', $exception->getMessage());
+            }
+            self::assertCount(0, $history);
+            self::assertSame(0, DB::table('estimate_generation_ai_role_runs')->where('session_id', $session->id)->count());
+        } else {
+            $result = $composer->run($input);
+            self::assertCount(2, $result);
+            self::assertCount(2, $history);
+            self::assertSame($result, $composer->run($input));
+            self::assertCount(2, $history);
+            self::assertSame(2, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+        }
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+            ->abort($session->fresh(), $operationId, 'fixture_finished'));
+    }
+
+    public static function composerPartApprovals(): array
+    {
+        return [[true], [false]];
+    }
+
     public function test_text_only_job_publishes_a_worklist_with_unknown_quantities_and_questions_without_charging_for_unpriced_work(): void
     {
         (new \Tests\Support\EstimateGeneration\InMemoryS3HttpStorage)->install();

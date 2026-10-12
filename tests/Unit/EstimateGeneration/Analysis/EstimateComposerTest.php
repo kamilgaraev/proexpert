@@ -255,6 +255,7 @@ final class EstimateComposerTest extends TestCase
 
         $input = $factory->capture(10, 20, 30, [$candidate], [[
             'key' => 'quantity:foundation', 'amount' => '10.2500', 'unit' => 'm3',
+            'formula_inputs' => ['entity_id' => 'entity:foundation', 'operands' => ['measurement' => ['fact_id' => 'fact:foundation']]],
         ]], []);
 
         self::assertSame($models->snapshotForPlanning(10, 20, 30, 10001)['token'], $input->snapshotToken);
@@ -262,6 +263,8 @@ final class EstimateComposerTest extends TestCase
         self::assertSame('decision:foundation', $input->decisions[0]['id']);
         self::assertSame('10.2500', $input->derivedQuantities[0]['value']);
         self::assertSame('quantity:foundation', $input->derivedQuantities[0]['id']);
+        self::assertSame('entity:foundation', $input->derivedQuantities[0]['entity_id']);
+        self::assertSame(['fact:foundation'], $input->derivedQuantities[0]['operand_fact_ids']);
         self::assertSame([$candidate], $input->candidates);
     }
 

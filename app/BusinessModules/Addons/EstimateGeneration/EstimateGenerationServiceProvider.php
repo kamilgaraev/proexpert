@@ -730,6 +730,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerBatchPlanner(
                 (int) config('estimate-generation.estimate_composer.max_input_bytes'),
             ),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class),
         ));
         $this->app->singleton(EstimateComposerInputFactory::class, static fn ($app): EstimateComposerInputFactory => new EstimateComposerInputFactory(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class),
@@ -781,6 +782,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerAllowance::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EloquentEstimateComposerAllowance::class);
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
         $this->app->singleton(PipelineDefinitionGraph::class, static fn (): PipelineDefinitionGraph => PipelineDefinitionGraph::standard());
         $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);

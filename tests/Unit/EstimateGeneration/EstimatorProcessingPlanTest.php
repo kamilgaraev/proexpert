@@ -36,6 +36,7 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(4096, $plan['roles']['vision']['output_ceiling']);
         self::assertArrayNotHasKey('project_synthesis', $plan['roles']);
         self::assertSame(0, $plan['synthesis_part_limit']);
+        self::assertSame(1, $plan['composer_part_limit']);
         self::assertArrayNotHasKey('rerank', $plan['roles']);
         self::assertSame(array_sum(array_column($plan['roles'], 'max_calls')), $plan['maximum_calls']);
     }
@@ -47,12 +48,14 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertArrayNotHasKey('estimate_composition', $plan['roles']);
         self::assertArrayNotHasKey('estimate_audit', $plan['roles']);
         self::assertArrayNotHasKey('estimate_composer_correction', $plan['roles']);
+        self::assertSame(0, $plan['composer_part_limit']);
     }
 
     public function test_a_large_operation_reserves_three_audits_two_corrections_and_three_sends_per_part(): void
     {
         $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff());
         self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(3, $plan['composer_part_limit']);
         self::assertSame(27, $plan['roles']['estimate_audit']['max_calls']);
         self::assertSame(18, $plan['roles']['estimate_composer_correction']['max_calls']);
         self::assertSame(54, $plan['maximum_calls']);
