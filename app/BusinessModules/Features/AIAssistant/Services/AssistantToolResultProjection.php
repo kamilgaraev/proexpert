@@ -265,7 +265,7 @@ final class AssistantToolResultProjection
         if (!is_array($reference)) { return $reference; }
         return array_diff_key($reference, array_flip(['version', 'source_version', 'checksum', 'source_field_identity', 'source_link_identity', 'checked_fields',
             'required_permissions', 'required_domains', 'projection_source_version', 'assistant_public_schema_revision',
-            '_search_count_query', '_search_count_actor', '_search_count_proof', 'unit_checksum', 'document_checksum', 'rag_source_checksum']));
+            '_search_count_query', '_search_count_actor', '_search_count_proof', 'unit_checksum', 'document_checksum', 'rag_source_checksum', 'estimate_projection']));
     }
 
     private static function sharedSourceContext(array $view): array

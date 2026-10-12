@@ -287,6 +287,37 @@ final class AssistantEstimatePositionReadService
         });
     }
 
+    public function matchesProjectedReference(User $actor, int $organizationId, array $reference): bool
+    {
+        $kind = $reference['estimate_projection'] ?? null;
+        $type = $reference['entity_type'] ?? null;
+        if (! in_array($kind, ['position_v1', 'child_resource_v1', 'resource_v1'], true)
+            || $type !== ($kind === 'resource_v1' ? 'estimate_item_resource' : 'estimate_item')
+            || ! is_string($reference['version'] ?? null) || ! $this->canReadReference($actor, $organizationId, $reference)) { return false; }
+        $estimate = Estimate::query()->where('organization_id', $organizationId)->find($reference['estimate_id'] ?? null);
+        if ($estimate === null || ($reference['project_id'] ?? null) !== ($estimate->project_id === null ? null : (int) $estimate->project_id)) { return false; }
+        $withUnit = ['measurementUnit' => static fn (BelongsTo $units): BelongsTo => $units->where('organization_id', $organizationId)];
+        if ($kind === 'resource_v1') {
+            $resource = EstimateItemResource::query()->with($withUnit)->where('estimate_item_id', $reference['estimate_item_id'] ?? null)
+                ->where('finance_representation', 'independent')->whereNull('represented_by_item_id')
+                ->whereHas('item', static fn (Builder $items): Builder => $items->where('estimate_id', $estimate->id))
+                ->find($reference['entity_id']);
+            if ($resource === null) { return false; }
+            $fields = AssistantEstimateRecordProjection::resource($resource);
+        } else {
+            $item = EstimateItem::query()->with($withUnit)->where('estimate_id', $estimate->id)->find($reference['entity_id']);
+            if ($item === null) { return false; }
+            if ($kind === 'child_resource_v1') {
+                if ((int) $item->parent_work_id !== ($reference['parent_work_id'] ?? null)) { return false; }
+                $fields = AssistantEstimateRecordProjection::child($item);
+            } else {
+                $excluded = $this->effectiveExclusions([$item], (int) $estimate->id);
+                $fields = AssistantEstimateRecordProjection::position($item, $excluded[(int) $item->id] ?? (bool) $item->is_not_accounted, self::POSITION_SCALES);
+            }
+        }
+        return hash_equals($reference['version'], hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR)));
+    }
+
     public function canReadReferences(User $actor, int $organizationId, array $references): array
     {
         return $this->access->withCurrentChecks($actor, $organizationId, function (AuthorizationService $authorization) use ($actor, $organizationId, $references): array {
@@ -513,21 +544,7 @@ final class AssistantEstimatePositionReadService
 
                 foreach ($items as $item) {
                     $isExcluded = $excluded[(int) $item->id] ?? (bool) $item->is_not_accounted;
-                    $position = [
-                        'id' => (int) $item->id,
-                        'position_number' => (string) $item->position_number,
-                        'name' => (string) $item->name,
-                        'normative_rate_code' => $item->normative_rate_code,
-                        'item_type' => (string) $item->getRawOriginal('item_type'),
-                        'parent_work_id' => $item->parent_work_id === null ? null : (int) $item->parent_work_id,
-                        'unit' => $item->measurementUnit?->short_name,
-                        'quantity' => FinanceDecimal::value((string) ($item->quantity_total ?? $item->quantity ?? '0'), 8),
-                        'excluded' => $isExcluded,
-                        'included_in_total' => ! $isExcluded && $item->parent_work_id === null,
-                    ];
-                    foreach (self::POSITION_SCALES as $field => $scale) {
-                        $position[$field] = $item->$field === null ? null : FinanceDecimal::value((string) $item->$field, $scale);
-                    }
+                    $position = AssistantEstimateRecordProjection::position($item, $isExcluded, self::POSITION_SCALES);
                     $position['version'] = hash('sha256', json_encode($position, JSON_THROW_ON_ERROR));
                     $position['navigation'] = ['url' => '/estimates/'.$estimateId.'?position_id='.$item->id];
                     $positions[] = $position;
@@ -574,6 +591,7 @@ final class AssistantEstimatePositionReadService
                     'navigation' => ['url' => '/estimates/'.$estimateId],
                 ];
                 $evidence = [
+                    'position_projection' => 'position_v1',
                     'estimate' => $header,
                     'positions' => $positions,
                     'position_count' => $matchingCount,
@@ -715,24 +733,7 @@ final class AssistantEstimatePositionReadService
         $resources = [];
         $references = [];
         foreach ($children as $child) {
-            $itemType = (string) $child->getRawOriginal('item_type');
-            $unit = $child->measurementUnit?->short_name ?? $child->measurementUnit?->name;
-            $quantity = $child->getRawOriginal('quantity') === null
-                ? null : FinanceDecimal::value((string) $child->getRawOriginal('quantity'), 8);
-            $unitPrice = $child->unit_price === null ? null : FinanceDecimal::value((string) $child->unit_price, 4);
-            $totalAmount = $child->total_amount === null ? null : FinanceDecimal::value((string) $child->total_amount, 2);
-            $fields = [
-                'id' => (int) $child->id,
-                'estimate_item_id' => (int) $child->id,
-                'position_number' => (string) $child->position_number,
-                'resource_type' => $itemType,
-                'name' => (string) $child->name,
-                'quantity' => $quantity,
-                'material_unit' => $unit,
-                'unit_price' => $unitPrice,
-                'currency' => null,
-                'total_amount' => $totalAmount,
-            ];
+            $fields = AssistantEstimateRecordProjection::child($child);
             $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));
             $factFields = array_intersect_key($fields, array_fill_keys([
                 'position_number', 'resource_type', 'name', 'quantity', 'material_unit', 'unit_price', 'currency', 'total_amount',
@@ -751,6 +752,7 @@ final class AssistantEstimatePositionReadService
                 'source_version' => (string) ($child->getRawOriginal('updated_at') ?? $item->getRawOriginal('updated_at')),
                 'fetched_at' => $fetchedAt,
                 'content_scope' => 'structured',
+                'estimate_projection' => 'child_resource_v1',
                 'checked_fields' => array_keys($factFields),
                 'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
                 'required_domains' => ['estimates'],
@@ -787,18 +789,7 @@ final class AssistantEstimatePositionReadService
 
     private function normalizedResourceRecord(EstimateItemResource $resource, EstimateItem $item, Estimate $estimate, int $organizationId, string $fetchedAt): array
     {
-        $fields = [
-            'id' => (int) $resource->id,
-            'estimate_item_id' => (int) $item->id,
-            'resource_type' => (string) $resource->resource_type,
-            'name' => (string) $resource->name,
-            'quantity_per_unit' => FinanceDecimal::value((string) $resource->quantity_per_unit, 4),
-            'total_quantity' => FinanceDecimal::value((string) $resource->total_quantity, 4),
-            'material_unit' => $resource->measurementUnit?->short_name ?? $resource->measurementUnit?->name,
-            'unit_price' => $resource->unit_price === null ? null : FinanceDecimal::value((string) $resource->unit_price, 2),
-            'currency' => null,
-            'total_amount' => $resource->total_amount === null ? null : FinanceDecimal::value((string) $resource->total_amount, 2),
-        ];
+        $fields = AssistantEstimateRecordProjection::resource($resource);
         $rowVersion = hash('sha256', json_encode($fields, JSON_THROW_ON_ERROR));
         $reference = [
             'source_type' => 'estimate',
@@ -814,6 +805,7 @@ final class AssistantEstimatePositionReadService
             'source_version' => (string) ($resource->getRawOriginal('updated_at') ?? $item->getRawOriginal('updated_at')),
             'fetched_at' => $fetchedAt,
             'content_scope' => 'structured',
+            'estimate_projection' => 'resource_v1',
             'checked_fields' => array_keys($fields),
             'required_permissions' => ['budget-estimates.view', 'budget-estimates.finance.view'],
             'required_domains' => ['estimates'],

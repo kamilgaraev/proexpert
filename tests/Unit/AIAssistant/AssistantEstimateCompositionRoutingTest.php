@@ -22,7 +22,7 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
     use UsesAssistantUnitTranslations;
 
     #[DataProvider('compositionRequests')]
-    public function test_composition_request_selects_estimates_and_exposes_the_resource_tool(string $query, array $context): void
+    public function test_composition_request_selects_estimates_and_exposes_the_resource_tool(string $query, array $context, bool $includesWarehouse): void
     {
         $registry = new AssistantCapabilityRegistry;
         $capability = $registry->match($query, $context);
@@ -35,8 +35,13 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         $names = $this->toolNames($query, $capability['id']);
         self::assertContains('get_estimate_positions', $names);
         self::assertContains('get_estimate_answer', $names);
-        self::assertContains('get_material_stock', $names);
-        self::assertContains('search_warehouse', $names);
+        if ($includesWarehouse) {
+            self::assertContains('get_material_stock', $names);
+            self::assertContains('search_warehouse', $names);
+        } else {
+            self::assertNotContains('get_material_stock', $names);
+            self::assertNotContains('search_warehouse', $names);
+        }
         self::assertTrue((new AssistantToolEligibilityPolicy)->canExposeTool('get_estimate_positions', $understanding)->allowed);
     }
 
@@ -100,8 +105,10 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         $names = $this->toolNames($query, $capabilityId);
 
         self::assertContains($expectedTool, $names);
-        if ($capabilityId === 'warehouse') {
+        if ($query === 'Сравни складские остатки с потребностью сметы.') {
             self::assertContains('get_estimate_positions', $names);
+        } elseif ($query === 'Покажи остатки материалов на складе.') {
+            self::assertNotContains('get_estimate_positions', $names);
         }
     }
 
@@ -110,11 +117,11 @@ final class AssistantEstimateCompositionRoutingTest extends TestCase
         yield 'production prompt despite warehouse route' => [self::productionQuery(), [
             'source_module' => 'ai-assistant', 'source_route' => '/warehouse',
             'ui_state' => ['assistant_path' => '/warehouse'],
-        ]];
-        yield 'other estimate and position' => ['В смете ЛОК-15 перечисли ресурсы позиции 2.4, их количества и цены.', []];
-        yield 'composition without resource wording' => ['Покажи состав позиции сметы Р-17: труд и материалы.', []];
-        yield 'selected estimate' => ['Какие материалы входят в состав позиции 1?', ['selected_estimate_id' => 19]];
-        yield 'estimate resource composition' => ['Покажи ресурсный состав сметы ЛОК-8.', []];
+        ], true];
+        yield 'other estimate and position' => ['В смете ЛОК-15 перечисли ресурсы позиции 2.4, их количества и цены.', [], false];
+        yield 'composition without resource wording' => ['Покажи состав позиции сметы Р-17: труд и материалы.', [], true];
+        yield 'selected estimate' => ['Какие материалы входят в состав позиции 1?', ['selected_estimate_id' => 19], true];
+        yield 'estimate resource composition' => ['Покажи ресурсный состав сметы ЛОК-8.', [], false];
     }
 
     public static function otherRequests(): iterable

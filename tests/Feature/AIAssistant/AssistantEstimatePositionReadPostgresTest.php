@@ -100,6 +100,10 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame([$firstItem->id, $secondItem->id], array_column(array_column($result['matches'], 'position'), 'id'));
         self::assertNotContains($deniedItem->id, array_column(array_column($result['matches'], 'position'), 'id'));
         self::assertNotContains($foreignItem->id, array_column(array_column($result['matches'], 'position'), 'id'));
+        foreach ($result['source_refs'] as $reference) {
+            self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+                ->fresh($this->actor, $this->organization->id, [$reference]), $reference['entity_type']);
+        }
         self::assertTrue((new AssistantStructuredFactVerifier)->trustedEvidence($result['structured_fact_evidence']));
         self::assertCount(4, $result['source_refs']);
         foreach ($result['source_refs'] as $reference) {
@@ -376,6 +380,14 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertCount(20, array_filter($result['source_refs'], static fn (array $source): bool => ($source['entity_type'] ?? null) === 'estimate_item_resource'));
         self::assertTrue(app(AssistantDataAccessPolicy::class)->canReadSource($this->actor, $this->organization->id,
             array_values(array_filter($result['source_refs'], static fn (array $source): bool => ($source['entity_type'] ?? null) === 'estimate_item_resource'))[0]));
+        foreach ($result['source_refs'] as $reference) {
+            self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+                ->fresh($this->actor, (int) $this->organization->id, [$reference]), (string) $reference['entity_type']);
+        }
+        foreach ($result['financial_evidence']['source_refs'] as $reference) {
+            self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+                ->fresh($this->actor, (int) $this->organization->id, [$reference]), (string) $reference['entity_type']);
+        }
 
         $next = app(GetEstimatePositionsTool::class)->execute([
             'estimate_id' => $estimate->id,
@@ -389,6 +401,38 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertSame('11', $next['positions'][0]['position_number']);
         self::assertSame('20', $next['positions'][9]['position_number']);
         self::assertArrayNotHasKey('composition', $next);
+    }
+
+    public function test_projected_position_and_resource_sources_reject_changed_price_unit_parent_and_access(): void
+    {
+        $estimate = $this->estimate('SM-PROJECTED', 'Бетон');
+        $item = $this->item($estimate, '1', 'Бетонирование');
+        $unit = MeasurementUnit::query()->firstOrCreate(['organization_id' => $this->organization->id, 'short_name' => 'м³'], ['name' => 'Кубический метр']);
+        $item->forceFill(['measurement_unit_id' => $unit->id, 'unit_price' => '125.00'])->save();
+        $resource = EstimateItemResource::query()->create([
+            'estimate_item_id' => $item->id, 'resource_type' => 'material', 'name' => 'Бетон', 'measurement_unit_id' => $unit->id,
+            'quantity_per_unit' => '1.0000', 'total_quantity' => '1.0000', 'unit_price' => '125.00', 'total_amount' => '125.00',
+            'finance_representation' => 'independent',
+        ]);
+        $result = app(GetEstimatePositionsTool::class)->execute([
+            'estimate_id' => $estimate->id, 'include_composition' => true,
+        ], $this->actor, $this->organization);
+        $references = [...$result['source_refs'], ...$result['financial_evidence']['source_refs']];
+        $guard = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($this->actor, (int) $this->organization->id, $references));
+        $unit->forceFill(['short_name' => 'qa-проверка'])->save();
+        self::assertFalse($guard->fresh($this->actor, (int) $this->organization->id, $references));
+        $unit->forceFill(['short_name' => 'м³'])->save();
+        $resource->forceFill(['unit_price' => '126.00'])->save();
+        self::assertFalse($guard->fresh($this->actor, (int) $this->organization->id, $references));
+        $resource->forceFill(['unit_price' => '125.00'])->save();
+        $forged = array_values(array_filter($references, static fn (array $ref): bool => ($ref['entity_type'] ?? null) === 'estimate_item_resource'))[0];
+        $forged['estimate_item_id'] = $item->id + 10000;
+        self::assertFalse($guard->fresh($this->actor, (int) $this->organization->id, [$forged]));
+        $item->forceFill(['unit_price' => '130.00'])->save();
+        self::assertFalse($guard->fresh($this->actor, (int) $this->organization->id, $references));
+        $this->financeAllowed = false;
+        self::assertFalse($guard->fresh($this->actor, (int) $this->organization->id, $references));
     }
 
     public function test_resource_continuation_and_position_exclusion_are_scoped_to_the_same_estimate(): void
@@ -766,6 +810,8 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
 
         $childReferences = array_values(array_filter($result['source_refs'], static fn (array $reference): bool => ($reference['entity_type'] ?? null) === 'estimate_item' && isset($reference['parent_work_id'])));
         self::assertCount(5, $childReferences);
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->fresh($this->actor, (int) $this->organization->id, [...$result['source_refs'], ...$result['financial_evidence']['source_refs']]));
         foreach ($childReferences as $reference) {
             self::assertSame($reference['entity_id'], $reference['estimate_item_id']);
             self::assertSame((int) $target->id, $reference['parent_work_id']);

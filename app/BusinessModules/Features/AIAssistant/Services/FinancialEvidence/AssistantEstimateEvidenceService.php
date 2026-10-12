@@ -112,6 +112,7 @@ final class AssistantEstimateEvidenceService
             $sources[] = ['source_type' => 'estimate', 'entity_type' => 'estimate_item', 'entity_id' => $id,
                 'estimate_id' => (int) $evidence['estimate']['id'], 'project_id' => $parent['project_id'],
                 'organization_id' => $parent['organization_id'], 'version' => $position['version'],
+                  ...(($evidence['position_projection'] ?? null) === 'position_v1' ? ['estimate_projection' => 'position_v1'] : []),
                 'fetched_at' => $evidence['fetched_at'],
                 'navigation' => ['url' => '/estimates/'.(int) $evidence['estimate']['id'].'?position_id='.$id]];
             if (count($seen) === 50) {

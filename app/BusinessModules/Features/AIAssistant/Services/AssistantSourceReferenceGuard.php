@@ -79,6 +79,11 @@ class AssistantSourceReferenceGuard
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            if (isset($reference['estimate_projection'])) {
+                if (! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimatePositionReadService::class)
+                    ->matchesProjectedReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
             if (isset($reference['projection_name'])) {
                 if (! ($this->projections ?? app(\App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantSalesParentProjection::class))
                     ->fresh($actor, $organizationId, $reference)) { return false; }

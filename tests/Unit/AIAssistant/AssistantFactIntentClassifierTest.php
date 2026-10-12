@@ -9,6 +9,15 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantFactIntentClassifierTest extends TestCase
 {
+    public function test_natural_price_per_unit_is_not_confused_with_record_count_or_total_contract_price(): void
+    {
+        foreach (['Найди в любой нашей смете, сколько стоит куб бетона.', 'Почём тонна арматуры?', 'Сколько стоит один квадратный метр штукатурки?'] as $query) {
+            self::assertTrue(AssistantFactIntentClassifier::requiresUnitPrice($query), $query);
+        }
+        foreach (['Сколько стоит весь договор?', 'Сколько кубов бетона осталось?', 'Покажи стоимость работ по объекту.'] as $query) {
+            self::assertFalse(AssistantFactIntentClassifier::requiresUnitPrice($query), $query);
+        }
+    }
     public function test_financial_record_questions_are_factual_but_explanatory_questions_stay_narrative(): void
     {
         $this->assertTrue(AssistantFactIntentClassifier::isFactual('Что с платежами?'));

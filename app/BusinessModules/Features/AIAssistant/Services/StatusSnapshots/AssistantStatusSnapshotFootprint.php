@@ -71,6 +71,7 @@ final class AssistantStatusSnapshotFootprint
                 'in', 'any', 'all', 'and', 'or', 'not', 'exists', 'as', 'materialized', 'values', 'filter', 'over', 'cast', 'numeric', 'decimal', 'varchar', 'character', 'timestamp', 'timestamptz'];
             $catalogFunctions = ['count', 'sum', 'min', 'max', 'array_agg', 'coalesce', 'nullif', 'btrim', 'trim', 'lower', 'upper', 'length', 'regexp_replace',
                 'left', 'right', 'replace', 'strpos', 'split_part', 'substring', 'substr', 'concat', 'concat_ws', 'abs', 'round', 'ceil', 'ceiling', 'floor',
+                'encode', 'sha256', 'convert_to', 'char_length', 'jsonb_exists',
                 'greatest', 'least', 'cardinality', 'array_length', 'array_cat', 'array_remove', 'array_append', 'bool_and', 'bool_or',
                 'jsonb_build_array', 'jsonb_build_object', 'jsonb_object_agg', 'string_agg', 'jsonb_agg',
                 'jsonb_array_elements', 'jsonb_array_elements_text', 'jsonb_array_length', 'jsonb_typeof', 'jsonb_extract_path', 'jsonb_extract_path_text',
