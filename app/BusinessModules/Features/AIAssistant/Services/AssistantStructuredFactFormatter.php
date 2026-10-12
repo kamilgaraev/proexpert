@@ -31,10 +31,11 @@ final class AssistantStructuredFactFormatter
         'rfi_number', 'question', 'answer', 'addressee_type', 'response_due_date', 'answered_at',
         'priority', 'request_type', 'user_id', 'assigned_to', 'material_name', 'material_quantity', 'material_unit',
         'personnel_count', 'equipment_count', 'work_start_date', 'work_end_date', 'rental_start_date', 'rental_end_date', 'equipment_start_at', 'equipment_end_at',
+        'requested_quantity', 'reserved_quantity', 'shipped_quantity', 'accepted_quantity', 'planned_delivery_date',
     ];
 
     private const NUMERIC_FIELDS = ['quantity', 'quantity_per_unit', 'quantity_total', 'total_quantity', 'completed_quantity', 'budget_amount', 'planned_advance_amount', 'actual_advance_amount', 'unit_price', 'total_amount',
-        'total_amount_with_vat', 'amount', 'hours', 'hours_worked', 'volume_completed', 'progress_percent', 'reading_time', 'material_quantity', 'personnel_count', 'equipment_count'];
+        'total_amount_with_vat', 'amount', 'hours', 'hours_worked', 'volume_completed', 'progress_percent', 'reading_time', 'material_quantity', 'personnel_count', 'equipment_count', 'requested_quantity', 'reserved_quantity', 'shipped_quantity', 'accepted_quantity'];
 
     private const ENTITY_TYPES = [
         'project', 'warehouse', 'site_request', 'estimate', 'estimate_section', 'estimate_item', 'estimate_item_resource', 'contract',

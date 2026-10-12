@@ -951,7 +951,7 @@ class AIAssistantService
             $financialIntentSupported = ! $imageDiscussion && ($this->financialAnswers?->supports($query, $clarificationPinnedId) ?? false);
             $stockDomainResolved = false;
             foreach ($rawPresentationPlan !== null || $rejectedFinancialPlan ? [] : array_reverse($this->activeToolResults) as $toolResult) {
-                if (($toolResult['_tool_name'] ?? null) === 'get_material_stock') {
+                if (in_array($toolResult['_tool_name'] ?? null, ['get_material_stock', 'get_project_material_stock'], true)) {
                     $verifiedStock = $this->verifyMaterialStock($toolResult, $user, $organizationId);
                     if ($verifiedStock !== null) {
                         $stockDomainResolved = in_array($toolResult['status'] ?? null, ['success', 'empty'], true)
@@ -1640,7 +1640,8 @@ class AIAssistantService
         if (!in_array($result['status'] ?? null, ['success', 'empty'], true) || !is_array($result['stock_evidence'] ?? null)) {
             return null;
         }
-        $read = fn (): ?array => $this->measurePhase('stock_read', fn (): ?array => app(AssistantMaterialStockReader::class)->verifiedAnswer($result, $actor, $organizationId));
+        $reader = ($result['_tool_name'] ?? null) === 'get_project_material_stock' ? AssistantProjectMaterialStockReader::class : AssistantMaterialStockReader::class;
+        $read = fn (): ?array => $this->measurePhase('stock_read', fn (): ?array => app($reader)->verifiedAnswer($result, $actor, $organizationId));
         $this->executionCheckpoint();
         try {
             $verified = $this->readPhase($read, $actor, $organizationId);
@@ -2012,6 +2013,7 @@ class AIAssistantService
             'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
+            'get_project_material_stock',
         ], true);
     }
 
@@ -2037,10 +2039,7 @@ class AIAssistantService
         $args = is_array($arguments) ? $arguments : [];
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
-        $requiredRead = AssistantRequiredProjectRead::fromPlan($taskPlan);
-        if (($requiredRead['name'] ?? null) === $toolName) {
-            $args = $requiredRead['arguments'];
-        }
+        $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
         if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             if ($args['project_id'] === null) {
@@ -2249,13 +2248,13 @@ class AIAssistantService
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
-                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_bim_model_elements',
+                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_bim_model_elements',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             ], true);
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool
                 ? $tool->executeForSelection($args, $user, $organization, $this->activeEstimateSelection)
                 : $tool->execute($args, $user, $organization);
-            if ($toolName === 'get_material_stock') {
+            if (in_array($toolName, ['get_material_stock', 'get_project_material_stock'], true)) {
                 $stockRead = $read;
                 $read = fn (): array|string => $this->measurePhase('stock_read', $stockRead);
             }

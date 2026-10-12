@@ -37,8 +37,7 @@ final class AssistantDomainReadService
             throw ValidationException::withMessages(['entity_type' => ['unsupported_entity']]);
         }
         $predicate = $arguments['predicate'] ?? null;
-        if ($predicate !== null && ($operation !== 'search' || $predicate !== 'overdue'
-            || $definition->domain !== 'schedule' || $entityType !== 'schedule_task')) {
+        if ($predicate !== null && ($operation !== 'search' || ! AssistantDomainPredicate::supports($definition->domain, $entityType, $predicate))) {
             throw ValidationException::withMessages(['predicate' => ['unsupported_predicate']]);
         }
         $projection = $arguments['projection'] ?? null;
@@ -134,9 +133,7 @@ final class AssistantDomainReadService
                     $query->where($table.'.project_id', $projectId);
                 }
             }
-            if (($arguments['predicate'] ?? null) === 'overdue') {
-                $query->overdue();
-            }
+            AssistantDomainPredicate::apply($query, $arguments['predicate'] ?? null);
             $countQuery = (clone $query)->reorder()->toBase()->select([])->selectRaw('COUNT(*) AS _assistant_result_total');
             $query->selectSub($countQuery, '_assistant_result_total');
             if ($after !== null) {
@@ -192,6 +189,7 @@ final class AssistantDomainReadService
         $factRows = [];
         $attachmentMessages = [];
         $fetchedAt = now()->toISOString();
+        AssistantDomainRelatedFields::hydrate($models, $entityType, $organizationId);
         $scheduleProjects = [];
         if ($entityType === 'schedule_task' && $models->isNotEmpty()) {
             $scheduleIds = $models->pluck('schedule_id')->unique()->values()->all();
@@ -286,7 +284,8 @@ final class AssistantDomainReadService
     {
         $requested = $operation === 'navigation' ? [] : array_intersect($fields, $safeColumns);
         $availableVersionColumns = array_intersect(['slug', 'updated_at', ...$versionColumns], $safeColumns);
-        return array_values(array_intersect(array_unique([$key, 'project_id', ...($entityType === 'schedule_task' ? ['schedule_id'] : []), ...$availableVersionColumns, ...$requested]), $columns));
+        $relatedParent = AssistantDomainRelatedFields::parentColumn($entityType);
+        return array_values(array_intersect(array_unique([$key, 'project_id', ...($relatedParent === null ? [] : [$relatedParent]), ...($entityType === 'schedule_task' ? ['schedule_id'] : []), ...$availableVersionColumns, ...$requested]), $columns));
     }
 
     private function reference(User $actor, Model $model, AssistantDomainDefinition $definition, string $entityType, int $organizationId, array $fields, string $fetchedAt, array $scheduleProjects = []): array
@@ -341,6 +340,9 @@ final class AssistantDomainReadService
             'required_domains' => [$policyDomain], 'source_version' => (string) $version, 'fetched_at' => $fetchedAt,
             'source_field_identity' => AssistantSourceReferenceIdentity::key(array_intersect_key($model->getAttributes(), array_flip($fields)))];
         $displayLabel = $this->displayLabel($model, $fields);
+        if (array_intersect($fields, AssistantDomainRelatedFields::fields($entityType)) !== []) {
+            $reference['related_field_projection'] = AssistantDomainRelatedFields::PROJECTION;
+        }
         if ($displayLabel !== null) {
             $reference['display_label'] = $displayLabel;
         }

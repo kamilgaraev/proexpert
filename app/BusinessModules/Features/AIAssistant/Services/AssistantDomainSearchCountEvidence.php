@@ -20,6 +20,10 @@ final class AssistantDomainSearchCountEvidence
             'query' => trim((string) ($arguments['query'] ?? '')),
             'project_id' => is_numeric($arguments['project_id'] ?? null) ? (int) $arguments['project_id'] : null, 'fields' => $fields];
         $clock = null;
+        if (($arguments['predicate'] ?? null) !== null) {
+            if (! AssistantDomainPredicate::supports($definition->domain, $entityType, $arguments['predicate'])) { throw new \LogicException('unsupported_count_predicate'); }
+            $scope['predicate'] = $arguments['predicate'];
+        }
         if (($arguments['predicate'] ?? null) === 'overdue') {
             if ($definition->domain !== 'schedule' || $entityType !== 'schedule_task') {
                 throw new \LogicException('unsupported_count_predicate');

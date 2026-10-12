@@ -222,12 +222,15 @@ final class AssistantDataAccessPolicy
         if (! is_string($type) || (! is_string($id) && ! is_int($id))) { return false; }
         if (! \App\BusinessModules\Features\AIAssistant\Services\DomainMetadata\AssistantFinanceTenderSourceSchema::allowsReference($type, $reference)) { return false; }
         if ($this->pendingEntityReads !== null && (isset($reference['projection_name'])
-            || in_array($type, ['file', 'assistant_document', 'live_project_financial_projection', 'published_report_financial_projection'], true))) {
+            || in_array($type, ['file', 'assistant_document', 'live_project_financial_projection', 'published_report_financial_projection', AssistantProjectMaterialStockReader::TYPE], true))) {
             return $this->withoutPendingEntityReads(fn (): bool => $this->canReadReferenceWithSourceLookup($user, $organizationId, $reference, $sourceLookup, $financialCheck));
         }
         if ($type === 'live_project_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class)
                 ->matchesReference($user, $organizationId, $reference);
+        }
+        if ($type === AssistantProjectMaterialStockReader::TYPE) {
+            return app(AssistantProjectMaterialStockReader::class)->matchesReference($user, $organizationId, $reference);
         }
         if ($type === 'published_report_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)

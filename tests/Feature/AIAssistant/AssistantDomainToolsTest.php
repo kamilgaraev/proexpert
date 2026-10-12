@@ -35,7 +35,7 @@ final class AssistantDomainToolsTest extends TestCase
         $authorization->shouldReceive('canCurrent')->andReturnUsing(fn (User $actor, string $permission): bool => $this->permissions && ($this->financialPermissions || ! in_array($permission, ['budget-estimates.finance.view','finance.view'], true)));
         $authorization->shouldReceive('forCurrentChecks')->andReturnSelf();
         $entitlements = Mockery::mock(OrganizationEntitlementService::class);
-        $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates']]));
+        $entitlements->shouldReceive('getEffectiveModules')->andReturn(collect([(object) ['slug' => 'project-management'], (object) ['slug' => 'budget-estimates'], (object) ['slug' => 'quality-control'], (object) ['slug' => 'basic-warehouse']]));
         $policy = new AssistantDataAccessPolicy($authorization, new UserProjectAccessService(), $entitlements);
         $this->policy = $policy;
         $this->reader = new AssistantDomainReadService(new AssistantDomainCatalog(AssistantDomainCatalog::defaults()), $policy, $authorization);
@@ -339,5 +339,76 @@ final class AssistantDomainToolsTest extends TestCase
         $actor = User::factory()->create(['current_organization_id' => $organization->id, 'is_active' => true]);
         $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'assigned_projects']);
         return [$organization, $actor];
+    }
+
+    public function test_confirmed_work_predicate_reads_actual_work_and_revalidates_related_type_name(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $type = \App\Models\WorkType::query()->create(['organization_id' => $organization->id, 'name' => 'Монтаж колонн', 'code' => 'ASSISTANT-CONFIRMED']);
+        $base = ['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
+            'quantity' => '1.0000', 'price' => '2.00', 'total_amount' => '2.00', 'completion_date' => '2026-10-01', 'work_type_id' => $type->id];
+        $confirmed = \App\Models\CompletedWork::query()->create($base + ['status' => 'confirmed']);
+        \App\Models\CompletedWork::query()->create($base + ['status' => 'pending']);
+        $result = $this->reader->execute('search', ['domain' => 'works', 'entity_type' => 'completed_work', 'project_id' => $project->id, 'predicate' => 'confirmed', 'query' => '', 'limit' => 20], $actor, $organization->id);
+        self::assertSame([$confirmed->id], array_column($result['results'], 'id'));
+        self::assertSame('Монтаж колонн', $result['results'][0]['fields']['name']);
+        self::assertSame(1, $result['result_window']['total']);
+        self::assertSame('confirmed', $result['domain_search_count_evidence']['source_ref']['_search_count_query']['predicate']);
+        $guard = new \App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard($this->policy);
+        self::assertTrue($guard->fresh($actor, (int) $organization->id, [$result['source_refs'][0]]));
+        $type->forceFill(['name' => 'Изменённый вид работ'])->save();
+        self::assertFalse($guard->fresh($actor, (int) $organization->id, [$result['source_refs'][0]]));
+    }
+
+    public function test_unresolved_quality_predicate_excludes_resolved_and_cancelled_before_paging(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $open = null;
+        foreach (['resolved', 'cancelled', 'open'] as $index => $status) {
+            $record = \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+                'organization_id' => $organization->id, 'project_id' => $project->id, 'created_by' => $actor->id,
+                'defect_number' => 'ASSISTANT-Q-'.$index, 'title' => 'Замечание '.$index, 'status' => $status,
+            ]);
+            if ($status === 'open') { $open = $record; }
+        }
+        $result = $this->reader->execute('search', ['domain' => 'quality', 'entity_type' => 'quality_defect', 'project_id' => $project->id, 'predicate' => 'unresolved', 'query' => '', 'limit' => 1], $actor, $organization->id);
+        self::assertSame([$open->id], array_column($result['results'], 'id'));
+        self::assertSame(1, $result['result_window']['total']);
+        self::assertFalse($result['result_window']['has_more']);
+        $answer = (new \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier)->guard(
+            'Какие незакрытые замечания есть по качеству на нашем объекте?', 'Устранённые замечания', [$result], ['project_id' => (int) $project->id],
+        );
+        self::assertFalse($answer['needs_clarification']);
+        self::assertStringContainsString('Замечание 2', $answer['text']);
+        self::assertStringNotContainsString('Замечание 0', $answer['text']);
+        self::assertTrue(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence::trusted($result['domain_search_count_evidence']));
+    }
+
+    public function test_supplier_waiting_predicate_reads_purchase_deliveries_with_current_material_and_unit(): void
+    {
+        [$organization, $actor] = $this->actor();
+        $project = Project::factory()->create(['organization_id' => $organization->id, 'is_archived' => false]);
+        $actor->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $unit = \App\Models\MeasurementUnit::query()->firstOrCreate(['organization_id' => $organization->id, 'short_name' => 'кг'], ['name' => 'Килограмм']);
+        $material = \App\Models\Material::query()->create(['organization_id' => $organization->id, 'name' => 'Цемент М500', 'measurement_unit_id' => $unit->id]);
+        $base = ['organization_id' => $organization->id, 'project_id' => $project->id, 'material_id' => $material->id, 'requested_quantity' => '100.000'];
+        $expected = null;
+        foreach ([['purchase', 'accepted'], ['warehouse', 'processing'], ['purchase', 'processing']] as [$source, $status]) {
+            $record = \App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery::query()->create($base + ['source_type' => $source, 'status' => $status]);
+            if ($source === 'purchase' && $status === 'processing') { $expected = $record; }
+        }
+        $result = $this->reader->execute('search', ['domain' => 'warehouse', 'entity_type' => 'project_material_delivery', 'project_id' => $project->id, 'predicate' => 'supplier_waiting', 'query' => '', 'limit' => 1], $actor, $organization->id);
+        self::assertSame([$expected->id], array_column($result['results'], 'id'));
+        self::assertSame('Цемент М500', $result['results'][0]['fields']['name']);
+        self::assertSame('кг', $result['results'][0]['fields']['material_unit']);
+        self::assertSame('100.000', $result['results'][0]['fields']['requested_quantity']);
+        $guard = new \App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard($this->policy);
+        self::assertTrue($guard->fresh($actor, (int) $organization->id, [$result['source_refs'][0]]));
+        $material->forceFill(['name' => 'Изменённый цемент'])->save();
+        self::assertFalse($guard->fresh($actor, (int) $organization->id, [$result['source_refs'][0]]));
     }
 }

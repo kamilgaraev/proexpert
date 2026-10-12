@@ -80,6 +80,45 @@ final class AssistantMaterialStockToolTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_native_project_stock_receipt_matches_project_delivery_accounting_and_rejects_changes_and_revoked_scope(): void
+    {
+        $unit = MeasurementUnit::query()->firstOrCreate(['organization_id' => $this->organization->id, 'short_name' => 'кг'], ['name' => 'Килограмм']);
+        $material = Material::query()->create(['organization_id' => $this->organization->id, 'name' => 'Арматура А500С', 'measurement_unit_id' => $unit->id]);
+        $delivery = \App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery::query()->create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->project->id, 'material_id' => $material->id,
+            'source_type' => 'purchase', 'status' => 'accepted', 'accepted_quantity' => '100.000', 'requested_quantity' => '100.000',
+        ]);
+        $reader = new \App\BusinessModules\Features\AIAssistant\Services\AssistantProjectMaterialStockReader($this->policy,
+            app(\App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockService::class));
+        $this->app->instance(\App\BusinessModules\Features\AIAssistant\Services\AssistantProjectMaterialStockReader::class, $reader);
+        $result = $reader->read($this->actor, (int) $this->organization->id, ['project_id' => (int) $this->project->id, 'offset' => 0, 'limit' => 20]);
+        self::assertSame('100.000', $result['stock'][0]['available_quantity']);
+        self::assertSame('кг', $result['stock'][0]['unit']);
+        self::assertSame(1, $result['total']);
+        self::assertTrue($reader->matchesReference($this->actor, (int) $this->organization->id, $result['source_refs'][0]));
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($this->actor, (int) $this->organization->id, $result['source_refs']));
+        self::assertStringContainsString('Арматура А500С', $reader->verifiedAnswer($result, $this->actor, (int) $this->organization->id)['text']);
+        $delivery->forceFill(['accepted_quantity' => '90.000'])->save();
+        self::assertFalse($reader->matchesReference($this->actor, (int) $this->organization->id, $result['source_refs'][0]));
+        $this->deniedPermissions = ['warehouse.manage_stock'];
+        self::assertFalse($reader->matchesReference($this->actor, (int) $this->organization->id, $result['source_refs'][0]));
+    }
+
+    public function test_native_project_stock_cannot_read_a_foreign_organization_measurement_unit_through_a_material(): void
+    {
+        $foreign = Organization::withoutEvents(fn () => Organization::factory()->create());
+        $unit = MeasurementUnit::query()->create(['organization_id' => $foreign->id, 'name' => 'Чужая закрытая единица', 'short_name' => 'foreign-stock-unit']);
+        $material = Material::query()->create(['organization_id' => $this->organization->id, 'name' => 'Материал', 'measurement_unit_id' => $unit->id]);
+        \App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery::query()->create([
+            'organization_id' => $this->organization->id, 'project_id' => $this->project->id, 'material_id' => $material->id,
+            'source_type' => 'purchase', 'status' => 'accepted', 'accepted_quantity' => '1.000',
+        ]);
+        $reader = new \App\BusinessModules\Features\AIAssistant\Services\AssistantProjectMaterialStockReader($this->policy,
+            app(\App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockService::class));
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $reader->read($this->actor, (int) $this->organization->id, ['project_id' => (int) $this->project->id]);
+    }
+
     public function test_runtime_read_has_bounded_full_checkpoints_and_returns_the_same_empty_result(): void
     {
         $baseline = $this->reader->read($this->actor, $this->organization->id, ['query' => 'бетон']);

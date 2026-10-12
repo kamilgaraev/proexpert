@@ -53,7 +53,7 @@ final class AssistantIndexStatusService
         }
 
         $checkCurrentAccess = $this->checksAssistantAccess();
-        if ($checkCurrentAccess && $section !== 'sources') {
+        if ($checkCurrentAccess && $section === 'all') {
             return $this->snapshotStatus($organizationId, $actor, $section);
         }
 
