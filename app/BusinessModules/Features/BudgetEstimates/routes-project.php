@@ -30,6 +30,17 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
     ->where(['project' => '[0-9]+'])
     ->name('admin.projects.estimates.')
     ->group(function () {
+        Route::prefix('estimate-operations')->group(function () {
+            Route::get('/options', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationPriceController::class, 'options']);
+            Route::post('/', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationController::class, 'store']);
+            Route::get('/{operation}', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationController::class, 'show'])->whereUuid('operation');
+            Route::patch('/{operation}/resolutions', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationController::class, 'resolve'])->whereUuid('operation');
+            Route::post('/{operation}/apply', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationController::class, 'apply'])->whereUuid('operation');
+        });
+        Route::prefix('estimate-price-lists')->name('price_lists.')->group(function () {
+            Route::post('/inspect', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationPriceController::class, 'inspect'])->name('inspect');
+            Route::post('/', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateOperationPriceController::class, 'store'])->name('store');
+        });
         
         Route::prefix('estimates')->group(function () {
             Route::get('/finance', [\App\BusinessModules\Features\BudgetEstimates\Http\Controllers\EstimateFinanceController::class, 'project'])

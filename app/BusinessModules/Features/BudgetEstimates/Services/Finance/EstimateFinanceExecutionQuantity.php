@@ -11,6 +11,76 @@ use Illuminate\Validation\ValidationException;
 
 final class EstimateFinanceExecutionQuantity
 {
+    public function snapshot(Estimate $estimate, bool $lock = false): array
+    {
+        $itemIds = $estimate->items()->pluck('id');
+        if ($lock) {
+            DB::table('contract_performance_acts')->where('project_id', $estimate->project_id)->orderBy('id')->lockForUpdate()->get(['id']);
+            DB::table('performance_act_lines')->whereIn('estimate_item_id', $itemIds)->orderBy('id')->lockForUpdate()->get(['id']);
+            DB::table('completed_works')->where('organization_id', $estimate->organization_id)->where('project_id', $estimate->project_id)->whereIn('estimate_item_id', $itemIds)->orderBy('id')->lockForUpdate()->get(['id']);
+            DB::table('estimate_finance_execution_allocations')->where('organization_id', $estimate->organization_id)->where('estimate_id', $estimate->id)->orderBy('id')->lockForUpdate()->get(['id']);
+        }
+        $acts = DB::table('contract_performance_acts as acts')->where('acts.project_id', $estimate->project_id)
+            ->whereIn('acts.status', ['approved', 'signed'])->whereNull('acts.annulled_at');
+        $native = (clone $acts)->join('performance_act_lines as line', 'line.performance_act_id', '=', 'acts.id')
+            ->whereIn('line.estimate_item_id', $itemIds)
+            ->selectRaw("acts.id AS act_id, acts.contract_id, line.estimate_item_id, line.quantity, line.amount, line.basis_snapshot->>'allocation_key' AS allocation_key, line.basis_snapshot->>'basis_type' AS basis_type, line.basis_snapshot->>'estimate_item_id' AS snapshot_item_id, line.basis_snapshot->>'estimate_id' AS snapshot_estimate_id, line.basis_snapshot->>'contract_id' AS snapshot_contract_id")->get();
+        $legacy = (clone $acts)->join('performance_act_completed_works as pivot', 'pivot.performance_act_id', '=', 'acts.id')
+            ->join('completed_works as work', 'work.id', '=', 'pivot.completed_work_id')
+            ->where('work.organization_id', $estimate->organization_id)->where('work.project_id', $estimate->project_id)
+            ->whereIn('work.estimate_item_id', $itemIds)
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('performance_act_lines')->whereColumn('performance_act_id', 'acts.id'))
+            ->selectRaw('acts.id AS act_id, acts.contract_id, work.estimate_item_id, pivot.included_quantity AS quantity, pivot.included_amount AS amount, NULL AS allocation_key, NULL AS basis_type, NULL AS snapshot_item_id, NULL AS snapshot_estimate_id, NULL AS snapshot_contract_id')->get();
+        $conditions = EstimateFinanceAllocation::query()->where('organization_id', $estimate->organization_id)
+            ->where('estimate_id', $estimate->id)->get()->keyBy('key');
+        $seen = [];
+        $totals = [];
+        foreach ($native->concat($legacy) as $row) {
+            $id = (int) $row->estimate_item_id;
+            $condition = $row->allocation_key === null ? null : $conditions->get($row->allocation_key);
+            if ($condition !== null && ($row->basis_type !== 'contract_conditions' || (int) $condition->estimate_item_id !== $id
+                || (int) $condition->contract_id !== (int) $row->contract_id || (int) $row->snapshot_item_id !== $id
+                || (int) $row->snapshot_estimate_id !== (int) $estimate->id || (int) $row->snapshot_contract_id !== (int) $row->contract_id)) {
+                $condition = null;
+            }
+            $resource = $condition?->resource_id !== null;
+            $totals[$id] ??= ['quantity' => '0', 'unknown' => false];
+            if ($resource || ($row->quantity === null && FinanceDecimal::compare((string) ($row->amount ?? '0'), '0') > 0)) {
+                $totals[$id]['unknown'] = true;
+            } else {
+                $totals[$id]['quantity'] = FinanceDecimal::add($totals[$id]['quantity'], (string) ($row->quantity ?? '0'));
+            }
+            if ($condition !== null) {
+                $seen[$row->act_id.':'.$condition->id] = true;
+            }
+        }
+        $ledger = DB::table('estimate_finance_execution_allocations as fact')->join('contract_performance_acts as acts', 'acts.id', '=', 'fact.performance_act_id')
+            ->join('estimate_finance_allocations as allocation', 'allocation.id', '=', 'fact.allocation_id')
+            ->where('fact.organization_id', $estimate->organization_id)->where('fact.project_id', $estimate->project_id)->where('fact.estimate_id', $estimate->id)
+            ->whereIn('allocation.estimate_item_id', $itemIds)->where('acts.project_id', $estimate->project_id)
+            ->whereIn('acts.status', ['approved', 'signed'])->whereNull('acts.annulled_at')
+            ->select('fact.*', 'allocation.estimate_item_id', 'allocation.resource_id')->get();
+        foreach ($ledger as $row) {
+            if (isset($seen[$row->performance_act_id.':'.$row->allocation_id])) {
+                continue;
+            }
+            $id = (int) $row->estimate_item_id;
+            $totals[$id] ??= ['quantity' => '0', 'unknown' => false];
+            if ($row->resource_id !== null || ($row->quantity === null && FinanceDecimal::compare((string) ($row->amount_with_vat ?? '0'), '0') > 0)) {
+                $totals[$id]['unknown'] = true;
+            } else {
+                $totals[$id]['quantity'] = FinanceDecimal::add($totals[$id]['quantity'], (string) ($row->quantity ?? '0'));
+            }
+        }
+        foreach ($totals as &$total) {
+            $total['quantity'] = FinanceDecimal::value($total['quantity'], 8);
+        }
+        unset($total);
+        ksort($totals);
+
+        return $totals;
+    }
+
     public function assertAvailable(Estimate $estimate, int $contractId, int $actId, array $changes, bool $excludeNativeAct = false): void
     {
         if ($changes === []) {
