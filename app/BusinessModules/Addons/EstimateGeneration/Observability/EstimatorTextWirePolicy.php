@@ -65,6 +65,17 @@ final class EstimatorTextWirePolicy
         return [...$policy, 'maximum_serialized_input_bytes' => $bound];
     }
 
+    public static function forInputCeiling(array $policy, int $configuredInputBytes): array
+    {
+        $policy = self::validate($policy);
+        if ($configuredInputBytes < 1 || $configuredInputBytes > PHP_INT_MAX - self::SYSTEM_HEADROOM_BYTES) {
+            throw new DomainException('estimator_processing_plan_configuration_invalid');
+        }
+
+        return [...$policy, 'maximum_serialized_input_bytes' => min($configuredInputBytes + self::SYSTEM_HEADROOM_BYTES,
+            $policy['maximum_serialized_input_bytes'])];
+    }
+
     public static function serializedInputUpper(array $messages): int
     {
         return strlen(json_encode($messages, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)) + count($messages) * 64;

@@ -23,6 +23,109 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_a_quote_reserves_the_real_known_composer_parts_even_with_one_selected_section(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        config(['estimate-generation.estimate_composer.max_input_bytes' => 5000]);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['selected_sections' => ['finishing']]]);
+        $this->saveKnownQuoteFact($scope, 1, str_repeat('word ', 500));
+        $this->saveKnownQuoteFact($scope, 2, str_repeat('word ', 500));
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:known-composer-parts');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame(2, $plan['known_context']['part_limits']['composer']);
+        self::assertSame(2, $plan['composer_part_limit']);
+        self::assertSame(6, $plan['roles']['estimate_composition']['max_calls']);
+        self::assertSame('known_context_lower_bound', $plan['known_context']['basis']);
+        self::assertStringNotContainsString('word word', json_encode($plan, JSON_THROW_ON_ERROR));
+        self::assertSame($quote['quote_id'], $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation')['quote_id']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+            ->abort($session->fresh(), $id, 'fixture_finished'));
+    }
+
+    public function test_changed_known_project_facts_require_a_new_quote_before_any_wallet_reservation(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $this->saveKnownQuoteFact($scope, 1, 'Original known context');
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:known-context-change');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $this->saveKnownQuoteFact($scope, 2, 'New source data arrived without changing the session input');
+        try {
+            DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation'));
+            self::fail('Changed model context was reserved using the previous quote.');
+        } catch (\DomainException $error) {
+            self::assertSame('estimator_known_context_changed', $error->getMessage());
+        }
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_a_stale_saved_draft_can_quote_recomposition_after_actual_fact_supersession(): void
+    {
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $old = $this->saveKnownQuoteFact($scope, 1, 'Original room name');
+        $draft = ['local_estimates' => [['key' => 'local:1', 'sections' => [['key' => 'section:1', 'work_items' => [[
+            'key' => 'work:1', 'item_type' => 'priced_work', 'name' => 'Paint', 'unit' => 'm2', 'quantity' => '10',
+            'source_refs' => [['fact_id' => $old->id]],
+        ]]]]]]];
+        $draft['source_input_version'] = $scope->sourceVersion;
+        $draft['quality_summary'] = ['content_version' => \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot::contentVersion($draft),
+            'review_items' => \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot::create($draft, [])];
+        $session->update(['draft_payload' => $draft]);
+        $new = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:quote-1:rev2',
+            $scope->organizationId, $scope->projectId, $scope->sessionId, $old->sourceVersion, $old->entityId, 'room_name',
+            'Updated room name', null, 0.0, 'user_assumption', 'confirmed', [], 2, $old->id);
+        $models = app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class);
+        $models->saveSourceModel([], [$new], []);
+        self::assertNotContains($old->id, array_map(static fn ($fact): string => $fact->id,
+            $models->snapshotForPlanning($scope->organizationId, $scope->projectId, $scope->sessionId, 2000)['snapshot']->facts));
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:stale-draft-quote');
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $id = (string) Str::uuid();
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $plan = json_decode(DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('processing_plan'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame('recomposition_required', $plan['known_context']['draft_context_status']);
+        self::assertSame(1, $plan['known_context']['known_work_count']);
+        self::assertSame(0, $plan['known_context']['part_limits']['audit']);
+        self::assertSame(CanonicalPipelineJson::encode($draft), CanonicalPipelineJson::encode($session->fresh()->draft_payload));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        self::assertSame($id, DB::transaction(fn () => $operations->begin($actor, $session, 0, $id, $quote['quote_id'], 'generation')));
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+            ->abort($session->fresh(), $id, 'fixture_finished'));
+    }
+
+    private function saveKnownQuoteFact(EstimatorCreditRequest $scope, int $index, string $value): \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact
+    {
+        $source = 'sha256:'.str_repeat('a', 64);
+        $entity = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Entity('room:quote-'.$index,
+            $scope->organizationId, $scope->projectId, $scope->sessionId, $source, 'room', 'room:quote-'.$index,
+            ['semantic_type' => 'room', 'identity' => ['room_name' => 'Quote room '.$index]]);
+        $fact = new \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact('fact:quote-'.$index,
+            $scope->organizationId, $scope->projectId, $scope->sessionId, $source, $entity->id, 'room_name', $value,
+            null, 0.0, 'user_assumption', 'confirmed', []);
+        app(\App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository::class)->saveSourceModel([$entity], [$fact], []);
+
+        return $fact;
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('composerPartApprovals')]
     public function test_actual_composer_preflights_all_parts_against_the_original_reserve_and_replays(bool $approved): void
     {

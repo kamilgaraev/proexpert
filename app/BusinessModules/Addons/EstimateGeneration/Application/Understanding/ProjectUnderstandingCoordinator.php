@@ -4,14 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Understanding;
 
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Geometry\DeterministicGeometryCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\EloquentProjectSynthesisAllowance;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisSelection;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\DerivedQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\Fact;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectUnderstandingFingerprint;
@@ -74,86 +70,8 @@ final readonly class ProjectUnderstandingCoordinator
         if ($snapshot->facts === []) {
             return ProjectUnderstandingResult::unresolved(['empty_facts']);
         }
-        $sourceVersions = array_values(array_unique(array_map(
-            static fn (Fact $fact): string => $fact->sourceVersion,
-            $snapshot->facts,
-        )));
-        sort($sourceVersions, SORT_STRING);
-        $quantities = [];
-        foreach ($sourceVersions as $version) {
-            $quantities = [
-                ...$quantities,
-                ...array_values(array_filter($this->models->currentDerivedQuantities(
-                    $organizationId,
-                    $projectId,
-                    $sessionId,
-                    $version,
-                    $this->budget->maxFacts,
-                ), static fn (DerivedQuantity $quantity): bool => $quantity->formulaVersion
-                    !== DeterministicGeometryCalculator::FORMULA_VERSION)),
-            ];
-        }
-        $quantities = [
-            ...$quantities,
-            ...$this->models->currentDerivedQuantitiesForFormulaVersion(
-                $organizationId,
-                $projectId,
-                $sessionId,
-                DeterministicGeometryCalculator::FORMULA_VERSION,
-                $this->budget->maxFacts,
-            ),
-        ];
-        $roleFingerprints = $this->models->completedSynthesisRoleFingerprints(
-            $organizationId,
-            $projectId,
-            $sessionId,
-            $sourceVersions,
-        );
-        $factIds = array_map(static fn (Fact $fact): string => $fact->id, $snapshot->facts);
-        $decisions = $this->models->decisionsForSelectedFacts($organizationId, $projectId, $sessionId, $factIds);
-        $synthesisInput = new ProjectSynthesisInput(
-            $organizationId,
-            $projectId,
-            $sessionId,
-            $sourceVersions,
-            array_map(static fn (Fact $fact): array => [
-                'id' => $fact->id,
-                'entity_id' => $fact->entityId,
-                'type' => $fact->type,
-                'value' => $fact->value,
-                'unit' => $fact->unit,
-                'status' => $fact->status,
-                'origin' => $fact->origin,
-                'evidence_ids' => $fact->evidenceIds,
-                'source_version' => $fact->sourceVersion,
-                'version' => $fact->version,
-                'current' => $fact->status !== 'invalidated',
-            ], $snapshot->facts),
-            array_map(static fn (DerivedQuantity $quantity): array => [
-                'id' => $quantity->id,
-                'logical_id' => $quantity->logicalId,
-                'entity_id' => $quantity->entityId,
-                'formula_identity' => $quantity->formulaIdentity,
-                'formula_version' => $quantity->formulaVersion,
-                'value' => $quantity->value,
-                'unit' => $quantity->unit,
-                'status' => $quantity->status,
-                'source_version' => $quantity->sourceVersion,
-                'exact_identity' => $quantity->exactIdentity,
-                'operand_fact_ids' => array_column($quantity->operands, 'fact_id'),
-            ], $quantities),
-            array_map(static fn ($decision): array => [
-                'id' => $decision->id,
-                'version' => $decision->version,
-                'selected_fact_id' => $decision->selectedFactId,
-            ], $decisions),
-            [
-                'arbiter' => $roleFingerprints['arbiter'],
-                'geometry_expert' => $roleFingerprints['geometry_expert'],
-            ],
-            RunProjectSynthesis::PROMPT_CONTRACT,
-            $wireScope,
-        );
+        $synthesisInput = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInputFactory($this->models))
+            ->capture($organizationId, $projectId, $sessionId, $snapshot, $this->budget->maxFacts, $wireScope);
         $sourceVersion = $synthesisInput->aggregateSourceVersion();
         $approvedParts = $allowModelCalls ? $this->allowance->partLimit($synthesisInput) : 0;
         $inputFingerprint = $approvedParts === null ? $synthesisInput->fingerprint()

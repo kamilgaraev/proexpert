@@ -25,7 +25,7 @@ final readonly class EstimatorCreditOperations
 {
     public function __construct(private Connection $database, private AICreditService $credits,
         private EstimateGenerationActionAuthorization $authorization, private AiPricingCatalog $prices,
-        private EstimatorProcessingPlan $plans, private EvaluationInputFingerprint $inputs) {}
+        private EstimatorProcessingPlan $plans, private EvaluationInputFingerprint $inputs, private EstimatorKnownContextSnapshot $knownInputs) {}
 
     public function quote(User $actor, int $projectId, int $sessionId, int $stateVersion, string $requestId, string $kind, array $parameters = []): array
     {
@@ -122,6 +122,13 @@ final readonly class EstimatorCreditOperations
         if ((int) $session->state_version !== $stateVersion || ! hash_equals($operation->input_hash, $this->inputs->fromSession($session))) {
             throw new StaleEstimateGenerationState((int) $session->id, $stateVersion);
         }
+        if (isset($plan['known_context']) && is_array($plan['known_context'])) {
+            $current = $this->knownInputs->capture($session, (bool) $plan['complex'], $plan['text_payload_policy'] ?? null,
+                $plan['operation_parameters']['local_estimate_key'] ?? null, $plan['known_context']['role_limits'] ?? null);
+            if (! hash_equals((string) $plan['known_context']['fingerprint'], $current['fingerprint'])) {
+                throw new DomainException('estimator_known_context_changed');
+            }
+        }
         $identity = json_decode($operation->credit_request, true, 64, JSON_THROW_ON_ERROR);
         $request = $this->request($identity);
         $reservation = $this->credits->beginEstimator(Organization::query()->findOrFail($session->organization_id), $actor, $quoteId, $request);
@@ -174,8 +181,15 @@ final readonly class EstimatorCreditOperations
         $workItems = min(2000, max(32, $this->database->table('estimate_generation_quantity_takeoffs')->where('session_id', $session->id)
             ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)->count() * 3,
             count($session->input_payload['selected_sections'] ?? []) * 32));
-        $plan = $this->plans->build($kind, $rasterUnits, $workItems, count($manifest) > 1 || ($session->input_payload['profile_id'] ?? null) === 'industrial', $tariff,
-            ($session->input_payload['regional_context']['normative_rerank_requested'] ?? null) === true);
+        $complex = count($manifest) > 1 || ($session->input_payload['profile_id'] ?? null) === 'industrial';
+        $known = in_array($kind, ['documents', 'dialogue'], true) ? null : $this->knownInputs->capture($session, $complex,
+            localEstimateKey: $parameters['local_estimate_key'] ?? null);
+        $workItems = max($workItems, $known['known_work_count'] ?? 0);
+        $plan = $this->plans->build($kind, $rasterUnits, $workItems, $complex, $tariff,
+            ($session->input_payload['regional_context']['normative_rerank_requested'] ?? null) === true, $known['part_limits'] ?? []);
+        if ($known !== null) {
+            $plan['known_context'] = $known;
+        }
         $plan['documents'] = $manifest;
         if ($parameters !== []) {
             $plan['operation_parameters'] = $parameters;

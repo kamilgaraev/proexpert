@@ -13,13 +13,24 @@ use DomainException;
 /** Finite server-owned ceilings. Unplanned expansion requires a separate approved operation. */
 final class EstimatorProcessingPlan
 {
-    public function build(string $kind, int $rasterUnits, int $workItems, bool $complex, AiPriceSnapshot $tariff, bool $rerank = false): array
+    public function build(string $kind, int $rasterUnits, int $workItems, bool $complex, AiPriceSnapshot $tariff, bool $rerank = false, array $knownPartLimits = []): array
     {
         if (! in_array($kind, ['generation', 'analysis', 'dialogue', 'documents', 'rebuild'], true)
             || $rasterUnits < 0 || $rasterUnits > 500 || $workItems < 0 || $workItems > 2000) {
             throw new DomainException('estimator_processing_plan_limit');
         }
         $roles = [];
+        if (array_diff(array_keys($knownPartLimits), ['composer', 'audit', 'synthesis']) !== []) {
+            throw new DomainException('estimator_processing_plan_part_limit_invalid');
+        }
+        foreach ($knownPartLimits as $parts) {
+            if (! is_int($parts) || $parts < 0 || $parts > 512) {
+                throw new DomainException('estimator_processing_plan_part_limit_invalid');
+            }
+        }
+        $baselineParts = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
+        $composerParts = max($baselineParts, $knownPartLimits['composer'] ?? 0);
+        $auditParts = max($baselineParts, $knownPartLimits['audit'] ?? 0);
         $synthesisParts = 0;
         if ($kind === 'dialogue') {
             $roles['estimate_dialogue_interpretation'] = $this->role(3, 80000, 2048, $tariff);
@@ -33,17 +44,16 @@ final class EstimatorProcessingPlan
                     (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);
             }
             if ($complex && $kind !== 'documents') {
-                $synthesisParts = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
+                $synthesisParts = max($baselineParts, $knownPartLimits['synthesis'] ?? 0);
                 $roles['project_synthesis'] = $this->role($synthesisParts * 3, (int) config('estimate-generation.project_engineer.max_input_bytes', 524288),
                     (int) config('estimate-generation.project_engineer.max_output_tokens', 4096), $tariff);
             }
             if ($kind !== 'documents') {
-                $chunks = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
-                $roles['estimate_composition'] = $this->role($chunks * 3, (int) config('estimate-generation.estimate_composer.max_input_bytes', 524288),
+                $roles['estimate_composition'] = $this->role($composerParts * 3, (int) config('estimate-generation.estimate_composer.max_input_bytes', 524288),
                     (int) config('estimate-generation.estimate_composer.max_output_tokens', 8192), $tariff);
-                $roles['estimate_audit'] = $this->role($chunks * 9, (int) config('estimate-generation.estimate_auditor.max_input_bytes', 2097152),
+                $roles['estimate_audit'] = $this->role($auditParts * 9, (int) config('estimate-generation.estimate_auditor.max_input_bytes', 2097152),
                     (int) config('estimate-generation.estimate_auditor.max_output_tokens', 8192), $tariff);
-                $roles['estimate_composer_correction'] = $this->role($chunks * 6, (int) config('estimate-generation.estimate_composer.max_input_bytes', 524288),
+                $roles['estimate_composer_correction'] = $this->role($auditParts * 6, (int) config('estimate-generation.estimate_composer.max_input_bytes', 524288),
                     (int) config('estimate-generation.estimate_composer.max_output_tokens', 8192), $tariff);
                 if ($rerank) {
                     $roles['rerank'] = $this->role(max(1, $workItems) * 3, 12000, 800, $tariff);
@@ -64,9 +74,9 @@ final class EstimatorProcessingPlan
             'maximum_calls' => $calls, 'maximum_provider_cost_micro_rub' => $maximum->toInt(),
             'raster_units' => $rasterUnits, 'work_item_limit' => $workItems, 'complex' => $complex, 'rerank' => $rerank,
             'audit_part_limit' => $kind === 'documents' || $kind === 'dialogue' ? 0
-                : \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems),
+                : $auditParts,
             'composer_part_limit' => $kind === 'documents' || $kind === 'dialogue' ? 0
-                : \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems),
+                : $composerParts,
             'synthesis_part_limit' => isset($roles['project_synthesis']) ? $synthesisParts : 0];
     }
 
@@ -77,8 +87,7 @@ final class EstimatorProcessingPlan
         }
         if (! $image) {
             $policy = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::capture();
-            $inputCeiling = min($inputCeiling + \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::SYSTEM_HEADROOM_BYTES,
-                $policy['maximum_serialized_input_bytes']);
+            $inputCeiling = \App\BusinessModules\Addons\EstimateGeneration\Observability\EstimatorTextWirePolicy::forInputCeiling($policy, $inputCeiling)['maximum_serialized_input_bytes'];
             $outputCeiling = min($outputCeiling, $policy['token_limits']['output_tokens']);
         }
         $cost = (new AiCostCalculator)->calculate($image ? $inputCeiling + 1024 : $inputCeiling, 0, $outputCeiling, 0,

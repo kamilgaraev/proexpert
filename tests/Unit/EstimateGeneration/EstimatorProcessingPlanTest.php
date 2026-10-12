@@ -79,6 +79,31 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(9, $plan['roles']['project_synthesis']['max_calls']);
     }
 
+    public function test_measured_context_parts_raise_both_call_allowances_and_the_frozen_money_reserve(): void
+    {
+        $baseline = (new EstimatorProcessingPlan)->build('generation', 0, 32, true, $this->tariff());
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 32, true, $this->tariff(), false,
+            ['composer' => 4, 'audit' => 3, 'synthesis' => 2]);
+        self::assertSame(4, $plan['composer_part_limit']);
+        self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(2, $plan['synthesis_part_limit']);
+        self::assertSame(12, $plan['roles']['estimate_composition']['max_calls']);
+        self::assertSame(27, $plan['roles']['estimate_audit']['max_calls']);
+        self::assertSame(18, $plan['roles']['estimate_composer_correction']['max_calls']);
+        self::assertSame(6, $plan['roles']['project_synthesis']['max_calls']);
+        self::assertSame(63, $plan['maximum_calls']);
+        self::assertGreaterThan($baseline['maximum_provider_cost_micro_rub'], $plan['maximum_provider_cost_micro_rub']);
+    }
+
+    public function test_measured_parts_cannot_reduce_the_unknown_input_allowance(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff(), false,
+            ['composer' => 1, 'audit' => 0, 'synthesis' => 1]);
+        self::assertSame(3, $plan['composer_part_limit']);
+        self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(0, $plan['synthesis_part_limit']);
+    }
+
     private function tariff(): AiPriceSnapshot
     {
         return AiPriceSnapshot::fromArray(['input_per_million' => '13.5', 'cached_input_per_million' => '13.5',
