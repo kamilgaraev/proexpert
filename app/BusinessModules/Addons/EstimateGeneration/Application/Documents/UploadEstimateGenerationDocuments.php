@@ -4,72 +4,57 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\Models\User;
-use DomainException;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
-use Throwable;
+use Illuminate\Validation\ValidationException;
 
 final class UploadEstimateGenerationDocuments
 {
     public function __construct(
-        private EstimateGenerationMutationPolicy $policy,
         private DocumentParsingService $parsing,
         private DocumentGenerationReadinessService $readiness,
         private EffectiveSettingsResolver $settingsResolver,
-        private EstimateGenerationActionAuthorization $authorizer,
+        private DocumentAdmissionOperation $admission,
     ) {}
 
     /** @param list<UploadedFile> $files */
-    public function handle(EstimateGenerationSession $session, int $expectedVersion, array $files, User $user): UploadDocumentsResult
+    public function handle(EstimateGenerationSession $session, int $expectedVersion, array $files, User $user, ?string $requestId = null): UploadDocumentsResult
     {
-        if (DB::transactionLevel() !== 0) {
-            throw new \LogicException('document_upload_requires_operation_transaction_boundary');
-        }
-        $batch = new UnpublishedDocumentObjectBatch((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
-        $created = collect();
-        try {
-            return DB::transaction(function () use ($session, $expectedVersion, $files, $user, &$created, $batch): UploadDocumentsResult {
-                $session = EstimateGenerationSession::query()->whereKey($session->getKey())
-                    ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
-                    ->lockForUpdate()->firstOrFail();
-                $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
-                $this->policy->documents($session, $expectedVersion);
+        $manifest = array_map(static fn (UploadedFile $file): array => ['sha256' => hash_file('sha256', $file->getPathname()),
+            'size' => $file->getSize(), 'name' => $file->getClientOriginalName(), 'mime' => $file->getClientMimeType()], $files);
+        $hash = hash('sha256', json_encode($manifest, JSON_THROW_ON_ERROR));
+
+        return $this->admission->run($session, $expectedVersion, $user, $requestId, 'upload', $hash,
+            function (EstimateGenerationSession $current) use ($files, $expectedVersion): PreparedDocumentAdmission {
                 $settings = $this->settingsResolver->forOperation(
-                    AiOperationContext::deterministicId("upload|{$session->id}|{$expectedVersion}"),
-                    (int) $session->organization_id,
-                    (int) $session->id,
+                    AiOperationContext::deterministicId("upload|{$current->id}|{$expectedVersion}"),
+                    (int) $current->organization_id, (int) $current->id,
                 );
-                $existingFiles = $session->documents()->count();
-                if ($existingFiles + count($files) > $settings->maxFiles()) {
-                    throw new DomainException('estimate_generation_document_file_limit_exceeded');
+                if ($files === [] || count($files) > 10 || $current->documents()->count() + count($files) > $settings->maxFiles()) {
+                    throw ValidationException::withMessages(['files' => trans_message('estimate_evaluation.document_file_limit_exceeded',
+                        ['limit' => $settings->maxFiles()])]);
                 }
                 foreach ($files as $file) {
                     (new DocumentFileAdmission)->uploaded($file, $settings);
                 }
-                $documents = $this->parsing->storeParsedDocuments($session, $files, $user, $batch);
-                $created = $documents;
-                $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
-                $session = $session->fresh(['documents']) ?? $session->load('documents');
+
+                return PreparedDocumentAdmission::upload($current, $files);
+            },
+            function (EstimateGenerationSession $current, PreparedDocumentAdmission $prepared, UnpublishedDocumentObjectBatch $batch) use ($files, $user): UploadDocumentsResult {
+                $documents = $this->parsing->storeParsedDocuments($current, $files, $user, $batch, $prepared->objects);
+                $current = $current->fresh(['documents']) ?? $current->load('documents');
                 if ($documents->isNotEmpty()) {
-                    $session->forceFill(['input_payload' => [...($session->input_payload ?? []),
+                    $current->forceFill(['input_payload' => [...($current->input_payload ?? []),
                         ...EstimateGenerationExecutionActor::identity($user)]])->saveQuietly();
                 }
 
-                return new UploadDocumentsResult($documents, $this->readiness->evaluate($session)['summary']);
-            }, 1);
-        } catch (Throwable $exception) {
-            $this->parsing->rollbackStoredDocuments($session, $created);
-            app(UnpublishedDocumentCleanupJournal::class)->recordBatch($batch);
-            throw $exception;
-        }
+                return new UploadDocumentsResult($documents, $this->readiness->evaluate($current)['summary']);
+            });
     }
 }

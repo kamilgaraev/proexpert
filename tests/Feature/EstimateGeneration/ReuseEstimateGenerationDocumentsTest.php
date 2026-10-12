@@ -18,9 +18,14 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use App\Services\Storage\FileService;
+use GuzzleHttp\Psr7\Response;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Mockery\MockInterface;
+use Psr\Http\Message\RequestInterface;
 use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
+use Tests\Support\EstimateGeneration\InMemoryS3HttpStorage;
 
 final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanonicalPostgresTestCase
 {
@@ -33,14 +38,23 @@ final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanon
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $source = $this->makeSession($organization, $project, $user);
         $target = $this->makeSession($organization, $project, $user);
+        $copies = 0;
+        (new InMemoryS3HttpStorage)->install(static function (RequestInterface $request) use (&$copies): ?Response {
+            if ($request->getMethod() === 'PUT' && $request->getHeaderLine('x-amz-copy-source') !== '') {
+                $copies++;
+            }
+
+            return null;
+        });
+        $jpeg = UploadedFile::fake()->image('first-floor.jpg', 1, 1);
         $sourceDocuments = collect([
-            $this->makeDocument($source, 'first-floor.jpg', 'jpg', 1024, str_repeat('a', 64)),
-            $this->makeDocument($source, 'house.dwg', 'dwg', 2048, str_repeat('b', 64)),
+            $this->makeDocument($source, 'first-floor.jpg', 'jpg', file_get_contents($jpeg->getPathname())),
+            $this->makeDocument($source, 'house.dwg', 'dwg', file_get_contents(base_path('tests/Fixtures/EstimateGeneration/Vision/simple-house.dwg'))),
         ]);
         $this->app->instance(EffectiveSettingsResolver::class, $this->settingsResolver((int) $organization->id));
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($organization, $project, $user): void {
             $mock->shouldReceive('canCurrent')
-                ->times(4)
+                ->times(6)
                 ->withArgs(static fn (User $actor, string $permission, array $scope): bool => (int) $actor->id === (int) $user->id && $permission === 'estimate_generation.upload_documents'
                     && $scope === [
                         'organization_id' => (int) $organization->id,
@@ -48,23 +62,6 @@ final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanon
                     ])
                 ->andReturnTrue();
         });
-        $copyIndex = 0;
-        $this->mock(FileService::class, function (MockInterface $mock) use (&$copyIndex, $sourceDocuments): void {
-            $mock->shouldReceive('duplicateEstimateGenerationObject')
-                ->twice()
-                ->andReturnUsing(function (string $sourcePath, string $destinationPath) use (&$copyIndex, $sourceDocuments): array {
-                    $document = $sourceDocuments[$copyIndex++];
-                    self::assertSame($document->storage_path, $sourcePath);
-                    self::assertStringContainsString('/estimate-generation/sessions/', $destinationPath);
-
-                    return [
-                        'path' => $destinationPath,
-                        'size' => (int) $document->file_size_bytes,
-                        'version_id' => 'version-'.$copyIndex,
-                    ];
-                });
-        });
-
         $result = app(ReuseEstimateGenerationDocuments::class)->handle(
             $target,
             (int) $target->state_version,
@@ -73,6 +70,7 @@ final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanon
         );
 
         self::assertCount(2, $result->documents);
+        self::assertSame(2, $copies);
         self::assertSame(2, $target->documents()->count());
         $cloned = $target->documents()->orderBy('id')->get();
         self::assertSame(['queued', 'queued'], $cloned->pluck('status')->all());
@@ -91,6 +89,7 @@ final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanon
         );
 
         self::assertCount(0, $second->documents);
+        self::assertSame(2, $copies);
         self::assertSame(2, $target->documents()->count());
         Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, 2);
     }
@@ -114,9 +113,13 @@ final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanon
         EstimateGenerationSession $session,
         string $filename,
         string $extension,
-        int $size,
-        string $checksum,
+        string $content,
     ): EstimateGenerationDocument {
+        $size = strlen($content);
+        $checksum = hash('sha256', $content);
+        $path = 'org-'.$session->organization_id.'/estimate-generation/sessions/'.$session->id.'/documents/'.Str::uuid().'.'.$extension;
+        app(FileService::class)->putImmutable($path, $content, $extension === 'jpg' ? 'image/jpeg' : 'image/vnd.dwg');
+
         return EstimateGenerationDocument::query()->create([
             'session_id' => $session->id,
             'organization_id' => $session->organization_id,
@@ -124,13 +127,7 @@ final class ReuseEstimateGenerationDocumentsTest extends EstimateGenerationCanon
             'user_id' => $session->user_id,
             'filename' => $filename,
             'mime_type' => $extension === 'jpg' ? 'image/jpeg' : 'image/vnd.dwg',
-            'storage_path' => sprintf(
-                'org-%d/estimate-generation/sessions/%d/documents/%s.%s',
-                $session->organization_id,
-                $session->id,
-                $checksum,
-                $extension,
-            ),
+            'storage_path' => $path,
             'status' => 'ready',
             'processing_stage' => 'completed',
             'progress_percent' => 100,

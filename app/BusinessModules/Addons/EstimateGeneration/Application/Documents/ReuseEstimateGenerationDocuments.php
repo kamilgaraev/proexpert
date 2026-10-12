@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationExecutionActor;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -14,96 +12,64 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Throwable;
 
 final class ReuseEstimateGenerationDocuments
 {
     public function __construct(
-        private EstimateGenerationMutationPolicy $policy,
         private DocumentParsingService $parsing,
         private DocumentGenerationReadinessService $readiness,
         private EffectiveSettingsResolver $settingsResolver,
-        private EstimateGenerationActionAuthorization $authorizer,
+        private DocumentAdmissionOperation $admission,
     ) {}
 
-    public function handle(
-        EstimateGenerationSession $session,
-        int $expectedVersion,
-        int $sourceSessionId,
-        User $user,
-    ): UploadDocumentsResult {
-        if (DB::transactionLevel() !== 0) {
-            throw new \LogicException('document_reuse_requires_operation_transaction_boundary');
-        }
-        $batch = new UnpublishedDocumentObjectBatch((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
-        $created = collect();
-        try {
-            return DB::transaction(function () use ($session, $expectedVersion, $sourceSessionId, $user, &$created, $batch): UploadDocumentsResult {
-                $session = EstimateGenerationSession::query()->whereKey($session->getKey())
-                    ->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
-                    ->lockForUpdate()->firstOrFail();
-                $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
-                $this->policy->documents($session, $expectedVersion);
-                if ($sourceSessionId === (int) $session->id) {
+    public function handle(EstimateGenerationSession $session, int $expectedVersion, int $sourceSessionId,
+        User $user, ?string $requestId = null): UploadDocumentsResult
+    {
+        return $this->admission->run($session, $expectedVersion, $user, $requestId, 'reuse',
+            hash('sha256', (string) $sourceSessionId),
+            function (EstimateGenerationSession $current) use ($sourceSessionId, $expectedVersion): PreparedDocumentAdmission {
+                if ($sourceSessionId === (int) $current->id) {
                     throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_same_session']);
                 }
-
-                $sourceSession = EstimateGenerationSession::query()
-                    ->whereKey($sourceSessionId)
-                    ->where('organization_id', $session->organization_id)
-                    ->where('project_id', $session->project_id)
-                    ->first();
+                $sourceSession = EstimateGenerationSession::query()->whereKey($sourceSessionId)
+                    ->where('organization_id', $current->organization_id)->where('project_id', $current->project_id)->first();
                 if ($sourceSession === null) {
                     throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_not_found']);
                 }
-
-                $sourceDocuments = $sourceSession->documents()
-                    ->whereNotIn('status', ['ignored'])
-                    ->whereNotNull('storage_path')
-                    ->whereNotNull('checksum_sha256')
-                    ->orderBy('id')
-                    ->get();
+                $sourceDocuments = $sourceSession->documents()->whereNotIn('status', ['ignored'])->whereNotNull('storage_path')
+                    ->whereNotNull('checksum_sha256')->orderBy('id')->get();
                 if ($sourceDocuments->isEmpty()) {
                     throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_source_empty']);
                 }
-
                 $settings = $this->settingsResolver->forOperation(
-                    AiOperationContext::deterministicId("reuse|{$session->id}|{$sourceSessionId}|{$expectedVersion}"),
-                    (int) $session->organization_id,
-                    (int) $session->id,
+                    AiOperationContext::deterministicId("reuse|{$current->id}|{$sourceSessionId}|{$expectedVersion}"),
+                    (int) $current->organization_id, (int) $current->id,
                 );
-                $existingDocuments = $session->documents()->get(['meta']);
-                $existingSourceIds = $existingDocuments
-                    ->map(static fn (EstimateGenerationDocument $document): int => (int) ($document->meta['reused_from_document_id'] ?? 0))
-                    ->filter(static fn (int $documentId): bool => $documentId > 0)
-                    ->all();
-                $missingDocuments = $sourceDocuments
-                    ->reject(static fn (EstimateGenerationDocument $document): bool => in_array((int) $document->id, $existingSourceIds, true))
-                    ->values();
-                if ($existingDocuments->count() + $missingDocuments->count() > $settings->maxFiles()) {
+                $existing = $current->documents()->get(['meta']);
+                $sourceIds = $existing->map(static fn (EstimateGenerationDocument $document): int => (int) ($document->meta['reused_from_document_id'] ?? 0))->filter(static fn (int $id): bool => $id > 0)->all();
+                $missing = $sourceDocuments->reject(static fn (EstimateGenerationDocument $document): bool => in_array((int) $document->id, $sourceIds, true))->values();
+                if ($existing->count() + $missing->count() > $settings->maxFiles()) {
                     throw ValidationException::withMessages(['source_session_id' => 'estimate_generation_document_file_limit_exceeded']);
                 }
-                foreach ($missingDocuments as $document) {
+                foreach ($missing as $document) {
                     (new DocumentFileAdmission)->stored($document, $settings);
                 }
 
-                $documents = $this->parsing->reuseDocuments($session, $missingDocuments, $user, $batch);
-                $created = $documents;
-                $this->authorizer->authorize($user, $session, 'estimate_generation.upload_documents');
-                $session = $session->fresh(['documents']) ?? $session->load('documents');
+                return PreparedDocumentAdmission::reuse($current, $missing);
+            },
+            function (EstimateGenerationSession $current, PreparedDocumentAdmission $prepared, UnpublishedDocumentObjectBatch $batch) use ($user): UploadDocumentsResult {
+                if ($prepared->sources === null) {
+                    throw new \LogicException('document_reuse_prepared_sources_missing');
+                }
+                $documents = $this->parsing->reuseDocuments($current, $prepared->sources, $user, $batch, $prepared->objects);
+                $current = $current->fresh(['documents']) ?? $current->load('documents');
                 if ($documents->isNotEmpty()) {
-                    $session->forceFill(['input_payload' => [...($session->input_payload ?? []),
+                    $current->forceFill(['input_payload' => [...($current->input_payload ?? []),
                         ...EstimateGenerationExecutionActor::identity($user)]])->saveQuietly();
                 }
 
-                return new UploadDocumentsResult($documents, $this->readiness->evaluate($session)['summary']);
-            }, 1);
-        } catch (Throwable $exception) {
-            $this->parsing->rollbackStoredDocuments($session, $created);
-            app(UnpublishedDocumentCleanupJournal::class)->recordBatch($batch);
-            throw $exception;
-        }
+                return new UploadDocumentsResult($documents, $this->readiness->evaluate($current)['summary']);
+            });
     }
 }

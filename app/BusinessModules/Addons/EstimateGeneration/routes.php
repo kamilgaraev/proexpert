@@ -33,6 +33,7 @@ Route::middleware([
         Route::get('/{session}/documents', [EstimateGenerationDocumentController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.index');
         Route::post('/{session}/documents', [EstimateGenerationDocumentController::class, 'upload'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.store');
         Route::post('/{session}/documents/reuse', [EstimateGenerationDocumentController::class, 'reuse'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.reuse');
+        Route::get('/{session}/document-admissions/{requestId}', [\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentAdmissionController::class, 'show'])->whereUuid('requestId')->middleware('authorize:estimate_generation.view,project,project')->name('documents.admission');
         Route::get('/{session}/documents/{document}', [EstimateGenerationDocumentController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.show');
         Route::post('/{session}/documents/{document}/retry', [EstimateGenerationDocumentController::class, 'retry'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.retry');
         Route::post('/{session}/documents/{document}/stop', [EstimateGenerationDocumentController::class, 'stop'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.stop');

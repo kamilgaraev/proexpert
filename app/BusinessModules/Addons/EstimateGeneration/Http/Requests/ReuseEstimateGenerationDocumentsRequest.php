@@ -20,6 +20,7 @@ final class ReuseEstimateGenerationDocumentsRequest extends FormRequest
     {
         return [
             'state_version' => ['required', 'integer', 'min:0'],
+            'request_id' => ['sometimes', 'required', 'uuid'],
             'source_session_id' => ['required', 'integer', 'min:1'],
         ];
     }

@@ -47,6 +47,11 @@ final class InMemoryS3HttpStorage
         $key = substr($path, strlen($prefix));
         parse_str($request->getUri()->getQuery(), $query);
         $method = $request->getMethod();
+        if ($method === 'GET' && array_key_exists('acl', $query)) {
+            return $this->response($request, isset($this->objects[$key])
+                ? new Response(200, ['Content-Type' => 'application/xml'], '<AccessControlPolicy xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>fixture-owner</ID></Owner><AccessControlList><Grant><Grantee xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CanonicalUser"><ID>fixture-owner</ID></Grantee><Permission>FULL_CONTROL</Permission></Grant></AccessControlList></AccessControlPolicy>')
+                : new Response(404, ['Content-Type' => 'application/xml'], '<Error><Code>NoSuchKey</Code></Error>'));
+        }
         if ($method === 'PUT' && array_key_exists('tagging', $query)) {
             return $this->response($request, new Response(isset($this->objects[$key]) ? 200 : 404));
         }
@@ -55,11 +60,26 @@ final class InMemoryS3HttpStorage
                 return $this->response($request, new Response(412, ['Content-Type' => 'application/xml'],
                     '<Error><Code>PreconditionFailed</Code><Message>Object exists</Message></Error>'));
             }
-            $body = (string) $request->getBody();
+            $copySource = $request->getHeaderLine('x-amz-copy-source');
+            if ($copySource !== '') {
+                $sourceKey = preg_replace('~^/?'.self::BUCKET.'/~', '', rawurldecode($copySource));
+                $source = $this->objects[$sourceKey] ?? null;
+                if ($source === null) {
+                    return $this->response($request, new Response(404, ['Content-Type' => 'application/xml'], '<Error><Code>NoSuchKey</Code></Error>'));
+                }
+                $body = $source['body'];
+            } else {
+                $body = (string) $request->getBody();
+            }
             $headers = ['ETag' => '"'.hash('sha256', $body).'"', 'Content-Length' => (string) strlen($body),
                 'Content-Type' => $request->getHeaderLine('Content-Type') ?: 'application/octet-stream',
                 'Last-Modified' => 'Mon, 12 Oct 2026 00:00:00 GMT', 'x-amz-version-id' => hash('sha256', $key.'|'.$body)];
             $this->objects[$key] = ['body' => $body, 'headers' => $headers];
+
+            if ($copySource !== '') {
+                return Create::promiseFor(new Response(200, ['Content-Type' => 'application/xml', 'x-amz-version-id' => $headers['x-amz-version-id']],
+                    '<CopyObjectResult><LastModified>2026-10-12T00:00:00Z</LastModified><ETag>'.htmlspecialchars($headers['ETag'], ENT_XML1).'</ETag></CopyObjectResult>'));
+            }
 
             return Create::promiseFor(new Response(200, ['ETag' => $headers['ETag'], 'x-amz-version-id' => $headers['x-amz-version-id']]));
         }
