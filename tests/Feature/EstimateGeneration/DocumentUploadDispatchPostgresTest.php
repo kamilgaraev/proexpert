@@ -69,8 +69,57 @@ final class DocumentUploadDispatchPostgresTest extends EstimateGenerationCanonic
         self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
     }
 
+    public function test_recovery_continues_after_queue_failure_and_does_not_dispatch_cancelled_sessions(): void
+    {
+        (new InMemoryS3HttpStorage)->install();
+        $this->seedGlobalSettings();
+        config(['cache.default' => 'array']);
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $actor = User::factory()->create(['is_active' => true, 'current_organization_id' => $organization->id]);
+        $actor->organizations()->attach($organization->id, ['is_active' => true, 'project_access_mode' => 'all_projects']);
+        $permissions = Mockery::mock(AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+            'user_id' => $actor->id, 'status' => 'draft', 'state_version' => 0, 'input_payload' => []]);
+        Queue::fake();
+        $bytes = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
+        $result = app(UploadEstimateGenerationDocuments::class)->handle($session, 0,
+            [UploadedFile::fake()->createWithContent('first.pdf', $bytes), UploadedFile::fake()->createWithContent('second.pdf', $bytes)], $actor);
+        $documents = $result->documents->sortBy('id')->values();
+        $attempts = $documents->map(static fn ($document): string => $document->meta['processing_attempt_id'])->all();
+        DB::table('estimate_generation_documents')->where('session_id', $session->id)->update(['updated_at' => now()->subMinutes(3)]);
+        $originalDispatcher = app(Dispatcher::class);
+        $dispatcher = Mockery::mock(Dispatcher::class);
+        $dispatcher->shouldReceive('dispatch')->once()->ordered()->andThrow(new \RuntimeException('queue-canary signed-private-url'));
+        $dispatcher->shouldReceive('dispatch')->once()->ordered()->andReturnNull();
+        $this->app->instance(Dispatcher::class, $dispatcher);
+        Log::spy();
+        try {
+            self::assertSame(1, app(RecoverStalledEstimateGenerationDocuments::class)->handle());
+        } finally {
+            $this->app->instance(Dispatcher::class, $originalDispatcher);
+        }
+        Log::shouldHaveReceived('warning')->with('estimate_generation.document_manifest_recovery_deferred', Mockery::on(
+            static fn (array $context): bool => $context['failure_code'] === 'document_queue_unavailable'
+                && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), 'canary')
+                && ! str_contains(json_encode($context, JSON_THROW_ON_ERROR), 'signed-private-url')))->once();
+        self::assertSame($attempts, $documents->map(static fn ($document): string => $document->fresh()->meta['processing_attempt_id'])->all());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        DB::table('estimate_generation_sessions')->where('id', $session->id)->update(['status' => 'cancelled']);
+        DB::table('estimate_generation_documents')->where('session_id', $session->id)->update(['updated_at' => now()->subMinutes(3)]);
+        Queue::fake();
+        self::assertSame(0, app(RecoverStalledEstimateGenerationDocuments::class)->handle());
+        Queue::assertNothingPushed();
+    }
+
     private function seedGlobalSettings(): void
     {
+        if (DB::table('estimate_generation_setting_snapshots')->where('scope', 'global')->whereNull('organization_id')->exists()) {
+            return;
+        }
+
         $snapshot = \App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData::fromArray([
             'scope' => 'global', 'organization_id' => null, 'expected_version' => 0, 'idempotency_key' => (string) \Illuminate\Support\Str::ulid(),
             'models' => ['vision' => 'openai/gpt-6-luna', 'classification' => 'openai/gpt-6-luna', 'normative_matching' => 'openai/gpt-6-luna'],
