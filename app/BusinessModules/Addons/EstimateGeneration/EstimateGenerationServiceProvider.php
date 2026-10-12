@@ -13,10 +13,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditIn
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\TimewebEstimateAuditModel;
-use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\EstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposer;
+use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\RunEstimateComposerCorrection;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Composition\TimewebEstimateComposerModel;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore;
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\EloquentAiRoleRunRepository;
@@ -780,6 +780,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureRecorderObserver::class, SafeLogFailureRecorderObserver::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishUniversalEvaluation::class);
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
         $this->app->singleton(PipelineDefinitionGraph::class, static fn (): PipelineDefinitionGraph => PipelineDefinitionGraph::standard());
         $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);
@@ -796,6 +797,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             ),
         );
         $this->app->singleton(GenerationPipelineDataGateway::class, EloquentGenerationPipelineDataGateway::class);
+        $this->app->singleton(ResolvePricesStage::class, fn ($app) => new ResolvePricesStage(
+            $app->make(EstimatePricingService::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveCommercialWorkPrice::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationActionAuthorization::class),
+        ));
         $this->app->singleton(PipelineRegistry::class, fn ($app) => new PipelineRegistry([
             $app->make(UnderstandDocumentsStage::class),
             $app->make(UnderstandObjectStage::class),

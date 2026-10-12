@@ -245,7 +245,8 @@ final class RequestEstimateGeneration
     /** @param array<string, mixed> $summary */
     private function hasInput(EstimateGenerationSession $session, array $summary): bool
     {
-        return trim((string) ($session->input_payload['description'] ?? '')) !== '' || (int) ($summary['ready_count'] ?? 0) > 0;
+        return trim((string) ($session->input_payload['description'] ?? '')) !== '' || (int) ($summary['ready_count'] ?? 0) > 0
+            || ($summary['manual_input_available'] ?? false) === true;
     }
 
     /** @param array<string, mixed> $summary */

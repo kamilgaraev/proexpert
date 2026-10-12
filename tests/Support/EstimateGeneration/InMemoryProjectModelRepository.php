@@ -151,7 +151,20 @@ final class InMemoryProjectModelRepository implements ProjectModelRepository
                 throw new InvalidArgumentException('Fact expected.');
             }
             $this->facts[$this->recordKey($fact)] = $fact;
-            if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true)) {
+            $identityCandidate = false;
+            if ($fact->status === 'candidate' && $fact->type === 'room_name' && $fact->unit === null
+                && $fact->evidenceIds !== [] && is_string($fact->value) && trim($fact->value) !== '' && mb_strlen($fact->value) <= 240) {
+                foreach ($this->entities as $entity) {
+                    if ($this->scope($entity) === $this->scope($fact) && $entity->sourceVersion === $fact->sourceVersion
+                        && $entity->id === $fact->entityId && $entity->type === 'room'
+                        && ($entity->attributes['semantic_type'] ?? null) === 'room'
+                        && ($entity->attributes['identity_only'] ?? null) === true
+                        && ($entity->attributes['requires_confirmation'] ?? null) === true) {
+                        $identityCandidate = true;
+                    }
+                }
+            }
+            if (in_array($fact->status, ['confirmed', 'conflicted', 'unresolved'], true) || $identityCandidate) {
                 $this->projection[$this->logicalKey($fact)] = $fact->id;
             }
         }

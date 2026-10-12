@@ -606,6 +606,68 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertArrayNotHasKey('prompt', $snapshot->scopeSummary['arbiter_review']);
     }
 
+    #[Test]
+    public function universal_manual_draft_exposes_generation_and_navigation_without_fictitious_documents(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::Draft);
+        $session->input_payload = ['evaluation_mode' => 'universal', 'description' => 'Ремонт комнаты'];
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['can_generate' => true, 'blockers' => [], 'warnings' => []],
+            documentsSummary: ['total' => 0, 'manual_input_available' => true],
+        );
+
+        self::assertContains('generate', array_column($snapshot->availableActions, 'action'));
+        self::assertTrue($snapshot->canGenerate);
+        self::assertSame('draft', $snapshot->recommendedStep);
+        self::assertTrue($snapshot->workflowSteps[3]['available']);
+        self::assertSame(0, $snapshot->documentsSummary['total']);
+    }
+
+    #[Test]
+    public function universal_manual_input_does_not_grant_generation_permission(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::Draft);
+        $session->input_payload = ['evaluation_mode' => 'universal'];
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session, permissions: ['estimate_generation.view'],
+            readinessSummary: ['can_generate' => true, 'blockers' => [], 'warnings' => []],
+            documentsSummary: ['total' => 0, 'manual_input_available' => true],
+        );
+
+        self::assertNotContains('generate', array_column($snapshot->availableActions, 'action'));
+    }
+
+    #[Test]
+    public function universal_pending_documents_keep_manual_draft_unavailable(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::Draft);
+        $session->input_payload = ['evaluation_mode' => 'universal'];
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session, permissions: ['estimate_generation.generate'],
+            readinessSummary: ['can_generate' => false, 'blockers' => [], 'warnings' => []],
+            documentsSummary: ['total' => 1, 'pending' => 1, 'manual_input_available' => true],
+        );
+
+        self::assertNotContains('generate', array_column($snapshot->availableActions, 'action'));
+        self::assertFalse($snapshot->workflowSteps[3]['available']);
+    }
+
+    #[Test]
+    public function universal_unevaluated_readiness_never_exposes_regeneration(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::Cancelled);
+        $session->input_payload = ['evaluation_mode' => 'universal'];
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session, permissions: ['estimate_generation.generate'],
+            readinessSummary: ['can_generate' => true], readinessEvaluated: false,
+            documentsSummary: ['total' => 0, 'manual_input_available' => true],
+        );
+
+        self::assertNotContains('generate', array_column($snapshot->availableActions, 'action'));
+    }
+
     private function makeSession(EstimateGenerationStatus $status): EstimateGenerationSession
     {
         $session = new EstimateGenerationSession;

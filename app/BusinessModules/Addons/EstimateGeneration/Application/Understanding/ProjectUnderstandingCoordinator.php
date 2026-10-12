@@ -34,6 +34,7 @@ final readonly class ProjectUnderstandingCoordinator
         string $checkpointClaimToken,
         int $logicalAttempt,
         ?\App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope $wireScope = null,
+        bool $allowIdentityOnlyPlanning = false,
     ): ProjectUnderstandingResult {
         $preflight = $this->models->understandingPreflight(
             $organizationId,
@@ -157,6 +158,9 @@ final readonly class ProjectUnderstandingCoordinator
         $inputFingerprint = $approvedParts === null ? $synthesisInput->fingerprint()
             : hash('sha256', $synthesisInput->fingerprint().'|approved-synthesis-parts:'.$approvedParts);
         $inputFingerprint = hash('sha256', ProjectUnderstandingFingerprint::CONTRACT."\0".$inputFingerprint);
+        if ($allowIdentityOnlyPlanning) {
+            $inputFingerprint = hash('sha256', $inputFingerprint.'|identity-only-planning:v1');
+        }
         $replayed = $this->models->replayUnderstanding(
             $organizationId,
             $projectId,
@@ -174,7 +178,8 @@ final readonly class ProjectUnderstandingCoordinator
                 $replayed['questions'] ?? [],
                 $replayed['limitations'] ?? [],
                 (int) ($replayed['provider_calls'] ?? 0),
-                $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts),
+                $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts, $snapshot->entities, $allowIdentityOnlyPlanning),
+                $allowIdentityOnlyPlanning,
             );
         }
         $linker = new CrossDocumentFactLinker(
@@ -262,7 +267,8 @@ final readonly class ProjectUnderstandingCoordinator
             $questions,
             $result->limitations,
             $result->providerCalls + $synthesisProviderCalls,
-            $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts),
+            $this->hasOnlyPlanningUnresolvedFacts($snapshot->facts, $snapshot->entities, $allowIdentityOnlyPlanning),
+            $allowIdentityOnlyPlanning,
         );
     }
 
@@ -280,8 +286,11 @@ final readonly class ProjectUnderstandingCoordinator
         array $limitations,
         int $providerCalls,
         bool $hasOnlyPlanningUnresolvedFacts,
+        bool $allowPartialQuestions = false,
     ): ProjectUnderstandingResult {
-        if ($limitations !== [] && (! $hasOnlyPlanningUnresolvedFacts || $questions !== [] || $conflicts !== [])) {
+        $identityQuestionsOnly = $allowPartialQuestions && $hasOnlyPlanningUnresolvedFacts && $conflicts === []
+            && array_diff($limitations, [$this->conflicts->insufficientEvidence()]) === [];
+        if ($limitations !== [] && (! $hasOnlyPlanningUnresolvedFacts || ($questions !== [] && ! $identityQuestionsOnly) || $conflicts !== [])) {
             return ProjectUnderstandingResult::unresolved(
                 $limitations,
                 $links,
@@ -304,10 +313,18 @@ final readonly class ProjectUnderstandingCoordinator
         );
     }
 
-    private function hasOnlyPlanningUnresolvedFacts(array $facts): bool
+    private function hasOnlyPlanningUnresolvedFacts(array $facts, array $entities = [], bool $allowIdentityOnlyPlanning = false): bool
     {
+        $entitiesById = array_column($entities, null, 'id');
         foreach ($facts as $fact) {
             if (! $fact instanceof Fact || $fact->status === 'confirmed') {
+                continue;
+            }
+            $entity = $entitiesById[$fact->entityId] ?? null;
+            if ($allowIdentityOnlyPlanning && $fact->type === 'room_name' && $fact->status === 'candidate'
+                && $fact->unit === null && $fact->evidenceIds !== [] && $entity !== null && $entity->type === 'room'
+                && ($entity->attributes['identity_only'] ?? false) === true
+                && ($entity->attributes['requires_confirmation'] ?? false) === true) {
                 continue;
             }
             if ($fact->origin !== 'unresolved'

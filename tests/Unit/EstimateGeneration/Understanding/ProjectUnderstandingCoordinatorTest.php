@@ -29,6 +29,43 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 final class ProjectUnderstandingCoordinatorTest extends TestCase
 {
     #[Test]
+    public function an_identity_only_photo_can_plan_an_unverified_worklist_without_confirming_a_dimension(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = $this->modelSource();
+        $entity = new Entity('room:photo', 1, 2, 3, $source, 'room', 'room:photo',
+            ['identity_only' => true, 'requires_confirmation' => true, 'semantic_type' => 'room']);
+        $fact = new Fact('fact:room-name', 1, 2, 3, $source, $entity->id, 'room_name', 'Помещение на фото',
+            null, 0.0, 'ai_inference', 'candidate', ['evidence:1']);
+        $models->saveSourceModel([$entity], [$fact], [$this->evidence('evidence:1')]);
+        $factory = new RecordingArbitratorFactory;
+        $coordinator = $this->coordinator($models, $factory);
+        self::assertFalse($coordinator->refresh(1, 2, 3, $this->token(), 1)->isReadyForPlanning());
+        $result = $coordinator->refresh(1, 2, 3, $this->token(), 2, allowIdentityOnlyPlanning: true);
+        self::assertTrue($result->isReadyForPlanning());
+        self::assertNotSame([], $result->limitations);
+        self::assertSame(0, $result->providerCalls);
+        self::assertSame('candidate', $models->fact(1, 2, 3, 'fact:room-name')->status);
+        self::assertSame('room_name', $models->snapshot(1, 2, 3)->facts[0]->type);
+        self::assertSame($result->inputFingerprint, $coordinator->refresh(1, 2, 3, $this->token(), 3, allowIdentityOnlyPlanning: true)->inputFingerprint);
+    }
+
+    #[Test]
+    public function partial_identity_planning_never_accepts_a_candidate_area(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $source = $this->modelSource();
+        $entity = new Entity('room:photo', 1, 2, 3, $source, 'room', 'room:photo',
+            ['identity_only' => true, 'requires_confirmation' => true, 'semantic_type' => 'room']);
+        $models->saveSourceModel([$entity], [new Fact('fact:guessed-area', 1, 2, 3, $source, $entity->id,
+            'area', '12', 'm2', 0.0, 'ai_inference', 'candidate', ['evidence:1'])], [$this->evidence('evidence:1')]);
+        $result = $this->coordinator($models, new RecordingArbitratorFactory)
+            ->refresh(1, 2, 3, $this->token(), 1, allowIdentityOnlyPlanning: true);
+        self::assertFalse($result->isReadyForPlanning());
+        self::assertSame('candidate', $models->fact(1, 2, 3, 'fact:guessed-area')->status);
+    }
+
+    #[Test]
     public function a_zero_engineer_allowance_keeps_deterministic_links_and_conflict_questions_without_a_model_call(): void
     {
         $models = new InMemoryProjectModelRepository;

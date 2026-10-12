@@ -19,6 +19,39 @@ use PHPUnit\Framework\TestCase;
 
 final class DocumentGenerationReadinessServiceTest extends TestCase
 {
+    public function test_a_fresh_universal_text_or_confirmed_manual_input_can_generate_without_documents(): void
+    {
+        foreach ([['description' => 'Обновить отделку помещения'], ['manual_input_revision' => 1]] as $input) {
+            $session = new EstimateGenerationSession;
+            $session->forceFill(['id' => 41, 'organization_id' => 7, 'state_version' => 0, 'status' => 'draft',
+                'input_payload' => ['evaluation_mode' => 'universal', ...$input]]);
+            $session->setRelation('documents', collect());
+            $readiness = (new DocumentGenerationReadinessService(universalEnabled: true))->evaluate($session);
+            self::assertTrue($readiness['can_generate']);
+            self::assertTrue($readiness['summary']['manual_input_available']);
+            self::assertFalse($readiness['summary']['has_documents']);
+            self::assertSame(0, $readiness['summary']['ready_count']);
+            self::assertFalse($readiness['can_analyze']);
+            self::assertNull($readiness['blocking_message_key']);
+        }
+    }
+
+    public function test_manual_input_does_not_hide_a_pending_document_or_bypass_a_disabled_profile(): void
+    {
+        $session = new EstimateGenerationSession;
+        $session->forceFill(['id' => 41, 'organization_id' => 7, 'state_version' => 0, 'status' => 'draft',
+            'input_payload' => ['evaluation_mode' => 'universal', 'description' => 'Ремонт']]);
+        $session->setRelation('documents', collect());
+        self::assertFalse((new DocumentGenerationReadinessService(universalEnabled: false))->evaluate($session)['can_generate']);
+        $document = new EstimateGenerationDocument;
+        $document->forceFill(['id' => 42, 'organization_id' => 7, 'project_id' => 17, 'session_id' => 41,
+            'filename' => 'Проект.pdf', 'status' => 'queued', 'processing_stage' => 'preflight', 'facts_summary' => []]);
+        $session->setRelation('documents', collect([$document]));
+        self::assertFalse((new DocumentGenerationReadinessService(universalEnabled: true))->evaluate($session)['can_generate']);
+        $document->status = 'failed';
+        self::assertFalse((new DocumentGenerationReadinessService(universalEnabled: true))->evaluate($session)['can_generate']);
+    }
+
     public function test_empty_session_does_not_pin_ai_settings_before_documents_are_uploaded(): void
     {
         $store = new class implements EffectiveSettingsOperationStore

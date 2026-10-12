@@ -23,6 +23,106 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_text_only_job_publishes_a_worklist_with_unknown_quantities_and_questions_without_charging_for_unpriced_work(): void
+    {
+        (new \Tests\Support\EstimateGeneration\InMemoryS3HttpStorage)->install();
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true, 'cache.default' => 'array',
+            'ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key',
+            'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        \Illuminate\Support\Facades\Queue::fake();
+        $session = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession::class)->handle([
+            'organization_id' => $organization->id, 'project_id' => $scope->projectId,
+            'input_payload' => ['description' => 'Отделка комнаты: штукатурка и окраска стен, площадь около 12 м² требует проверки.',
+                'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'renovation',
+                'construction_type' => 'current_repair', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']],
+        ], $actor);
+        $history = [];
+        $responses = array_map(static fn (array $payload): \GuzzleHttp\Psr7\Response => new \GuzzleHttp\Psr7\Response(200,
+            ['Content-Type' => 'application/json'], json_encode([
+                'id' => 'chatcmpl-text-only', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+                'choices' => [['index' => 0, 'finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => json_encode($payload, JSON_THROW_ON_ERROR)]]],
+                'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 50, 'total_tokens' => 150],
+            ], JSON_THROW_ON_ERROR)), [['work_intents' => []], ['findings' => []]]);
+        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler($responses));
+        $handler->push(\GuzzleHttp\Middleware::history($history));
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient(
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebChatCompletionPayloadFactory::class),
+                app(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard::class),
+                app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
+                httpClient: new \GuzzleHttp\Client(['handler' => $handler])));
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:text-only-pipeline');
+        $operationId = (string) Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, (int) $session->project_id, (int) $session->id, 0, $operationId, 'generation');
+        app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration::class)
+            ->handle($session, 0, 'ai_assisted', $actor, creditApproval: ['request_id' => $operationId, 'quote_id' => $quote['quote_id']]);
+        $job = \Illuminate\Support\Facades\Queue::pushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class)->first();
+        foreach (\App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage::cases() as $stage) {
+            $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
+        }
+        $session->refresh();
+        self::assertSame('estimate_review_required', $session->status->value);
+        $evaluation = $session->draft_payload['evaluation_result'];
+        self::assertNotEmpty($evaluation['scenarios'][0]['positions']);
+        foreach ($evaluation['scenarios'][0]['positions'] as $position) {
+            self::assertNull($position['quantity']);
+            self::assertNull($position['price_snapshot']);
+        }
+        self::assertNotEmpty($evaluation['priority_questions']);
+        self::assertLessThanOrEqual(3, count($evaluation['priority_questions']));
+        self::assertCount(2, $history);
+        self::assertSame(2, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        $operation = DB::table('estimate_generation_credit_operations')->where('operation_id', $operationId)->sole();
+        self::assertSame(0, (int) $operation->consumed_units_minor);
+        self::assertSame(1000000, app(AICreditService::class)->balance($organization)['available_minor']);
+        $job->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft::class));
+        self::assertCount(2, $history);
+        self::assertSame(1, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+    }
+
+    public function test_fresh_text_without_files_queues_only_with_an_approved_quote_and_replays_once(): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        config(['estimate-generation.universal_enabled' => true]);
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        \Illuminate\Support\Facades\Queue::fake();
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['description' => 'Ремонт помещения, размеры уточним',
+            'generation_mode' => 'ai_assisted', 'evaluation_mode' => 'universal', 'profile_id' => 'renovation',
+            'construction_type' => 'current_repair', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']]]);
+        self::assertSame(0, $session->documents()->count());
+        $generate = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration::class);
+        try {
+            $generate->handle($session, 0, 'ai_assisted', $actor);
+            self::fail('Text-only generation bypassed the price approval.');
+        } catch (\Illuminate\Validation\ValidationException) {
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+            \Illuminate\Support\Facades\Queue::assertNotPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class);
+        }
+        app(AICreditService::class)->grant($organization, 1000000, 'purchase', null, 'test:text-only');
+        $id = (string) Str::uuid();
+        $quote = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class)
+            ->quote($actor, $scope->projectId, $scope->sessionId, 0, $id, 'generation');
+        $approval = ['request_id' => $id, 'quote_id' => $quote['quote_id']];
+        $result = $generate->handle($session, 0, 'ai_assisted', $actor, creditApproval: $approval);
+        self::assertTrue($result->successful);
+        self::assertSame('generating', $result->session->status->value);
+        self::assertSame($id, $result->session->input_payload['generation_credit_operation_id']);
+        self::assertTrue($generate->handle($session->fresh(), 0, 'ai_assisted', $actor, creditApproval: $approval)->successful);
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        \Illuminate\Support\Facades\Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, 1);
+    }
+
     public function test_simple_paid_understanding_keeps_current_conflict_questions_without_any_model_expense(): void
     {
         $this->seedGlobalSettings();

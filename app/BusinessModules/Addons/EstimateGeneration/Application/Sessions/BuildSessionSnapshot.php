@@ -82,6 +82,7 @@ final class BuildSessionSnapshot
             $blockers,
             $readinessEvaluated,
             $documentsSummary,
+            (bool) ($readinessSummary['can_generate'] ?? false),
         );
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
@@ -170,13 +171,23 @@ final class BuildSessionSnapshot
         array $blockers,
         bool $readinessEvaluated,
         array $documentsSummary,
+        bool $canGenerate,
     ): array {
         if ($status === EstimateGenerationStatus::Archived) {
             return [];
         }
 
         $available = [];
-        foreach (self::STATUS_ACTIONS[$status->value] ?? [] as $action) {
+        $actions = self::STATUS_ACTIONS[$status->value] ?? [];
+        $universal = ($session->input_payload['evaluation_mode'] ?? null) === 'universal';
+        if ($universal && $status === EstimateGenerationStatus::Draft && $canGenerate
+            && ($documentsSummary['manual_input_available'] ?? false) === true) {
+            $actions[] = EstimateGenerationAction::Generate;
+        }
+        foreach ($actions as $action) {
+            if ($universal && $action === EstimateGenerationAction::Generate && (! $readinessEvaluated || ! $canGenerate)) {
+                continue;
+            }
             if (
                 $action === EstimateGenerationAction::StartDocumentProcessing
                 && array_key_exists('total', $documentsSummary)
@@ -296,7 +307,11 @@ final class BuildSessionSnapshot
             && $actionRequired > 0;
         $confirmedUniversal = ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
             && $status === EstimateGenerationStatus::ReadyToApply;
-        $analysisComplete = $confirmedUniversal || ($total > 0
+        $manualInputReady = ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && ($documentsSummary['manual_input_available'] ?? false) === true
+            && $actionRequired === 0 && (int) ($documentsSummary['pending'] ?? $documentsSummary['pending_count'] ?? 0) === 0
+            && (int) ($documentsSummary['system_failure_count'] ?? 0) === 0;
+        $analysisComplete = $confirmedUniversal || $manualInputReady || ($total > 0
             && $this->documentAnalysisComplete($documentsSummary)
             && ($usable + $ignored) >= $total);
         $questionsResolved = $questionCount === 0;
@@ -311,6 +326,7 @@ final class BuildSessionSnapshot
         $recommendedStep = match (true) {
             $confirmedUniversal => 'review',
             $requiresDocumentRecovery, $requiresDocumentReview => 'documents',
+            $status === EstimateGenerationStatus::Draft && $manualInputReady => 'draft',
             $status === EstimateGenerationStatus::InputReviewRequired && $analysisComplete => $questionCount > 0
                 ? 'ai_questions'
                 : 'draft',

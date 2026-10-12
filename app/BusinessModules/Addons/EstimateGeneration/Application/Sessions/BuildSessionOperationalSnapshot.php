@@ -24,7 +24,8 @@ use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
-    public const QUERY_BUDGET = 13;
+    // Ten aggregate reads, three quota reads and two current clarification reads.
+    public const QUERY_BUDGET = 15;
 
     private const CHECKPOINT_STATUS_VALUES = [
         CheckpointStatus::Running->value,
@@ -343,6 +344,12 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         $model->exists = true;
 
         $universal = ($model->input_payload['evaluation_mode'] ?? null) === 'universal';
+        $manualInputAvailable = \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::manualInputAvailable(
+            $model->input_payload ?? [], $universal && (bool) config('estimate-generation.universal_enabled', false));
+        $documentSummary = $this->documentSummary($documents, $sources);
+        if ($universal) {
+            $documentSummary['manual_input_available'] = $manualInputAvailable;
+        }
         $readiness = $universal
             ? app(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\UniversalEvaluationReadinessService::class)->evaluate($model, $documents)
             : $this->withPersistedBlockingIssues($this->readinessEvaluator->evaluate(
@@ -357,7 +364,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             $model,
             $permissions,
             $readiness,
-            $this->documentSummary($documents, $sources),
+            $documentSummary,
         );
         $processingProgress = $base->status === \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus::ProcessingDocuments
             ? DocumentProcessingProgress::fromSummary($documents, $base->processingProgress)
@@ -377,7 +384,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             warnings: $readiness['warnings'],
             nextAction: $base->nextAction ?? (string) ($readiness['next_action']['code'] ?? ''),
             readinessEvaluated: true,
-            documentsSummary: $this->documentSummary($documents, $sources),
+            documentsSummary: $documentSummary,
             estimateSummary: [
                 'packages' => $this->number($estimate, 'packages'),
                 'items' => $this->number($estimate, 'items'),

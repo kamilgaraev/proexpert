@@ -37,10 +37,19 @@ final readonly class UniversalEvaluationReadinessService
             $blockers[] = ['code' => 'contingency_tax_confirmation_required', 'message' => 'Подтвердите резерв и его налоговые условия.'];
         }
         $canApply = $session->status->value === 'ready_to_apply' && $blockers === [];
+        $manualInputAvailable = \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService::manualInputAvailable(
+            $session->input_payload ?? [], (bool) config('estimate-generation.universal_enabled', false));
+        $hasReadyDocuments = (int) ($documents['ready'] ?? $documents['ready_count'] ?? 0) > 0;
+        $canGenerate = config('estimate-generation.universal_enabled', false)
+            && (! $session->status->isTerminal() || in_array($session->status->value, ['applied', 'cancelled'], true))
+            && ($manualInputAvailable || $hasReadyDocuments)
+            && (int) ($documents['pending'] ?? $documents['pending_count'] ?? 0) === 0
+            && (int) ($documents['action_required'] ?? $documents['action_required_count'] ?? 0) === 0
+            && (int) ($documents['system_failure_count'] ?? 0) === 0;
         $metrics = array_fill_keys(['review_items_total', 'review_items_blocking', 'review_items_warning', 'review_items_optional', 'normative_requires_review'], 0);
 
         return new ReadinessResult(status: $canApply ? 'ready_to_apply' : ($session->status->value === 'applied' ? 'applied' : 'draft_needs_review'),
-            canGenerate: ! $session->status->isTerminal() && ($session->input_payload['description'] ?? '') !== '',
+            canGenerate: $canGenerate,
             canApply: $canApply, blockingIssues: $blockers, warnings: [], metrics: $metrics,
             nextAction: ['code' => $canApply ? 'apply' : 'review_draft', 'message' => $canApply ? 'Создайте смету подтверждённого состава.' : 'Проверьте текущую оценку.'],
             confirmedEvaluation: $accepted === null ? null : [...$accepted['confirmation'],

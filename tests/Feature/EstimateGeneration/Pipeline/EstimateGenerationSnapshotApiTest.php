@@ -13,36 +13,24 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
 #[Group('database')]
 #[Group('postgres')]
-final class EstimateGenerationSnapshotApiTest extends TestCase
+final class EstimateGenerationSnapshotApiTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    use RefreshDatabase;
-
-    public function createApplication()
-    {
-        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
-        $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-
-        return $app;
-    }
-
     #[Test]
     public function unchanged_snapshot_returns_empty_not_modified_response(): void
     {
         [$user, $project, $session] = $this->fixture();
         $this->route($project, $session);
-        $this->actingAs($user);
-
+        $this->withToken(auth('api_admin')->login($user));
         $first = $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
         $etag = (string) $first->headers->get('ETag');
         $second = $this->withHeader('If-None-Match', '"other", W/'.$etag)
@@ -58,7 +46,8 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $second->assertStatus(304);
         self::assertSame('', $second->getContent());
         self::assertSame($etag, $second->headers->get('ETag'));
-        self::assertSame('private, no-cache, must-revalidate', $second->headers->get('Cache-Control'));
+        self::assertEqualsCanonicalizing(['private', 'no-cache', 'must-revalidate'],
+            array_map('trim', explode(',', (string) $second->headers->get('Cache-Control'))));
     }
 
     #[Test]
@@ -67,7 +56,7 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         [, $project, $session] = $this->fixture();
         $foreign = User::factory()->create(['current_organization_id' => Organization::factory()->create()->id]);
         $this->route($project, $session);
-        $this->actingAs($foreign);
+        $this->withToken(auth('api_admin')->login($foreign));
 
         $this->withHeader('If-None-Match', '*')
             ->get('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
@@ -80,16 +69,17 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         [$user, $project, $session] = $this->fixture();
         app(AiEstimateQuotaService::class)->reserve($session);
         $this->route($project, $session);
-        $this->actingAs($user);
+        $this->withToken(auth('api_admin')->login($user));
 
         $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
             ->assertOk()
             ->assertJsonPath('data.ai_estimate_quota', [
                 'included' => 10,
                 'purchased' => 0,
-                'used' => 1,
+                'used' => 0,
+                'reserved' => 1,
                 'available' => 9,
-                'reservation_status' => 'confirmed',
+                'reservation_status' => 'reserved',
             ]);
 
         DB::table('estimate_generation_ai_estimate_quota_reservations')
@@ -103,18 +93,19 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
                 'included' => 10,
                 'purchased' => 0,
                 'used' => 0,
+                'reserved' => 0,
                 'available' => 10,
                 'reservation_status' => 'released',
             ]);
     }
 
     #[Test]
-    public function confirmed_reservation_in_another_session_invalidates_the_snapshot_etag(): void
+    public function reserved_operation_in_another_session_invalidates_the_snapshot_etag_without_becoming_usage(): void
     {
         [$user, $project, $session] = $this->fixture();
         $otherSession = $this->anotherSession($user, $project);
         $this->route($project, $session);
-        $this->actingAs($user);
+        $this->withToken(auth('api_admin')->login($user));
 
         $first = $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
         $etag = (string) $first->headers->get('ETag');
@@ -125,7 +116,8 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
             ->get('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id);
 
         $second->assertOk()
-            ->assertJsonPath('data.ai_estimate_quota.used', 1);
+            ->assertJsonPath('data.ai_estimate_quota.used', 0)
+            ->assertJsonPath('data.ai_estimate_quota.reserved', 1);
         self::assertNotSame($etag, $second->headers->get('ETag'));
     }
 
@@ -163,13 +155,14 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
                 'session_id' => $reservedSession->id,
                 'monthly_period' => $now->copy()->startOfMonth()->toDateString(),
                 'status' => 'confirmed',
+                'reserved_at' => $now,
                 'confirmed_at' => $now,
                 'released_at' => null,
             ],
             $sessions,
         ));
         $this->route($project, $session);
-        $this->actingAs($user);
+        $this->withToken(auth('api_admin')->login($user));
 
         $this->getJson('/_snapshot/projects/'.$project->id.'/sessions/'.$session->id)
             ->assertOk()
@@ -177,6 +170,7 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
                 'included' => 10,
                 'purchased' => 0,
                 'used' => 11,
+                'reserved' => 0,
                 'available' => 0,
                 'reservation_status' => 'confirmed',
             ]);
@@ -262,7 +256,63 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         $this->assertSourceMutation($session, 'item insert', static fn () => DB::table('estimate_generation_package_items')->insert(['package_id' => $packageId, 'key' => 'wall', 'item_type' => 'priced_work', 'name' => 'wall', 'total_cost' => 100, 'created_at' => now(), 'updated_at' => now()]));
         $attemptId = (string) Str::uuid();
         $this->assertSourceMutation($session, 'checkpoint insert', static fn () => DB::table('estimate_generation_pipeline_checkpoints')->insert([...$scope, 'generation_attempt_id' => $attemptId, 'base_input_version' => 'sha256:'.str_repeat('a', 64), 'stage' => 'understand_documents', 'input_version' => 'sha256:'.str_repeat('b', 64), 'status' => 'running', 'claim_token' => (string) Str::uuid(), 'lease_expires_at' => now()->addHour(), 'started_at' => now(), 'created_at' => now(), 'updated_at' => now()]));
-        $this->assertSourceMutation($session, 'processing unit insert', static fn () => DB::table('estimate_generation_processing_units')->insert([...$scope, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1, 'source_version' => 'sha256:'.str_repeat('c', 64), 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]));
+        $unitSource = 'sha256:'.str_repeat('c', 64);
+        $this->assertSourceMutation($session, 'processing unit insert', static fn () => DB::table('estimate_generation_processing_units')->insert([
+            ...$scope, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1, 'source_version' => $unitSource,
+            'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+            'locator' => json_encode(['source_kind' => 'pdf', 'source_version' => $unitSource, 'coordinate_space' => 'pdf_page_pixels',
+                'artifact_path' => 'fixture/private/page.png', 'artifact_sha256' => 'sha256:'.hash('sha256', 'fixture-page'),
+                'artifact_version_id' => 'fixture.v1'], JSON_THROW_ON_ERROR),
+        ]));
+    }
+
+    #[Test]
+    public function manual_universal_input_reaches_the_operational_contract_without_extra_queries(): void
+    {
+        config()->set('estimate-generation.universal_enabled', true);
+        [, , $session] = $this->fixture();
+        $session->update(['input_payload' => ['evaluation_mode' => 'universal', 'description' => 'Ремонт комнаты без размеров']]);
+        $selects = 0;
+        DB::listen(static function (QueryExecuted $query) use (&$selects): void {
+            if (str_starts_with(ltrim(strtolower($query->sql)), 'select')) {
+                $selects++;
+            }
+        });
+
+        $snapshot = app(BuildSessionOperationalSnapshot::class)->handle($session, ['estimate_generation.generate']);
+
+        self::assertSame(BuildSessionOperationalSnapshot::QUERY_BUDGET, $selects);
+        self::assertTrue($snapshot->documentsSummary['manual_input_available']);
+        self::assertSame(0, $snapshot->documentsSummary['total']);
+        self::assertTrue($snapshot->canGenerate);
+        self::assertFalse($snapshot->canApply);
+        self::assertContains('generate', array_column($snapshot->availableActions, 'action'));
+        self::assertSame('draft', $snapshot->recommendedStep);
+        self::assertTrue($snapshot->workflowSteps[3]['available']);
+    }
+
+    #[Test]
+    public function universal_readiness_accepts_ready_photo_and_structured_input_but_honours_rollout_and_document_blocks(): void
+    {
+        config()->set('estimate-generation.universal_enabled', true);
+        [, , $session] = $this->fixture();
+        $session->input_payload = ['evaluation_mode' => 'universal'];
+        $readiness = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\UniversalEvaluationReadinessService::class);
+        self::assertTrue($readiness->evaluate($session, ['ready' => 1])->canGenerate);
+        self::assertFalse($readiness->evaluate($session, ['ready' => 1, 'pending' => 1])->canGenerate);
+        self::assertFalse($readiness->evaluate($session, ['ready' => 1, 'system_failure_count' => 1])->canGenerate);
+        self::assertFalse($readiness->evaluate($session, ['ready' => 1, 'action_required' => 1])->canGenerate);
+        self::assertFalse($readiness->evaluate($session)->canGenerate);
+        $session->input_payload = ['evaluation_mode' => 'universal', 'manual_input_revision' => 1];
+        self::assertTrue($readiness->evaluate($session)->canGenerate);
+        $session->status = EstimateGenerationStatus::Archived;
+        self::assertFalse($readiness->evaluate($session)->canGenerate);
+        $session->status = EstimateGenerationStatus::Cancelled;
+        self::assertTrue($readiness->evaluate($session)->canGenerate);
+        $session->status = EstimateGenerationStatus::Applied;
+        self::assertTrue($readiness->evaluate($session)->canGenerate);
+        config()->set('estimate-generation.universal_enabled', false);
+        self::assertFalse($readiness->evaluate($session, ['ready' => 1])->canGenerate);
     }
 
     private function route(Project $project, EstimateGenerationSession $session): void
@@ -270,7 +320,7 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         Route::bind('project', static fn (): Project => $project);
         Route::bind('session', static fn (): EstimateGenerationSession => $session);
         Route::get('/_snapshot/projects/{project}/sessions/{session}', [EstimateGenerationSessionController::class, 'snapshot'])
-            ->middleware(SubstituteBindings::class);
+            ->middleware(['auth:api_admin', SubstituteBindings::class]);
     }
 
     private function assertSourceMutation(EstimateGenerationSession $session, string $source, callable $mutation): void

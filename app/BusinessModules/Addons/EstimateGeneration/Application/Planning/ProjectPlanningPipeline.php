@@ -23,6 +23,13 @@ final readonly class ProjectPlanningPipeline
         int $logicalAttempt,
         ?\App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope $wireScope = null,
     ): ProjectPlanningResult {
+        $identityOnlyPlanning = false;
+        if (config('estimate-generation.universal_enabled', false)) {
+            $session = \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession::query()
+                ->where('organization_id', $organizationId)->where('project_id', $projectId)->whereKey($sessionId)
+                ->first(['input_payload']);
+            $identityOnlyPlanning = ($session?->input_payload['evaluation_mode'] ?? null) === 'universal';
+        }
         $understanding = $this->understanding->refresh(
             $organizationId,
             $projectId,
@@ -30,6 +37,7 @@ final readonly class ProjectPlanningPipeline
             $checkpointClaimToken,
             $logicalAttempt,
             $wireScope,
+            $identityOnlyPlanning,
         );
         $planning = $this->planning->refresh(
             $organizationId,
