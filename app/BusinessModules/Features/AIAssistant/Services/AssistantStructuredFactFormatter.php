@@ -285,30 +285,23 @@ final class AssistantStructuredFactFormatter
         return $title;
     }
 
-    public static function withUnknownCurrency(array $row): array
-    {
-        $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
-        if (array_intersect(array_keys($row['fields']), $moneyFields) === []
-            || array_key_exists('currency', $row['fields']) || array_key_exists('budget_currency', $row['fields'])) {
-            return $row;
-        }
-        $row['fields']['currency'] = null;
-        $row['source_ref']['checked_fields'][] = 'currency';
-        $row['version'] = hash('sha256', json_encode(array_diff_key($row, ['version' => true]), JSON_THROW_ON_ERROR));
-
-        return $row;
-    }
-
     public static function presentationFields(array $row): array
     {
         $allowed = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
         $checked = $row['source_ref']['checked_fields'] ?? [];
 
-        return array_values(array_filter(array_keys($row['fields'] ?? []), static function (string $field) use ($allowed, $checked): bool {
+        $fields = array_values(array_filter(array_keys($row['fields'] ?? []), static function (string $field) use ($allowed, $checked): bool {
             return in_array($field, $allowed, true) && in_array($field, $checked, true)
                 && $field !== 'id' && ! str_ends_with($field, '_id') && ! str_ends_with($field, '_ids')
                 && ! in_array($field, ['version', 'source_size_bytes', 'source_mime_type', 'fetched_at', 'created_at', 'updated_at', 'deleted_at'], true);
         }));
+        $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
+        if (array_intersect($fields, $moneyFields) !== []
+            && ! array_key_exists('currency', $row['fields']) && ! array_key_exists('budget_currency', $row['fields'])) {
+            $fields[] = 'currency';
+        }
+
+        return $fields;
     }
 
     public static function renderVerifiedRows(array $sets, array $plan): string

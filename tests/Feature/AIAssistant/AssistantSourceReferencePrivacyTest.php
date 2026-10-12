@@ -142,6 +142,30 @@ final class AssistantSourceReferencePrivacyTest extends TestCase
         self::assertTrue($guard->fresh($fixture->member, $fixture->organization->id, $current['source_refs']));
     }
 
+    public function test_missing_currency_presentation_preserves_fresh_source_proof_and_rejects_changed_amount(): void
+    {
+        $fixture = $this->canonicalFixture();
+        $fixture->memberRole->update(['module_permissions' => ['ai-assistant' => ['ai_assistant.chat'], 'project-management' => ['projects.view']], 'system_permissions' => ['finance.view_project_budget']]);
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id, 'budget_amount' => '12345.67']));
+        $fixture->member->assignedProjects()->attach($project->id, ['is_active' => true, 'role' => 'member']);
+        $reader = app(AssistantDomainReadService::class);
+        $receipt = $reader->execute('read', ['domain' => 'projects', 'id' => $project->id, 'fields' => ['budget_amount']], $fixture->member, $fixture->organization->id);
+        $refs = $receipt['structured_fact_evidence']['source_refs'];
+
+        self::assertSame($receipt['source_refs'], $refs);
+        self::assertArrayNotHasKey('currency', $receipt['results'][0]['fields']);
+        self::assertArrayNotHasKey('currency', $receipt['structured_fact_evidence']['rows'][0]['fields']);
+        $guard = app(AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($fixture->member, $fixture->organization->id, $refs));
+
+        $updatedAt = $project->getRawOriginal('updated_at');
+        DB::table('projects')->where('id', $project->id)->update(['budget_amount' => '12345.68']);
+        self::assertSame($updatedAt, $project->refresh()->getRawOriginal('updated_at'));
+        self::assertFalse($guard->fresh($fixture->member, $fixture->organization->id, $refs));
+        $current = $reader->execute('read', ['domain' => 'projects', 'id' => $project->id, 'fields' => ['budget_amount']], $fixture->member, $fixture->organization->id);
+        self::assertTrue($guard->fresh($fixture->member, $fixture->organization->id, $current['structured_fact_evidence']['source_refs']));
+    }
+
     public function test_indexed_proof_rejects_current_content_change_without_timestamp_or_reindex(): void
     {
         $fixture = $this->canonicalFixture();
