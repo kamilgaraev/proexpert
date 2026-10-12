@@ -25,6 +25,7 @@ final readonly class ConfirmEvaluationScenario
         private EvaluationInputFingerprint $inputs, private ProjectModelRepository $models,
         private EvaluationDraftArithmeticRecalculator $arithmetic, private UserEvaluationChoiceWriter $choices,
         private MaterializeSelectedEvaluationQuantities $quantities, private SaveEvaluationRevision $revisions,
+        private \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow $workflow,
         private SelectedEvaluationScenario $scenarios = new SelectedEvaluationScenario,
         private UniversalEvaluationBuilder $builder = new UniversalEvaluationBuilder,
         private BuildMostEstimateDraft $artifacts = new BuildMostEstimateDraft) {}
@@ -150,11 +151,15 @@ final readonly class ConfirmEvaluationScenario
             $proof = $this->choices->write($actor, $session, 'selected-scenario', 'evaluation_scenario', $choice,
                 'Пользователь подтвердил конкретный сценарий, состав, объёмы, цены и показанные допущения.', $input['request_id']);
             $payload['confirmed_evaluation'] = [...$choice, ...$proof];
+            if (isset($payload['planning_review']['limitations'])) {
+                $payload['planning_review']['limitations'] = array_values(array_diff($payload['planning_review']['limitations'], ['planning_requires_paid_approval']));
+            }
             $result = [...$proof, 'request_id' => $input['request_id'], 'revision_id' => $sourceRevisionId, 'result_revision_id' => $revision->public_id,
                 'scenario_id' => $input['scenario_id'], 'state_version' => $session->state_version + 1, 'cost_units' => '0', 'recalculation_required' => false];
             $receipts[$input['request_id']] = ['fingerprint' => $fingerprint, 'result' => $result];
             $payload['scenario_confirmation_receipts'] = $receipts;
-            $session->update(['input_payload' => $payload, 'state_version' => $result['state_version']]);
+            $this->workflow->transition($session, \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent::EvaluationConfirmed,
+                ['input_payload' => $payload, 'processing_stage' => 'ready_to_apply', 'processing_progress' => 100]);
 
             return $result;
         }, 3);

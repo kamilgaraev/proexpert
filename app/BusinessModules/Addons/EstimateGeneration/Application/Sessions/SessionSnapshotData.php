@@ -47,6 +47,7 @@ final readonly class SessionSnapshotData
         public ?string $recommendedStep = null,
         public array $workflowSteps = [],
         public array $creditPolicy = [],
+        public ?array $evaluationConfirmation = null,
     ) {}
 
     /** @return array<string, mixed> */
@@ -78,6 +79,7 @@ final readonly class SessionSnapshotData
             'applied_estimate_id' => $this->appliedEstimateId,
             'updated_at' => $this->updatedAt,
             ...($this->creditPolicy === [] ? [] : ['credit_policy' => $this->creditPolicy]),
+            ...($this->evaluationConfirmation === null ? [] : ['evaluation_confirmation' => $this->evaluationConfirmation]),
         ];
 
         if ($this->operationalVersion === '') {
@@ -117,6 +119,7 @@ final readonly class SessionSnapshotData
             'applied_estimate_id' => $this->appliedEstimateId,
             'updated_at' => $this->updatedAt,
             ...($this->creditPolicy === [] ? [] : ['credit_policy' => $this->creditPolicy]),
+            ...($this->evaluationConfirmation === null ? [] : ['evaluation_confirmation' => $this->evaluationConfirmation]),
         ];
     }
 }

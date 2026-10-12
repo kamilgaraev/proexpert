@@ -315,7 +315,7 @@ class EstimateCalculationService
         // Такая формула физически исключает расхождение шапки с разделами.
         $totalDirectCosts = BigDecimal::max('0', $baseAmount->minus($totalEquipment)->minus($totalOverheadCosts)->minus($totalEstimatedProfit));
 
-        $totalAmountWithVat = $totalAmount->multipliedBy(BigDecimal::one()->plus(BigDecimal::of((string) $estimate->vat_rate)->withPointMovedLeft(2)));
+        $totalAmountWithVat = (new EstimateSourceVatCalculator)->gross($estimate, $totalAmount);
 
         $result = [
             'total_direct_costs' => (string) $totalDirectCosts->toScale(2, RoundingMode::HalfUp),
@@ -410,6 +410,7 @@ class EstimateCalculationService
 
     public function applyCoefficients(Estimate $estimate, array $coefficients): void
     {
+        (new EstimateSourceVatCalculator)->assertStructureMutable($estimate);
         $metadata = $estimate->metadata ?? [];
         $metadata['coefficients'] = array_merge($metadata['coefficients'] ?? [], $coefficients);
 
@@ -420,10 +421,13 @@ class EstimateCalculationService
 
     public function applyVAT(Estimate $estimate, float $vatRate): void
     {
-        $estimate->update(['vat_rate' => $vatRate]);
-
-        $totalAmountWithVat = $estimate->total_amount * (1 + $vatRate / 100);
-        $estimate->update(['total_amount_with_vat' => round($totalAmountWithVat, 2)]);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($estimate, $vatRate): void {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertHeaderUpdate($estimate, ['vat_rate' => $vatRate]);
+            $estimate->update(['vat_rate' => $vatRate]);
+            $gross = (new EstimateSourceVatCalculator)->gross($estimate, BigDecimal::of((string) $estimate->total_amount));
+            $estimate->update(['total_amount_with_vat' => (string) $gross->toScale(2, RoundingMode::HalfUp)]);
+        });
     }
 
     public function updateRates(Estimate $estimate, ?float $overheadRate = null, ?float $profitRate = null, ?float $vatRate = null): void
@@ -443,8 +447,12 @@ class EstimateCalculationService
         }
 
         if (! empty($updates)) {
-            $estimate->update($updates);
-            $this->recalculateAll($estimate);
+            \Illuminate\Support\Facades\DB::transaction(function () use ($estimate, $updates): void {
+                $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+                (new EstimateSourceVatCalculator)->assertHeaderUpdate($estimate, $updates);
+                $estimate->update($updates);
+                $this->recalculateMutableEstimate($estimate);
+            });
         }
     }
 

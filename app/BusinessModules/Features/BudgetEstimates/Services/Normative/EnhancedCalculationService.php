@@ -25,6 +25,9 @@ class EnhancedCalculationService
         float $quantity,
         array $options = []
     ): EstimateItem {
+        if ($item->exists) {
+            (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($item->estimate);
+        }
         $item->normative_rate_id = $rate->id;
         $item->normative_rate_code = $rate->code;
         $item->name = $rate->name;
@@ -61,6 +64,7 @@ class EnhancedCalculationService
 
     public function applyPriceIndices(EstimateItem $item, Carbon $date): void
     {
+        (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($item->estimate);
         $item->materials_index = $this->getIndexValue('construction_general', $date) ?? 1.0;
         $item->machinery_index = $this->getIndexValue('construction_general', $date) ?? 1.0;
         $item->labor_index = $this->getIndexValue('construction_general', $date) ?? 1.0;
@@ -72,6 +76,7 @@ class EnhancedCalculationService
 
     public function applyCoefficients(EstimateItem $item, array $coefficients): void
     {
+        (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($item->estimate);
         $totalCoefficient = 1.0;
         $appliedCoefficients = [];
 

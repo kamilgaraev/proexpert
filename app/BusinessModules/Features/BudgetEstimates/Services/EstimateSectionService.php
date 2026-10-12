@@ -67,6 +67,10 @@ class EstimateSectionService
     {
         return DB::transaction(function () use ($section, $cascade) {
             $estimateId = (int) $section->estimate_id;
+            $estimate = Estimate::query()->whereKey($estimateId)->lockForUpdate()->firstOrFail();
+            if ($cascade) {
+                (new EstimateSourceVatCalculator)->assertStructureMutable($estimate);
+            }
 
             if ($cascade) {
                 foreach ($section->children as $child) {

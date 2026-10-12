@@ -20,6 +20,20 @@ final class GeneratedEstimateDecimalCalculation
         }
         $money = static fn (mixed $value): string => (string) BigDecimal::of((string) ($value ?? '0'))->toScale(2, RoundingMode::HalfUp);
         $total = BigDecimal::of((string) ($item->current_total_amount ?? $item->total_amount ?? '0'));
+        $sourceMoney = $item->metadata['generated_source_money'] ?? null;
+        if (is_array($sourceMoney)) {
+            if (($estimate->metadata['vat_calculation_method'] ?? null) !== EstimateSourceVatCalculator::METHOD) {
+                throw new \DomainException('source_money_parent_policy_missing');
+            }
+            $accepted = (new SourceMoneyVatBasis)->accepted($sourceMoney, [
+                'organization_id' => (int) $estimate->organization_id, 'project_id' => (int) $estimate->project_id,
+                'session_id' => (int) ($estimate->metadata['generation_session_id'] ?? 0),
+                'work_item_key' => $item->metadata['source_work_item_key'] ?? null,
+                'measurement_unit_id' => (int) $item->measurement_unit_id, 'quantity' => (string) $item->quantity,
+                'stored_unit_price' => (string) $item->unit_price, 'net_amount' => (string) $total->toScale(2),
+            ]);
+            $total = BigDecimal::of($accepted['net_amount']);
+        }
         if ($total->isZero()) {
             $total = BigDecimal::of((string) $item->quantity)->multipliedBy((string) $item->unit_price)->toScale(2, RoundingMode::HalfUp);
         }

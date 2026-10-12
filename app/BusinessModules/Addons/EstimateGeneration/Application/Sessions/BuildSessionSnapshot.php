@@ -127,6 +127,7 @@ final class BuildSessionSnapshot
             recommendedStep: $workflow['recommended_step'],
             workflowSteps: $workflow['steps'],
             creditPolicy: $this->creditPolicy($session),
+            evaluationConfirmation: $readinessSummary['confirmed_evaluation'] ?? null,
         );
     }
 
@@ -293,9 +294,11 @@ final class BuildSessionSnapshot
                 && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
         $requiresDocumentReview = $status === EstimateGenerationStatus::InputReviewRequired
             && $actionRequired > 0;
-        $analysisComplete = $total > 0
+        $confirmedUniversal = ($session->input_payload['evaluation_mode'] ?? null) === 'universal'
+            && $status === EstimateGenerationStatus::ReadyToApply;
+        $analysisComplete = $confirmedUniversal || ($total > 0
             && $this->documentAnalysisComplete($documentsSummary)
-            && ($usable + $ignored) >= $total;
+            && ($usable + $ignored) >= $total);
         $questionsResolved = $questionCount === 0;
 
         $available = [
@@ -306,6 +309,7 @@ final class BuildSessionSnapshot
             'review' => $analysisComplete && $questionsResolved && ! $requiresDocumentRecovery,
         ];
         $recommendedStep = match (true) {
+            $confirmedUniversal => 'review',
             $requiresDocumentRecovery, $requiresDocumentReview => 'documents',
             $status === EstimateGenerationStatus::InputReviewRequired && $analysisComplete => $questionCount > 0
                 ? 'ai_questions'

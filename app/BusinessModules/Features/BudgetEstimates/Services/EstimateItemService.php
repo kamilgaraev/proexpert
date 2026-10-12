@@ -19,6 +19,8 @@ class EstimateItemService
     public function addItem(array $data, Estimate $estimate): EstimateItem
     {
         return DB::transaction(function () use ($data, $estimate) {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             // Проверка лимита позиций
             $this->checkItemsLimit($estimate);
 
@@ -89,6 +91,9 @@ class EstimateItemService
     public function updateItem(EstimateItem $item, array $data): EstimateItem
     {
         return DB::transaction(function () use ($item, $data) {
+            $estimate = Estimate::query()->whereKey($item->estimate_id)->lockForUpdate()->firstOrFail();
+            $item = EstimateItem::query()->whereKey($item->id)->where('estimate_id', $estimate->id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertLineUpdate($estimate, $item, $data);
             $oldQuantity = (float) $item->quantity;
             $exactOldQuantity = (string) $item->quantity;
 
@@ -131,6 +136,7 @@ class EstimateItemService
     public function bulkUpdate(Estimate $estimate, array $items): array
     {
         return DB::transaction(function () use ($estimate, $items): array {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
             $itemIds = collect($items)->pluck('id')->map(static fn ($id): int => (int) $id)->unique()->values();
 
             $models = EstimateItem::query()
@@ -140,6 +146,13 @@ class EstimateItemService
                 ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
+
+            foreach ($items as $itemData) {
+                $candidate = $models->get((int) $itemData['id']);
+                if ($candidate !== null) {
+                    (new EstimateSourceVatCalculator)->assertLineUpdate($estimate, $candidate, $this->bulkUpdatePayload($itemData));
+                }
+            }
 
             $updatedItems = collect();
             $sectionsToRecalculate = collect();
@@ -213,7 +226,8 @@ class EstimateItemService
     public function deleteItem(EstimateItem $item): bool
     {
         return DB::transaction(function () use ($item) {
-            $estimate = $item->estimate;
+            $estimate = Estimate::query()->whereKey($item->estimate_id)->lockForUpdate()->firstOrFail();
+            (new EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             $section = $item->section;
 
             \Log::debug('estimate.item.deleting', [

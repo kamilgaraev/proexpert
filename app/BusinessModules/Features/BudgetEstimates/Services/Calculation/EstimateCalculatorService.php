@@ -14,6 +14,11 @@ class EstimateCalculatorService
      */
     public function recalculate(Estimate $estimate): void
     {
+        if (($estimate->metadata['calculation_version'] ?? null) === 'generated-decimal:v1') {
+            app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService::class)->recalculateAll($estimate);
+
+            return;
+        }
         $estimate->loadMissing('items');
 
         $totals = [

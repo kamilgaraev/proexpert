@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => 'd8407c8b3ff2578a29ff0ffa1f65013bcf372ad0103314dbb960479be2178f73',
-        'training' => '057bd5835de2ca6cd0046069115d90215cc13ad19a95cd3f10c4a5795f19868b',
-        'pricing' => '057bd5835de2ca6cd0046069115d90215cc13ad19a95cd3f10c4a5795f19868b',
+        'geometry' => 'f98cd1e08264e4963a75a54047fc7a184d34e3ded8d37d72233c7d4120cad175',
+        'training' => 'a2aadc3d735a68a2a8692547b7bdb12d848c0246882dbadeb859cf51fccef7eb',
+        'pricing' => 'a2aadc3d735a68a2a8692547b7bdb12d848c0246882dbadeb859cf51fccef7eb',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '88bae8c01ffb39faad4cdbfbb255f6de147936f8edb1abc0d37dcda1d45b8980';
+    private const FRESH_INVENTORY_DIGEST = '494831c1f2d9bea97b1bd4c521a04145720fc6905323c71365c8057167ab4aab';
 
     private const SUBJECT = [
         'geometry' => [
@@ -97,13 +97,22 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2025_11_07_000001_add_estimate_integration_to_schedules.php',
         'database/migrations/2025_11_13_092257_add_is_onboarding_demo_to_multiple_tables.php',
         'database/migrations/2025_11_15_120000_create_estimate_position_catalog_tables.php',
+        'database/migrations/2025_11_15_120001_add_catalog_item_id_to_estimate_items.php',
+        'database/migrations/2026_01_26_025159_add_import_diagnostics_to_estimates_table.php',
         'database/migrations/2026_02_16_193000_increase_estimate_sections_column_lengths.php',
+        'database/migrations/2026_02_17_141501_add_base_costs_to_estimates_table.php',
+        'database/migrations/2026_02_19_063400_create_estimate_versions_table.php',
         'database/migrations/2026_02_19_203122_update_estimate_items_item_type_check_constraint.php',
         'database/migrations/2026_02_20_012227_add_total_equipment_costs_to_estimates_table.php',
+        'database/migrations/2026_02_21_070320_add_performance_columns_to_estimates_table.php',
+        'database/migrations/2026_02_27_000001_add_procurement_fields_to_estimate_items.php',
+        'database/migrations/2026_02_28_000002_add_material_id_to_estimate_items_table.php',
         'database/migrations/2026_03_04_000001_create_organization_package_subscriptions_table.php',
         'database/migrations/2026_03_06_000001_create_contract_estimate_items_table.php',
         'database/migrations/2026_04_25_000002_add_subscription_bundling_to_package_subscriptions.php',
         'database/migrations/2026_04_29_000001_allow_standalone_package_upgrade_over_bundled_packages.php',
+        'database/migrations/2026_05_05_000001_harden_estimate_versions.php',
+        'database/migrations/2026_05_05_000002_add_estimate_stable_keys.php',
         'database/migrations/2026_05_12_000001_create_user_auth_sessions_table.php',
         'database/migrations/2026_05_14_120000_add_project_access_mode_to_organization_user_table.php',
         'database/migrations/2026_05_14_120100_extend_project_user_assignments.php',
@@ -113,6 +122,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'database/migrations/2026_07_14_000002_create_commercial_checkout_tables.php',
         'database/migrations/2026_07_24_000001_create_organization_resource_allocations_table.php',
         'database/migrations/2026_07_24_000002_add_resource_addons_to_commercial_orders_table.php',
+        'database/migrations/2026_08_23_200000_harden_financial_estimate_versions.php',
         'database/migrations/2026_09_04_150000_add_tax_basis_to_contract_estimate_items.php',
         'database/migrations/2026_09_09_180000_create_estimate_finance_allocations.php',
         'database/migrations/2026_09_29_000006_create_ai_credit_tables.php',
@@ -257,6 +267,8 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_001000_add_ordinary_estimate_money_components.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_11_001200_create_estimator_credit_operations.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_12_001300_create_estimator_qa_expense_runs.php',
+        'database/migrations/2026_10_12_001400_preserve_estimate_quantity_and_unit_price_precision.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_10_12_001400_preserve_estimate_quantity_and_unit_price_precision.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

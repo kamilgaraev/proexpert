@@ -126,6 +126,8 @@ class EstimateLibraryService
         }
 
         return DB::transaction(function () use ($libraryItem, $estimate, $userId, $parameters, $sectionId) {
+            $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            (new \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator)->assertStructureMutable($estimate);
             $addedItems = [];
             $positions = $libraryItem->positions()->ordered()->get();
 

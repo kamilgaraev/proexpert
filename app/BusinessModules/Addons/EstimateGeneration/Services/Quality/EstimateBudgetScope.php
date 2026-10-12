@@ -12,7 +12,8 @@ final class EstimateBudgetScope
     /** @return array<string, mixed> */
     public function project(array $draft, string|int|float $directCosts): array
     {
-        if (($draft['generation_contract'] ?? null) !== 'most_ordinary_estimate:v1') {
+        if (! in_array($draft['generation_contract'] ?? null, ['most_ordinary_estimate:v1',
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ConfirmedEvaluationDraftProjector::CONTRACT], true)) {
             return $this->legacyProject($draft, (float) $directCosts);
         }
 

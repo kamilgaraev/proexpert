@@ -34,6 +34,8 @@ class EstimateVersionRestoreService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            (new SourceMoneySnapshotGuard)->assertAccepted($lockedEstimate, $version->snapshot ?? []);
+
             if ($lockedEstimate->status === 'approved' && $lockedEstimate->current_version_id !== null) {
                 $lockedEstimate->forceFill([
                     'status' => 'draft',
@@ -75,6 +77,7 @@ class EstimateVersionRestoreService
 
         return DB::transaction(function () use ($estimate, $version): Estimate {
             $estimate = Estimate::query()->whereKey($estimate->id)->lockForUpdate()->firstOrFail();
+            (new SourceMoneySnapshotGuard)->assertAccepted($estimate, $version->snapshot ?? []);
             $this->assertStructureReplaceable($estimate);
             $this->applyEstimateSnapshot($estimate, $version->snapshot ?? []);
             $this->replaceStructure($estimate, $version->snapshot ?? []);

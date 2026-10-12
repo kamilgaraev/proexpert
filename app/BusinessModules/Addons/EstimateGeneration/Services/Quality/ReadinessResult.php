@@ -19,6 +19,7 @@ final readonly class ReadinessResult implements ArrayAccess, JsonSerializable
         public array $warnings,
         public array $metrics,
         public array $nextAction,
+        public ?array $confirmedEvaluation = null,
     ) {}
 
     public function toArray(): array
@@ -32,6 +33,7 @@ final readonly class ReadinessResult implements ArrayAccess, JsonSerializable
             'warnings' => $this->warnings,
             'metrics' => $this->metrics,
             'next_action' => $this->nextAction,
+            ...($this->confirmedEvaluation === null ? [] : ['confirmed_evaluation' => $this->confirmedEvaluation]),
         ];
     }
 

@@ -17,7 +17,7 @@ final readonly class CurrentDraftQuantityProofGuard
     public function __construct(private CurrentProjectDerivedQuantityService $current,
         private WorkItemQuantityMapper $mapper, private EvidenceRepository $evidence) {}
 
-    public function assertCurrent(int $organizationId, int $projectId, int $sessionId, array $draft): void
+    public function assertCurrent(int $organizationId, int $projectId, int $sessionId, array $draft, bool $lockEvidence = true): void
     {
         $quantities = $this->current->previewInput($organizationId, $projectId, $sessionId)['quantities'];
         $ids = [];
@@ -79,7 +79,11 @@ final readonly class CurrentDraftQuantityProofGuard
         }
         // Keep actual source nodes locked through ordinary estimate publication.
         foreach (array_chunk(array_values($ids), 1000) as $chunk) {
-            if (count($this->evidence->activeNodesForUpdate($organizationId, $projectId, $sessionId, $chunk)) !== count($chunk)) {
+            $active = $lockEvidence
+                ? count($this->evidence->activeNodesForUpdate($organizationId, $projectId, $sessionId, $chunk))
+                : \Illuminate\Support\Facades\DB::table('estimate_generation_evidence')->where('organization_id', $organizationId)
+                    ->where('project_id', $projectId)->where('session_id', $sessionId)->whereIn('id', $chunk)->whereNull('invalidated_at')->count();
+            if ($active !== count($chunk)) {
                 $this->reject();
             }
         }

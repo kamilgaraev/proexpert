@@ -68,7 +68,7 @@ final class GeneratedEstimateItemMetadataFactory
             'source' => $workItem['price_source'] ?? null,
             'snapshot' => is_array($workItem['price_snapshot'] ?? null)
                 ? $workItem['price_snapshot']
-                : null,
+                : ($workItem['commercial_price_snapshot'] ?? null),
         ];
     }
 }

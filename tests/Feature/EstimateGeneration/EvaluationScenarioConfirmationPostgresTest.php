@@ -135,7 +135,70 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         self::assertNotSame($after['token'], $models->snapshotForPlanning(...[...$scope, 10001])['token']);
     }
 
-    private function fixture(): array
+    public function test_confirmed_catalog_scenario_creates_one_ordinary_estimate_with_identical_payable_money(): void
+    {
+        [$actor, $session, $catalog, $input] = $this->fixture('included', '0.03');
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $session->refresh();
+        self::assertSame('ready_to_apply', $session->status->value);
+        $this->actingAs($actor);
+        $snapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+            ->handle($session, ['estimate_generation.view', 'estimate_generation.apply']);
+        self::assertTrue($snapshot->canApply, json_encode($snapshot->blockingIssues));
+        self::assertContains('apply', array_column($snapshot->availableActions, 'action'));
+        self::assertSame('review', $snapshot->recommendedStep);
+        self::assertSame('0.63', $snapshot->evaluationConfirmation['total_by_currency']['RUB']);
+        self::assertSame('0.63', $snapshot->estimateSummary['total_cost']);
+        $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
+            (int) $session->id, (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
+            idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
+        $apply = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class);
+        $published = $apply->handle($command);
+        self::assertSame($published->estimateId, $apply->handle($command)->estimateId);
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame('analog', $estimate->calculation_method);
+        self::assertSame('0.53', $estimate->total_amount);
+        self::assertSame('0.63', $estimate->total_amount_with_vat);
+        self::assertSame(2, $estimate->items()->whereNull('parent_work_id')->count());
+        self::assertSame(0, $estimate->items()->whereNotNull('normative_rate_id')->count());
+        foreach ($estimate->items as $item) {
+            self::assertNotEmpty($item->metadata['generated_source_money']['confirmation']['fact_id']);
+            self::assertSame('included', $item->metadata['generated_source_money']['money']['vat_mode']);
+        }
+        for ($iteration = 0; $iteration < 2; $iteration++) {
+            app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+            self::assertSame('0.63', $estimate->fresh()->total_amount_with_vat);
+        }
+        $export = (new \ReflectionMethod(\App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService::class, 'prepareTotalsData'))
+            ->invoke(app(\App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService::class), $estimate->fresh());
+        self::assertSame('0.63', (string) $export['total_amount_with_vat']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public function test_a_catalog_change_revokes_read_only_confirmation_and_the_apply_action_without_changing_the_revision(): void
+    {
+        [$actor, $session, $catalog, $input] = $this->fixture();
+        app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $this->actingAs($actor);
+        $session->refresh();
+        $originalState = $session->state_version;
+        $originalRevisionCount = DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count();
+        $catalog->update(['unit_price' => '200']);
+        $evaluation = app(GetCurrentEvaluation::class)->handle($actor, (int) $session->project_id, (int) $session->id);
+        self::assertNull($evaluation['confirmed_scenario']);
+        self::assertTrue($evaluation['result_stale']);
+        $snapshot = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder::class)
+            ->handle($session->fresh(), ['estimate_generation.view', 'estimate_generation.apply']);
+        self::assertFalse($snapshot->canApply);
+        self::assertNotContains('apply', array_column($snapshot->availableActions, 'action'));
+        self::assertSame($originalState, $session->fresh()->state_version);
+        self::assertSame($originalRevisionCount, DB::table('estimate_generation_evaluation_revisions')->where('session_id', $session->id)->count());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100'): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -147,8 +210,8 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         $this->app->instance(AuthorizationService::class, $authorization);
         $unit = MeasurementUnit::query()->create(['organization_id' => $organization->id, 'name' => 'Квадратный метр', 'short_name' => 'м²', 'type' => 'area']);
         $catalog = EstimatePositionCatalog::query()->create(['organization_id' => $organization->id, 'name' => 'Работы по полу', 'code' => 'P-'.Str::random(6),
-            'item_type' => 'work', 'measurement_unit_id' => $unit->id, 'unit_price' => '100', 'is_active' => true, 'created_by_user_id' => $actor->id,
-            'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => 'not_applicable', 'delivery_included' => true]]);
+            'item_type' => 'work', 'measurement_unit_id' => $unit->id, 'unit_price' => $unitPrice, 'is_active' => true, 'created_by_user_id' => $actor->id,
+            'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => $vatMode, 'vat_rate' => '20', 'delivery_included' => true]]);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
             'status' => 'estimate_review_required', 'state_version' => 0,
             'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']]]);

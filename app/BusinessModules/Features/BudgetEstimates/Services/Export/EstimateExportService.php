@@ -360,6 +360,7 @@ class EstimateExportService
             'overhead_rate' => (float) $estimate->overhead_rate,
             'profit_rate' => (float) $estimate->profit_rate,
             'vat_amount' => (float) ($estimate->total_amount_with_vat - $estimate->total_amount),
+            'vat_calculation_method' => $estimate->metadata['vat_calculation_method'] ?? 'global-rate',
         ];
     }
 
