@@ -9,15 +9,15 @@ use App\BusinessModules\Features\DesignManagement\Jobs\PrepareDesignModelViewerJ
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignIfcToFragmentsConverterContract;
-use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\BusinessModules\Features\DesignManagement\Support\DesignIfcIndexUpgradeState;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerFileIntegrity;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
 use BackedEnum;
 use DomainException;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -508,14 +508,18 @@ final class DesignModelViewerPreparationService
 
     private function markProcessing(DesignModelDerivative $derivative, int $progressPercent, string $stage): void
     {
-        if (DesignIfcIndexUpgradeState::active($derivative->metadata ?? [])) {
-            $metadata = $derivative->metadata;
+        $metadata = $derivative->metadata ?? [];
+        if (DesignIfcIndexUpgradeState::active($metadata)) {
+            $previousState = $metadata['index_upgrade'];
             $metadata['index_upgrade']['status'] = 'processing';
             $metadata['index_upgrade']['stage'] = $stage;
             $metadata['index_upgrade']['progress_percent'] = max((int) ($metadata['index_upgrade']['progress_percent'] ?? 0), min(99, $progressPercent));
+            $attributes = $metadata['index_upgrade'] === $previousState
+                ? ['updated_at' => now()]
+                : ['metadata' => json_encode($metadata, JSON_THROW_ON_ERROR)];
             $updated = DesignModelDerivative::query()->whereKey($derivative->id)
                 ->where('metadata->index_upgrade->generation', DesignIfcIndexUpgradeState::generation($metadata))
-                ->update(['metadata' => json_encode($metadata, JSON_THROW_ON_ERROR)]);
+                ->update($attributes);
             if ($updated !== 1) {
                 throw new RuntimeException('BIM preparation generation was superseded.');
             }
