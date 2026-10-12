@@ -12,10 +12,10 @@ final readonly class ResolveAutomaticCommercialPrice
     public function __construct(private CataloguePriceSnapshotReader $catalog, private ConvertEvaluationPriceUnit $units = new ConvertEvaluationPriceUnit,
         private AutomaticCommercialPriceMatcher $matcher = new AutomaticCommercialPriceMatcher) {}
 
-    public function resolve(int $organizationId, array $item): ?array
+    public function resolve(int $organizationId, array $item, ?string $targetRegion = null): ?array
     {
         $name = $this->matcher->name($item['name'] ?? null);
-        if ($name === null || ! is_string($item['unit'] ?? null) || $organizationId < 1) {
+        if ($name === null || ! is_string($item['unit'] ?? null) || $organizationId < 1 || $targetRegion === null) {
             return null;
         }
         $prices = [];
@@ -41,6 +41,6 @@ final readonly class ResolveAutomaticCommercialPrice
             }
         }
 
-        return $this->matcher->select($prices, $item);
+        return $this->matcher->select($prices, $item, $targetRegion);
     }
 }

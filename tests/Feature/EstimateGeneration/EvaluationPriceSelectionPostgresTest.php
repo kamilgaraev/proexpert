@@ -226,6 +226,32 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
         self::assertNull($resolver->resolveAutomatic($session->fresh(), $item));
     }
 
+    public function test_automatic_price_requires_an_explicit_matching_region_and_invalidates_frozen_region_changes(): void
+    {
+        [$actor, $session, , $item] = $this->fixture();
+        $resolver = app(ResolveCommercialWorkPrice::class);
+        $original = $session->input_payload;
+        $price = $resolver->resolveAutomatic($session, $item);
+        self::assertNotNull($price);
+        self::assertSame('москва', $price['automatic_selection_basis']['target_region']);
+        $frozen = [...$item, 'commercial_price_snapshot' => $price];
+        $fingerprint = (new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint)->fromSession($session);
+        $session->update(['input_payload' => [...$original, 'region' => 'Московская область']]);
+        self::assertNull($resolver->resolveAutomatic($session->fresh(), $item));
+        self::assertNull($resolver->resolveFrozen($actor, $session->fresh(), $frozen));
+        self::assertNotSame($fingerprint, (new \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint)->fromSession($session->fresh()));
+        unset($original['region']);
+        foreach (['single_active', 'text_detected'] as $source) {
+            $session->update(['input_payload' => [...$original, 'regional_context' => ['source' => $source, 'region_name' => 'Москва', 'region_id' => 100]]]);
+            self::assertNull($resolver->resolveAutomatic($session->fresh(), $item));
+            self::assertNull($resolver->resolveFrozen($actor, $session->fresh(), $frozen));
+        }
+        $session->update(['input_payload' => [...$original, 'region_id' => 100,
+            'regional_context' => ['source' => 'selected', 'region_name' => 'Москва', 'region_id' => 100]]]);
+        self::assertNotNull($resolver->resolveAutomatic($session->fresh(), $item));
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
     public function test_real_pricing_stage_publishes_a_verified_unit_rate_without_a_volume_or_model_price(): void
     {
         [, $session, , $item] = $this->fixture();
@@ -278,7 +304,7 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
             'metadata' => ['currency' => 'RUB', 'price_as_of_date' => '2026-10-01', 'price_region' => 'Москва', 'vat_mode' => 'not_applicable', 'delivery_included' => true]]);
         $item = ['key' => 'finish:1', 'name' => 'Отделка пола', 'unit' => 'm2', 'quantity' => null];
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $actor->id,
-            'state_version' => 0, 'status' => 'draft', 'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['finishing']],
+            'state_version' => 0, 'status' => 'draft', 'input_payload' => ['evaluation_mode' => 'universal', 'price_policy' => 'catalog', 'selected_sections' => ['finishing'], 'region' => 'Москва'],
             'draft_payload' => ['local_estimates' => [['key' => 'finishing', 'sections' => [['key' => 'finish', 'work_items' => [$item]]]]]]]);
 
         return [$actor, $session, $catalog, $item];

@@ -20,6 +20,7 @@ final class EvaluationInputFingerprint
             'quantity_selections', 'quantity_selection_revision',
             'work_entity_selections', 'work_entity_selection_revision', 'room_identity_revision',
             'contingency_selection',
+            'region', 'region_id', 'estimate_regional_price_version_id',
         ]));
         $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->orderBy('id')->get(['id', 'checksum_sha256', 'status'])->map(static fn ($document): array => [
