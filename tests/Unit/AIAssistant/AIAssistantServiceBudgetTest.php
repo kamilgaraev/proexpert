@@ -494,6 +494,42 @@ class AIAssistantServiceBudgetTest extends TestCase
         }
     }
 
+    public function test_simple_equipment_question_binds_requested_kind_and_rejects_model_category_substitution(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => [
+            'project_id' => ['type' => ['integer', 'null']], 'model_query' => ['type' => ['string', 'null']],
+            'equipment_kind' => ['type' => ['string', 'null']], 'element_query' => ['type' => ['string', 'null']],
+            'material_query' => ['type' => ['string', 'null']], 'offset' => ['type' => 'integer'], 'limit' => ['type' => 'integer'],
+        ], 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->exactly(2))->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen[] = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'Сколько кондиционеров в модели?';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'kind_bound', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => null, 'equipment_kind' => null,
+                'element_query' => 'IFCBUILDINGELEMENTPROXY', 'material_query' => 'Подмена', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertSame(['project_id' => 52, 'model_query' => null, 'equipment_kind' => 'air_conditioner',
+            'element_query' => null, 'material_query' => null, 'offset' => 0, 'limit' => 1], $seen[0]);
+        $plan['request']['message'] = 'Покажи все кондиционеры в модели';
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'kind_list', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => null, 'equipment_kind' => null,
+                'element_query' => 'IFCBUILDINGELEMENTPROXY', 'material_query' => 'Подмена', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame('air_conditioner', $seen[1]['equipment_kind']);
+        self::assertSame(20, $seen[1]['offset']);
+        self::assertSame(20, $seen[1]['limit']);
+    }
+
     public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void
     {
         $arguments = ['domain' => 'contracts', 'entity_type' => 'contract', 'query' => 'Подрядчик', 'project_id' => null];
