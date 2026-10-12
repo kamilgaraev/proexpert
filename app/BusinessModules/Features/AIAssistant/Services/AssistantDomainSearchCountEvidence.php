@@ -223,6 +223,22 @@ final class AssistantDomainSearchCountEvidence
             throw new \LogicException('search_count_signing_key_unavailable');
         }
 
-        return hash_hmac('sha256', json_encode($value, JSON_THROW_ON_ERROR), $key);
+        return hash_hmac('sha256', json_encode(self::canonicalize($value), JSON_THROW_ON_ERROR), $key);
+    }
+
+    private static function canonicalize(array $value): array
+    {
+        if (array_is_list($value)) {
+            return array_map(static fn (mixed $item): mixed => is_array($item) ? self::canonicalize($item) : $item, $value);
+        }
+
+        ksort($value, SORT_STRING);
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = self::canonicalize($item);
+            }
+        }
+
+        return $value;
     }
 }

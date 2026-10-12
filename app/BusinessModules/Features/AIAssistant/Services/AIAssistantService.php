@@ -2096,8 +2096,10 @@ class AIAssistantService
             return ['error' => $message];
         }
 
+        $toolFailureStage = 'argument_validation';
         try {
             $this->toolArguments->validate($args, $tool->getParametersSchema());
+            $toolFailureStage = 'request_policy';
             $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
             if ($isMutationTool && (! $allowActions || ! $requestUnderstanding instanceof AssistantRequestUnderstanding)) {
                 $this->recordRequestOutcome('request_blocked');
@@ -2132,6 +2134,7 @@ class AIAssistantService
                 }
             }
 
+            $toolFailureStage = 'authorization';
             $canExecuteTool = $this->permissionChecker->canExecuteTool($user, $toolName, $args);
 
             if ($isMutationTool) {
@@ -2186,6 +2189,7 @@ class AIAssistantService
                 return ['error' => $message];
             }
 
+            $toolFailureStage = 'tool_preparation';
             $progressCode = AssistantRequestProgress::toolCode($toolName, $args);
             if ($bimScopeMissing) {
                 $this->recordRequestOutcome('insufficient_data');
@@ -2208,8 +2212,10 @@ class AIAssistantService
                 $stockRead = $read;
                 $read = fn (): array|string => $this->measurePhase('stock_read', $stockRead);
             }
+            $toolFailureStage = 'tool_execution';
             $toolResult = $this->measurePhase('tool', fn (): array|string => $pureDatabaseRead && app()->bound(AssistantRequestExecutionContext::class)
                 ? $this->readPhase($read, $user, $organizationId) : $read());
+            $toolFailureStage = 'evidence_processing';
             $this->executionCheckpoint();
             if (is_array($toolResult) && in_array($toolResult['status'] ?? null, ['access_denied', 'forbidden'], true)) {
                 $this->recordRequestOutcome('access_denied');
@@ -2221,6 +2227,7 @@ class AIAssistantService
                 $this->recordRequestOutcome('service_error');
             }
             if (is_array($toolResult) && $this->legacyLiveEvidence !== null) {
+                $toolFailureStage = 'legacy_enrichment';
                 $liveReads = $this->legacyLiveEvidence->read($toolName, $toolResult, $user, $organizationId);
                 foreach ($liveReads as $liveRead) {
                     $this->activeToolResults[] = $liveRead;
@@ -2229,6 +2236,7 @@ class AIAssistantService
                     $toolResult['live_entity_reads'] = $liveReads;
                 }
             }
+            $toolFailureStage = 'evidence_processing';
             if (AssistantRequestProgress::toolCompleted($toolResult)
                 || ($toolName === 'search_assistant_documents' && is_array($toolResult)
                     && ($toolResult['status'] ?? null) === 'partial' && ($toolResult['source_refs'] ?? []) !== [])) {
@@ -2281,7 +2289,12 @@ class AIAssistantService
                 'organization_id' => $organizationId,
                 'user_id' => $user->id,
                 'exception_class' => $exception::class,
+                'tool_failure_stage' => $toolFailureStage,
             ];
+            $activeRequestId = $this->activeRequest?->request_id;
+            if (is_string($activeRequestId) && \Illuminate\Support\Str::isUuid($activeRequestId)) {
+                $technicalContext['request_id'] = $activeRequestId;
+            }
             if ($exception instanceof QueryException) {
                 $technicalContext += $this->queryExceptionDiagnosticMetadata($exception);
             }

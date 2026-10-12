@@ -30,7 +30,7 @@ final class AssistantBimIndexQueryAggregateTest extends TestCase
                     return [(object) ['aggregate' => 0]];
                 }
                 if (str_contains($query, 'AS fingerprint')) {
-                    return [(object) ['fingerprint' => 'empty-index']];
+                    return [(object) ['indexed_count' => 0, 'schema2_count' => 0, 'fingerprint' => 'empty-index']];
                 }
                 return [];
             }
@@ -47,9 +47,14 @@ final class AssistantBimIndexQueryAggregateTest extends TestCase
             $result = (new AssistantBimIndexQuery(new AssistantBimIndexProjection, new AssistantBimIndexPredicate))->read($scope,
                 ['offset' => 0, 'limit' => 20, 'include_properties' => false, 'include_quantities' => false], [], []);
             self::assertSame(0, $result['total']);
+            self::assertSame(0, $result['scanned_count']);
+            self::assertSame(0, $result['schema2_row_count']);
             self::assertSame('empty-index', $result['index_fingerprint']);
+            self::assertCount(4, $connection->statements);
             $fingerprint = array_values(array_filter($connection->statements, static fn (string $sql): bool => str_contains($sql, 'AS fingerprint')))[0];
-            self::assertStringStartsWith('select md5(', $fingerprint);
+            self::assertStringStartsWith('select COUNT(*) AS indexed_count, COUNT(*) FILTER (WHERE design_ifc_model_elements.source_schema_version = 2) AS schema2_count, md5(', $fingerprint);
+            self::assertStringContainsString('source_content_hash', $fingerprint);
+            self::assertStringContainsString('ORDER BY design_ifc_model_elements.id', $fingerprint);
             self::assertStringNotContainsString('order by "design_ifc_model_elements"."name"', $fingerprint);
             self::assertStringContainsString('"design_ifc_model_elements"."organization_id" = ?', $fingerprint);
             self::assertStringContainsString('"design_ifc_model_elements"."id" in (select "id" from "authorized_bim_elements")', $fingerprint);

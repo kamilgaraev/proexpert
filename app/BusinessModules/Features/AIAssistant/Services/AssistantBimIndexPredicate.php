@@ -25,8 +25,14 @@ final class AssistantBimIndexPredicate
         $equipmentQuery = (new AssistantBimIndexProjection)->queryEquipment(trim($filters['element_query'] ?? ''));
         if (! empty($filters['equipment_kind']) || $equipmentQuery !== null) {
             $genericCategories = implode(', ', array_map(static fn (string $category): string => "'{$category}'", AssistantBimIndexProjection::genericEquipmentCategories()));
+            $kind = ! empty($filters['equipment_kind']) ? $filters['equipment_kind'] : $equipmentQuery;
+            if ($kind !== null && $kind !== 'unknown') {
+                $directCategory = ['fan' => 'IFCFAN', 'pump' => 'IFCPUMP', 'boiler' => 'IFCBOILER', 'chiller' => 'IFCCHILLER'][$kind] ?? null;
+                $eligibleCategories = $genericCategories.($directCategory === null ? '' : ", '{$directCategory}'");
+                $scope->whereRaw("upper({$table}.category) IN ({$eligibleCategories})");
+            }
             $input = (clone $scope)->toBase()->reorder()->select($table.'.*')
-                ->selectRaw("CASE WHEN upper({$table}.category) IN ({$genericCategories}) THEN concat_ws(' ', ".$this->engineering(true).", {$attributes}, {$classifications}) ELSE '' END AS assistant_equipment_identity")->offset(0);
+                ->selectRaw("CASE WHEN upper({$table}.category) IN ({$genericCategories}) THEN ".$this->equipmentIdentity($attributes, $classifications)." ELSE jsonb_build_object('text', '', 'air_conditioning_enum', false) END AS assistant_equipment_identity")->offset(0);
             $scope->setQuery($scope->getQuery()->newQuery()->fromSub($input, $table));
         }
         $classifier = $this->classifier($table.'.assistant_equipment_identity');
@@ -78,6 +84,14 @@ final class AssistantBimIndexPredicate
         return '(COALESCE(('.str_replace('SELECT 1', "SELECT string_agg(left(p.value #>> '{}', 255), ' ')", $leaves)."), ''))";
     }
 
+    private function equipmentIdentity(string $attributes, string $classifications): string
+    {
+        $leaves = $this->leaves()." AND p.key ~* '^(PredefinedType|ObjectType|ElementType|TypeName|ModelReference|Reference|Тип|ТипОбъекта|GP_Наименование|ADSK_Наименование|Наименование|Марка|Модель)$'";
+        $aggregate = "SELECT jsonb_build_object('text', concat_ws(' ', COALESCE(string_agg(left(p.value #>> '{}', 255), ' '), ''), {$attributes}, {$classifications}), 'air_conditioning_enum', COALESCE(bool_or(p.key ~* '^PredefinedType$' AND upper(trim(p.value #>> '{}')) = 'AIRCONDITIONINGUNIT'), false))";
+
+        return '('.str_replace('SELECT 1', $aggregate, $leaves).')';
+    }
+
     private function labels(string $column): string
     {
         $source = self::TABLE.'.'.$column;
@@ -92,9 +106,9 @@ final class AssistantBimIndexPredicate
         $case = "CASE WHEN upper({$table}.category) = 'IFCFAN' THEN 'fan' WHEN upper({$table}.category) = 'IFCPUMP' THEN 'pump' WHEN upper({$table}.category) = 'IFCBOILER' THEN 'boiler' WHEN upper({$table}.category) = 'IFCCHILLER' THEN 'chiller' WHEN COALESCE(upper({$table}.category), '') NOT IN ({$generic}) THEN 'unknown'";
         $room = str_replace("'", "''", AssistantBimIndexProjection::roomCategoryPattern());
         $case .= " WHEN trim(COALESCE({$table}.properties #>> '{Прочее,Категория}', '')) ~* '{$room}' THEN 'unknown'";
-        $enum = "upper(trim(COALESCE({$table}.properties #>> '{_ifc,predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR upper(trim(COALESCE({$table}.properties #>> '{_ifc,type_predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR EXISTS (".$this->leaves()." AND p.key ~* '^PredefinedType$' AND upper(trim(p.value #>> '{}')) = 'AIRCONDITIONINGUNIT')";
+        $enum = "upper(trim(COALESCE({$table}.properties #>> '{_ifc,predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR upper(trim(COALESCE({$table}.properties #>> '{_ifc,type_predefined_type}', ''))) = 'AIRCONDITIONINGUNIT' OR ({$text} ->> 'air_conditioning_enum')::boolean";
         $case .= " WHEN ({$enum}) THEN 'air_conditioner'";
-        foreach ([$text, "COALESCE({$table}.name, '')"] as $source) {
+        foreach (["({$text} ->> 'text')", "COALESCE({$table}.name, '')"] as $source) {
             $unit = str_replace("'", "''", AssistantBimIndexProjection::airConditionerUnitPattern());
             $unitReference = str_replace("'", "''", AssistantBimIndexProjection::airConditionerUnitReferencePattern());
             $case .= " WHEN {$source} ~* '{$unit}' AND {$source} !~* '{$unitReference}' THEN 'air_conditioner'";

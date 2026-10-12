@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Project\UserProjectAccessService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -136,6 +137,9 @@ final class AssistantDomainToolsTest extends TestCase
         $this->app->instance(AssistantDomainReadService::class, $this->reader);
         $countHelper = new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence;
         self::assertTrue($countHelper->matchesReference($actor, $organization->id, $countReference));
+        $jsonb = DB::selectOne('select CAST(? AS jsonb)::text AS value', [json_encode($countReference, JSON_THROW_ON_ERROR)]);
+        $persistedReference = json_decode($jsonb->value, true, 512, JSON_THROW_ON_ERROR);
+        self::assertTrue($countHelper->matchesReference($actor, $organization->id, $persistedReference));
         $actor->assignedProjects()->detach($projects[23]->id);
         $second = $this->reader->execute('search', $arguments + ['cursor' => $first['result_window']['next_cursor']], $actor, $organization->id);
 

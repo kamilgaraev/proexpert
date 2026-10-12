@@ -644,6 +644,55 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertSame('air_conditioner', $matches['models'][0]['elements'][0]['equipment_kind']);
     }
 
+    public function test_bounded_equipment_queries_preserve_full_proof_unknown_rows_and_off_page_freshness(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 6);
+        $rows = [
+            ['IFCBUILDINGELEMENTPROXY', 'TYPE-OUTDOOR', ['Идентификация' => ['GP_Наименование' => 'Наружный блок мультизональной системы']]],
+            ['IFCUNITARYEQUIPMENT', 'Типовой блок', ['Pset_Device' => ['PredefinedType' => 'AIRCONDITIONINGUNIT']]],
+            ['IFCWALL', 'Стена для кондиционера', []],
+            ['IFCBUILDINGELEMENTPROXY', 'Кронштейн кондиционера', []],
+            ['IFCPUMP', 'Насос', []],
+            ['IFCBUILDINGELEMENTPROXY', 'Кондиционер последний', []],
+        ];
+        foreach ($rows as [$category, $name, $properties]) {
+            $element = $this->element($version, $category, $name);
+            $element->updateQuietly(['derivative_id' => $derivative->id,
+                'properties' => ['_ifc' => ['schema_version' => 2]] + $properties]);
+        }
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $result = $this->read(['version_id' => $version->id, 'equipment_kind' => 'air_conditioner', 'limit' => 1]);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $model = $result['models'][0];
+        self::assertSame(6, $model['scanned_count']);
+        self::assertSame(6, $model['schema2_row_count']);
+        self::assertSame(3, $model['total']);
+        self::assertSame(3, $model['semantic_matching_count']);
+        self::assertSame('complete', $model['index_coverage']['status']);
+        self::assertTrue($model['has_more']);
+        self::assertCount(1, $model['elements']);
+        $proofs = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'AS indexed_count')));
+        self::assertCount(1, $proofs);
+        self::assertStringContainsString('COUNT(*) FILTER', $proofs[0]['query']);
+        self::assertStringContainsString('source_content_hash', $proofs[0]['query']);
+        self::assertStringContainsString('"design_ifc_model_elements"."id" in (', $proofs[0]['query']);
+        self::assertStringContainsString('"design_ifc_model_elements"."project_id" = ? and "design_ifc_model_elements"."version_id" = ? and "design_ifc_model_elements"."derivative_id" = ?', $proofs[0]['query']);
+        self::assertSame([(int) $version->project_id, (int) $version->id, (int) $derivative->id], array_map('intval', array_slice($proofs[0]['bindings'], -3)));
+        $unknown = $this->read(['version_id' => $version->id, 'equipment_kind' => 'unknown']);
+        self::assertSame(2, $unknown['models'][0]['total']);
+        self::assertSame(6, $unknown['models'][0]['scanned_count']);
+        self::assertSame(1, $this->read(['version_id' => $version->id, 'equipment_kind' => 'pump'])['models'][0]['total']);
+        $element->updateQuietly(['properties' => ['_ifc' => ['schema_version' => 2], 'Pset_Device' => ['Width' => 42]]]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+    }
+
     private function readyIndex(DesignArtifactVersion $version, int $count, array $units = []): DesignModelDerivative
     {
         $units = array_map(static fn (array $unit): array => $unit + ['source' => 'project_units_in_context'], $units);

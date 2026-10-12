@@ -566,12 +566,68 @@ class AIAssistantServiceBudgetTest extends TestCase
         $registry = new AIToolRegistry;
         $registry->registerTool($tool);
         $service = $this->makeService($registry, true);
+        $logging = (new \ReflectionProperty(AIAssistantService::class, 'logging'))->getValue($service);
+        $logging->expects($this->once())->method('technical')->with('ai.tool.error', [
+            'tool' => 'search_projects', 'organization_id' => 15, 'user_id' => 7,
+            'exception_class' => \RuntimeException::class, 'tool_failure_stage' => 'tool_execution',
+        ], 'error');
         $failures = [];
         $result = $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'call_projects', 'name' => 'search_projects', 'arguments' => '{}'], [], $failures);
         $safe = trans_message('ai_assistant.tool_execute_failed');
         $this->assertSame(['error' => $safe], $result);
         $this->assertSame([$safe], $failures);
         $this->assertStringNotContainsString('secret database', json_encode([$result, $failures], JSON_THROW_ON_ERROR));
+    }
+
+    public function test_invalid_optional_contract_argument_is_diagnosed_before_execution_without_exposing_values(): void
+    {
+        $schema = (new \App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\ReadOnly\GetContractSnapshotTool)->getParametersSchema();
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_contract_snapshot');
+        $tool->method('getParametersSchema')->willReturn($schema);
+        $tool->expects($this->never())->method('execute');
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $logging = (new \ReflectionProperty(AIAssistantService::class, 'logging'))->getValue($service);
+        $logging->expects($this->once())->method('technical')->with('ai.tool.error', [
+            'tool' => 'get_contract_snapshot', 'organization_id' => 15, 'user_id' => 7,
+            'exception_class' => \RuntimeException::class, 'tool_failure_stage' => 'argument_validation',
+        ], 'error');
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['name' => 'get_contract_snapshot',
+            'arguments' => '{"project_id":52,"contract_id":null,"number":"private synthetic filter"}'], [], $failures);
+        $safe = trans_message('ai_assistant.tool_execute_failed');
+        self::assertSame(['error' => $safe], $result);
+        self::assertSame([$safe], $failures);
+        self::assertStringNotContainsString('private synthetic filter', json_encode([$result, $failures], JSON_THROW_ON_ERROR));
+    }
+
+    public function test_tool_failure_correlates_only_valid_uuid_from_active_request(): void
+    {
+        foreach (['eaa072f4-5694-4adf-a7af-b3e8a69b30a3', 'private invalid request value'] as $requestId) {
+            $tool = $this->createMock(AIToolInterface::class);
+            $tool->method('getName')->willReturn('search_projects');
+            $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
+            $tool->expects($this->never())->method('execute');
+            $registry = new AIToolRegistry;
+            $registry->registerTool($tool);
+            $service = $this->makeService($registry);
+            $request = new \App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
+            $request->setRawAttributes(['request_id' => $requestId]);
+            (new \ReflectionProperty(AIAssistantService::class, 'activeRequest'))->setValue($service, $request);
+            $expected = ['tool' => 'search_projects', 'organization_id' => 15, 'user_id' => 7,
+                'exception_class' => \RuntimeException::class, 'tool_failure_stage' => 'argument_validation'];
+            if (\Illuminate\Support\Str::isUuid($requestId)) {
+                $expected['request_id'] = $requestId;
+            }
+            $logging = (new \ReflectionProperty(AIAssistantService::class, 'logging'))->getValue($service);
+            $logging->expects($this->once())->method('technical')->with('ai.tool.error', $expected, 'error');
+            $failures = [];
+            $result = $service->exposeHandleToolCall(['name' => 'search_projects',
+                'arguments' => '{"unknown":"private filter"}'], [], $failures);
+            self::assertSame(['error' => trans_message('ai_assistant.tool_execute_failed')], $result);
+        }
     }
 
     public function test_follow_up_payload_keeps_previous_schedule_report_intent(): void

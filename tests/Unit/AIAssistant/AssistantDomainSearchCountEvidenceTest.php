@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainDefinition;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantDomainSearchCountEvidence;
 use App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactVerifier;
 use App\Models\User;
@@ -52,6 +53,28 @@ final class AssistantDomainSearchCountEvidenceTest extends TestCase
         self::assertTrue($result['needs_clarification']);
         self::assertSame([], $result['source_refs']);
         self::assertStringNotContainsString('20', $result['text']);
+    }
+
+    public function test_count_proof_survives_associative_key_reordering_but_preserves_list_order(): void
+    {
+        config(['app.key' => 'search-count-test-key']);
+        $actor = new User;
+        $actor->setAttribute('id', 3);
+        $definition = new AssistantDomainDefinition('contracts', 'contract-management', 'contract',
+            ['contract.view', 'finance.view'], ['name'], [], ['search' => []], '/contracts',
+            'contracts', ['contract']);
+        $evidence = AssistantDomainSearchCountEvidence::payload($actor, 1, $definition, 'contract',
+            ['query' => ''], ['name'], 24, (new \DateTimeImmutable('now'))->format(DATE_ATOM));
+        $reference = $evidence['source_ref'];
+        self::assertTrue(AssistantDomainSearchCountEvidence::trusted($evidence));
+
+        $reordered = $evidence;
+        $reordered['source_ref'] = $this->reverseAssociativeKeys($reference);
+        self::assertTrue(AssistantDomainSearchCountEvidence::trusted($reordered));
+
+        $tamperedList = $evidence;
+        $tamperedList['source_ref']['required_permissions'] = array_reverse($reference['required_permissions']);
+        self::assertFalse(AssistantDomainSearchCountEvidence::trusted($tamperedList));
     }
 
     public function test_current_count_scope_and_freshness_must_match_original_receipt(): void
@@ -279,5 +302,19 @@ final class AssistantDomainSearchCountEvidenceTest extends TestCase
 
         return AssistantDomainSearchCountEvidence::payload($actor, $organizationId, $definition, $entityType,
             $arguments + ['query' => '', 'project_id' => null], [$definition->fields[0]], $total, (new \DateTimeImmutable($time))->format(DATE_ATOM));
+    }
+
+    private function reverseAssociativeKeys(array $value): array
+    {
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = $this->reverseAssociativeKeys($item);
+            }
+        }
+        if (! array_is_list($value)) {
+            $value = array_reverse($value, true);
+        }
+
+        return $value;
     }
 }
