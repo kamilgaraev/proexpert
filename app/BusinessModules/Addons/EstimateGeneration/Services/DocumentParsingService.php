@@ -15,6 +15,7 @@ use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -127,10 +128,18 @@ class DocumentParsingService
                 sourceVersion: DocumentSourceVersion::fromDocument($document),
             );
             DB::afterCommit(static function () use ($documentId, $snapshot): void {
-                ProcessEstimateGenerationDocumentJob::dispatch($documentId, $snapshot)
-                    ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                    ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
-                    ->afterCommit();
+                try {
+                    ProcessEstimateGenerationDocumentJob::dispatch($documentId, $snapshot)
+                        ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
+                        ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
+                        ->afterCommit();
+                } catch (Throwable $exception) {
+                    // The committed queued document and attempt ID are the durable recovery target.
+                    // A queue outage must not turn an accepted upload into a failed/duplicated batch.
+                    Log::warning('estimate_generation.document_manifest_dispatch_deferred', [
+                        'document_id' => $documentId, 'failure_code' => 'document_queue_unavailable', 'exception_class' => $exception::class,
+                    ]);
+                }
             });
         }
     }

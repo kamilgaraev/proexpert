@@ -150,14 +150,15 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
     public function test_reuse_failure_cleans_only_new_destinations_and_preserves_original_sources(): void
     {
         $this->storage(failCopyAt: 2);
+        $contents = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
         foreach (['one', 'two'] as $name) {
             $path = 'org-10/estimate-generation/sessions/31/documents/'.$name.'.pdf';
-            $this->objects[$path] = 10;
+            $this->objects[$path] = strlen($contents);
             EstimateGenerationDocument::query()->create([
                 'organization_id' => 10, 'project_id' => 20, 'session_id' => 31, 'user_id' => 40,
                 'filename' => $name.'.pdf', 'mime_type' => 'application/pdf', 'storage_path' => $path,
-                'status' => 'ready', 'file_size_bytes' => 10, 'checksum_sha256' => hash('sha256', $name),
-                'source_version' => 'sha256:'.hash('sha256', $name), 'meta' => ['original_extension' => 'pdf'],
+                'status' => 'ready', 'file_size_bytes' => strlen($contents), 'checksum_sha256' => hash('sha256', $contents),
+                'source_version' => 'sha256:'.hash('sha256', $contents), 'meta' => ['original_extension' => 'pdf'],
             ]);
         }
         try {
@@ -238,8 +239,9 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
 
     private function files(): array
     {
-        return [UploadedFile::fake()->createWithContent('one.pdf', 'first'),
-            UploadedFile::fake()->createWithContent('two.pdf', 'second')];
+        $contents = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
+
+        return [UploadedFile::fake()->createWithContent('one.pdf', $contents), UploadedFile::fake()->createWithContent('two.pdf', $contents)];
     }
 
     private function storage(int $failHeadAt = 0, int $failCopyAt = 0): OcrDocumentStorageService
@@ -272,6 +274,21 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
         });
         $service = new OcrDocumentStorageService($files);
         $this->app->instance(OcrDocumentStorageService::class, $service);
+        $sources = Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage::class);
+        $sources->shouldReceive('open')->andReturnUsing(static function (EstimateGenerationDocument $document, string $version) {
+            $contents = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
+            self::assertSame(10, (int) $document->organization_id);
+            self::assertSame(20, (int) $document->project_id);
+            self::assertSame(strlen($contents), $document->file_size_bytes);
+            self::assertSame(hash('sha256', $contents), $document->checksum_sha256);
+            self::assertSame('sha256:'.hash('sha256', $contents), $version);
+            $stream = tmpfile();
+            fwrite($stream, $contents);
+            rewind($stream);
+
+            return new \App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource($stream, strlen($contents));
+        });
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage::class, $sources);
 
         return $service;
     }
