@@ -145,7 +145,7 @@ final class TimewebProvider implements LLMProviderInterface
         $prepared = $budgetService->resolvePrepared($options['_prepared_token_budget'] ?? null, $input, $tools,
             (string) ($options['budget_profile'] ?? 'normal'), isset($options['budget_limits']) ? (array) $options['budget_limits'] : null);
         $maxTokens = min(max(1, (int) ($options['max_completion_tokens'] ?? $options['max_tokens'] ?? $this->maxTokens)), $prepared['max_completion_tokens']);
-        $payload = OpenAIProvider::nativePayload($model, $prepared['messages'], $tools, $maxTokens);
+        $payload = OpenAIProvider::nativePayload($model, $prepared['messages'], $tools, $maxTokens, $options['tool_choice'] ?? null);
         $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
         try {
             $response = $this->makeClient($timeout)->responses()->create($payload);
