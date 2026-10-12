@@ -890,6 +890,25 @@ final class AssistantDocumentIngestionTest extends TestCase
         self::assertGreaterThan(1, $iterations);
     }
 
+    public function test_exact_ready_document_tool_read_is_available_despite_an_unrelated_unsupported_file(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('ready-exact.txt', 'Проверить комплектность.'))->id);
+        $this->file('unrelated.wav', 'audio', null, 'audio/wav');
+        $coverage = app(AssistantDocumentCoverageService::class);
+        self::assertFalse(AssistantDocumentCoverageService::isCompleteForAnswer($coverage->coverage($this->organization->id, $this->owner)));
+        $tool = $this->searchTool($coverage);
+        $blocked = $tool->execute($this->searchArguments(), $this->owner, $this->organization);
+        self::assertSame('corpus_incomplete', $blocked['status']);
+
+        $read = $tool->execute($this->searchArguments() + ['document_id' => (int) $document->id], $this->owner, $this->organization);
+
+        self::assertSame('success', $read['status']);
+        self::assertSame('document_units', $read['search_scope']);
+        self::assertFalse($read['search_complete']);
+        self::assertStringContainsString('Проверить комплектность.', $read['document_context']);
+        self::assertSame((string) $document->id, (string) $read['source_refs'][0]['entity_id']);
+    }
+
     public function test_exact_document_read_rejects_a_unit_from_another_document(): void
     {
         $first = $this->documents->process((int) $this->documents->registerFile($this->file('first-unit.txt', 'Первый'))->id);

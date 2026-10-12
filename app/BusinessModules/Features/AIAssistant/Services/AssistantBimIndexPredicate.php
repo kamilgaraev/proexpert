@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 final class AssistantBimIndexPredicate
 {
@@ -32,6 +33,9 @@ final class AssistantBimIndexPredicate
         }
         if (! empty($filters['equipment_kind'])) {
             $scope->where($classifier, $filters['equipment_kind']);
+        }
+        if (! empty($filters['equipment_kinds'])) {
+            $scope->whereIn(DB::raw(self::equipmentCountExpression()), $filters['equipment_kinds']);
         }
         if (! empty($filters['property_name'])) {
             $scope->whereRaw('EXISTS ('.$this->leaves()." AND lower(p.key) LIKE ?".
@@ -62,6 +66,20 @@ final class AssistantBimIndexPredicate
         $pattern = str_replace("'", "''", AssistantBimIndexProjection::propertyPattern());
         $unsafe = str_replace("'", "''", self::UNSAFE_VALUE);
         return "SELECT 1 FROM jsonb_path_query(COALESCE({$table}.properties, '{}'::jsonb), '$.**') AS node(value) CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(node.value) = 'object' THEN node.value ELSE '{}'::jsonb END) AS p(key, value) WHERE p.key ~* '{$pattern}' AND jsonb_typeof(p.value) IN ('string', 'number', 'boolean') AND (p.value #>> '{}') !~* '{$unsafe}'";
+    }
+
+    public static function equipmentCountExpression(): string
+    {
+        $table = self::TABLE;
+        $name = "COALESCE({$table}.name, '')";
+        $roomPattern = AssistantBimIndexProjection::roomCategoryPattern();
+        return "CASE WHEN {$table}.source_equipment_kind <> 'unknown' THEN {$table}.source_equipment_kind
+            WHEN {$table}.category IN ('IFCAIRHANDLINGUNIT', 'IFCUNITARYEQUIPMENT', 'IFCBUILDINGELEMENTPROXY')
+                AND {$name} ~* '(вентиляционн[а-яё]*[ _-]+установк|приточн[а-яё]*[ _-]+установк|вытяжн[а-яё]*[ _-]+установк|вентустановк|air[ _-]+handling[ _-]+unit)'
+                AND {$name} !~* '(кронштейн|воздухозабор|клапан|решетк|решётк|фильтр|переход|адаптер|креплен|креплён|кожух|панель|рамк|датчик|шкаф|щит|управлен|автоматик|кабель|привод|помещен|помещён|room|space)'
+                AND {$name} !~* '".self::UNSAFE_VALUE."'
+                AND BTRIM(COALESCE({$table}.properties #>> '{Прочее,Категория}', '')) !~* '{$roomPattern}'
+            THEN 'ventilation_unit' ELSE 'unknown' END";
     }
 
     private function engineering(): string

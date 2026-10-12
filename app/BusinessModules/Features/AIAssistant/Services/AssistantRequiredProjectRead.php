@@ -14,6 +14,10 @@ final readonly class AssistantRequiredProjectRead
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         if (! $scope->requested || $scope->projectId === null) { return null; }
+        if (self::simpleProjectBudget($query)) {
+            return ['name' => 'assistant_domain_read', 'arguments' => ['domain' => 'projects', 'entity_type' => 'project',
+                'id' => $scope->projectId, 'fields' => ['name', 'budget_amount']]];
+        }
         if (($arguments = AssistantDomainSearchCountEvidence::overdueCountArguments($query, $scope->projectId)) !== null) {
             return ['name' => 'assistant_domain_search', 'arguments' => $arguments + ['limit' => 1, 'cursor' => null, 'fields' => null]];
         }
@@ -91,6 +95,14 @@ final readonly class AssistantRequiredProjectRead
         if (preg_match('/склад|остат/iu', $query) !== 1) { return false; }
         preg_match_all('/[\pL\pN_]+/u', mb_strtolower($query), $words);
         $allowed = explode(' ', 'что какие сколько сейчас есть осталось остатки материалы покажи покажите на в у нас складе склад текущего текущем выбранного нашем нашего этом этого объекте объекта проекте проекта и пожалуйста');
+        return $words[0] !== [] && array_diff($words[0], $allowed) === [];
+    }
+
+    private static function simpleProjectBudget(string $query): bool
+    {
+        if (preg_match('/(?<!\pL)бюджет[а-яё]*(?!\pL)/iu', $query) !== 1) { return false; }
+        preg_match_all('/[\pL\pN_]+/u', mb_strtolower($query), $words);
+        $allowed = explode(' ', 'какой какая каков какова сколько бюджет сумма суммы в валюте валюта у нас нашего нашем текущего текущем выбранного выбранном этого этом проекте проекта объекте объекта покажи покажите пожалуйста');
         return $words[0] !== [] && array_diff($words[0], $allowed) === [];
     }
 }

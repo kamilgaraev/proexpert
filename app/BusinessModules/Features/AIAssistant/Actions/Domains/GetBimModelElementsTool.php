@@ -53,7 +53,10 @@ final readonly class GetBimModelElementsTool implements AIToolInterface
                 'description' => trans_message('ai_assistant_bim.estimate_links_description')],
         ];
 
-        return ['type' => 'object', 'properties' => $properties, 'required' => array_keys($properties), 'additionalProperties' => false];
+        $required = array_keys($properties);
+        $properties['equipment_kinds'] = ['type' => ['array', 'null'], 'minItems' => 1, 'maxItems' => 6,
+            'items' => ['type' => 'string', 'enum' => ['air_conditioner', 'fan', 'pump', 'boiler', 'chiller', 'ventilation_unit']]];
+        return ['type' => 'object', 'properties' => $properties, 'required' => $required, 'additionalProperties' => false];
     }
 
     public function execute(array $arguments, ?User $user, Organization $organization): array|string

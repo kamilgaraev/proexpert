@@ -36,12 +36,12 @@ final class AssistantToolResultProjection
             if (($filters['answer_kind'] ?? null) === 'materials') {
                 $view['server_formatted_answer'] = trans_message('ai_assistant_bim.provider_material_summary');
             }
-            $view['filters'] = array_intersect_key($filters, array_flip(['answer_kind', 'equipment_kind', 'element_query', 'material_query',
+            $view['filters'] = array_intersect_key($filters, array_flip(['answer_kind', 'equipment_kind', 'equipment_kinds', 'element_query', 'material_query',
                 'classification_query', 'storey_query', 'property_name', 'property_value', 'quantity_name', 'offset', 'limit']));
             $view['models'] = [];
             foreach (array_slice($result['models'] ?? [], 0, 5) as $model) {
                 $projected = array_intersect_key($model, array_flip(['source_scope', 'index_coverage', 'semantic_coverage',
-                    'semantic_matching_count', 'total', 'has_more', 'next_offset', 'scan_complete', 'estimate_link_coverage', 'material_summary']));
+                    'semantic_matching_count', 'equipment_counts', 'total', 'has_more', 'next_offset', 'scan_complete', 'estimate_link_coverage', 'material_summary']));
                 $projected['version'] = array_intersect_key($model['version'] ?? [], array_flip(['id', 'project_id', 'artifact_id',
                     'title', 'version_number', 'source_original_name', 'is_current']));
                 if (($filters['answer_kind'] ?? null) === 'materials') {

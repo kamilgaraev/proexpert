@@ -34,6 +34,20 @@ final class AssistantRequiredProjectReadTest extends TestCase
         return ['request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
     }
 
+    public function test_current_project_budget_reads_the_actual_budget_without_an_invented_currency_field(): void
+    {
+        $plan = $this->plan('Какой бюджет у нашего объекта? В какой валюте сумма?');
+        $expected = ['name' => 'assistant_domain_read', 'arguments' => ['domain' => 'projects',
+            'entity_type' => 'project', 'id' => 52, 'fields' => ['name', 'budget_amount']]];
+        self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($plan));
+        self::assertSame($expected['arguments'], AssistantRequiredProjectRead::bindArguments($plan, 'assistant_domain_read',
+            ['domain' => 'payments', 'entity_type' => 'payment_document', 'id' => 99, 'fields' => ['currency']]));
+        foreach (['Какой бюджет нашего объекта в долларах?', 'Какой бюджет нашего объекта и сколько потрачено?',
+            'Какой бюджет нашего объекта на бетон?'] as $query) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($query)));
+        }
+    }
+
     public function test_current_object_stock_uses_the_native_project_stock_scope(): void
     {
         $read = AssistantRequiredProjectRead::fromPlan($this->plan('Что сейчас есть на складе текущего объекта и сколько осталось?'));

@@ -268,6 +268,23 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertContains('get_estimate_answer', $mixedToolNames);
     }
 
+    public function test_global_document_gap_keeps_guarded_search_exposed_and_pdf_blocked(): void
+    {
+        $registry = new AIToolRegistry;
+        foreach (['search_assistant_documents', 'generate_rag_pdf_report'] as $name) {
+            $registry->registerTool($this->makeTool($name));
+        }
+        $service = $this->makeService($registry);
+        (new \ReflectionProperty(AIAssistantService::class, 'documentContextBlocked'))->setValue($service, true);
+        $query = 'Прочитай текст правил из документа.';
+        $plan = ['task_type' => 'summary', 'capability' => ['id' => 'reports'],
+            'request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => [], 'allow_actions' => false]];
+        $names = array_column($service->exposeResolveToolDefinitions($plan), 'name');
+        self::assertContains('search_assistant_documents', $names);
+        self::assertNotContains('generate_rag_pdf_report', $names);
+    }
+
     public function test_model_selected_related_read_still_requires_current_tool_permission(): void
     {
         $tool = $this->createMock(AIToolInterface::class);
@@ -528,6 +545,39 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame('air_conditioner', $seen[1]['equipment_kind']);
         self::assertSame(20, $seen[1]['offset']);
         self::assertSame(20, $seen[1]['limit']);
+    }
+
+    public function test_mixed_equipment_count_binds_all_requested_kinds_and_disables_expensive_unrequested_fields(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('get_bim_model_elements');
+        $properties = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema()['properties'];
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => $properties, 'additionalProperties' => false]);
+        $seen = [];
+        $tool->expects($this->once())->method('execute')->willReturnCallback(static function (array $args) use (&$seen): array {
+            $seen = $args;
+            return ['status' => 'success'];
+        });
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $query = 'В Севгу сколько кондиционеров и вентиляционных установок?';
+        $plan = ['request_understanding' => (new AssistantRequestUnderstandingResolver)->resolve($query)->toArray(),
+            'request' => ['message' => $query, 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $service->exposeHandleToolCall(['type' => 'function_call', 'call_id' => 'mixed', 'name' => 'get_bim_model_elements',
+            'arguments' => json_encode(['project_id' => 52, 'model_query' => 'Севгу', 'equipment_kind' => 'air_conditioner',
+                'element_query' => 'вентиляционные установки', 'equipment_kinds' => null, 'include_properties' => true,
+                'include_quantities' => true, 'include_estimate_links' => true, 'answer_kind' => 'elements', 'offset' => 20, 'limit' => 20], JSON_THROW_ON_ERROR)], $plan, $failures);
+        self::assertSame(['air_conditioner', 'ventilation_unit'], $seen['equipment_kinds'], json_encode($seen));
+        self::assertNull($seen['equipment_kind']);
+        self::assertNull($seen['element_query']);
+        self::assertFalse($seen['include_properties']);
+        self::assertFalse($seen['include_quantities']);
+        self::assertFalse($seen['include_estimate_links']);
+        self::assertSame(1, $seen['limit']);
+        self::assertSame(0, $seen['offset']);
     }
 
     public function test_model_selected_domain_search_arguments_are_not_rewritten_from_classified_intent(): void

@@ -22,6 +22,17 @@ final readonly class AssistantBimIndexQuery
             ->map(static fn ($row): array => ['category' => $row->category, 'count' => (int) $row->element_count])->all();
         $this->predicate->apply($scope, $filters, $categories);
         $matchedCount = (clone $scope)->count();
+        $equipmentCounts = [];
+        if (! empty($filters['equipment_kinds'])) {
+            $equipmentCounts = array_fill_keys($filters['equipment_kinds'], 0);
+            $expression = AssistantBimIndexPredicate::equipmentCountExpression();
+            foreach ((clone $scope)->reorder()->select([])->selectRaw($expression.' AS equipment_count_kind, COUNT(*) AS equipment_count')
+                ->groupByRaw($expression)->get() as $row) {
+                if (array_key_exists((string) $row->equipment_count_kind, $equipmentCounts)) {
+                    $equipmentCounts[(string) $row->equipment_count_kind] = (int) $row->equipment_count;
+                }
+            }
+        }
         $columns = ['id', 'project_id', 'version_id', 'derivative_id', 'express_id', 'global_id', 'category', 'name', 'properties', 'classifications', 'updated_at'];
         $selected = array_map(static fn (string $column): string => $table.'.'.$column, $columns);
         $page = (clone $scope)->select($selected)->orderBy($table.'.id')->offset($filters['offset'])->limit($filters['limit'])->get()
@@ -95,7 +106,7 @@ final readonly class AssistantBimIndexQuery
             'elements' => $page, 'total' => $matchedCount, 'observed_matches' => $matchedCount,
             'has_more' => $filters['offset'] + count($page) < $matchedCount,
             'scan_complete' => $complete, 'scanned_count' => $indexedCount, 'index_fingerprint' => $fingerprint,
-            'schema2_row_count' => $schema2Count,
+            'schema2_row_count' => $schema2Count, 'equipment_counts' => $equipmentCounts,
             'matching_count_coverage' => 'full_index_query',
             'material_summary' => ($filters['answer_kind'] ?? 'elements') === 'materials'
                 ? (new AssistantBimMaterialSummary($this->projection))->read($scope, $filters['offset'], $filters['limit']) : null,
