@@ -18,6 +18,7 @@ final class EvaluationInputFingerprint
             'manual_input_revision', 'price_selection_revision', 'technology_selection_revision', 'scope_selection_revision',
             'price_selections', 'technology_selections', 'scenario_selections', 'scope_selection', 'currency_selections',
             'quantity_selections', 'quantity_selection_revision',
+            'work_entity_selections', 'work_entity_selection_revision', 'room_identity_revision',
         ]));
         $documents = $session->documents()->where('organization_id', $session->organization_id)->where('project_id', $session->project_id)
             ->orderBy('id')->get(['id', 'checksum_sha256', 'status'])->map(static fn ($document): array => [

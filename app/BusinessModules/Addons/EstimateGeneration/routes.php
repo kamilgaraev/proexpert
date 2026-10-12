@@ -60,6 +60,7 @@ Route::middleware([
         Route::get('/{session}/evaluation/quantity-sources', [EstimateGenerationEvaluationController::class, 'quantitySources'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.quantity-sources');
         Route::get('/{session}/evaluation/room-identities', [EstimateGenerationRoomIdentityController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('evaluation.room-identities');
         Route::post('/{session}/evaluation/room-identity', [EstimateGenerationRoomIdentityController::class, 'confirm'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.room-identity');
+        Route::post('/{session}/evaluation/work-entity', [EstimateGenerationRoomIdentityController::class, 'bindWork'])->middleware('authorize:estimate_generation.review,project,project')->name('evaluation.work-entity');
         Route::post('/{session}/evaluation/pricing-source', [EstimateGenerationEvaluationController::class, 'pricingSource'])->middleware('authorize:estimate_generation.generate,project,project')->name('evaluation.pricing-source');
         Route::get('/{session}/analysis-basis', [EstimateGenerationAnalysisBasisController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('analysis-basis.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');

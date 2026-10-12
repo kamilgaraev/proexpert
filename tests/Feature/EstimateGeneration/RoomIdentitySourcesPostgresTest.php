@@ -5,8 +5,13 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Analysis\Arbitration\ObservationClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\CurrentDraftQuantityProofGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BindEvaluationWorkEntity;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\ConfirmRoomIdentity;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationDraftArithmeticRecalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EvaluationInputFingerprint;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetRoomIdentitySources;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationWorkQuantity;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\ProjectModelEvidenceWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\ProjectModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -14,6 +19,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\CurrentProjectDerivedQuantityService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -28,6 +35,78 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    public function test_work_binding_revokes_only_the_old_quantity_assignment_and_preserves_its_source_and_history(): void
+    {
+        [$actor, $session] = $this->fixture(['local_estimates' => [['key' => 'finishing', 'sections' => [['work_items' => [
+            ['key' => 'finishing:floor', 'name' => 'Устройство пола', 'quantity' => null, 'unit' => 'm2'],
+        ]]]]]]);
+        $scope = [(int) $session->organization_id, (int) $session->project_id, (int) $session->id];
+        $reader = app(GetRoomIdentitySources::class);
+        $candidate = $reader->handle($actor, $scope[1], $scope[2])['sources'][0];
+        app(ConfirmRoomIdentity::class)->handle($actor, $scope[1], $scope[2], $this->input($candidate));
+        $selected = array_values(array_filter($reader->handle($actor, $scope[1], $scope[2])['sources'], static fn (array $row): bool => $row['status'] === 'confirmed'))[0];
+        $quantityResult = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => 1, 'work_item_key' => 'finishing:floor',
+            'value' => '25', 'unit' => 'm2', 'reason' => 'Объём первоначального состава введён пользователем.',
+        ]);
+        $quantity = app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'][$quantityResult['quantity_key']];
+        self::assertSame('25', $quantity->amount);
+        $oldDraft = ['local_estimates' => [['sections' => [['work_items' => [[
+            'key' => 'finishing:floor', 'quantity' => '25', 'unit' => 'm2',
+            'metadata' => ['quantity_key' => $quantityResult['quantity_key']], 'quantity_evidence' => $quantity->toArray(),
+        ]]]]]]];
+        DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$scope, $oldDraft]));
+        $input = [...$this->input($selected), 'state_version' => 2, 'work_item_key' => 'finishing:floor'];
+        $binding = app(BindEvaluationWorkEntity::class);
+        $result = $binding->handle($actor, $scope[1], $scope[2], $input);
+        self::assertSame(CanonicalPipelineJson::encode($result), CanonicalPipelineJson::encode($binding->handle($actor, $scope[1], $scope[2], $input)));
+        self::assertTrue($result['quantity_reset']);
+        self::assertSame('0', $result['cost_units']);
+        self::assertSame($selected['entity_id'], $result['scope_entity_id']);
+        self::assertNotSame($result['entity_id'], $result['scope_entity_id']);
+        $fresh = $session->fresh();
+        self::assertArrayNotHasKey('finishing:floor', $fresh->input_payload['quantity_selections']);
+        self::assertSame($selected['entity_id'], $fresh->input_payload['work_entity_selections']['finishing:floor']['entity_id']);
+        $item = $fresh->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertNull($item['quantity']);
+        self::assertSame('unknown', $item['quantity_status']);
+        self::assertNull($item['total_cost']);
+        self::assertTrue($item['metadata']['quantity_reset_required']);
+        self::assertArrayNotHasKey($quantityResult['quantity_key'], app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities']);
+        self::assertNotNull(app(ProjectModelRepository::class)->fact(...[...$scope, $quantityResult['source_fact_id']]));
+        self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $scope[0])->count());
+        try {
+            DB::transaction(fn () => app(CurrentDraftQuantityProofGuard::class)->assertCurrent(...[...$scope, $oldDraft]));
+            self::fail('Old quantity proof survived a changed physical scope.');
+        } catch (ValidationException) {
+            self::assertTrue(true);
+        }
+        $sameScope = [...$input, 'request_id' => (string) Str::uuid(), 'state_version' => 3];
+        self::assertFalse($binding->handle($actor, $scope[1], $scope[2], $sameScope)['quantity_reset']);
+        $reentered = app(SaveEvaluationWorkQuantity::class)->handle($actor, $scope[1], $scope[2], [
+            'request_id' => (string) Str::uuid(), 'state_version' => 4, 'work_item_key' => 'finishing:floor',
+            'value' => '30', 'unit' => 'm2', 'reason' => 'Подтверждён новый объём для выбранного помещения.',
+        ]);
+        self::assertSame('30', app(CurrentProjectDerivedQuantityService::class)->previewInput(...$scope)['quantities'][$reentered['quantity_key']]->amount);
+        self::assertSame($selected['entity_id'], $session->fresh()->input_payload['work_entity_selections']['finishing:floor']['entity_id']);
+        $ready = $session->fresh();
+        $snapshot = app(ProjectModelRepository::class)->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+        $decisions = app(ProjectModelRepository::class)->decisionsForSelectedFacts(...[...$scope, array_column($snapshot->facts, 'id')]);
+        $version = 'sha256:'.app(EvaluationInputFingerprint::class)->fromSession($ready);
+        $context = new PipelineContext($scope[2], $scope[0], $scope[1], (int) $ready->state_version,
+            $version, $ready->status->value, baseInputVersion: $version);
+        $updated = app(EvaluationDraftArithmeticRecalculator::class)->recalculate($ready->draft_payload, $context, $snapshot, $decisions, $actor, $ready);
+        self::assertSame('30', $updated['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+        $withoutPointer = clone $ready;
+        $payload = $ready->input_payload;
+        unset($payload['quantity_selections']);
+        $withoutPointer->input_payload = $payload;
+        $resetDraft = $ready->draft_payload;
+        $resetDraft['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['quantity_key'] = $reentered['quantity_key'];
+        $suppressed = app(EvaluationDraftArithmeticRecalculator::class)->recalculate($resetDraft, $context, $snapshot, $decisions, $actor, $withoutPointer);
+        self::assertNull($suppressed['local_estimates'][0]['sections'][0]['work_items'][0]['quantity']);
+    }
+
     public function test_the_same_room_label_on_separate_photographs_does_not_merge_entities(): void
     {
         [$actor, $session, $first] = $this->fixture();
@@ -175,7 +254,7 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
             'reason' => 'Подтверждаю название помещения по выбранному источнику.'];
     }
 
-    private function fixture(): array
+    private function fixture(?array $draft = null): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -186,7 +265,8 @@ final class RoomIdentitySourcesPostgresTest extends EstimateGenerationCanonicalP
         $authorization->allows('canCurrent')->andReturn(true);
         $this->app->instance(AuthorizationService::class, $authorization);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'user_id' => $actor->id, 'status' => 'draft', 'input_payload' => ['evaluation_mode' => 'universal'], 'state_version' => 0]);
+            'user_id' => $actor->id, 'status' => 'draft', 'input_payload' => ['evaluation_mode' => 'universal'], 'state_version' => 0,
+            'draft_payload' => $draft]);
         $version = 'sha256:'.str_repeat('a', 64);
         $document = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $organization->id,
             'project_id' => $project->id, 'user_id' => $actor->id, 'filename' => 'room-fixture.jpg', 'mime_type' => 'image/jpeg',

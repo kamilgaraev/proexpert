@@ -46,6 +46,9 @@ final readonly class EvaluationDraftArithmeticRecalculator
                         $item['metadata']['quantity_key'] = $quantityKey;
                     }
                     $quantity = is_string($quantityKey) ? $this->mapper->map($quantityKey, $quantities) : null;
+                    if (! $explicitQuantity && ($item['metadata']['quantity_reset_required'] ?? false) === true) {
+                        $quantity = null;
+                    }
                     $expectedEntity = $item['quantity_basis_details']['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
                     if (! $explicitQuantity && $quantity !== null && is_string($expectedEntity) && ($quantity->formulaInputs['entity_id'] ?? null) !== $expectedEntity) {
                         $quantity = null;

@@ -74,6 +74,7 @@ final readonly class ConfirmRoomIdentity
                 'recalculation_required' => isset($session->draft_payload['evaluation_result'])];
             $receipts[$input['request_id']] = ['actor_id' => (int) $actor->id, 'fingerprint' => $fingerprint, 'result' => $result];
             $payload['room_identity_receipts'] = $receipts;
+            $payload['room_identity_revision'] = ($payload['room_identity_revision'] ?? 0) + 1;
             unset($payload['confirmed_evaluation']);
             $this->authorization->authorize($actor, $session, 'estimate_generation.review');
             $session->update(['input_payload' => $payload, 'state_version' => $result['state_version']]);
