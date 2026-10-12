@@ -502,6 +502,26 @@ final class EstimateOperationsTest extends TestCase
         self::assertSame(3, Estimate::query()->count());
     }
 
+    public function test_preserved_price_indices_require_review_even_if_current_prices_match(): void
+    {
+        [$base, $baseItem] = $this->source('100');
+        [$add, $addItem] = $this->source('20');
+        $baseItem->update(['base_unit_price' => '1', 'price_index' => '5']);
+        $addItem->update(['base_unit_price' => '2.5', 'price_index' => '2']);
+        $operation = $this->operations->create($this->actor, $this->project->id, ['mode' => 'adjust', 'base_id' => $base->id, 'addition_ids' => [$add->id], 'reprice' => false]);
+        $this->preview($operation);
+        self::assertSame('needs_resolution', $operation->fresh()->status);
+        self::assertContains('match_required', $this->conflictCodes($operation));
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, ['match:'.$add->id.':'.$addItem->id => ['action' => 'separate']]);
+        $this->operations->process($operation->id, 2, false);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'preserved-indices');
+        $this->operations->process($operation->id, 2, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0]);
+        self::assertSame(2, $result->items()->count());
+        self::assertSame('150.00', $result->total_base_direct_costs);
+        self::assertSame('600.00', $result->total_amount);
+    }
+
     private function source(string $quantity, string $price = '5'): array
     {
         $estimate = Estimate::query()->create(['organization_id' => $this->actor->current_organization_id, 'project_id' => $this->project->id,
