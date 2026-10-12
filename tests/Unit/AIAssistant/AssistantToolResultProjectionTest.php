@@ -12,6 +12,20 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantToolResultProjectionTest extends TestCase
 {
+    public function test_unit_price_search_keeps_its_priced_position_and_unit_in_provider_view(): void
+    {
+        $view = \App\BusinessModules\Features\AIAssistant\Services\AssistantToolResultProjection::forProvider('search_estimate_positions', [
+            'price_subject' => 'concrete_m3', 'search_scope' => 'all_accessible_estimates', 'search_complete' => false,
+            'estimate' => ['id' => 428, 'number' => 'СМ-2026-0009'],
+            'positions' => [['id' => 280417, 'name' => 'Смеси бетонные тяжелого бетона, класс В25', 'unit' => 'м³', 'unit_price' => '14746.4700', 'version' => 'private-proof']],
+            'meta' => ['total' => 1], 'source_refs' => [['checked_fields' => ['private-proof']]],
+        ]);
+        self::assertSame('concrete_m3', $view['price_subject']);
+        self::assertSame(428, $view['estimate']['id']);
+        self::assertSame('14746.4700', $view['positions'][0]['unit_price']);
+        self::assertSame('м³', $view['positions'][0]['unit']);
+        self::assertStringNotContainsString('private-proof', json_encode($view, JSON_THROW_ON_ERROR));
+    }
     use UsesAssistantUnitTranslations;
 
     public function test_only_equal_reference_context_is_shared_without_losing_distinct_scope(): void

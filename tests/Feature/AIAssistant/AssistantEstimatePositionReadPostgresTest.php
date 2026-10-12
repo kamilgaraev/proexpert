@@ -435,6 +435,34 @@ final class AssistantEstimatePositionReadPostgresTest extends TestCase
         self::assertFalse($guard->fresh($this->actor, (int) $this->organization->id, $references));
     }
 
+    public function test_concrete_unit_price_search_filters_subject_and_unit_before_candidate_limit_and_returns_current_price(): void
+    {
+        $estimate = $this->estimate('SM-CONCRETE-PRICE', 'Бетон');
+        $unit = MeasurementUnit::query()->firstOrCreate(['organization_id' => $this->organization->id, 'short_name' => 'м³'], ['name' => 'Кубический метр']);
+        $kg = MeasurementUnit::query()->firstOrCreate(['organization_id' => $this->organization->id, 'short_name' => 'кг'], ['name' => 'Килограмм']);
+        for ($index = 0; $index < 205; $index++) {
+            $this->item($estimate, (string) ($index + 1), 'Перемычки железобетонные, бетон В25', ['item_type' => 'material', 'measurement_unit_id' => $unit->id, 'unit_price' => '999.00']);
+        }
+        $this->item($estimate, '206', 'Бетон ремонтный', ['item_type' => 'material', 'measurement_unit_id' => $kg->id]);
+        $this->item($estimate, '207', 'Бетон тяжёлый', ['item_type' => 'work', 'measurement_unit_id' => $unit->id]);
+        $this->item($estimate, '207.1', 'Бетон тяжёлый', ['item_type' => 'material', 'measurement_unit_id' => $unit->id, 'unit_price' => '-1.00']);
+        $concrete = $this->item($estimate, '208', 'Смеси бетонные тяжелого бетона (БСТ), класс В25', ['item_type' => 'material', 'measurement_unit_id' => $unit->id, 'unit_price' => '14746.47']);
+        $result = app(SearchEstimatePositionsTool::class)->execute(['query' => 'бетон', 'price_subject' => 'concrete_m3', 'per_page' => 1], $this->actor, $this->organization);
+        self::assertSame([$concrete->id], array_column($result['positions'], 'id'));
+        self::assertSame('14746.4700', $result['positions'][0]['unit_price']);
+        self::assertSame('м³', $result['positions'][0]['unit']);
+        self::assertTrue($result['search_complete']);
+        $guarded = (new AssistantStructuredFactVerifier)->guard('Найди в любой нашей смете, сколько стоит куб бетона.', 'Перемычка стоит 999', [$result]);
+        self::assertFalse($guarded['needs_clarification']);
+        self::assertStringContainsString('14746.4700', $guarded['text']);
+        self::assertStringNotContainsString('999', $guarded['text']);
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->fresh($this->actor, (int) $this->organization->id, $guarded['source_refs']));
+        $this->financeAllowed = false;
+        self::assertFalse(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)
+            ->fresh($this->actor, (int) $this->organization->id, $guarded['source_refs']));
+    }
+
     public function test_resource_continuation_and_position_exclusion_are_scoped_to_the_same_estimate(): void
     {
         $estimate = $this->estimate('SM-LOCAL', 'Локальная смета');

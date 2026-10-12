@@ -9,6 +9,13 @@ final class AssistantToolResultProjection
     public static function forProvider(string $toolName, array $result): array
     {
         if ($toolName === 'search_estimate_positions') {
+            if (($result['price_subject'] ?? null) === 'concrete_m3') {
+                $view = array_intersect_key($result, array_flip(['price_subject', 'search_scope', 'search_complete', 'has_more', 'next_cursor', 'validation_status']));
+                $view['estimate'] = array_intersect_key($result['estimate'] ?? [], array_flip(['id', 'number', 'name', 'project_id']));
+                $view['positions'] = array_map(static fn (array $position): array => array_intersect_key($position,
+                    array_flip(['id', 'position_number', 'name', 'unit', 'unit_price', 'current_unit_price', 'currency'])), array_slice($result['positions'] ?? [], 0, 1));
+                return $view;
+            }
             $view = array_intersect_key($result, array_flip(['status', 'search_status', 'search_scope',
                 'search_complete', 'has_more', 'next_cursor', 'meta', 'matches', 'error', 'reason']));
             foreach ($view['matches'] ?? [] as $index => $match) {

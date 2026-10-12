@@ -33,6 +33,7 @@ final class SearchEstimatePositionsTool extends ReadonlyEstimateTool
         return ['type' => 'object', 'properties' => [
             'query' => ['type' => 'string', 'minLength' => 1, 'maxLength' => 200],
             'per_page' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 12],
+            'price_subject' => ['type' => ['string', 'null'], 'enum' => ['concrete_m3', null]],
             'cursor' => ['type' => ['string', 'null'], 'maxLength' => 2048,
                 'description' => 'Opaque cursor returned by the previous search page. Reuse the same query.'],
         ], 'required' => ['query'], 'additionalProperties' => false];
@@ -61,11 +62,22 @@ final class SearchEstimatePositionsTool extends ReadonlyEstimateTool
             'query' => ['required', 'string', 'max:200'],
             'per_page' => ['sometimes', 'integer', 'between:1,12'],
             'cursor' => ['nullable', 'string', 'max:2048'],
+            'price_subject' => ['nullable', 'in:concrete_m3'],
         ])->validate();
 
         $perPage = (int) ($arguments['per_page'] ?? 12);
         $result = $this->reader->searchAcrossEstimates($arguments['query'], $organizationId, $actor,
-            $perPage, $arguments['cursor'] ?? null);
+            $perPage, $arguments['cursor'] ?? null, $arguments['price_subject'] ?? null);
+        if (($arguments['price_subject'] ?? null) === 'concrete_m3' && $result['matches'] !== []) {
+            $match = $result['matches'][0];
+            $priced = app(GetEstimatePositionsTool::class)->execute(['estimate_id' => $match['estimate']['id'],
+                'position_id' => $match['position']['id'], 'per_page' => 1], $actor, $organization);
+            if (! is_array($priced) || ! AssistantEstimateCrossSearchIntent::isConcreteCubicPosition($priced['positions'][0] ?? [])) {
+                return ['status' => 'source_changed', 'source_refs' => [], 'validation_status' => 'partial', 'needs_clarification' => true];
+            }
+            return $priced + ['search_scope' => 'all_accessible_estimates', 'price_subject' => 'concrete_m3',
+                'search_complete' => $result['search_complete'], 'has_more' => $result['has_more'], 'next_cursor' => $result['next_cursor']];
+        }
         $matches = array_map(static fn (array $match): array => [
             'estimate' => $match['estimate'],
             'position' => $match['position'],
