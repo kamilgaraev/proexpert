@@ -12,6 +12,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Exceptions\BusinessLogicException;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
@@ -19,7 +20,9 @@ use App\Models\EstimateItem;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Modules\Core\AccessController;
+use App\Services\CompletedWork\CompletedWorkScopeResolver;
 use App\Services\ConstructionJournal\ConstructionJournalAccessService;
+use App\Services\Project\ProjectContextService;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
@@ -31,6 +34,8 @@ final class DesignSourceLinkService
         private readonly AuthorizationService $authorization,
         private readonly AccessController $access,
         private readonly ConstructionJournalAccessService $journals,
+        private readonly CompletedWorkScopeResolver $completedWorks,
+        private readonly ProjectContextService $projects,
     ) {}
 
     /** @return array<int, array<string, mixed>> */
@@ -71,6 +76,26 @@ final class DesignSourceLinkService
                 || $scope['organization_id'] <= 0
                 || $scope['project_id'] <= 0
                 || ! $this->journals->canRead($actor, $target->journal)) {
+                throw new DomainException(trans_message('design_links.errors.target_out_of_scope'));
+            }
+            if (! $this->targetModulesActive($scope['organization_id'], $targetType)) {
+                throw new DomainException(trans_message('design_links.target_module_inactive'));
+            }
+        } elseif ($target instanceof CompletedWork && $scope['organization_id'] !== $organizationId) {
+            if ((int) $actor->current_organization_id !== $organizationId
+                || $scope['organization_id'] <= 0
+                || $scope['project_id'] <= 0) {
+                throw new DomainException(trans_message('design_links.errors.target_out_of_scope'));
+            }
+            $project = $target->project;
+            $organization = $actor->currentOrganization()->first();
+            if ($project === null || $organization === null
+                || $this->projects->getOrganizationRole($project, $organization) === null) {
+                throw new DomainException(trans_message('design_links.errors.target_out_of_scope'));
+            }
+            try {
+                $this->completedWorks->assertRead($target, $actor);
+            } catch (BusinessLogicException) {
                 throw new DomainException(trans_message('design_links.errors.target_out_of_scope'));
             }
             if (! $this->targetModulesActive($scope['organization_id'], $targetType)) {

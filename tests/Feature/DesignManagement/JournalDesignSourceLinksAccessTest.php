@@ -157,7 +157,7 @@ final class JournalDesignSourceLinksAccessTest extends TestCase
         }
     }
 
-    public function test_other_target_types_keep_strict_organization_scope(): void
+    public function test_shared_completed_work_can_read_an_empty_list_of_source_links(): void
     {
         [$project, , $users] = $this->fixture();
         $work = CompletedWork::query()->create([
@@ -165,9 +165,9 @@ final class JournalDesignSourceLinksAccessTest extends TestCase
             'quantity' => 3, 'completed_quantity' => 3, 'price' => 500, 'total_amount' => 1500,
             'completion_date' => '2026-10-11', 'description' => 'Объём', 'status' => 'confirmed',
         ]);
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage(trans_message('design_links.errors.target_out_of_scope'));
-        app(DesignSourceLinkService::class)->linksForTarget($users[0], (int) $users[0]->current_organization_id, 'completed_work', $work->id);
+        self::assertSame([], app(DesignSourceLinkService::class)->linksForTarget(
+            $users[0], (int) $users[0]->current_organization_id, 'completed_work', $work->id,
+        ));
     }
 
     public function test_shared_link_read_keeps_the_journal_module_gate(): void
