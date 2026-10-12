@@ -123,6 +123,26 @@ final class ProjectUnderstandingCoordinatorTest extends TestCase
     }
 
     #[Test]
+    public function server_only_refresh_does_not_request_an_allowance_or_call_any_model(): void
+    {
+        $models = new InMemoryProjectModelRepository;
+        $this->seedPair($models, 'plan', 'room_schedule', 'room_number', '101', 'room');
+        $this->appendRight($models, 'entity:right-2', 'fact:right-2', 'evidence:3');
+        $factory = new RecordingArbitratorFactory('fact:right-2');
+        $synthesis = new RecordingProjectSynthesisRunner;
+        $allowance = $this->createMock(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisAllowance::class);
+        $allowance->expects(self::never())->method('partLimit');
+        $result = $this->coordinator($models, $factory, synthesis: $synthesis, allowance: $allowance)
+            ->refresh(1, 2, 3, $this->token(), 1, allowModelCalls: false);
+        self::assertCount(1, $result->links);
+        self::assertSame('unresolved', $result->links[0]['status']);
+        self::assertNotSame([], $result->questions);
+        self::assertSame(0, $factory->calls);
+        self::assertSame(0, $synthesis->calls);
+        self::assertSame(0, $result->providerCalls);
+    }
+
+    #[Test]
     #[DataProvider('deterministicCases')]
     public function mandatory_cross_document_scenarios_run_through_coordinator_and_persist(
         string $leftRole,

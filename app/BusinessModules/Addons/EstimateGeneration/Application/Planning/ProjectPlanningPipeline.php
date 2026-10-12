@@ -22,6 +22,7 @@ final readonly class ProjectPlanningPipeline
         string $checkpointClaimToken,
         int $logicalAttempt,
         ?\App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope $wireScope = null,
+        bool $allowModelCalls = true,
     ): ProjectPlanningResult {
         $identityOnlyPlanning = false;
         if (config('estimate-generation.universal_enabled', false)) {
@@ -38,6 +39,7 @@ final readonly class ProjectPlanningPipeline
             $logicalAttempt,
             $wireScope,
             $identityOnlyPlanning,
+            $allowModelCalls,
         );
         $planning = $this->planning->refresh(
             $organizationId,

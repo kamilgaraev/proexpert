@@ -35,6 +35,7 @@ final readonly class ProjectUnderstandingCoordinator
         int $logicalAttempt,
         ?\App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope $wireScope = null,
         bool $allowIdentityOnlyPlanning = false,
+        bool $allowModelCalls = true,
     ): ProjectUnderstandingResult {
         $preflight = $this->models->understandingPreflight(
             $organizationId,
@@ -154,7 +155,7 @@ final readonly class ProjectUnderstandingCoordinator
             $wireScope,
         );
         $sourceVersion = $synthesisInput->aggregateSourceVersion();
-        $approvedParts = $this->allowance->partLimit($synthesisInput);
+        $approvedParts = $allowModelCalls ? $this->allowance->partLimit($synthesisInput) : 0;
         $inputFingerprint = $approvedParts === null ? $synthesisInput->fingerprint()
             : hash('sha256', $synthesisInput->fingerprint().'|approved-synthesis-parts:'.$approvedParts);
         $inputFingerprint = hash('sha256', ProjectUnderstandingFingerprint::CONTRACT."\0".$inputFingerprint);
