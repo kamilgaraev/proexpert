@@ -2926,6 +2926,33 @@ final class DesignManagementApiTest extends TestCase
         $this->assertArrayNotHasKey('coordinate_transformations', $slim->metadata);
         $this->assertArrayNotHasKey('transformations', $slim->metadata['ifc_metadata']);
         $this->assertSame(\App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter::version(), $slim->metadata['converter_version']);
+
+        foreach ([
+            [],
+            ['coordinate_transformations' => [1], 'ifc_metadata' => null],
+            ['coordinate_transformations' => [1], 'ifc_metadata' => 'summary'],
+            ['coordinate_transformations' => [1], 'ifc_metadata' => ['transformations', 'summary']],
+            ['coordinate_transformations' => [1], 'ifc_metadata' => ['transformations' => [2], 'summary' => 3]],
+        ] as $metadata) {
+            DB::table('design_model_derivatives')->where('id', $stored->id)->update([
+                'metadata' => json_encode($metadata, JSON_THROW_ON_ERROR),
+            ]);
+            $projected = DesignModelDerivative::query()
+                ->forOrganization((int) $version->organization_id)
+                ->forProject((int) $version->project_id)
+                ->forResponse()
+                ->findOrFail($stored->id);
+            $expected = $metadata;
+            unset($expected['coordinate_transformations']);
+            if (isset($expected['ifc_metadata']) && is_array($expected['ifc_metadata']) && !array_is_list($expected['ifc_metadata'])) {
+                unset($expected['ifc_metadata']['transformations']);
+            }
+            $this->assertEquals($expected, $projected->metadata);
+            $this->assertSame($stored->id, $projected->id);
+            $this->assertSame($stored->version_id, $projected->version_id);
+            $this->assertNull(DesignModelDerivative::query()->forProject(-1)->forResponse()->find($stored->id));
+            $this->assertNull(DesignModelDerivative::query()->forOrganization(-1)->forResponse()->find($stored->id));
+        }
     }
 
     public function test_derivative_upload_accepts_frag_file(): void
