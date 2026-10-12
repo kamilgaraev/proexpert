@@ -47,7 +47,7 @@ final class MobilePtoService
             'status' => $filters['status'] ?? null,
             'per_page' => $filters['per_page'] ?? 20,
             'page' => $filters['page'] ?? 1,
-        ]);
+        ], $actor);
 
         return [
             'items' => collect($paginator->items())
@@ -62,7 +62,7 @@ final class MobilePtoService
     public function designPackage(User $actor, int $organizationId, int $packageId): array
     {
         $this->assertModuleAvailable($actor, $organizationId);
-        $package = $this->designManagement->findPackage($organizationId, $packageId);
+        $package = $this->designManagement->findPackage($organizationId, $packageId, $actor);
         if (! $package instanceof DesignPackage) {
             throw new BusinessLogicException(trans_message('design_management.errors.package_not_found'), 404);
         }
@@ -87,7 +87,7 @@ final class MobilePtoService
             'planned_issue_date' => $package->planned_issue_date?->format('Y-m-d'),
             'issued_at' => $package->issued_at?->toIso8601String(),
             'result' => $this->result($package),
-            'files' => $this->files($package, $organizationId),
+            'files' => $this->files($package, $organizationId, $actor),
             'comments' => $this->comments($package->reviewComments),
             'workflow_history' => DesignPackageWorkflow::workflowHistory($package),
             'available_actions' => $this->availableActions($package, $actor, $organizationId),
@@ -99,7 +99,7 @@ final class MobilePtoService
     public function actOnDesignPackage(User $actor, int $organizationId, int $packageId, string $action, ?string $comment): array
     {
         $this->assertModuleAvailable($actor, $organizationId);
-        $package = $this->designManagement->findPackage($organizationId, $packageId);
+        $package = $this->designManagement->findPackage($organizationId, $packageId, $actor);
         if (! $package instanceof DesignPackage) {
             throw new BusinessLogicException(trans_message('design_management.errors.package_not_found'), 404);
         }
@@ -378,7 +378,7 @@ final class MobilePtoService
     }
 
     /** @return list<array<string, mixed>> */
-    private function files(DesignPackage $package, int $organizationId): array
+    private function files(DesignPackage $package, int $organizationId, User $actor): array
     {
         $files = [];
 
@@ -391,8 +391,16 @@ final class MobilePtoService
                 continue;
             }
 
-            $source = $this->designManagement->viewerPayload($version)['source'];
-            $downloadUrl = $source['download_url'] ?? null;
+            $artifact->loadMissing('section');
+            $isStandaloneModel = $this->enumValue($artifact->artifact_type) === 'model' && ($artifact->section_id === null || $artifact->section === null || trim((string) $artifact->document_code) === '');
+            $filePermission = $isStandaloneModel ? 'design-management.models.view' : 'design-management.documents.view';
+            $fileAccess = app(\App\BusinessModules\Features\DesignManagement\Services\DesignAccessService::class);
+            $canDownload = $fileAccess->canAccessProject($actor, $organizationId, (int) $package->project_id, $filePermission);
+            $downloadUrl = null;
+            if ($canDownload) {
+                $fileAccess->assertVersion($version, $actor, $filePermission, $isStandaloneModel);
+                $downloadUrl = $this->fileService->temporaryUrl((string) $version->source_file_path, 60, Organization::query()->find($organizationId));
+            }
             $mimeType = (string) ($version->source_mime_type ?? 'application/octet-stream');
             $files[] = [
                 'id' => (int) $version->id,
@@ -401,6 +409,7 @@ final class MobilePtoService
                 'mime_type' => $mimeType,
                 'preview_url' => in_array($mimeType, ['application/pdf', 'image/jpeg', 'image/png'], true) ? $downloadUrl : null,
                 'download_url' => $downloadUrl,
+                'can_download' => $canDownload,
             ];
         }
 

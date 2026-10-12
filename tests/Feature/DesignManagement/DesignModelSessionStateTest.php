@@ -70,6 +70,31 @@ final class DesignModelSessionStateTest extends TestCase
         $this->session = DesignModelSession::query()->create([...$scope, 'title' => 'Просмотр', 'model_set_id' => $set->id, 'model_set_revision_id' => $revision->id]);
     }
 
+    public function test_model_set_and_session_creation_replay_and_search_are_scoped(): void
+    {
+        $service = app(DesignModelSetService::class);
+        $payload = ['project_id' => $this->version->project_id, 'title' => 'Набор для поиска', 'version_ids' => [$this->version->id], 'idempotency_key' => 'audit_set_create_0001'];
+        $first = $service->create((int) $this->version->organization_id, $this->actor, $payload);
+        $replay = $service->create((int) $this->version->organization_id, $this->actor, $payload);
+        $this->assertSame($first->id, $replay->id);
+        $this->assertSame(1, $first->revisions()->count());
+        $sessionData = ['project_id' => $this->version->project_id, 'model_set_id' => $first->id, 'model_set_revision' => 1, 'title' => 'Точный просмотр', 'idempotency_key' => 'audit_session_create_0001'];
+        $session = $service->createSession((int) $this->version->organization_id, $this->actor, $sessionData);
+        $this->assertSame($session->id, $service->createSession((int) $this->version->organization_id, $this->actor, $sessionData)->id);
+        $sets = $service->listSets((int) $this->version->organization_id, $this->actor, ['project_id' => $this->version->project_id, 'search' => 'для поиска', 'page' => 1, 'per_page' => 1]);
+        $this->assertSame(1, $sets->total());
+        $this->assertSame($first->id, $sets->getCollection()->sole()->id);
+        $sessions = $service->listSessions((int) $this->version->organization_id, $this->actor, (int) $this->version->project_id, 1, 'Точный', 1);
+        $this->assertSame(1, $sessions->total());
+        $this->assertSame($session->id, $sessions->getCollection()->sole()->id);
+        try {
+            $service->create((int) $this->version->organization_id, $this->actor, array_replace($payload, ['title' => 'Другой запрос']));
+            $this->fail('Reusing the key with another payload must conflict.');
+        } catch (DomainException $exception) {
+            $this->assertSame(trans_message('safety_management.errors.idempotency_conflict'), $exception->getMessage());
+        }
+    }
+
     public function test_server_envelope_monotonic_sequences_and_distinct_connections(): void
     {
         $first = $this->relay('camera', 10, $this->camera(), 'desktop');

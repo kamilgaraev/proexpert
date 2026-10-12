@@ -12,6 +12,9 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
 use App\BusinessModules\Features\DesignManagement\Models\DesignWorkflowEvent;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use BackedEnum;
+use App\Models\User;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignDocumentSectionStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessScope;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -24,6 +27,11 @@ final class DesignWorkflowService
 
     public function transition(DesignPackage $package, int $userId, string $action, ?string $comment = null): DesignPackage
     {
+        $permission = DesignPackageWorkflow::permissionForAction($action);
+        if ($permission === null) {
+            throw new DomainException(trans_message('design_management.errors.workflow_action_not_available'));
+        }
+        app(DesignAccessService::class)->assertPackage($package, User::query()->findOrFail($userId), $permission);
         $comment = trim((string) $comment);
 
         if (DesignPackageWorkflow::requiresComment($action) && $comment === '') {
@@ -81,11 +89,24 @@ final class DesignWorkflowService
             }
 
             $lockedPackage->update($update);
+            $sectionStatus = match ($action) {
+                DesignPackageWorkflow::SUBMIT_NORM_CONTROL => DesignDocumentSectionStatusEnum::READY_FOR_CHECK,
+                DesignPackageWorkflow::SUBMIT_CUSTOMER_REVIEW, DesignPackageWorkflow::APPROVE => DesignDocumentSectionStatusEnum::CHECKED,
+                DesignPackageWorkflow::ISSUE => DesignDocumentSectionStatusEnum::ISSUED,
+                DesignPackageWorkflow::RETURN_TO_WORK => DesignDocumentSectionStatusEnum::RETURNED,
+                default => null,
+            };
+            if ($sectionStatus !== null) {
+                foreach ((new DesignCompletenessScope($lockedPackage))->sections() as $entry) {
+                    $entry['section']->update(['status' => $sectionStatus]);
+                }
+            }
 
             if ($nextStatus === DesignPackageStatusEnum::ISSUED) {
                 $this->createImpactReviews($lockedPackage);
             }
 
+            $releaseSnapshot = $nextStatus === DesignPackageStatusEnum::ISSUED ? app(DesignPackageIssueRegisterService::class)->snapshot($lockedPackage) : null;
             DesignWorkflowEvent::query()->create([
                 'organization_id' => $lockedPackage->organization_id,
                 'project_id' => $lockedPackage->project_id,
@@ -98,13 +119,9 @@ final class DesignWorkflowService
                 'metadata' => [
                     'latest_completeness_check_id' => $lockedPackage->latestCompletenessCheck?->id,
                     ...($nextStatus === DesignPackageStatusEnum::ISSUED ? [
+                        'release_snapshot' => $releaseSnapshot,
                         'composition_revision_id' => $lockedPackage->composition_revision_id,
-                        'artifact_version_ids' => $lockedPackage->artifacts
-                            ->map(fn ($artifact) => $artifact->currentVersion?->id)
-                            ->filter()
-                            ->sort()
-                            ->values()
-                            ->all(),
+                        'artifact_version_ids' => collect($releaseSnapshot['sections'] ?? [])->flatMap(static fn (array $section): array => array_column($section['documents'], 'current_version_id'))->filter()->unique()->sort()->values()->all(),
                     ] : []),
                 ],
             ]);
@@ -147,7 +164,7 @@ final class DesignWorkflowService
             $check = $package->latestCompletenessCheck;
 
             if (! $this->completenessService->isFreshForPackage($package, $check)) {
-                $check = $this->completenessService->run($package, $userId);
+                $check = $this->completenessService->runForWorkflow($package, $userId, $action);
                 $package->setRelation('latestCompletenessCheck', $check);
             }
 
@@ -163,13 +180,15 @@ final class DesignWorkflowService
     {
         return [
             'project:id,name,organization_id',
+            'artifacts.section',
             'artifacts.currentVersion.readyDerivative' => static fn ($query) => $query->forResponse(),
+            'artifacts.currentVersion.derivatives' => static fn ($query) => $query->forResponse(),
             'artifacts.currentVersion.sheets',
             'artifacts.versions.derivatives' => static fn ($query) => $query->forResponse(),
             'sections.artifacts.currentVersion.sheets',
             'sections.artifacts.versions.sheets',
             'reviewComments',
-            'workflowEvents',
+            'workflowEvents.actor',
             'latestCompletenessCheck',
         ];
     }

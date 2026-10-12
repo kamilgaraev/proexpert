@@ -20,6 +20,9 @@ Route::prefix('api/v1/admin/design-management')
         Route::get('/packages/{packageId}', [DesignManagementController::class, 'showPackage'])
             ->middleware('authorize:design-management.view')
             ->name('packages.show');
+        Route::patch('/packages/{packageId}', [DesignManagementController::class, 'updatePackage'])
+            ->middleware('authorize:design-management.edit')
+            ->name('packages.update');
         Route::post('/packages/{packageId}/workflow', [DesignManagementController::class, 'transitionPackageWorkflow'])
             ->middleware('authorize:design-management.view')
             ->name('packages.workflow');
@@ -93,6 +96,6 @@ Route::prefix('api/v1/admin/design-management')
             ->middleware('authorize:design-management.models.view')
             ->name('model_versions.derivative_file');
         Route::post('/model-versions/{versionId}/mark-current', [DesignManagementController::class, 'markCurrent'])
-            ->middleware('authorize:design-management.edit')
+            ->middleware('authorize:design-management.models.edit')
             ->name('model_versions.mark_current');
     });

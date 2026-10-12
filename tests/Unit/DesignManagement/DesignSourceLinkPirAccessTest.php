@@ -63,6 +63,7 @@ final class DesignSourceLinkPirAccessTest extends TestCase
     {
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $permission, array $scope): bool => $permission === 'design-management.view' && $scope === ['organization_id' => 7, 'project_id' => 12])->andReturnTrue();
+        $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $permission, array $scope): bool => $permission === 'design-management.models.view' && $scope === ['organization_id' => 7, 'project_id' => 12])->andReturnTrue();
         $access = Mockery::mock(AccessController::class);
         $access->shouldReceive('hasModuleAccess')->once()->with(7, 'design-management')->andReturnTrue();
         $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
@@ -79,6 +80,37 @@ final class DesignSourceLinkPirAccessTest extends TestCase
 
         self::assertSame(18, $payload['source_version_id']);
         self::assertSame(['title' => 'АР. План', 'revision' => 'R01', 'id' => 18, 'available' => true, 'element' => null], $payload['source']);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('sourcePermissions')]
+    public function test_typed_source_denial_keeps_frozen_labels_without_source_identifiers(string $format, string $permission): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $right): bool => $right === 'design-management.view')->andReturnTrue();
+        $authorization->shouldReceive('can')->once()->withArgs(fn (User $user, string $right): bool => $right === $permission)->andReturnFalse();
+        $access = Mockery::mock(AccessController::class);
+        $access->shouldReceive('hasModuleAccess')->once()->with(7, 'design-management')->andReturnTrue();
+        $service = new DesignSourceLinkService($authorization, $access, app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class));
+        $link = new DesignSourceLink([
+            'organization_id' => 7, 'project_id' => 12, 'source_version_id' => 18, 'source_element_id' => 17,
+            'source_snapshot' => ['title' => 'Исторический план', 'revision' => 'R01', 'element' => ['global_id' => 'private-id']],
+            'target_snapshot' => ['type' => 'completed_work', 'label' => 'Кладка'],
+        ]);
+        $version = new DesignArtifactVersion(['organization_id' => 7, 'project_id' => 12, 'file_format' => $format, 'title' => 'Изменённое название']);
+        $artifact = new DesignArtifact(['organization_id' => 7, 'project_id' => 12]);
+        $artifact->setRelation('package', new DesignPackage(['organization_id' => 7, 'project_id' => 12]));
+        $version->setRelation('artifact', $artifact);
+        $link->setRelation('sourceVersion', $version);
+        $payload = $this->invoke($service, 'presentLink', [new User(), $link]);
+        self::assertSame(['title' => 'Исторический план', 'revision' => 'R01', 'available' => false], $payload['source']);
+        self::assertNull($payload['source_version_id']);
+        self::assertNull($payload['source_element_id']);
+        self::assertSame('Кладка', $payload['target']['label']);
+    }
+
+    public static function sourcePermissions(): array
+    {
+        return [['ifc', 'design-management.models.view'], ['pdf', 'design-management.documents.view']];
     }
 
     public function test_target_read_depends_only_on_target_permission(): void

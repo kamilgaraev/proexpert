@@ -9,10 +9,10 @@ use App\BusinessModules\Features\DesignManagement\Enums\DesignObjectTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactVersionResource;
+use App\BusinessModules\Features\DesignManagement\Http\Requests\UpdateDesignPackageRequest;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
-use App\BusinessModules\Features\DesignManagement\Services\DesignCompositionService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignWorkflowService;
@@ -35,7 +35,6 @@ final class DesignManagementController extends Controller
 {
     public function __construct(
         private readonly DesignManagementService $service,
-        private readonly DesignCompositionService $compositionService,
         private readonly DesignWorkflowService $workflowService,
         private readonly DesignModelViewerPreparationService $viewerPreparationService,
         private readonly DesignModelMultipartUploader $multipartUploadService,
@@ -53,15 +52,20 @@ final class DesignManagementController extends Controller
                 'project_stage' => ['nullable', 'string', Rule::in($this->projectStages())],
                 'object_type' => ['nullable', 'string', Rule::in($this->objectTypes())],
                 'normative_profile_code' => ['nullable', 'string', 'max:120'],
+                'search' => ['nullable', 'string', 'max:255'],
+                'section_code' => ['nullable', 'string', 'max:120'],
+                'readiness_status' => ['nullable', 'string', Rule::in(['ready', 'warning', 'blocked', 'not_checked'])],
+                'viewer_status' => ['nullable', 'string', Rule::in(['missing', 'queued', 'processing', 'ready', 'failed'])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
                 'page' => ['nullable', 'integer', 'min:1'],
             ]);
-            $paginator = $this->service->listPackages($this->organizationId($request), $validated);
+            $paginator = $this->service->listPackages($this->organizationId($request), $validated, $request->user());
 
             return AdminResponse::paginated(
                 DesignPackageResource::collection($paginator->getCollection()),
                 $this->paginationMeta($paginator),
                 trans_message('design_management.messages.packages_loaded'),
+                summary: $this->service->packageSummary($this->organizationId($request), $validated, $request->user()),
                 links: $this->paginationLinks($paginator)
             );
         } catch (ValidationException $e) {
@@ -82,22 +86,16 @@ final class DesignManagementController extends Controller
                 'object_type' => ['nullable', 'string', Rule::in($this->objectTypes())],
                 'normative_profile_code' => ['nullable', 'string', 'max:120'],
                 'discipline' => ['nullable', 'string', 'max:120'],
-                'status' => ['nullable', 'string', Rule::in($this->packageStatuses())],
+                'status' => ['nullable', 'string', Rule::in([DesignPackageStatusEnum::DRAFT->value])],
                 'planned_issue_date' => ['nullable', 'date'],
                 'metadata' => ['nullable', 'array'],
                 'composition' => ['required', 'array'],
             ]);
 
-            $this->compositionService->preview(
-                $this->organizationId($request),
-                $request->user(),
-                $validated,
-            );
-            $package = $this->service->createPackage($this->organizationId($request), (int) auth()->id(), $validated);
-            $this->compositionService->createRevision($package, $request->user(), $validated);
+            $package = $this->service->createPackage($this->organizationId($request), (int) $request->user()->id, $validated);
 
             return AdminResponse::success(
-                new DesignPackageResource($this->service->findPackage($this->organizationId($request), (int) $package->id)),
+                new DesignPackageResource($package),
                 trans_message('design_management.messages.package_created'),
                 201
             );
@@ -113,7 +111,7 @@ final class DesignManagementController extends Controller
     public function showPackage(Request $request, int $packageId): JsonResponse
     {
         try {
-            $package = $this->service->findPackage($this->organizationId($request), $packageId);
+            $package = $this->service->findPackage($this->organizationId($request), $packageId, $request->user());
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -128,11 +126,33 @@ final class DesignManagementController extends Controller
         }
     }
 
+    public function updatePackage(UpdateDesignPackageRequest $request, int $packageId): JsonResponse
+    {
+        try {
+            $validated = $request->validated();
+            $package = $this->service->findPackage($this->organizationId($request), $packageId, $request->user(), 'design-management.edit');
+            if ($package === null) {
+                return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
+            }
+
+            return AdminResponse::success(new DesignPackageResource(
+                $this->service->updatePackage($package, (int) $request->user()->id, $validated)
+            ));
+        } catch (ValidationException $e) {
+            return $this->validationFailed($e);
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('update_package', $packageId, $e);
+        }
+    }
+
     public function uploadModel(Request $request, int $packageId): JsonResponse
     {
         try {
             $validated = $request->validate([
                 'file' => ['required', 'file', 'max:'.$this->maxIfcSizeKilobytes(), $this->extensionRule('ifc')],
+                'artifact_id' => ['nullable', 'integer', 'min:1'],
                 'title' => ['required', 'string', 'max:255'],
                 'version_number' => ['required', 'string', 'max:80'],
                 'revision' => ['nullable', 'string', 'max:80'],
@@ -143,7 +163,7 @@ final class DesignManagementController extends Controller
                 'metadata' => ['nullable', 'array'],
                 'artifact_metadata' => ['nullable', 'array'],
             ]);
-            $package = $this->service->findPackage($this->organizationId($request), $packageId);
+            $package = $this->service->findPackage($this->organizationId($request), $packageId, $request->user(), 'design-management.models.upload');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -175,7 +195,7 @@ final class DesignManagementController extends Controller
                 'action' => ['required', 'string', Rule::in(DesignPackageWorkflow::actions())],
                 'comment' => ['nullable', 'string', 'max:1000'],
             ]);
-            $package = $this->service->findPackage($this->organizationId($request), $packageId);
+            $package = $this->service->findPackage($this->organizationId($request), $packageId, $request->user());
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -216,14 +236,14 @@ final class DesignManagementController extends Controller
     public function viewerPayload(Request $request, int $versionId): JsonResponse
     {
         try {
-            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+            $version = $this->service->findVersion($this->organizationId($request), $versionId, $request->user());
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
             }
 
             return AdminResponse::success(
-                $this->service->viewerPayload($version),
+                $this->service->viewerPayload($version, $request->user()),
                 trans_message('design_management.messages.viewer_payload_loaded')
             );
         } catch (\Throwable $e) {
@@ -234,13 +254,13 @@ final class DesignManagementController extends Controller
     public function downloadSourceFile(Request $request, int $versionId): JsonResponse|StreamedResponse
     {
         try {
-            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+            $version = $this->service->findVersion($this->organizationId($request), $versionId, $request->user());
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
             }
 
-            return $this->streamModelFile($this->service->sourceFileStream($version));
+            return $this->streamModelFile($this->service->sourceFileStream($version, $request->user()));
         } catch (DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -251,13 +271,13 @@ final class DesignManagementController extends Controller
     public function downloadDerivativeFile(Request $request, int $versionId): JsonResponse|StreamedResponse
     {
         try {
-            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+            $version = $this->service->findVersion($this->organizationId($request), $versionId, $request->user());
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
             }
 
-            return $this->streamModelFile($this->service->derivativeFileStream($version));
+            return $this->streamModelFile($this->service->derivativeFileStream($version, $request->user()));
         } catch (DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -269,6 +289,7 @@ final class DesignManagementController extends Controller
     {
         try {
             $validated = $request->validate([
+                'artifact_id' => ['nullable', 'integer', 'min:1'],
                 'original_name' => ['required', 'string', 'max:255', $this->extensionNameRule('ifc')],
                 'file_size_bytes' => ['required', 'integer', 'min:1', 'max:'.($this->maxIfcSizeKilobytes() * 1024)],
                 'content_type' => ['nullable', 'string', 'max:120'],
@@ -284,7 +305,7 @@ final class DesignManagementController extends Controller
                 'metadata' => ['nullable', 'array'],
                 'artifact_metadata' => ['nullable', 'array'],
             ]);
-            $package = $this->service->findPackage($this->organizationId($request), $packageId);
+            $package = $this->service->findPackage($this->organizationId($request), $packageId, $request->user(), 'design-management.models.upload');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -316,6 +337,8 @@ final class DesignManagementController extends Controller
                 trans_message('design_management.messages.model_upload_completed'),
                 201
             );
+        } catch (ValidationException $e) {
+            return $this->validationFailed($e);
         } catch (DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -374,7 +397,7 @@ final class DesignManagementController extends Controller
                 'derivative_format' => ['nullable', 'string', Rule::in(['thatopen_frag'])],
                 'metadata' => ['nullable', 'array'],
             ]);
-            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+            $version = $this->service->findVersion($this->organizationId($request), $versionId, $request->user(), 'design-management.models.prepare_viewer');
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
@@ -402,13 +425,13 @@ final class DesignManagementController extends Controller
     public function prepareViewer(Request $request, int $versionId): JsonResponse
     {
         try {
-            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+            $version = $this->service->findVersion($this->organizationId($request), $versionId, $request->user(), 'design-management.models.prepare_viewer');
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
             }
 
-            $this->service->ensureVersionPackageAcceptsModelChanges($version);
+            $this->service->ensureVersionPackageAcceptsModelChanges($version, $request->user());
 
             $derivative = $this->viewerPreparationService->queuePreparation($version, (int) auth()->id());
 
@@ -427,7 +450,7 @@ final class DesignManagementController extends Controller
     public function markCurrent(Request $request, int $versionId): JsonResponse
     {
         try {
-            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+            $version = $this->service->findVersion($this->organizationId($request), $versionId, $request->user(), 'design-management.models.edit');
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);

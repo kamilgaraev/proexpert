@@ -32,6 +32,7 @@ final class DesignArtifactResource extends JsonResource
             'title' => $artifact->title,
             'discipline' => $artifact->discipline,
             'stage' => $artifact->stage,
+            'composition_active' => (bool) ($artifact->metadata['composition_active'] ?? true),
             'status' => $artifact->status,
             'metadata' => $artifact->metadata ?? [],
             'section' => $this->whenLoaded('section', fn () => $artifact->section ? [

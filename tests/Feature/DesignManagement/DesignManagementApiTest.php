@@ -214,11 +214,28 @@ final class DesignManagementApiTest extends TestCase
         $this->assertFalse($access->canAccessProject($context->user, $context->organization->id, $foreign->id));
         $project->update(['is_archived' => true]);
         $this->assertFalse($access->canAccessProject($context->user, $context->organization->id, $project->id));
+        foreach (['model-sets', 'model-sessions'] as $list) {
+            foreach ([$project->id, $foreign->id] as $deniedProjectId) {
+                $this->withHeaders($context->authHeaders())
+                    ->getJson("/api/v1/admin/design-management/{$list}?project_id={$deniedProjectId}&search=scope&page=2&per_page=1")
+                    ->assertForbidden();
+            }
+        }
         $project->update(['is_archived' => false]);
         $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/model-sets?project_id={$project->id}")->assertForbidden();
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/design-management/model-sessions?project_id={$project->id}&search=scope&page=2&per_page=1")
+            ->assertForbidden();
         $this->attachProjectUser($project, $context->user);
         $this->assertTrue($access->canAccessProject($context->user, $context->organization->id, $project->id));
+        foreach (['model-sets', 'model-sessions'] as $list) {
+            $this->withHeaders($context->authHeaders())
+                ->getJson("/api/v1/admin/design-management/{$list}?project_id={$project->id}&search=scope&page=2&per_page=1")
+                ->assertOk();
+        }
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/design-management/model-sets/999999999')->assertNotFound();
+        $this->withHeaders($context->authHeaders())->getJson('/api/v1/admin/design-management/model-sessions/999999999/bootstrap')->assertForbidden();
         $this->allowAdminAccess(['design-management.models.view']);
         $this->assertFalse(app(\App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionAccessService::class)->canAccessProject($context->user, $context->organization->id, $project->id));
     }
@@ -271,11 +288,21 @@ final class DesignManagementApiTest extends TestCase
         $pirList->assertStatus($pirReadable ? 200 : 403);
         if ($pirReadable) {
             $pirList->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $issues['project']->id);
-            $pirList->assertJsonPath('data.0.author_id', $context->user->id);
-            $unusedRelations = array_filter($listQueries, static fn (array $query): bool =>
-                str_contains($query['query'], 'quality_defect_status_histories')
-                || str_contains($query['query'], '"users"."id" in ('));
-            self::assertSame([], $unusedRelations, 'The issue list returns scalar actor IDs and does not use user or status-history relations');
+            $pirList->assertJsonPath('data.0.author_id', $context->user->id)
+                ->assertJsonPath('data.0.author.id', $context->user->id)
+                ->assertJsonPath('data.0.author.name', $context->user->name)
+                ->assertJsonPath('data.0.assignee_id', null)
+                ->assertJsonPath('data.0.assignee', null)
+                ->assertJsonPath('data.0.history', []);
+            $historyQueries = array_filter($listQueries, static fn (array $query): bool =>
+                str_contains($query['query'], 'from "quality_defect_status_history"'));
+            self::assertLessThanOrEqual(1, count($historyQueries), 'Issue histories are loaded in one batch.');
+            $nameQueries = array_filter($listQueries, static fn (array $query): bool =>
+                preg_match('/select\s+(?:"users"\.)?"id",\s+(?:"users"\.)?"name"\s+from\s+"users"/i', $query['query']) === 1);
+            self::assertLessThanOrEqual(3, count($nameQueries), 'Actor names are batched per author, assignee and history relation.');
+            foreach ($nameQueries as $query) {
+                self::assertStringContainsString('"users"."id" in (', $query['query']);
+            }
         }
         foreach ($issues as $kind => $issue) {
             $pirResponse = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/issues/{$issue->id}");
@@ -290,6 +317,75 @@ final class DesignManagementApiTest extends TestCase
             }
         }
         $this->assertSame(2, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
+    }
+
+    public function test_project_issue_actor_names_and_history_are_batched_for_multiple_actors(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->attachProjectUser($project, $context->user);
+        $this->allowAdminAccess();
+        $this->mock(AccessController::class)->shouldReceive('hasModuleAccess')->andReturn(true);
+        $actors = User::factory()->count(5)->create(['current_organization_id' => $context->organization->id]);
+        foreach ($actors as $actor) {
+            $context->organization->users()->attach($actor->id, ['is_active' => true, 'project_access_mode' => 'assigned_projects']);
+            $this->attachProjectUser($project, $actor);
+        }
+        $expected = [];
+        foreach ($actors as $index => $author) {
+            $assignee = $actors[($index + 1) % $actors->count()];
+            $changedBy = $actors[($index + 2) % $actors->count()];
+            $issue = \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->create([
+                'organization_id' => $context->organization->id, 'project_id' => $project->id,
+                'kind' => 'project', 'created_by' => $author->id, 'assigned_to' => $assignee->id,
+                'defect_number' => 'BATCH-ACTORS-'.$index, 'title' => 'Замечание '.$index,
+                'severity' => 'major', 'status' => 'open', 'metadata' => [],
+            ]);
+            $event = $issue->statusHistory()->create([
+                'organization_id' => $context->organization->id, 'from_status' => 'open', 'to_status' => 'assigned',
+                'comment' => 'Назначение '.$index, 'changed_by' => $changedBy->id, 'changed_at' => now(),
+            ]);
+            $expected[$issue->id] = [$author, $assignee, $changedBy, $event];
+        }
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $response = $this->withHeaders($context->authHeaders())->getJson("/api/v1/admin/design-management/projects/{$project->id}/issues");
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $response->assertOk()->assertJsonCount(5, 'data');
+        foreach ($response->json('data') as $row) {
+            [$author, $assignee, $changedBy, $event] = $expected[$row['id']];
+            self::assertSame($author->id, $row['author_id']);
+            self::assertSame($assignee->id, $row['assignee_id']);
+            self::assertSame(['id' => $author->id, 'name' => $author->name], $row['author']);
+            self::assertSame(['id' => $assignee->id, 'name' => $assignee->name], $row['assignee']);
+            self::assertCount(1, $row['history']);
+            self::assertSame($event->id, $row['history'][0]['id']);
+            self::assertSame($changedBy->id, $row['history'][0]['changed_by']);
+            self::assertSame(['id' => $changedBy->id, 'name' => $changedBy->name], $row['history'][0]['author']);
+            self::assertSame('open', $row['history'][0]['from_status']);
+            self::assertSame('assigned', $row['history'][0]['to_status']);
+            self::assertSame($event->comment, $row['history'][0]['comment']);
+        }
+        $nameQueries = array_filter($queries, static fn (array $query): bool =>
+            preg_match('/select\s+(?:"users"\.)?"id",\s+(?:"users"\.)?"name"\s+from\s+"users"/i', $query['query']) === 1);
+        self::assertCount(3, $nameQueries, 'All author, assignee and history actor names are loaded in one batch per relation.');
+        foreach ($nameQueries as $query) {
+            self::assertStringContainsString('"users"."id" in (', $query['query']);
+            self::assertSame(1, preg_match('/"users"\."id" in \(([^)]*)\)/', $query['query'], $matches));
+            $loadedIds = array_map('intval', explode(',', $matches[1]));
+            foreach ($actors as $actor) {
+                self::assertContains($actor->id, $loadedIds);
+            }
+        }
+        $historyQueries = array_filter($queries, static fn (array $query): bool =>
+            str_contains($query['query'], 'from "quality_defect_status_history"'));
+        self::assertCount(1, $historyQueries, 'All issue histories are loaded in one query.');
+        self::assertStringContainsString('"quality_defect_status_history"."quality_defect_id" in (', array_values($historyQueries)[0]['query']);
     }
 
     public function test_project_issue_snapshot_queries_do_not_grow_with_list_size(): void
@@ -355,6 +451,7 @@ final class DesignManagementApiTest extends TestCase
         $path = 'org-999999/design-management/issues/1/snapshot.png';
         $issue = new \App\BusinessModules\Features\QualityControl\Models\QualityDefect([
             'organization_id' => 999999, 'project_id' => 1, 'kind' => 'project',
+            'created_by' => 33, 'assigned_to' => 34,
             'title' => 'Missing organization snapshot', 'severity' => 'major', 'status' => 'open',
             'metadata' => ['design_issue_context' => ['snapshot' => ['path' => $path]]],
         ]);
@@ -374,6 +471,60 @@ final class DesignManagementApiTest extends TestCase
         }
 
         self::assertNull($data['snapshot_url']);
+        self::assertSame(33, $data['author_id']);
+        self::assertSame(34, $data['assignee_id']);
+        self::assertNull($data['author']);
+        self::assertNull($data['assignee']);
+        self::assertSame([], $data['history']);
+        self::assertSame([], $data['photos']);
+        self::assertSame([], $queries);
+    }
+
+    public function test_issue_resources_keep_loaded_names_and_history_without_database_queries(): void
+    {
+        $author = (new User())->forceFill(['id' => 33, 'name' => 'Автор']);
+        $assignee = (new User())->forceFill(['id' => 34, 'name' => 'Исполнитель']);
+        $eventActor = (new User())->forceFill(['id' => 35, 'name' => 'Проверяющий']);
+        $event = new \App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory([
+            'organization_id' => 7, 'from_status' => 'open', 'to_status' => 'assigned',
+            'changed_by' => 35, 'changed_at' => now(), 'comment' => 'Назначено',
+        ]);
+        $event->setRelation('changedBy', $eventActor);
+        $unloadedEvent = new \App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory([
+            'organization_id' => 7, 'from_status' => 'assigned', 'to_status' => 'in_progress',
+            'changed_by' => 36, 'changed_at' => now(), 'comment' => 'Начато',
+        ]);
+        $issue = new \App\BusinessModules\Features\QualityControl\Models\QualityDefect([
+            'organization_id' => 7, 'project_id' => 12, 'kind' => 'project',
+            'created_by' => 33, 'assigned_to' => 34, 'title' => 'Замечание', 'severity' => 'major', 'status' => 'open',
+        ]);
+        $issue->setRelation('organization', null);
+        $issue->setRelation('createdBy', $author);
+        $issue->setRelation('assignedUser', $assignee);
+        $issue->setRelation('statusHistory', collect([$event, $unloadedEvent]));
+        $issue->setRelation('photos', collect());
+        $request = \Illuminate\Http\Request::create('/');
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $admin = (new \App\BusinessModules\Features\DesignManagement\Http\Resources\DesignProjectIssueResource($issue))->resolve($request);
+            $mobile = (new \App\Http\Resources\Mobile\MobileDesignProjectIssueResource($issue))->resolve($request);
+            $queries = DB::getQueryLog();
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        foreach ([$admin, $mobile] as $data) {
+            self::assertSame(['id' => 33, 'name' => 'Автор'], $data['author']);
+            self::assertSame(['id' => 34, 'name' => 'Исполнитель'], $data['assignee']);
+            self::assertCount(2, $data['history']);
+            self::assertSame('Назначено', $data['history'][0]['comment']);
+            self::assertSame(35, $data['history'][0]['changed_by']);
+            self::assertSame(36, $data['history'][1]['changed_by']);
+            self::assertNull($data['history'][1]['author']);
+        }
+        self::assertSame(['id' => 35, 'name' => 'Проверяющий'], $admin['history'][0]['author']);
+        self::assertSame('Проверяющий', $mobile['history'][0]['author']);
         self::assertSame([], $queries);
     }
 
@@ -1610,7 +1761,7 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/viewer', 'design-management.models.view');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/source-file', 'design-management.models.view');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/derivative-file', 'design-management.models.view');
-        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/mark-current', 'design-management.edit');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/mark-current', 'design-management.models.edit');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-sets', 'design-management.models.view');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-sets/{setId}', 'design-management.models.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-sets', 'design-management.models.edit');
@@ -1696,6 +1847,7 @@ final class DesignManagementApiTest extends TestCase
     public function test_transient_relay_requires_membership_and_does_not_accept_spoofed_sender(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
@@ -1762,6 +1914,21 @@ final class DesignManagementApiTest extends TestCase
             'type' => 'cursor',
             'payload' => ['x' => 3, 'y' => 7, 'z' => 0],
         ])->assertForbidden();
+
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'all_projects']);
+        $this->assertFalse($project->users()->where('users.id', $context->user->id)->exists());
+        $this->withHeaders($context->authHeaders())->postJson($url, [
+            'type' => 'cursor',
+            'payload' => ['x' => 3, 'y' => 7, 'z' => 0],
+        ])->assertStatus(202);
+
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
+        \Illuminate\Support\Facades\Event::fake([DesignModelSessionTransientEvent::class]);
+        $this->withHeaders($context->authHeaders())->postJson($url, [
+            'type' => 'cursor',
+            'payload' => ['x' => 3, 'y' => 7, 'z' => 0],
+        ])->assertForbidden();
+        \Illuminate\Support\Facades\Event::assertNotDispatched(DesignModelSessionTransientEvent::class);
 
         $otherContext = AdminApiTestContext::create(roleSlug: 'project_manager');
         $this->withHeaders($otherContext->authHeaders())->postJson($url, [
@@ -1981,9 +2148,10 @@ final class DesignManagementApiTest extends TestCase
         $previous->update(['is_current' => false]);
         $link = DesignSourceLink::query()->create(['organization_id' => $context->organization->id, 'project_id' => $project->id, 'source_version_id' => $previous->id, 'target_type' => 'completed_work', 'target_id' => 999999, 'target_snapshot' => ['type' => 'completed_work', 'label' => 'Работа'], 'created_by' => $context->user->id]);
 
+        $previousComposition = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->findOrFail($package->fresh()->composition_revision_id);
         $composition = $this->withHeaders($context->authHeaders())->postJson("/api/v1/admin/design-management/composition/packages/{$package->id}/revisions", [
-            'composition' => ['brand' => 'AR', 'document_groups' => [['code' => 'AR', 'title' => 'Архитектурные решения']]],
-            'expected_revision' => 1, 'expected_state_version' => 2,
+            'composition' => $previousComposition->composition,
+            'expected_revision' => $previousComposition->revision_number, 'expected_state_version' => $previousComposition->state_version,
         ])->assertCreated();
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/design-management/composition/revisions/'.$composition->json('data.id').'/approve', ['expected_state_version' => 1])
@@ -2287,6 +2455,7 @@ final class DesignManagementApiTest extends TestCase
     public function test_project_manager_cannot_read_ifc_element_from_unassigned_project(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
@@ -2336,12 +2505,15 @@ final class DesignManagementApiTest extends TestCase
             'classifications' => [],
         ]);
 
+        $this->assertFalse($project->users()->where('users.id', $context->user->id)->exists());
         $response = $this->withHeaders($context->authHeaders())->getJson(
             "/api/v1/admin/design-management/model-versions/{$version->id}/elements/42/properties"
         );
 
         $response->assertNotFound();
         $response->assertJsonMissing(['IsExternal']);
+        $response->assertJsonMissingPath('data.properties');
+        $this->assertStringNotContainsString('Pset_WallCommon', $response->getContent());
     }
 
     public function test_multipart_start_rejects_invalid_file_identity(): void
@@ -3001,7 +3173,7 @@ final class DesignManagementApiTest extends TestCase
         $response->assertJsonPath('data.progress_percent', 35);
         $response->assertJsonPath('data.processing_stage', 'converting');
 
-        Queue::assertNothingPushed();
+        Queue::assertNotPushed(PrepareDesignModelViewerJob::class);
     }
 
     public function test_prepare_viewer_endpoint_requeues_old_ready_derivative(): void
@@ -3265,6 +3437,28 @@ final class DesignManagementApiTest extends TestCase
 
     private function completeRequiredDocuments(DesignPackage $package, User $user): void
     {
+        $revision = \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->findOrFail($package->composition_revision_id);
+        $composition = $revision->composition;
+        $key = isset($composition['sections']) ? 'sections' : (isset($composition['document_groups']) ? 'document_groups' : 'items');
+        $changed = false;
+        foreach ($composition[$key] as &$item) {
+            if (($item['documents'] ?? []) === [] && ($item['required'] ?? true)) {
+                $item['documents'] = [[
+                    'document_code' => $item['code'].'-01', 'document_title' => 'Документ '.$item['code'],
+                    'artifact_type' => 'text_document', 'required' => true, 'allowed_formats' => ['pdf'],
+                    'sheet_registry_required' => false,
+                ]];
+                $changed = true;
+            }
+        }
+        unset($item);
+        if ($changed) {
+            app(\App\BusinessModules\Features\DesignManagement\Services\DesignCompositionService::class)->createRevision($package, $user, [
+                'composition' => $composition, 'expected_revision' => $revision->revision_number,
+                'expected_state_version' => $revision->state_version,
+            ]);
+            $package->refresh();
+        }
         $package->loadMissing('sections');
 
         foreach ($package->sections as $section) {
@@ -3291,7 +3485,7 @@ final class DesignManagementApiTest extends TestCase
 
                 $format = (string) (($document['allowed_formats'][0] ?? null) ?: 'pdf');
                 $documentCode = (string) $document['document_code'];
-                $artifact = DesignArtifact::query()->create([
+                $artifact = DesignArtifact::query()->firstOrCreate(['package_id' => $package->id, 'section_id' => $section->id, 'document_code' => $documentCode], [
                     'organization_id' => $package->organization_id,
                     'project_id' => $package->project_id,
                     'package_id' => $package->id,

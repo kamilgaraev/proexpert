@@ -63,7 +63,8 @@ final class DesignCompletenessScope
 
     public function includesArtifact(DesignArtifact $artifact, Collection $documents): bool
     {
-        return $this->items === null || $documents->isEmpty() || $documents->has($artifact->document_code);
+        return ($artifact->metadata['composition_active'] ?? true) !== false
+            && ($this->items === null || $documents->has($artifact->document_code));
     }
 
     public function artifacts(): Collection

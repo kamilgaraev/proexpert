@@ -21,6 +21,8 @@ use App\BusinessModules\Features\DesignManagement\Support\Rules\RequiredSectionR
 use App\BusinessModules\Features\DesignManagement\Support\Rules\RevisionSequenceRule;
 use App\BusinessModules\Features\DesignManagement\Support\Rules\SheetRegistryRule;
 use BackedEnum;
+use App\Models\User;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignDocumentSectionStatusEnum;
 use Illuminate\Support\Facades\DB;
 
 final class DesignCompletenessService
@@ -43,6 +45,30 @@ final class DesignCompletenessService
     }
 
     public function run(DesignPackage $package, int $userId): DesignCompletenessCheck
+    {
+        app(DesignAccessService::class)->assertPackage($package, User::query()->findOrFail($userId), 'design-management.norm_control.run');
+        return $this->calculate($package, $userId);
+    }
+
+    public function runForWorkflow(DesignPackage $package, int $userId, string $action): DesignCompletenessCheck
+    {
+        $permission = \App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow::permissionForAction($action);
+        if ($permission === null || ! in_array($action, ['submit_norm_control', 'submit_customer_review', 'approve', 'issue'], true)) {
+            throw new \DomainException(trans_message('design_management.errors.workflow_action_not_available'));
+        }
+        $actor = User::query()->findOrFail($userId);
+        app(DesignAccessService::class)->assertPackage($package, $actor, $permission);
+        return DB::transaction(function () use ($package, $actor, $permission, $action, $userId): DesignCompletenessCheck {
+            $locked = DesignPackage::query()->whereKey($package->id)->where('organization_id', $package->organization_id)->where('project_id', $package->project_id)->lockForUpdate()->firstOrFail();
+            app(DesignAccessService::class)->assertPackage($locked, $actor, $permission);
+            if (\App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow::nextStatus($locked, $action) === null) {
+                throw new \DomainException(trans_message('design_management.errors.workflow_action_not_available'));
+            }
+            return $this->calculate($locked, $userId);
+        });
+    }
+
+    private function calculate(DesignPackage $package, int $userId): DesignCompletenessCheck
     {
         return DB::transaction(function () use ($package, $userId): DesignCompletenessCheck {
             $package = DesignPackage::forOrganization((int) $package->organization_id)
@@ -78,7 +104,7 @@ final class DesignCompletenessService
                 ? DesignCompletenessStatusEnum::BLOCKED
                 : ($warningCount > 0 ? DesignCompletenessStatusEnum::WARNING : DesignCompletenessStatusEnum::READY);
 
-            return DesignCompletenessCheck::query()->create([
+            $check = DesignCompletenessCheck::query()->create([
                 'organization_id' => $package->organization_id,
                 'project_id' => $package->project_id,
                 'package_id' => $package->id,
@@ -104,6 +130,47 @@ final class DesignCompletenessService
                     'input_fingerprint' => $this->inputFingerprint($package),
                 ],
             ]);
+            foreach ($package->sections as $section) {
+                if (($section->metadata['composition_active'] ?? true) === false) {
+                    continue;
+                }
+                $sectionResults = array_values(array_filter($results, static fn (array $result): bool => ($result['metadata']['section_code'] ?? null) === $section->code || (($result['target_type'] ?? null) === 'section' && (int) ($result['target_id'] ?? 0) === (int) $section->id) || (($result['target_type'] ?? null) === 'artifact' && $section->artifacts->contains('id', (int) ($result['target_id'] ?? 0))) || (($result['target_type'] ?? null) === 'version' && $section->artifacts->contains(static fn (DesignArtifact $artifact): bool => (int) ($artifact->currentVersion?->id ?? 0) === (int) ($result['target_id'] ?? 0))) || in_array($result['target_type'] ?? null, ['quality_defect', 'review_comment'], true) || (($result['target_type'] ?? null) === 'package' && ! isset($result['metadata']['section_code']))));
+                $blocked = collect($sectionResults)->contains(static fn (array $result): bool => ($result['status'] ?? null) === 'blocked');
+                $metadata = $section->metadata ?? [];
+                $metadata['readiness_status'] = $blocked ? 'blocked' : (collect($sectionResults)->contains(static fn (array $result): bool => ($result['status'] ?? null) === 'warning') ? 'warning' : 'ready');
+                $metadata['readiness_results'] = $sectionResults;
+                $metadata['readiness_check_id'] = $check->id;
+                $sectionStatus = match ($package->status->value) {
+                    'issued', 'archived' => DesignDocumentSectionStatusEnum::ISSUED,
+                    'approved', 'under_customer_review' => DesignDocumentSectionStatusEnum::CHECKED,
+                    'returned' => DesignDocumentSectionStatusEnum::RETURNED,
+                    default => $blocked ? DesignDocumentSectionStatusEnum::IN_WORK : DesignDocumentSectionStatusEnum::READY_FOR_CHECK,
+                };
+                $section->update(['status' => $sectionStatus, 'metadata' => $metadata]);
+            }
+            return $check;
+        });
+    }
+
+    public function invalidateLockedInputs(DesignPackage $package, ?int $userId = null): void
+    {
+        DB::transaction(function () use ($package, $userId): void {
+            $locked = DesignPackage::query()->whereKey($package->id)->where('organization_id', $package->organization_id)
+                ->where('project_id', $package->project_id)->lockForUpdate()->firstOrFail();
+            $metadata = $locked->metadata ?? [];
+            $stamp = now();
+            if (is_string($metadata['completeness_invalidated_at'] ?? null)) {
+                try {
+                    $previous = \Illuminate\Support\Carbon::parse($metadata['completeness_invalidated_at']);
+                    if ($previous->greaterThanOrEqualTo($stamp)) {
+                        $stamp = $previous->addMicrosecond();
+                    }
+                } catch (\Carbon\Exceptions\InvalidFormatException) {
+                    $stamp = now();
+                }
+            }
+            $metadata['completeness_invalidated_at'] = $stamp->toISOString();
+            $locked->update(['metadata' => $metadata] + ($userId === null ? [] : ['updated_by' => $userId]));
         });
     }
 
@@ -130,7 +197,7 @@ final class DesignCompletenessService
             return null;
         }
 
-        return DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->where('package_id', $package->id)->where('status', 'approved')->first();
+        return DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->where('package_id', $package->id)->where('organization_id', $package->organization_id)->where('project_id', $package->project_id)->where('status', 'approved')->first();
     }
 
     private function packageInvalidationStamp(DesignPackage $package): ?string
@@ -142,7 +209,7 @@ final class DesignCompletenessService
 
     private function inputFingerprint(DesignPackage $package): string
     {
-        $sections = $package->sections()->orderBy('id')->get()->map(static fn ($item): array => ['id' => $item->id, 'code' => $item->code, 'required' => $item->required, 'metadata' => $item->metadata])->all();
+        $sections = $package->sections()->orderBy('id')->get()->map(static fn ($item): array => ['id' => $item->id, 'code' => $item->code, 'required' => $item->required, 'metadata' => array_diff_key($item->metadata ?? [], array_flip(['readiness_status', 'readiness_results', 'readiness_check_id']))])->all();
         $artifacts = DesignArtifact::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at'])->map(static fn (DesignArtifact $item): array => $item->only(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at']))->all();
         $versions = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query->where('package_id', $package->id))->orderBy('id')->get(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'page_count', 'sheet_count', 'metadata', 'updated_at'])->map(static fn (DesignArtifactVersion $item): array => $item->only(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'page_count', 'sheet_count', 'metadata', 'updated_at']))->all();
         $sheets = DesignDocumentSheet::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'version_id', 'status', 'revision', 'updated_at'])->map(static fn (DesignDocumentSheet $item): array => $item->only(['id', 'version_id', 'status', 'revision', 'updated_at']))->all();

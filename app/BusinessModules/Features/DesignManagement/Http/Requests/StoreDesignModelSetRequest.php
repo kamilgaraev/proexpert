@@ -16,6 +16,7 @@ class StoreDesignModelSetRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'idempotency_key' => ['nullable', 'string', 'regex:/^[A-Za-z0-9_-]{16,128}$/'],
             'project_id' => ['required', 'integer'],
             'title' => ['required', 'string', 'max:255'],
             'version_ids' => ['required', 'array', 'min:1', 'max:100'],

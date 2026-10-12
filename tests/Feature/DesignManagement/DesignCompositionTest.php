@@ -135,7 +135,7 @@ final class DesignCompositionTest extends TestCase
         $payload = $this->pdPayload($project->id);
         $preview = app(DesignCompositionService::class)->preview($context->organization->id, $context->user, $payload);
         $package = app(DesignManagementService::class)->createPackage($context->organization->id, $context->user->id, array_merge($payload, ['title' => 'АР']));
-        $revision = app(DesignCompositionService::class)->createRevision($package, $context->user, ['composition' => $preview]);
+        $revision = DesignCompositionRevision::query()->findOrFail($package->composition_revision_id);
 
         $this->assertEquals($preview, $revision->composition);
         $this->assertSame(['AR'], DesignPackageSection::query()->where('package_id', $package->id)->pluck('code')->all());
@@ -249,6 +249,8 @@ final class DesignCompositionTest extends TestCase
     public function test_legacy_ambiguous_rd_marker_does_not_issue_package(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        \Tests\Support\DesignManagementTestEntitlements::activate($context);
+        \Illuminate\Support\Facades\Cache::store('array')->flush();
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         $package = $this->package($context->user, $project, 'rd', null);
         $revision = DesignCompositionRevision::query()->create(['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'package_id' => $package->id, 'revision_number' => 1, 'status' => 'needs_review', 'composition' => ['project_stage' => 'rd', 'items' => []], 'fingerprint' => 'legacy-ambiguous', 'created_by' => $context->user->id]);

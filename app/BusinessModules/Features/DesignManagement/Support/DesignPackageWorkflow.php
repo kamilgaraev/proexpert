@@ -127,6 +127,13 @@ final class DesignPackageWorkflow
             && self::statusValue($package->status) === $targetStatus->value;
     }
 
+    public static function isActiveArtifact(DesignPackage $package, DesignArtifact $artifact): bool
+    {
+        $section = $artifact->relationLoaded('section') ? $artifact->section : ($package->relationLoaded('sections') ? $package->sections->firstWhere('id', $artifact->section_id) : null);
+        return ($artifact->metadata['composition_active'] ?? true) !== false
+            && ($section?->metadata['composition_active'] ?? true) !== false;
+    }
+
     public static function currentVersion(DesignPackage $package): ?DesignArtifactVersion
     {
         if (!$package->relationLoaded('artifacts')) {
@@ -134,7 +141,7 @@ final class DesignPackageWorkflow
         }
 
         $modelArtifacts = $package->artifacts
-            ->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) === 'model');
+            ->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) === 'model' && self::isActiveArtifact($package, $artifact));
 
         foreach ($modelArtifacts as $artifact) {
             if ($artifact->relationLoaded('currentVersion') && $artifact->currentVersion instanceof DesignArtifactVersion) {
@@ -172,6 +179,15 @@ final class DesignPackageWorkflow
         }
 
         return null;
+    }
+
+    public static function viewerStatus(DesignPackage $package): string
+    {
+        $derivative = self::preferredDerivative(self::currentVersion($package));
+        if ($derivative === null || DesignViewerConverter::isStale($derivative)) {
+            return 'missing';
+        }
+        return self::statusValue($derivative->status);
     }
 
     public static function problemFlags(
@@ -243,14 +259,15 @@ final class DesignPackageWorkflow
         $nextAction = $availableActions[0] ?? null;
         $derivativeStatus = self::derivativeStatus($derivative);
         $modelsCount = $package->relationLoaded('artifacts')
-            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) === 'model')->count()
+            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) === 'model' && self::isActiveArtifact($package, $artifact))->count()
             : $artifactsCount;
-        $sectionsCount = $package->relationLoaded('sections') ? $package->sections->count() : null;
+        $sectionsCount = $package->relationLoaded('sections') ? $package->sections->filter(static fn ($section): bool => ($section->metadata['composition_active'] ?? true) !== false)->count() : null;
         $documentsCount = $package->relationLoaded('artifacts')
-            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) !== 'model')->count()
+            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) !== 'model' && self::isActiveArtifact($package, $artifact))->count()
             : null;
         $currentDocumentsCount = $package->relationLoaded('artifacts')
             ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) !== 'model'
+                && self::isActiveArtifact($package, $artifact)
                 && $artifact->relationLoaded('currentVersion')
                 && $artifact->currentVersion instanceof DesignArtifactVersion)->count()
             : null;

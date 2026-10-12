@@ -31,7 +31,7 @@ final class DesignCompositionService
         $stage = $package->project_stage instanceof \BackedEnum ? $package->project_stage->value : (string) $package->project_stage;
         return DB::transaction(function () use ($package, $actor, $stage, $payload): DesignCompositionRevision {
             $locked = DesignPackage::query()->whereKey($package->id)->where('organization_id', $package->organization_id)->lockForUpdate()->firstOrFail();
-            if (in_array($locked->status->value, ['issued', 'archived'], true)) {
+            if (! \App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow::canChangeDocuments($locked)) {
                 throw new DomainException(trans_message('design_composition.errors.issued_package_locked'));
             }
             $preservedDocumentCodes = [];
@@ -127,6 +127,16 @@ final class DesignCompositionService
             }
 
             $locked->increment('state_version');
+            $section = $package->sections()->where('code', (string) $payload['item_key'])->first();
+            if ($section !== null) {
+                $sectionMetadata = $section->metadata ?? [];
+                $sectionMetadata['composition_active'] = false;
+                $sectionMetadata['readiness_status'] = 'not_checked';
+                $section->update(['metadata' => $sectionMetadata]);
+            }
+            $packageMetadata = $package->metadata ?? [];
+            $packageMetadata['completeness_invalidated_at'] = now()->toISOString();
+            $package->update(['metadata' => $packageMetadata]);
 
             return DesignCompositionExclusion::query()->create(['organization_id' => $locked->organization_id, 'project_id' => $locked->project_id, 'package_id' => $locked->package_id, 'revision_id' => $locked->id, 'item_key' => $payload['item_key'], 'reason' => $payload['reason'], 'created_by' => $actor->id])->fresh('author');
         });
@@ -148,7 +158,7 @@ final class DesignCompositionService
 
     private function authorize(User $actor, string $permission, int $organizationId, int $projectId): void
     {
-        if (! $this->authorization->can($actor, $permission, ['organization_id' => $organizationId, 'project_id' => $projectId])) {
+        if (! app(DesignAccessService::class)->canAccessProject($actor, $organizationId, $projectId, $permission)) {
             throw new DomainException(trans_message('design_composition.errors.forbidden'));
         }
     }
@@ -228,16 +238,34 @@ final class DesignCompositionService
     private function materialize(DesignPackage $package, array $composition, User $actor): void
     {
         $items = $composition['sections'] ?? $composition['document_groups'] ?? $composition['items'] ?? [];
+        $selectedCodes = array_column($items, 'code');
+        foreach ($package->sections()->get() as $existing) {
+            $metadata = $existing->metadata ?? [];
+            $metadata['composition_active'] = in_array($existing->code, $selectedCodes, true);
+            $metadata['readiness_status'] = 'not_checked';
+            $metadata['readiness_results'] = [];
+            $existing->update(['metadata' => $metadata]);
+        }
         foreach ($items as $index => $item) {
             $code = mb_strtoupper(trim((string) $item['code']), 'UTF-8');
             $section = DesignPackageSection::query()->firstOrNew(['package_id' => $package->id, 'code' => $code]);
             $metadata = is_array($section->metadata) ? $section->metadata : [];
             $metadata['documents'] = $item['documents'];
+            $metadata['composition_active'] = true;
             $section->fill(['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'title' => (string) ($item['title'] ?? $code), 'project_stage' => $package->project_stage, 'object_type' => $package->object_type, 'required' => (bool) ($item['required'] ?? true), 'sort_order' => ($index + 1) * 10, 'metadata' => $metadata]);
             $section->save();
+            $documentCodes = array_column($metadata['documents'], 'document_code');
+            foreach ($section->artifacts()->get() as $existingArtifact) {
+                $artifactMetadata = $existingArtifact->metadata ?? [];
+                $artifactMetadata['composition_active'] = in_array($existingArtifact->document_code, $documentCodes, true);
+                $existingArtifact->update(['metadata' => $artifactMetadata]);
+            }
             foreach ($metadata['documents'] as $document) {
                 if (! is_array($document) || trim((string) ($document['document_code'] ?? '')) === '') continue;
-                DesignArtifact::query()->firstOrCreate(['package_id' => $package->id, 'section_id' => $section->id, 'document_code' => (string) $document['document_code']], ['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'created_by' => $actor->id, 'updated_by' => $actor->id, 'artifact_type' => (string) ($document['artifact_type'] ?? 'text_document'), 'title' => (string) ($document['document_title'] ?? $document['document_code']), 'document_title' => (string) ($document['document_title'] ?? $document['document_code']), 'requires_sheet_registry' => (bool) ($document['sheet_registry_required'] ?? false), 'status' => 'active', 'metadata' => ['composition_managed' => true]]);
+                $artifact = DesignArtifact::query()->firstOrCreate(['package_id' => $package->id, 'section_id' => $section->id, 'document_code' => (string) $document['document_code']], ['organization_id' => $package->organization_id, 'project_id' => $package->project_id, 'created_by' => $actor->id, 'updated_by' => $actor->id, 'artifact_type' => (string) ($document['artifact_type'] ?? 'text_document'), 'title' => (string) ($document['document_title'] ?? $document['document_code']), 'document_title' => (string) ($document['document_title'] ?? $document['document_code']), 'requires_sheet_registry' => (bool) ($document['sheet_registry_required'] ?? false), 'status' => 'active', 'metadata' => ['composition_managed' => true, 'composition_active' => true]]);
+                $artifactMetadata = $artifact->metadata ?? [];
+                $artifactMetadata['composition_active'] = true;
+                $artifact->update(['title' => (string) ($document['document_title'] ?? $document['document_code']), 'document_title' => (string) ($document['document_title'] ?? $document['document_code']), 'requires_sheet_registry' => (bool) ($document['sheet_registry_required'] ?? false), 'metadata' => $artifactMetadata, 'updated_by' => $actor->id]);
             }
         }
     }

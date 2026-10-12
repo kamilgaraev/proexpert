@@ -16,6 +16,7 @@ final class StoreDesignModelSessionRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'idempotency_key' => ['nullable', 'string', 'regex:/^[A-Za-z0-9_-]{16,128}$/'],
             'project_id' => ['required', 'integer'],
             'model_set_id' => ['required', 'integer'],
             'model_set_revision' => ['required', 'integer', 'min:1'],

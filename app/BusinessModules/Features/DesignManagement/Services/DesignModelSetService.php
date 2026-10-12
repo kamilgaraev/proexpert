@@ -21,6 +21,55 @@ final class DesignModelSetService
 
     public function create(int $organizationId, User $user, array $data): DesignModelSet
     {
+        $projectId = (int) $data['project_id'];
+        $this->assertProjectAccess($user, $organizationId, $projectId, 'design-management.models.edit');
+        $key = $data['idempotency_key'] ?? null;
+        unset($data['idempotency_key']);
+        $result = app(\App\Services\Mobile\MobileMutationIdempotency::class)->run($organizationId, (int) $user->id, $key, 'design-management.set.create', $data,
+            fn (): DesignModelSet => $this->persistCreate($organizationId, $user, $data),
+            fn (int $id): DesignModelSet => DesignModelSet::query()->where('organization_id', $organizationId)->where('project_id', $projectId)->with('revisions')->findOrFail($id));
+        assert($result instanceof DesignModelSet);
+        return $result;
+    }
+
+    public function update(int $organizationId, int $setId, User $user, array $data): DesignModelSet
+    {
+        $set = DesignModelSet::query()->where('organization_id', $organizationId)->findOrFail($setId);
+        $this->assertProjectAccess($user, $organizationId, (int) $set->project_id, 'design-management.models.edit');
+        $key = $data['idempotency_key'] ?? null;
+        unset($data['idempotency_key']);
+        $result = app(\App\Services\Mobile\MobileMutationIdempotency::class)->run($organizationId, (int) $user->id, $key, 'design-management.set.update', ['set_id' => $setId] + $data,
+            fn (): DesignModelSet => $this->persistUpdate($organizationId, $setId, $user, $data),
+            fn (int $id): DesignModelSet => DesignModelSet::query()->where('organization_id', $organizationId)->where('project_id', $set->project_id)->whereKey($setId)->with('revisions')->findOrFail($id));
+        assert($result instanceof DesignModelSet);
+        return $result;
+    }
+
+    public function createSession(int $organizationId, User $user, array $data): DesignModelSession
+    {
+        $projectId = (int) $data['project_id'];
+        $this->assertProjectAccess($user, $organizationId, $projectId);
+        $key = $data['idempotency_key'] ?? null;
+        unset($data['idempotency_key']);
+        $result = app(\App\Services\Mobile\MobileMutationIdempotency::class)->run($organizationId, (int) $user->id, $key, 'design-management.session.create', $data,
+            fn (): DesignModelSession => $this->persistSession($organizationId, $user, $data),
+            fn (int $id): DesignModelSession => $this->sessionAccess->requireSession($user, $id, $organizationId));
+        assert($result instanceof DesignModelSession);
+        return $result;
+    }
+
+    public function listSets(int $organizationId, User $user, array $filters): LengthAwarePaginator
+    {
+        $this->assertProjectAccess($user, $organizationId, (int) $filters['project_id']);
+        $search = trim((string) ($filters['search'] ?? ''));
+        $pattern = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search).'%';
+        return DesignModelSet::query()->where('organization_id', $organizationId)->where('project_id', (int) $filters['project_id'])
+            ->when($search !== '', static fn ($query) => $query->where('title', 'ilike', $pattern))
+            ->with('revisions')->latest('id')->paginate((int) ($filters['per_page'] ?? 25), ['*'], 'page', (int) ($filters['page'] ?? 1));
+    }
+
+    private function persistCreate(int $organizationId, User $user, array $data): DesignModelSet
+    {
         return DB::transaction(function () use ($organizationId, $user, $data): DesignModelSet {
             $this->assertProjectAccess($user, $organizationId, (int) $data['project_id'], 'design-management.models.edit');
             $this->assertVersions($organizationId, (int) $data['project_id'], $data['version_ids']);
@@ -34,7 +83,7 @@ final class DesignModelSetService
         });
     }
 
-    public function update(int $organizationId, int $setId, User $user, array $data): DesignModelSet
+    private function persistUpdate(int $organizationId, int $setId, User $user, array $data): DesignModelSet
     {
         return DB::transaction(function () use ($organizationId, $setId, $user, $data): DesignModelSet {
             $set = DesignModelSet::query()->where('organization_id', $organizationId)->lockForUpdate()->findOrFail($setId);
@@ -50,7 +99,7 @@ final class DesignModelSetService
         });
     }
 
-    public function createSession(int $organizationId, User $user, array $data): DesignModelSession
+    private function persistSession(int $organizationId, User $user, array $data): DesignModelSession
     {
         $set = DesignModelSet::query()->where('organization_id', $organizationId)->where('project_id', $data['project_id'])->findOrFail($data['model_set_id']);
         $this->assertProjectAccess($user, $organizationId, (int) $set->project_id);
@@ -63,13 +112,20 @@ final class DesignModelSetService
         ])->load('modelSetRevision');
     }
 
-    public function listSessions(int $organizationId, User $user, int $projectId, int $perPage): LengthAwarePaginator
+    public function listSessions(int $organizationId, User $user, int $projectId, int $perPage, ?string $search = null, int $page = 1): LengthAwarePaginator
     {
         $this->assertProjectAccess($user, $organizationId, $projectId);
 
+        $search = trim((string) $search);
+        $pattern = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search).'%';
         return DesignModelSession::query()
+            ->when($search !== '', static fn ($query) => $query->where('design_model_sessions.title', 'ilike', $pattern))
             ->select('design_model_sessions.*')
             ->join('design_model_set_revisions', 'design_model_set_revisions.id', '=', 'design_model_sessions.model_set_revision_id')
+            ->join('design_model_sets', 'design_model_sets.id', '=', 'design_model_sessions.model_set_id')
+            ->whereColumn('design_model_set_revisions.model_set_id', 'design_model_sessions.model_set_id')
+            ->whereColumn('design_model_sets.organization_id', 'design_model_sessions.organization_id')
+            ->whereColumn('design_model_sets.project_id', 'design_model_sessions.project_id')
             ->where('design_model_sessions.organization_id', $organizationId)
             ->where('design_model_sessions.project_id', $projectId)
             ->whereRaw('jsonb_array_length(design_model_set_revisions.version_ids) > 0')
@@ -89,7 +145,7 @@ final class DesignModelSetService
             SQL)
             ->with('modelSetRevision')
             ->latest('design_model_sessions.id')
-            ->paginate($perPage);
+            ->paginate(max(1, min(100, $perPage)), ['design_model_sessions.*'], 'page', max(1, $page));
     }
 
     public function sessionBootstrap(int $organizationId, User $user, int $sessionId): DesignModelSession
@@ -158,7 +214,7 @@ final class DesignModelSetService
     private function assertVersions(int $organizationId, int $projectId, array $ids): void
     {
         $ids = array_values(array_unique(array_map('intval', $ids)));
-        if ($ids === [] || DesignArtifactVersion::query()->where('organization_id', $organizationId)->where('project_id', $projectId)->whereIn('id', $ids)->where('file_format', 'ifc')->count() !== count($ids)) {
+        if ($ids === [] || DesignArtifactVersion::query()->where('organization_id', $organizationId)->where('project_id', $projectId)->whereIn('id', $ids)->where('file_format', 'ifc')->whereHas('artifact', static fn ($query) => $query->where('organization_id', $organizationId)->where('project_id', $projectId)->whereHas('package', static fn ($packages) => $packages->where('organization_id', $organizationId)->where('project_id', $projectId)))->count() !== count($ids)) {
             throw new DomainException(trans_message('design_bim.errors.model_versions_invalid'));
         }
     }

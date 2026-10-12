@@ -7,6 +7,7 @@ use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/design-management/composition')->name('admin.design_management.composition.')->middleware(AdminRouteStack::middleware(['design-management.active']))->group(function (): void {
+    Route::get('/packages/{packageId}/issue-register/export', \App\BusinessModules\Features\DesignManagement\Http\Controllers\DesignIssueRegisterExportController::class)->middleware('authorize:design-management.export')->name('issue_register.export');
     Route::post('/preview', [DesignCompositionController::class, 'preview'])->middleware('authorize:design-management.composition.edit')->name('preview');
     Route::get('/packages/{packageId}/composition', [DesignCompositionController::class, 'show'])->middleware('authorize:design-management.view')->name('show');
     Route::post('/packages/{packageId}/revisions', [DesignCompositionController::class, 'store'])->middleware('authorize:design-management.composition.edit')->name('revisions.store');

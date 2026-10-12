@@ -46,7 +46,7 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
 
     public function start(DesignPackage $package, int $userId, array $payload): array
     {
-        $this->designManagementService->ensurePackageAcceptsModelChanges($package);
+        $this->designManagementService->ensurePackageAcceptsModelChanges($package, $userId, isset($payload['artifact_id']) ? (int) $payload['artifact_id'] : null);
         $this->cleanupExpiredSessions((int) $package->organization_id, $userId);
 
         $fileSizeBytes = (int) $payload['file_size_bytes'];
@@ -174,6 +174,8 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
         UploadedFile $chunk
     ): array {
         $session = $this->session($organizationId, $userId, $uploadId);
+        $package = $this->ownedPackage($organizationId, $userId, $session);
+        $this->designManagementService->ensurePackageAcceptsModelChanges($package, $userId, isset($session['payload']['artifact_id']) ? (int) $session['payload']['artifact_id'] : null);
 
         if ($partNumber < 1 || $partNumber > (int) $session['parts_count']) {
             throw new DomainException(trans_message('design_management.errors.multipart_upload_not_found'));
@@ -220,6 +222,8 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
             ->where('status', 'completed')
             ->first();
         if ($completed?->completedVersion instanceof DesignArtifactVersion) {
+            $package = $this->ownedPackage($organizationId, $userId, $this->sessionArray($completed));
+            $this->assertCompletedVersion($completed->completedVersion, $package);
             return $completed->completedVersion;
         }
 
@@ -227,13 +231,9 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
         $upload = $this->multipartUpload($session);
         $parts = $this->multipartParts($session, $upload);
 
-        $package = $this->designManagementService->findPackage($organizationId, (int) $session['package_id']);
+        $package = $this->ownedPackage($organizationId, $userId, $session);
 
-        if (! $package instanceof DesignPackage) {
-            throw new DomainException(trans_message('design_management.errors.package_not_found'));
-        }
-
-        $this->designManagementService->ensurePackageAcceptsModelChanges($package);
+        $this->designManagementService->ensurePackageAcceptsModelChanges($package, $userId, isset($session['payload']['artifact_id']) ? (int) $session['payload']['artifact_id'] : null);
 
         $completion = $this->multipartCompletion($session);
         if (! $completion instanceof CurrentMultipartCompletion) {
@@ -270,6 +270,7 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                         ->lockForUpdate()
                         ->first();
                     if ($alreadyCompleted?->completedVersion instanceof DesignArtifactVersion) {
+                        $this->assertCompletedVersion($alreadyCompleted->completedVersion, $package);
                         return $alreadyCompleted->completedVersion;
                     }
 
@@ -403,6 +404,32 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
         return $session;
     }
 
+    private function ownedPackage(int $organizationId, int $userId, array $session): DesignPackage
+    {
+        $package = $this->designManagementService->findPackage($organizationId, (int) $session['package_id'], $userId, 'design-management.models.upload');
+        if (! $package instanceof DesignPackage
+            || (int) $package->organization_id !== $organizationId
+            || (int) $package->project_id !== (int) $session['project_id']) {
+            throw new DomainException(trans_message('design_management.errors.package_not_found'));
+        }
+
+        return $package;
+    }
+
+    private function assertCompletedVersion(DesignArtifactVersion $version, DesignPackage $package): void
+    {
+        $version->loadMissing('artifact');
+        if ((int) $version->organization_id !== (int) $package->organization_id
+            || (int) $version->project_id !== (int) $package->project_id
+            || (int) $version->artifact?->package_id !== (int) $package->id
+            || (int) $version->artifact?->organization_id !== (int) $package->organization_id
+            || (int) $version->artifact?->project_id !== (int) $package->project_id
+            || $version->file_format !== 'ifc'
+            || $version->artifact?->artifact_type->value !== 'model') {
+            throw new DomainException(trans_message('design_management.errors.version_not_found'));
+        }
+    }
+
     private function multipartUpload(array $session): MultipartUpload
     {
         try {
@@ -489,6 +516,7 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
     private function modelPayload(array $payload): array
     {
         return array_intersect_key($payload, array_flip([
+            'artifact_id',
             'title',
             'version_number',
             'revision',
@@ -695,14 +723,14 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
     private function fileIdentity(array $payload): string
     {
         $provided = strtolower(trim((string) ($payload['file_sha256'] ?? '')));
-        if (preg_match('/^[a-f0-9]{64}$/', $provided) === 1) {
-            return $provided;
-        }
-
         return hash('sha256', implode("\0", [
+            preg_match('/^[a-f0-9]{64}$/', $provided) === 1 ? $provided : '',
             (string) $payload['original_name'],
             (string) $payload['file_size_bytes'],
             (string) ($payload['last_modified_at'] ?? ''),
+            (string) ($payload['artifact_id'] ?? ''),
+            (string) ($payload['version_number'] ?? ''),
+            (string) ($payload['revision'] ?? ''),
         ]));
     }
 

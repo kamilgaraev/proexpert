@@ -101,7 +101,7 @@ final class DesignSourceLinkService
         }
         $isModel = strtolower((string) $source->file_format) === 'ifc';
         $this->authorize($actor, 'design-management.view', $organizationId, (int) $source->project_id);
-        $this->authorize($actor, $isModel ? 'design-management.models.view' : 'design-management.documents.view', $organizationId, (int) $source->project_id);
+        $this->authorize($actor, $this->sourceReadPermission($source), $organizationId, (int) $source->project_id);
         $element = $link->source_element_id !== null ? DesignIfcModelElement::query()
             ->where('organization_id', $organizationId)->where('project_id', $source->project_id)
             ->where('version_id', $source->id)->where('express_id', $link->source_element_id)->first() : null;
@@ -159,6 +159,7 @@ final class DesignSourceLinkService
     {
         $this->requirePirAccess($organizationId);
         $source = $this->source($organizationId, (int) $data['source_version_id']);
+        $this->authorize($actor, $this->sourceReadPermission($source), $organizationId, (int) $source->project_id);
         if (isset($data['source_element_id'], $data['source_sheet_id'])) {
             throw new DomainException(trans_message('design_links.errors.source_kind_conflict'));
         }
@@ -272,6 +273,7 @@ final class DesignSourceLinkService
                 if ($previous->artifact_id !== $next->artifact_id || $next->project_id !== $review->project_id || $previous->project_id !== $review->project_id) {
                     throw new DomainException(trans_message('design_links.errors.revision_source_mismatch'));
                 }
+                $this->authorize($actor, $this->sourceReadPermission($next), $organizationId, (int) $next->project_id);
                 if ($link->source_sheet_id !== null && $newSheetId === null) {
                     throw new DomainException(trans_message('design_links.errors.new_sheet_required'));
                 }
@@ -340,6 +342,7 @@ final class DesignSourceLinkService
         if ($next->project_id !== $review->project_id) {
             throw new DomainException(trans_message('design_links.errors.revision_source_mismatch'));
         }
+        $this->authorize($actor, $this->sourceReadPermission($next), $organizationId, (int) $next->project_id);
         $sheets = DesignDocumentSheet::query()->where('organization_id', $organizationId)
             ->where('project_id', $review->project_id)->where('version_id', $next->id)
             ->orderBy('id')->paginate(50, ['id', 'sheet_number', 'sheet_title'], 'page', max(1, $page));
@@ -524,7 +527,11 @@ final class DesignSourceLinkService
             && $this->access->hasModuleAccess((int) $link->organization_id, 'design-management')
             && $source instanceof DesignArtifactVersion
             && $this->sourceInScope($source, (int) $link->organization_id, (int) $link->project_id)
-            && $this->authorization->can($actor, 'design-management.view', ['organization_id' => $link->organization_id, 'project_id' => $link->project_id]);
+            && $this->authorization->can($actor, 'design-management.view', ['organization_id' => $link->organization_id, 'project_id' => $link->project_id])
+            && $this->authorization->can($actor, $this->sourceReadPermission($source), ['organization_id' => $link->organization_id, 'project_id' => $link->project_id]);
+        if (! $sourceReadable && is_array($sourceSnapshot)) {
+            $sourceSnapshot = array_intersect_key($sourceSnapshot, array_flip(['title', 'revision']));
+        }
 
         return ['id' => $link->id, 'revision' => (int) $link->row_version, 'status' => $link->status, 'ended_reason' => $link->ended_reason, 'ended_at' => $link->ended_at?->toIso8601String(), 'replacement_link_id' => $link->replacement_link_id, 'source_version_id' => $sourceReadable ? $link->source_version_id : null, 'source_sheet_id' => $sourceReadable ? $link->source_sheet_id : null, 'source_element_id' => $sourceReadable ? $link->source_element_id : null, 'target' => ['id' => (int) $link->target_id, 'type' => $link->target_type] + ($link->target_snapshot ?? []), 'created_at' => $link->created_at?->toIso8601String(), 'source' => $sourceReadable ? $this->sourceSnapshot($source) + ['id' => $source->id, 'available' => true, 'element' => $link->source_snapshot['element'] ?? null] : ($sourceSnapshot ? $sourceSnapshot + ['available' => false] : null)];
     }
@@ -543,6 +550,13 @@ final class DesignSourceLinkService
             && $package !== null
             && (int) $package->organization_id === $organizationId
             && (int) $package->project_id === $projectId;
+    }
+
+    private function sourceReadPermission(DesignArtifactVersion $source): string
+    {
+        return strtolower((string) $source->file_format) === 'ifc'
+            ? 'design-management.models.view'
+            : 'design-management.documents.view';
     }
 
     /** @return array{title:string,revision:?string} */

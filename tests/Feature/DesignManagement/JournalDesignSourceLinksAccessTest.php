@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\DesignManagement;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
+use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentSheet;
+use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
+use App\BusinessModules\Features\DesignManagement\Models\DesignImpactReview;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignSourceLink;
 use App\BusinessModules\Features\DesignManagement\Services\DesignSourceLinkService;
@@ -18,6 +21,8 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Project\ProjectParticipantService;
 use DomainException;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
@@ -30,13 +35,16 @@ final class JournalDesignSourceLinksAccessTest extends TestCase
 
     private array $inactiveBudgetOrganizations = [];
 
+    private ?string $deniedSourcePermission = null;
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->enableImmutableAuditWriter();
         $this->mock(AuthorizationService::class, function ($mock): void {
             $mock->shouldReceive('can')->andReturnUsing(fn (User $actor, string $permission): bool =>
-                ! ($actor->id === $this->deniedViewer && str_starts_with($permission, 'construction-journal.')));
+                $permission !== $this->deniedSourcePermission
+                && ! ($actor->id === $this->deniedViewer && str_starts_with($permission, 'construction-journal.')));
             $mock->shouldReceive('hasRole')->andReturnFalse();
         });
         $this->mock(AccessController::class, function ($mock): void {
@@ -169,6 +177,157 @@ final class JournalDesignSourceLinksAccessTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage(trans_message('design_links.target_module_inactive'));
         app(DesignSourceLinkService::class)->linksForTarget($users[0], (int) $users[0]->current_organization_id, 'construction_journal_entry', $entry->id);
+    }
+
+    #[DataProvider('sourcePermissions')]
+    public function test_create_denies_typed_source_before_element_or_sheet_read_and_allows_authorized_source(string $format, string $permission): void
+    {
+        [$project, $entry, $users, $link] = $this->fixture();
+        $source = DesignArtifactVersion::query()->findOrFail($link->source_version_id);
+        $source->update(['file_format' => $format]);
+        $selection = $this->sourceSelection($source, $format);
+        $actor = $users[1];
+        $organizationId = (int) $actor->current_organization_id;
+        $data = ['source_version_id' => $source->id, 'target_type' => 'construction_journal_entry', 'target_id' => $entry->id] + $selection;
+        $this->deniedSourcePermission = $permission;
+        $reads = [];
+        DB::listen(static function (QueryExecuted $query) use (&$reads): void {
+            if (str_contains($query->sql, 'design_ifc_model_elements') || str_contains($query->sql, 'design_document_sheets')) {
+                $reads[] = $query->sql;
+            }
+        });
+        $service = app(DesignSourceLinkService::class);
+        try {
+            $service->create($actor, $organizationId, $data);
+            self::fail('Creating a source snapshot requires its typed read permission.');
+        } catch (DomainException $exception) {
+            self::assertSame(trans_message('design_links.errors.forbidden'), $exception->getMessage());
+        }
+        self::assertSame([], $reads);
+        self::assertSame(1, DesignSourceLink::query()->count());
+        $this->deniedSourcePermission = null;
+        $created = $service->create($actor, $organizationId, $data);
+        self::assertTrue($created['source']['available']);
+        self::assertSame(2, DesignSourceLink::query()->count());
+        $context = $service->sourceContext($actor, $organizationId, $created['id']);
+        self::assertSame($source->id, $context['version_id']);
+        self::assertSame($format === 'ifc' ? 'model' : 'document', $context['kind']);
+        self::assertSame($format === 'ifc' ? 'private-new-id' : 'План листа', $format === 'ifc' ? $context['element']['global_id'] : $context['sheet']['sheet_title']);
+    }
+
+    #[DataProvider('sourcePermissions')]
+    public function test_move_to_new_denies_typed_source_without_changing_history_or_reading_selection(string $format, string $permission): void
+    {
+        [, $entry, $users, $link] = $this->fixture();
+        $source = DesignArtifactVersion::query()->findOrFail($link->source_version_id);
+        $next = $source->replicate();
+        $next->forceFill(['version_number' => '2', 'file_format' => $format, 'is_current' => false])->save();
+        $selection = $this->sourceSelection($next, $format);
+        $review = DesignImpactReview::query()->create([
+            'organization_id' => $link->organization_id, 'project_id' => $link->project_id,
+            'link_id' => $link->id, 'previous_version_id' => $source->id, 'new_version_id' => $next->id, 'status' => 'pending',
+        ]);
+        $this->deniedSourcePermission = $permission;
+        $before = $link->fresh()->getAttributes();
+        $reads = [];
+        DB::listen(static function (QueryExecuted $query) use (&$reads): void {
+            if (str_contains($query->sql, 'design_ifc_model_elements') || str_contains($query->sql, 'design_document_sheets')) {
+                $reads[] = $query->sql;
+            }
+        });
+        $service = app(DesignSourceLinkService::class);
+        try {
+            $service->decideReview($users[1], (int) $link->organization_id, $review->id, 'move_to_new', 'Новая редакция', 1,
+                $selection['source_sheet_id'] ?? null, $selection['source_element_id'] ?? null);
+            self::fail('Moving to a new source requires its typed read permission.');
+        } catch (DomainException $exception) {
+            self::assertSame(trans_message('design_links.errors.forbidden'), $exception->getMessage());
+        }
+        self::assertSame([], $reads);
+        self::assertSame($before, $link->fresh()->getAttributes());
+        self::assertSame('pending', $review->fresh()->status);
+        self::assertSame(1, DesignSourceLink::query()->count());
+        if ($format === 'pdf') {
+            try {
+                $service->replacementSheets($users[1], (int) $link->organization_id, $review->id, 1);
+                self::fail('Replacement sheet reads require document permission.');
+            } catch (DomainException $exception) {
+                self::assertSame(trans_message('design_links.errors.forbidden'), $exception->getMessage());
+            }
+            self::assertSame([], $reads);
+        }
+        $this->deniedSourcePermission = null;
+        $result = $service->decideReview($users[1], (int) $link->organization_id, $review->id, 'move_to_new', 'Новая редакция', 1,
+            $selection['source_sheet_id'] ?? null, $selection['source_element_id'] ?? null);
+        self::assertSame('move_to_new', $result['decision']);
+        self::assertSame('replaced', $link->fresh()->status);
+        self::assertSame($before['source_snapshot'], $link->fresh()->getAttributes()['source_snapshot']);
+        self::assertSame(2, DesignSourceLink::query()->count());
+    }
+
+    public function test_owner_without_typed_permission_retains_frozen_history_and_can_keep_old_revision(): void
+    {
+        [, $entry, $users, $link] = $this->fixture();
+        $source = DesignArtifactVersion::query()->findOrFail($link->source_version_id);
+        $source->update(['title' => 'Текущее название изменено']);
+        $next = $source->replicate();
+        $next->forceFill(['version_number' => '2', 'is_current' => false])->save();
+        $review = DesignImpactReview::query()->create([
+            'organization_id' => $link->organization_id, 'project_id' => $link->project_id,
+            'link_id' => $link->id, 'previous_version_id' => $source->id, 'new_version_id' => $next->id, 'status' => 'pending',
+        ]);
+        $this->deniedSourcePermission = 'design-management.models.view';
+        $service = app(DesignSourceLinkService::class);
+        foreach ([$users[0], $users[1], $users[2]] as $actor) {
+            $history = $service->linksForTarget($actor, (int) $actor->current_organization_id, 'construction_journal_entry', $entry->id);
+            self::assertCount(1, $history);
+            self::assertSame(['title' => 'АР. План', 'revision' => 'R01', 'available' => false], $history[0]['source']);
+            self::assertSame('Бетонирование', $history[0]['target']['label']);
+            self::assertNull($history[0]['source_version_id']);
+        }
+        $result = $service->decideReview($users[1], (int) $link->organization_id, $review->id, 'keep_old', 'Старый источник актуален', 1);
+        self::assertSame('keep_old', $result['decision']);
+        self::assertSame('active', $link->fresh()->status);
+        self::assertSame('АР. План', $link->fresh()->source_snapshot['title']);
+    }
+
+    public function test_edit_and_typed_source_permission_can_create_without_generic_view(): void
+    {
+        [, $entry, $users, $link] = $this->fixture();
+        $source = DesignArtifactVersion::query()->findOrFail($link->source_version_id);
+        $selection = $this->sourceSelection($source, 'ifc');
+        $this->deniedSourcePermission = 'design-management.view';
+        $created = app(DesignSourceLinkService::class)->create($users[1], (int) $link->organization_id, [
+            'source_version_id' => $source->id, 'target_type' => 'construction_journal_entry', 'target_id' => $entry->id,
+        ] + $selection);
+        self::assertSame(2, DesignSourceLink::query()->count());
+        self::assertFalse($created['source']['available']);
+        self::assertNull($created['source_version_id']);
+        self::assertSame('private-new-id', DesignSourceLink::query()->findOrFail($created['id'])->source_snapshot['element']['global_id']);
+    }
+
+    public static function sourcePermissions(): array
+    {
+        return [['ifc', 'design-management.models.view'], ['pdf', 'design-management.documents.view']];
+    }
+
+    private function sourceSelection(DesignArtifactVersion $source, string $format): array
+    {
+        if ($format === 'ifc') {
+            DesignIfcModelElement::query()->create([
+                'organization_id' => $source->organization_id, 'project_id' => $source->project_id,
+                'version_id' => $source->id, 'express_id' => 17, 'global_id' => 'private-new-id', 'name' => 'Закрытый элемент', 'category' => 'IfcWall',
+            ]);
+
+            return ['source_element_id' => 17];
+        }
+        $sheet = DesignDocumentSheet::query()->create([
+            'organization_id' => $source->organization_id, 'project_id' => $source->project_id,
+            'package_id' => $source->artifact->package_id, 'artifact_id' => $source->artifact_id,
+            'version_id' => $source->id, 'sheet_number' => '1', 'sheet_title' => 'План листа',
+        ]);
+
+        return ['source_sheet_id' => $sheet->id];
     }
 
     private function fixture(): array

@@ -21,9 +21,12 @@ use DomainException;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
 use App\Models\Project;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Tests\Support\AdminApiTestContext;
+use Tests\Support\DesignManagementTestEntitlements;
 use Tests\TestCase;
 
 final class DesignCanonicalBlockingIssueTest extends TestCase
@@ -31,6 +34,7 @@ final class DesignCanonicalBlockingIssueTest extends TestCase
     public function test_package_summary_counts_canonical_and_unmapped_legacy_without_resource_queries(): void
     {
         $actor = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $this->activatePir($actor);
         $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
         $otherProject = Project::factory()->create(['organization_id' => $actor->organization->id]);
         $foreignProject = Project::factory()->create();
@@ -64,7 +68,7 @@ final class DesignCanonicalBlockingIssueTest extends TestCase
         $unmapped->update(['status' => 'accepted']);
         $this->assertSummaryCount($package, 0);
 
-        $packages = app(DesignManagementService::class)->listPackages((int) $project->organization_id, ['project_id' => $project->id]);
+        $packages = app(DesignManagementService::class)->listPackages((int) $project->organization_id, ['project_id' => $project->id], $actor->user);
         DB::enableQueryLog();
         DB::flushQueryLog();
         try {
@@ -79,7 +83,7 @@ final class DesignCanonicalBlockingIssueTest extends TestCase
 
     private function assertSummaryCount(DesignPackage $package, int $expected): void
     {
-        $loaded = app(DesignManagementService::class)->findPackage((int) $package->organization_id, (int) $package->id);
+        $loaded = app(DesignManagementService::class)->findPackage((int) $package->organization_id, (int) $package->id, User::query()->findOrFail($package->created_by));
         self::assertNotNull($loaded);
         $data = (new DesignPackageResource($loaded))->resolve(Request::create('/'));
         self::assertSame($expected, $data['open_blocking_comments_count']);
@@ -88,9 +92,20 @@ final class DesignCanonicalBlockingIssueTest extends TestCase
         self::assertCount($expected, (new OpenBlockingCommentsRule())->check($loaded));
     }
 
+    private function activatePir(AdminApiTestContext $actor): void
+    {
+        DesignManagementTestEntitlements::activate($actor);
+        Cache::store('array')->flush();
+        self::assertTrue(app(AccessController::class)->hasModuleAccess((int) $actor->organization->id, 'design-management'));
+        self::assertTrue(app(AuthorizationService::class)->can($actor->user, 'design-management.view', [
+            'organization_id' => (int) $actor->organization->id,
+        ]));
+    }
+
     public function test_common_issue_blocks_each_referenced_package_until_accepted(): void
     {
         $actor = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $this->activatePir($actor);
         $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
         $attributes = ['organization_id' => $project->organization_id, 'project_id' => $project->id, 'created_by' => $actor->user->id, 'updated_by' => $actor->user->id];
         $first = DesignPackage::query()->create($attributes + ['title' => 'АР', 'project_stage' => 'pd', 'status' => 'draft']);
