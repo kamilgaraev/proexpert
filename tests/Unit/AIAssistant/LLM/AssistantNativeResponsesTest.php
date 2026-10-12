@@ -40,7 +40,8 @@ final class AssistantNativeResponsesTest extends TestCase
         $history = [];
         $provider = $this->provider($name, $model, [$this->wire($model, [$text, $call]), $this->wire($model, [self::text('Готово.')], ['id' => 'resp_final'])], $history);
         $input = [['role' => 'system', 'content' => 'Соблюдай права.'], ['role' => 'user', 'content' => 'Проверь проект.']];
-        $first = $provider->responses($input, ['tools' => self::tools(), 'store' => true, 'previous_response_id' => 'ignored']);
+        $first = $provider->responses($input, ['tools' => self::tools(), 'store' => true, 'previous_response_id' => 'ignored',
+            'tool_choice' => ['type' => 'function', 'function' => ['name' => $call['name']]]]);
         self::assertEquals([$text, $call], $first['output']);
         self::assertEquals([$call], $first['function_calls']);
         self::assertArrayNotHasKey('tool_calls', $first);
@@ -64,6 +65,26 @@ final class AssistantNativeResponsesTest extends TestCase
             self::assertArrayNotHasKey('previous_response_id', $payload);
             self::assertArrayNotHasKey('messages', $payload);
             self::assertSame($index === 0 ? $input : $next, $payload['input']);
+            if ($index === 0) {
+                self::assertSame(['type' => 'function', 'name' => $call['name']], $payload['tool_choice']);
+            } else {
+                self::assertArrayNotHasKey('tool_choice', $payload);
+            }
+        }
+    }
+
+    #[DataProvider('providers')]
+    public function test_forced_unknown_tool_choice_has_no_outbound_request(string $name, string $model): void
+    {
+        $history = [];
+        $provider = $this->provider($name, $model, [], $history);
+        try {
+            $provider->responses([['role' => 'user', 'content' => 'Проверь проект.']], ['tools' => self::tools(),
+                'tool_choice' => ['type' => 'function', 'function' => ['name' => 'not_allowed']]]);
+            self::fail('Unavailable forced tool must be rejected');
+        } catch (\DomainException $exception) {
+            self::assertSame('assistant_native_tool_choice_invalid', $exception->getMessage());
+            self::assertSame([], $history);
         }
     }
 
