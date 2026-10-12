@@ -11,12 +11,16 @@ final readonly class AssistantRequiredProjectRead
     public static function fromPlan(array $plan): ?array
     {
         $query = (string) ($plan['request']['message'] ?? '');
+        if (($arguments = \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::readyListArguments($query)) !== null) {
+            return ['name' => 'search_assistant_documents', 'arguments' => $arguments];
+        }
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         if (! $scope->requested || $scope->projectId === null) { return null; }
         if (self::simpleProjectBudget($query)) {
             return ['name' => 'assistant_domain_read', 'arguments' => ['domain' => 'projects', 'entity_type' => 'project',
-                'id' => $scope->projectId, 'fields' => ['name', 'budget_amount']]];
+                'id' => $scope->projectId, 'fields' => ['name', 'budget_amount'],
+                'projection' => null, 'projection_offset' => 0, 'projection_limit' => 20]];
         }
         if (($arguments = AssistantDomainSearchCountEvidence::overdueCountArguments($query, $scope->projectId)) !== null) {
             return ['name' => 'assistant_domain_search', 'arguments' => $arguments + ['limit' => 1, 'cursor' => null, 'fields' => null]];
@@ -59,6 +63,7 @@ final readonly class AssistantRequiredProjectRead
             || $toolName === 'assistant_domain_search' && ($bound['predicate'] ?? null) !== 'overdue')
             && is_string($arguments['cursor'] ?? null)) { $bound['cursor'] = $arguments['cursor']; }
         if ($toolName === 'get_project_material_stock' && is_int($arguments['offset'] ?? null)) { $bound['offset'] = $arguments['offset']; }
+        if ($toolName === 'search_assistant_documents' && is_int($arguments['metadata_offset'] ?? null)) { $bound['metadata_offset'] = $arguments['metadata_offset']; }
         return $bound;
     }
 

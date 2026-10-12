@@ -131,6 +131,7 @@ final class AssistantStructuredFactVerifier
             $lines = [];
             $currencies = [];
             $valid = true;
+            $qualityAttention = false;
             foreach ($evidence['rows'] as $row) {
                 $ref = is_array($row) ? ($row['source_ref'] ?? null) : null;
                 $key = is_array($ref) ? ($ref['composite_key'] ?? null) : null;
@@ -154,11 +155,15 @@ final class AssistantStructuredFactVerifier
                     if ($age < -60 || $age > 600) { $valid = false; break; }
                 } catch (\Throwable) { $valid = false; break; }
                 $currencies[$currency] = true;
-                $lines[] = trans_message('ai_assistant_financial.project_expense_total', ['from' => $period->dateFrom,
+                $nativeReport = ($ref['currency_basis'] ?? null) === 'native_management_report';
+                $qualityAttention = $qualityAttention || ($nativeReport && ($ref['quality_flags'] ?? []) !== []);
+                $lines[] = trans_message($nativeReport ? 'ai_assistant_financial.project_expense_management_total' : 'ai_assistant_financial.project_expense_total', ['from' => $period->dateFrom,
                     'to' => $period->dateTo, 'amount' => $cost, 'currency' => $currency]);
+                if ($nativeReport) { $lines[] = trans_message('ai_assistant_financial.native_management_currency'); }
             }
             if ($valid && $lines !== []) {
-                $candidate = ['text' => implode("\n", $lines), 'validation_status' => 'verified', 'source_refs' => $evidence['source_refs'],
+                if ($qualityAttention) { $lines[] = trans_message('ai_assistant_financial.native_management_quality'); }
+                $candidate = ['text' => implode("\n", $lines), 'validation_status' => $qualityAttention ? 'partial' : 'verified', 'source_refs' => $evidence['source_refs'],
                     'replaced' => $text !== implode("\n", $lines), 'needs_clarification' => false, 'structured_evidence_truncated' => false];
                 $candidates[AssistantSourceReferenceIdentity::key($candidate)] = $candidate;
             }

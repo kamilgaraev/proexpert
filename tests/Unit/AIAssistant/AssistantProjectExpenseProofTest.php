@@ -49,6 +49,26 @@ final class AssistantProjectExpenseProofTest extends TestCase
         self::assertTrue((new AssistantStructuredFactVerifier)->guard('Покажи плановые расходы нашего объекта за сентябрь 2025 года.', '', [$this->read()], ['project_id' => 52])['needs_clarification']);
     }
 
+    public function test_management_expense_total_retains_quality_and_currency_limitations_in_final_answer(): void
+    {
+        $native = $this->native();
+        $native['sources'][1]['problem_flags'] = 'missing_budget_article,missing_counterparty';
+        $native['aggregates'][0]['problem_flags'] = 'missing_budget_article,missing_counterparty';
+        foreach ($native['coverage'] as &$coverage) {
+            if ($coverage['source_type'] === 'warehouse_movement') { $coverage['problem_rows_count'] = 1; }
+        }
+        unset($coverage);
+        $read = ['_tool_name' => 'get_live_project_financial_evidence'] + (new AssistantLiveProjectFinanceProjection)->project($native, 1, 52);
+        $answer = (new AssistantStructuredFactVerifier)->guard(self::QUERY, 'Бухгалтерски подтверждённые расходы: 999 RUB.', [$read], ['project_id' => 52]);
+        self::assertSame('partial', $answer['validation_status']);
+        self::assertFalse($answer['needs_clarification']);
+        self::assertStringContainsString('60.00 RUB', $answer['text']);
+        self::assertStringContainsString('по управленческому отчёту', $answer['text']);
+        self::assertStringContainsString('не подтверждение валюты каждого первичного документа', $answer['text']);
+        self::assertStringContainsString('не является подтверждённым бухгалтерским итогом', $answer['text']);
+        self::assertStringNotContainsString('999', $answer['text']);
+    }
+
     public function test_currencies_are_rendered_independently_and_unsigned_modified_values_are_rejected(): void
     {
         $native = $this->native();

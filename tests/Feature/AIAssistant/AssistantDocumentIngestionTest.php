@@ -951,6 +951,31 @@ final class AssistantDocumentIngestionTest extends TestCase
         return ['query' => 'Найди правила.', 'project_id' => null, 'source_types' => null, 'limit' => null];
     }
 
+    public function test_metadata_read_lists_only_allowed_matching_files_without_requiring_full_corpus_or_exposing_text(): void
+    {
+        $document = $this->documents->process((int) $this->documents->registerFile($this->file('metadata-ready.txt', 'private_doc_text_should_not_appear'))->id);
+        $this->file('metadata-unsupported.wav', 'audio', null, 'audio/wav');
+        $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id]));
+        $hidden = $this->documents->process((int) $this->documents->registerFile($this->file('metadata-hidden.txt', 'private_hidden_text', $other))->id);
+        $this->deniedProjects[] = $other->id;
+        $coverage = app(AssistantDocumentCoverageService::class);
+        $arguments = $this->searchArguments() + ['read_mode' => 'metadata', 'filename_query' => 'metadata-', 'document_status' => 'ready'];
+        $read = $this->searchTool($coverage)->execute($arguments, $this->owner, $this->organization);
+        self::assertSame('document_metadata', $read['read_scope']);
+        self::assertSame([(int) $document->id], array_column($read['source_refs'], 'entity_id'));
+        self::assertStringNotContainsString('private_doc_text_should_not_appear', json_encode($read));
+        self::assertStringNotContainsString('private_hidden_text', json_encode($read));
+        self::assertSame('metadata-ready.txt', $read['structured_fact_evidence']['rows'][0]['fields']['filename']);
+        self::assertStringContainsString('Текст готов', $read['server_formatted_facts']);
+        $guard = app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($this->owner, $this->organization->id, $read['source_refs']));
+        $document->updateQuietly(['filename' => 'changed-name.txt']);
+        self::assertFalse($guard->fresh($this->owner, $this->organization->id, $read['source_refs']));
+        self::assertNotContains((int) $hidden->id, array_column($read['source_refs'], 'entity_id'));
+        $this->allowed = false;
+        self::assertFalse($guard->fresh($this->owner, $this->organization->id, $read['source_refs']));
+    }
+
     private function searchTool(AssistantDocumentCoverageService $coverage): SearchAssistantDocumentsTool
     {
         return new SearchAssistantDocumentsTool(app(RagRetriever::class), app(RagPromptContextBuilder::class), $this->policy,

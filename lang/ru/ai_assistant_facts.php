@@ -33,6 +33,7 @@ return [
         'cancelled' => 'Отменён',
     ],
     'fields' => [
+        'filename' => 'Имя файла', 'file_id' => 'Файл', 'coverage_status' => 'Охват текста',
         'rfi_number' => 'Номер запроса', 'question' => 'Вопрос', 'answer' => 'Ответ', 'addressee_type' => 'Адресат',
         'response_due_date' => 'Срок ответа', 'answered_at' => 'Дата ответа',
         'package_id' => 'Комплект', 'artifact_id' => 'Документ или модель', 'document_title' => 'Название документа',

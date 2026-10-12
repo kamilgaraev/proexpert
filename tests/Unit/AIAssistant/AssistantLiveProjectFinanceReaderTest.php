@@ -80,6 +80,19 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
         self::assertTrue($reader->matchesReference($actor, (int) $organization->id, $reference));
     }
 
+    public function test_reference_cannot_drop_quality_warning_or_change_currency_provenance(): void
+    {
+        [$reader, $actor, $organization] = $this->fixture(false, reads: 4);
+        $output = $reader->read($actor, $organization, ['project_id' => 7, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30', 'currency' => null]);
+        $reference = $output['source_refs'][0];
+        self::assertTrue($reader->matchesReference($actor, (int) $organization->id, $reference));
+        $forged = $reference;
+        $forged['quality_flags'] = ['missing_budget_article'];
+        self::assertFalse($reader->matchesReference($actor, (int) $organization->id, $forged));
+        $reference['currency_basis'] = 'raw_source';
+        self::assertFalse($reader->matchesReference($actor, (int) $organization->id, $reference));
+    }
+
     public function test_new_record_invalidates_previously_empty_period_reference(): void
     {
         [$reader, $actor, $organization, $native] = $this->fixture(false);
@@ -97,7 +110,7 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
         $reader->read($actor, $organization, ['project_id' => 7, 'period_start' => '2026-09-01', 'period_end' => '2026-09-30', 'currency' => null]);
     }
 
-    private function fixture(bool $revokeAfterRead, string $sourceType = 'completed_work', bool $empty = false): array
+    private function fixture(bool $revokeAfterRead, string $sourceType = 'completed_work', bool $empty = false, int $reads = 1): array
     {
         $this->previousResolver = Model::getConnectionResolver();
         $connection = $this->getMockBuilder(PostgresConnection::class)->setConstructorArgs([static fn () => throw new \LogicException('Pure test must not connect to PostgreSQL')])->onlyMethods(['select'])->getMock();
@@ -127,18 +140,18 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
         $definition = (new ReportDefinitionBuilder)->code('project_margin')->payload();
         $target = new CurrentReportAuthorizationTarget($definition, ReportOperation::RUN, null);
         $targets = $this->createMock(ReportHttpAuthorizationTargetResolver::class);
-        $targets->expects(self::exactly(2))->method('createRun')->with('project_margin')->willReturn($target);
+        $targets->expects(self::exactly(2 * $reads))->method('createRun')->with('project_margin')->willReturn($target);
         $subjects = $this->createMock(ReportAuthorizationSubjectReader::class);
         $subjects->expects(self::never())->method('run');
         $scopes = $this->createMock(CurrentReportScopeAuthorizer::class);
-        $scopes->expects(self::exactly(2))->method('authorizeExact')->willReturnCallback(static function () use (&$nativeChecks, $target): CurrentReportAuthorization {
+        $scopes->expects(self::exactly(2 * $reads))->method('authorizeExact')->willReturnCallback(static function () use (&$nativeChecks, $target): CurrentReportAuthorization {
             $nativeChecks++;
             return new CurrentReportAuthorization(new ReportActor(9, 'active', []), new AuthorizationDecisionContext('http', 1, [1], [7], [], new DateTimeZone('UTC'), 'live-financial-read', null),
                 new ReportVisibility(true, true, false, false, false, true, true), $target);
         });
         $database = $this->createMock(ConnectionInterface::class);
-        $database->expects(self::exactly(2))->method('transaction')->willReturnCallback(static fn (Closure $callback): mixed => $callback());
-        $database->expects(self::exactly(2))->method('statement')->willReturn(true);
+        $database->expects(self::exactly(2 * $reads))->method('transaction')->willReturnCallback(static fn (Closure $callback): mixed => $callback());
+        $database->expects(self::exactly(2 * $reads))->method('statement')->willReturn(true);
         $sources = $this->createMock(ExactProjectFinanceSourceRead::class);
         $source = ['source_type' => $sourceType, 'source_id' => 1, 'source_line_id' => 1, 'component' => 'actual', 'direction' => $sourceType === 'machinery_shift' ? 'cost' : 'revenue', 'currency' => 'RUB',
             'project_id' => 7, 'amount_without_vat' => '1.25', 'management_amount' => '1.25', 'recognition_date' => '2026-09-01', 'problem_flags' => ''];
@@ -153,7 +166,7 @@ final class AssistantLiveProjectFinanceReaderTest extends TestCase
             foreach ($native['coverage'] as &$item) { $item['included_source_rows'] = 0; }
             unset($item);
         }
-        $sources->expects(self::once())->method('exactFinancialSourceRows')->with(self::callback(static fn (array $input): bool => $input['organization_id'] === 1 && $input['project_id'] === 7), [7], $actor)->willReturn($native);
+        $sources->expects(self::exactly($reads))->method('exactFinancialSourceRows')->with(self::callback(static fn (array $input): bool => $input['organization_id'] === 1 && $input['project_id'] === 7), [7], $actor)->willReturn($native);
         return [new AssistantLiveProjectFinanceReader(new ReportHttpAuthorizationOrchestrator($database, new ReportExecutionContextFactory, $targets, $subjects, $scopes), $sources, new AssistantLiveProjectFinanceProjection, $policy, $authorization), $actor, $organization, $native];
     }
 }

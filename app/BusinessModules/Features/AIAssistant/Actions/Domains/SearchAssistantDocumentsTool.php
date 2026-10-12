@@ -59,6 +59,11 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
             'text_offset' => ['type' => ['integer', 'null'], 'minimum' => 0, 'maximum' => 2_000_000],
             'cursor' => ['type' => ['string', 'null'], 'minLength' => 1, 'maxLength' => 4096],
             'retrieval_mode' => ['type' => ['string', 'null'], 'enum' => ['hybrid', 'lexical', null]],
+            'read_mode' => ['type' => ['string', 'null'], 'enum' => ['metadata', null]],
+            'filename_query' => ['type' => ['string', 'null'], 'maxLength' => 200],
+            'document_status' => ['type' => ['string', 'null'], 'enum' => ['queued', 'processing', 'ready', 'ocr_quote_required', 'ocr_approved', 'unsupported', 'damaged', 'failed', null]],
+            'metadata_offset' => ['type' => ['integer', 'null'], 'minimum' => 0, 'maximum' => 1000000],
+            'include_document_id' => ['type' => 'boolean'],
         ];
         return ['type' => 'object', 'properties' => $properties, 'required' => $required, 'additionalProperties' => false];
     }
@@ -77,6 +82,18 @@ final readonly class SearchAssistantDocumentsTool implements AIToolInterface
         }
         $context = array_filter(array_intersect_key($arguments, array_flip(['project_id', 'source_types', 'limit', 'retrieval_mode'])),
             static fn (mixed $value): bool => $value !== null);
+        if (($arguments['read_mode'] ?? null) === 'metadata') {
+            if (($arguments['source_types'] ?? null) !== null && ! in_array('file_document', $arguments['source_types'], true)) { throw new AuthorizationException; }
+            if (array_filter(array_intersect_key($arguments, array_flip(['document_id', 'unit_id', 'cursor', 'text_offset'])),
+                static fn (mixed $value): bool => $value !== null) !== []) {
+                throw new \RuntimeException(trans_message('ai_assistant.action_arguments_invalid'));
+            }
+            $read = fn (): array => $this->access->withCurrentChecks($user, (int) $organization->id,
+                fn (): array => app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentMetadataReader::class)
+                    ->read($user, (int) $organization->id, $arguments, $execution === null ? null : $execution->assertCanContinue(...)), true);
+            return $execution === null ? $read() : $execution->withDatabaseStatementTimeout(
+                fn (): array => $execution->withOperationBudget($read, 30_000, 'pgsql'));
+        }
         if (($arguments['document_id'] ?? null) !== null || ($arguments['cursor'] ?? null) !== null) {
             $read = fn (): array => ($this->unitReader ?? app(AssistantDocumentUnitReader::class))->read($user, (int) $organization->id, $arguments,
                 $execution === null ? null : $execution->assertCanContinue(...));

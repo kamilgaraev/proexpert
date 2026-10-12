@@ -27,6 +27,10 @@ final class AssistantStructuredFactLabels
     public static function display(string $entityType, string $field, string $value): string
     {
         $label = match ($entityType.'.'.$field) {
+            'assistant_document.status' => Lang::has('ai_assistant.document_metadata_statuses.'.$value)
+                ? trans_message('ai_assistant.document_metadata_statuses.'.$value) : null,
+            'assistant_document.coverage_status' => Lang::has('ai_assistant.document_metadata_coverage.'.$value)
+                ? trans_message('ai_assistant.document_metadata_coverage.'.$value) : null,
             'contract.status' => ContractStatusEnum::tryFrom($value)?->label(),
             'payment_document.status' => PaymentDocumentStatus::tryFrom($value)?->label(),
             'payment_document.document_type' => PaymentDocumentType::tryFrom($value)?->label(),

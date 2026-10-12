@@ -440,6 +440,40 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertFalse($response['message']['metadata']['rag_context']['used']);
     }
 
+    public function test_document_metadata_request_preserves_names_and_statuses_without_claiming_document_content(): void
+    {
+        $coverage = \Mockery::mock((new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class))->newInstanceWithoutConstructor());
+        $coverage->shouldNotReceive('coverage');
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class, $coverage);
+        $at = now()->toISOString();
+        $fields = ['id' => 11, 'filename' => 'metadata-file.txt', 'status' => 'ready', 'coverage_status' => 'full'];
+        $reference = ['entity_type' => 'assistant_document', 'entity_id' => 11, 'organization_id' => 15,
+            'content_scope' => 'structured', 'checked_fields' => array_keys($fields), 'fetched_at' => $at, 'document_metadata_id_requested' => true];
+        $document = new \App\BusinessModules\Features\AIAssistant\Models\AIAssistantDocument;
+        $document->forceFill($fields);
+        $row = \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::row($document, 'assistant_document', array_keys($fields), $reference);
+        $payload = ['status' => 'success', 'read_scope' => 'document_metadata', 'search_scope' => 'document_metadata']
+            + \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::payload([$row], $at);
+        $call = $this->toolCall('search_assistant_documents');
+        $call['function']['arguments'] = json_encode(['query' => 'документы', 'project_id' => null, 'source_types' => null, 'limit' => 20]);
+        $schema = (new \ReflectionClass(SearchAssistantDocumentsTool::class))->newInstanceWithoutConstructor()->getParametersSchema();
+        $service = $this->service(['search_assistant_documents' => $payload], [
+            ['content' => '', 'tool_calls' => [$call]], ['content' => 'В документе написано обязательное требование.'],
+        ], toolSchemas: ['search_assistant_documents' => $schema]);
+        $response = $service->ask('Покажи список документов, их названия, статусы и идентификаторы.', 15, $this->actor(), 7);
+        $this->assertSame(1, $this->toolExecutions);
+        $this->assertSame('metadata', $this->executedArguments[0]['read_mode']);
+        $this->assertStringContainsString('metadata\\-file\\.txt', $response['message']['content']);
+        $this->assertStringContainsString('Текст готов', $response['message']['content']);
+        $this->assertStringContainsString('11', $response['message']['content']);
+        $this->assertContains('id', \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::presentationFields($row));
+        $hidden = $row;
+        $hidden['source_ref']['document_metadata_id_requested'] = false;
+        $this->assertNotContains('id', \App\BusinessModules\Features\AIAssistant\Services\AssistantStructuredFactFormatter::presentationFields($hidden));
+        $this->assertStringNotContainsString('обязательное требование', $response['message']['content']);
+        $this->assertSame([$reference], $response['message']['metadata']['source_refs']);
+    }
+
     public function test_three_large_position_reads_fit_next_provider_without_losing_server_receipts_or_causal_messages(): void
     {
         $query = 'Найди позиции в сметах и покажи состав материалов с количеством и единицами.';
