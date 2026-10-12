@@ -37,7 +37,7 @@ final class EstimateOperationCalculator
                     continue;
                 }
                 $key = $source['id'].':'.$item['attributes']['id'];
-                $node = $this->tree($item, $source['items']);
+                $node = $this->tree($item, $source['role']);
                 $node['rates'] = ['overhead_rate' => $source['header']['overhead_rate'] ?? '0', 'profit_rate' => $source['header']['profit_rate'] ?? '0'];
                 $originalTrees[$key] = $node;
                 $row = [
@@ -145,6 +145,11 @@ final class EstimateOperationCalculator
                     $row['node']['attributes']['quantity_total'] = $row['quantity'];
                     $row['node']['attributes']['quantity'] = $this->rawQuantity($output[$target]['node'], $row['quantity']);
                     $row['node']['attributes']['quantity_coefficient'] = $output[$target]['node']['attributes']['quantity_coefficient'];
+                    foreach ($row['node']['source_items'] as &$sourceItem) {
+                        $sourceItem['result_quantity'] = Decimal::multiply($sourceItem['result_quantity'], $factor, 8);
+                        $sourceItem['result_unit'] = $row['unit'];
+                    }
+                    unset($sourceItem);
                     foreach (['unit_price', 'current_unit_price', 'base_unit_price'] as $field) {
                         if (isset($row['node']['attributes'][$field])) {
                             $row['node']['attributes'][$field] = Decimal::divide((string) $row['node']['attributes'][$field], $factor, 4);
@@ -165,8 +170,10 @@ final class EstimateOperationCalculator
                 }
                 if ($reprice && $decision !== null) {
                     $row['conflicts'] = array_values(array_filter($row['conflicts'], fn (array $conflict): bool => ! str_starts_with($conflict['key'], 'price:')));
+                    $contribution = $row['node'];
                     $row['node'] = $originalTrees[$target];
                     $this->priceNode($row['node'], $row['quantity'], true, $prices, $resolutions, $row['conflicts'], $parameters);
+                    $this->copySourceItems($row['node'], $contribution);
                     $row['new_price'] = $row['node']['attributes']['current_unit_price'];
                     $row['price_source'] = $row['node']['price_source'] ?? null;
                     $row['total_amount'] = $row['node']['attributes']['is_not_accounted'] ? '0.00' : $row['node']['attributes']['total_amount'];
@@ -235,12 +242,16 @@ final class EstimateOperationCalculator
         ]];
     }
 
-    private function tree(array $item, array $items): array
+    private function tree(array $item, string $role): array
     {
         $item['key'] = $item['attributes']['estimate_id'].':'.$item['attributes']['id'];
+        $item['source_items'] = [[
+            'estimate_id' => $item['attributes']['estimate_id'], 'item_id' => $item['attributes']['id'], 'role' => $role,
+            'quantity' => $item['quantity'], 'unit' => $item['unit'], 'result_quantity' => $item['quantity'], 'result_unit' => $item['unit'],
+        ]];
         $item['children'] = [];
         foreach ($this->childrenByParent[$item['key']] ?? [] as $child) {
-            $item['children'][] = $this->tree($child, $items);
+            $item['children'][] = $this->tree($child, $role);
         }
 
         return $item;
@@ -296,6 +307,10 @@ final class EstimateOperationCalculator
         $attrs['quantity'] = $this->rawQuantity($node, $quantity);
         $attrs['quantity_total'] = $quantity;
         $node['quantity'] = $quantity;
+        foreach ($node['source_items'] as &$sourceItem) {
+            $sourceItem['result_quantity'] = Decimal::multiply($sourceItem['result_quantity'], $ratio, 8);
+        }
+        unset($sourceItem);
         foreach (['direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost', 'labor_hours', 'machinery_hours', 'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'base_machinery_labor_cost', 'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
             $attrs[$field] = Decimal::multiply((string) ($attrs[$field] ?? '0'), $ratio, str_contains($field, 'hours') ? 8 : 2);
         }
@@ -643,6 +658,7 @@ final class EstimateOperationCalculator
 
     private function mergeNodes(array &$target, array $source): void
     {
+        $target['source_items'] = array_merge($target['source_items'], $source['source_items']);
         $quantity = Decimal::add((string) $target['attributes']['quantity_total'], (string) $source['attributes']['quantity_total']);
         $target['attributes']['quantity'] = $this->rawQuantity($target, $quantity);
         foreach (['quantity_total', 'direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost', 'labor_hours', 'machinery_hours', 'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
@@ -675,5 +691,20 @@ final class EstimateOperationCalculator
         }
 
         return Decimal::divide(Decimal::multiply((string) $node['attributes']['quantity'], $quantity, 16), $node['quantity'], 8);
+    }
+
+    private function copySourceItems(array &$target, array $source): void
+    {
+        $target['source_items'] = $source['source_items'];
+        $sourceChildren = [];
+        foreach ($source['children'] as $child) {
+            $key = json_encode([$child['attributes']['item_type'], $child['attributes']['normative_rate_code'], $child['unit'], $this->terms($child, false)], JSON_THROW_ON_ERROR);
+            $sourceChildren[$key][] = $child;
+        }
+        foreach ($target['children'] as &$child) {
+            $key = json_encode([$child['attributes']['item_type'], $child['attributes']['normative_rate_code'], $child['unit'], $this->terms($child, false)], JSON_THROW_ON_ERROR);
+            $this->copySourceItems($child, array_shift($sourceChildren[$key]));
+        }
+        unset($child);
     }
 }
