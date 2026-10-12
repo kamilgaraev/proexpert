@@ -318,6 +318,11 @@ final class EstimateOperationsTest extends TestCase
         self::assertSame('ready', $operation->fresh()->status);
         self::assertSame('300.00', $operation->fresh()->summary['total_amount']);
         self::assertSame(1, $operation->fresh()->summary['result_row_count']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'manual-match-lineage');
+        $this->operations->process($operation->id, 3, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0])->items()->firstOrFail();
+        self::assertSame([$firstItem->id, $secondItem->id], array_column($result->metadata['operation']['source_items'], 'item_id'));
+        self::assertSame(['10.00000000', '20.00000000'], array_column($result->metadata['operation']['source_items'], 'result_quantity'));
     }
 
     public function test_manual_unit_conversion_preserves_original_remainder_checks(): void
@@ -632,6 +637,36 @@ final class EstimateOperationsTest extends TestCase
         $this->operations->process($operation->id, 3, false);
         self::assertSame('ready', $operation->fresh()->status);
         self::assertSame('1200.00', $operation->fresh()->summary['total_amount']);
+    }
+
+    public function test_consolidation_preserves_each_nested_source_item_and_its_contribution(): void
+    {
+        [$first, $firstItem] = $this->source('10', '2');
+        [$second, $secondItem] = $this->source('5', '2');
+        $resolutions = [];
+        $childIds = [];
+        foreach ([[$first, $firstItem, '20'], [$second, $secondItem, '10']] as [$source, $parent, $quantity]) {
+            $parent->update(['is_manual' => false]);
+            $child = EstimateItem::query()->create(['estimate_id' => $source->id, 'parent_work_id' => $parent->id, 'position_number' => '1.1', 'name' => 'Материал', 'item_type' => 'material', 'normative_rate_code' => 'MAT-001', 'measurement_unit_id' => $this->unit->id, 'quantity' => $quantity, 'quantity_total' => $quantity, 'unit_price' => '1', 'direct_costs' => $quantity, 'total_amount' => $quantity, 'is_manual' => true]);
+            $childIds[] = $child->id;
+            $resolutions['price:'.$source->id.':'.$child->id] = ['unit_price' => '10', 'source' => 'Прайс материала'];
+        }
+        $operation = $this->operations->create($this->actor, $this->project->id, ['mode' => 'consolidate', 'source_ids' => [$first->id, $second->id], 'target_date' => '2026-10-13', 'region_code' => '77']);
+        $this->preview($operation);
+        $this->operations->resolve($this->actor, $this->project->id, $operation->id, $resolutions);
+        $this->operations->process($operation->id, 2, false);
+        self::assertSame('ready', $operation->fresh()->status);
+        self::assertSame('300.00', $operation->fresh()->summary['total_amount']);
+        $this->operations->apply($this->actor, $this->project->id, $operation->id, 'nested-lineage');
+        $this->operations->process($operation->id, 2, true);
+        $result = Estimate::query()->findOrFail($operation->fresh()->result_ids[0]);
+        $parent = $result->items()->whereNull('parent_work_id')->firstOrFail();
+        $child = $result->items()->whereNotNull('parent_work_id')->firstOrFail();
+        self::assertSame([$firstItem->id, $secondItem->id], array_column($parent->metadata['operation']['source_items'], 'item_id'));
+        self::assertSame($childIds, array_column($child->metadata['operation']['source_items'], 'item_id'));
+        self::assertSame(['20.00000000', '10.00000000'], array_column($child->metadata['operation']['source_items'], 'result_quantity'));
+        self::assertSame('30.00000000', $child->quantity_total);
+        self::assertSame('300.00', $result->total_amount);
     }
 
     private function source(string $quantity, string $price = '5'): array
