@@ -11,7 +11,7 @@ final class BenchmarkExpectedContract
         'work_ids', 'normative_rankings', 'costs', 'applicable_item_ids', 'evidence_ids_by_item',
     ];
 
-    private const OPTIONAL_DATA_KEYS = ['review_codes', 'review_items'];
+    private const OPTIONAL_DATA_KEYS = ['review_codes', 'review_items', 'unknown_numeric_fields'];
 
     /** @param array<string, mixed> $payload @return array<string, mixed> */
     public static function expected(array $payload, string $expectedVersion): array
@@ -55,6 +55,12 @@ final class BenchmarkExpectedContract
         self::evidence($data['evidence_ids_by_item'] ?? null, $applicable);
         self::tokenList($data['review_codes'] ?? [], 'review_codes_invalid', 100);
         self::reviewItems($data['review_items'] ?? []);
+        $unknown = self::tokenList($data['unknown_numeric_fields'] ?? [], 'unknown_numeric_fields_invalid', 3);
+        foreach ($unknown as $field) {
+            if (! in_array($field, ['areas', 'quantities', 'costs'], true) || $data[$field] !== []) {
+                throw new BenchmarkContractException('unknown_numeric_fields_invalid');
+            }
+        }
     }
 
     /** @param mixed $value @return list<string> */
@@ -149,6 +155,9 @@ final class BenchmarkExpectedContract
             }
         }
         $allowed = [...$required, ...self::OPTIONAL_DATA_KEYS];
+        if ($prediction) {
+            $allowed = array_values(array_diff($allowed, ['unknown_numeric_fields']));
+        }
         if (array_diff($actual, $allowed) !== []) {
             throw new BenchmarkContractException('contract_keys_invalid');
         }

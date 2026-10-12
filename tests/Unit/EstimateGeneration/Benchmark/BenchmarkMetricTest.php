@@ -101,6 +101,31 @@ final class BenchmarkMetricTest extends TestCase
     }
 
     /** @return array<string, mixed> */
+    #[Test]
+    public function unknown_numeric_values_cannot_be_replaced_with_measurements_or_zero_even_when_mape_has_no_oracle(): void
+    {
+        $expected = $this->expected();
+        $expected['areas'] = $expected['quantities'] = $expected['costs'] = [];
+        $expected['unknown_numeric_fields'] = ['areas', 'quantities', 'costs'];
+        $prediction = $expected;
+        unset($prediction['unknown_numeric_fields']);
+        self::assertSame(1.0, MetricRegistry::standard()->calculate($expected, $prediction, true)['unknown_numeric_values_preserved']->value);
+        $prediction['areas'] = ['room-a' => '9'];
+        $prediction['quantities'] = ['wall' => '0'];
+        $prediction['costs'] = ['work-a' => '90'];
+        $metrics = MetricRegistry::standard()->calculate($expected, $prediction, true);
+        self::assertSame(0.0, $metrics['unknown_numeric_values_preserved']->value);
+        self::assertSame(3, $metrics['unknown_numeric_values_preserved']->denominator);
+        $gate = new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
+        $summary = ['work_recall' => ['macro' => 1.0], 'normative_top3' => ['macro' => 1.0],
+            'technical_success_rate' => ['macro' => 1.0], 'evidenced_applicable_items' => ['macro' => 1.0],
+            'unknown_numeric_values_preserved' => ['macro' => 0.0]];
+        $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException::class);
+        $this->expectExceptionMessage('acceptance_threshold_failed_unknown_numeric_values_preserved');
+        $gate->assertSummary(0, 0, $summary);
+    }
+
+    /** @return array<string, mixed> */
     private function expected(): array
     {
         return [
