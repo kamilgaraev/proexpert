@@ -2054,6 +2054,13 @@ class AIAssistantService
             $namedProject = AssistantBimModelSelector::namedProject($requestQuery);
             $requestedKind = (new AssistantBimIndexProjection)->queryEquipment($requestQuery);
             $bimSchema = $this->toolRegistry->getTool($toolName)?->getParametersSchema()['properties'] ?? [];
+            if (isset($bimSchema['answer_kind'])) {
+                if (! array_key_exists('answer_kind', $args)) { $args['answer_kind'] = 'elements'; }
+                if (AssistantBimAnswerIntent::materialList($requestQuery)) {
+                    $args['answer_kind'] = 'materials';
+                    $args['include_quantities'] = $args['include_properties'] = $args['include_estimate_links'] = false;
+                }
+            }
             if ($requestedKind !== null && isset($bimSchema['equipment_kind'])
                 && $this->simpleBimEquipmentQuestion($requestQuery, $namedProject ?? '')) {
                 $args['equipment_kind'] = $requestedKind;

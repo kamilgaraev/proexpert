@@ -357,6 +357,73 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
     }
 
+    public function test_material_summary_reads_all_associations_beyond_page_and_changes_invalidate_receipt(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 3);
+        foreach ([[], ['Сталь', 'Сталь'], ['Бетон', 'Утеплитель']] as $materials) {
+            $last = $this->element($version, 'IFCWALL', 'Стена');
+            $last->updateQuietly(['derivative_id' => $derivative->id,
+                'properties' => ['_ifc' => ['schema_version' => 2], 'materials' => $materials]]);
+        }
+        $result = $this->read(['answer_kind' => 'materials', 'limit' => 1]);
+        $summary = $result['models'][0]['material_summary'];
+        self::assertSame(['Бетон'], $summary['names']);
+        self::assertSame([], $result['models'][0]['elements'][0]['materials']);
+        self::assertSame(3, $summary['total']);
+        self::assertSame('full_matching_index', $summary['coverage']);
+        self::assertStringContainsString('• Бетон', $result['server_formatted_answer']);
+        $next = $this->read(['answer_kind' => 'materials', 'offset' => 1, 'limit' => 2]);
+        self::assertSame(['Сталь', 'Утеплитель'], $next['models'][0]['material_summary']['names']);
+        self::assertStringNotContainsString('Состав загруженной модели', $result['server_formatted_answer']);
+        self::assertLessThan(1000, mb_strlen($result['server_formatted_answer']));
+        self::assertNotNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        $last->updateQuietly(['properties' => ['_ifc' => ['schema_version' => 2], 'materials' => ['Кирпич']]]);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+    }
+
+    public function test_material_summary_preserves_all_more_than_thirty_relations_and_never_publishes_unsafe_labels(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 1);
+        $materials = array_map(static fn (int $id): string => sprintf('Материал %02d', $id), range(1, 61));
+        $element = $this->element($version, 'IFCWALL', 'Слои');
+        $element->updateQuietly(['derivative_id' => $derivative->id,
+            'properties' => ['_ifc' => ['schema_version' => 2], 'materials' => $materials]]);
+        $result = $this->read(['answer_kind' => 'materials']);
+        self::assertSame(61, $result['models'][0]['material_summary']['total']);
+        self::assertCount(20, $result['models'][0]['material_summary']['names']);
+        self::assertTrue($result['models'][0]['material_summary']['truncated']);
+        $next = $this->read(['answer_kind' => 'materials', 'offset' => 40]);
+        self::assertSame('Материал 41', $next['models'][0]['material_summary']['names'][0]);
+        self::assertSame(61, $next['models'][0]['material_summary']['total']);
+        $element->updateQuietly(['properties' => ['_ifc' => ['schema_version' => 2],
+            'materials' => ['Сталь', 'https://secret.invalid', 'user@example.com', 'password=private-secret']]]);
+        $safe = $this->read(['answer_kind' => 'materials']);
+        self::assertSame(['Сталь'], $safe['models'][0]['material_summary']['names']);
+        self::assertSame('partial', $safe['models'][0]['material_summary']['coverage']);
+        self::assertStringNotContainsString('private-secret', $safe['server_formatted_answer']);
+        self::assertStringNotContainsString('example.com', $safe['server_formatted_answer']);
+        self::assertStringNotContainsString('Названия материалов в подходящих элементах IFC не указаны', $safe['server_formatted_answer']);
+    }
+
+    public function test_material_summary_is_complete_above_the_php_element_scan_limit(): void
+    {
+        $version = $this->model('Гаражная', 'гаражная.ifc');
+        $derivative = $this->readyIndex($version, 100001);
+        \Illuminate\Support\Facades\DB::insert("INSERT INTO design_ifc_model_elements (organization_id, project_id, version_id, derivative_id, express_id, category, name, properties, created_at, updated_at)
+            SELECT ?, ?, ?, ?, item_id, 'IFCWALL', 'Стена',
+                jsonb_build_object('_ifc', jsonb_build_object('schema_version', 2), 'materials',
+                    CASE WHEN item_id = 100001 THEN '[\"Материал после предела сканирования\"]'::jsonb ELSE '[]'::jsonb END), NOW(), NOW()
+            FROM generate_series(1, 100001) AS item_id", [$version->organization_id, $version->project_id, $version->id, $derivative->id]);
+        \Illuminate\Support\Facades\DB::statement('ANALYZE design_ifc_model_elements');
+        $result = $this->read(['answer_kind' => 'materials', 'limit' => 1]);
+        self::assertSame(100001, $result['models'][0]['total']);
+        self::assertSame(['Материал после предела сканирования'], $result['models'][0]['material_summary']['names']);
+        self::assertSame('full_matching_index', $result['models'][0]['material_summary']['coverage']);
+        self::assertStringContainsString('Материал после предела сканирования', $result['server_formatted_answer']);
+    }
+
     public function test_comparison_requires_complete_same_artifact_indices_and_uses_global_ids(): void
     {
         $before = $this->model('Гаражная', 'гаражная.ifc');

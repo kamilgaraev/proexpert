@@ -322,13 +322,14 @@ final readonly class AssistantBimModelReader
             'storey_query' => ['nullable', 'string', 'max:200'], 'quantity_name' => ['nullable', 'string', 'max:100'],
             'equipment_kind' => ['nullable', 'string', 'in:air_conditioner,fan,pump,boiler,chiller,unknown'],
             'offset' => ['integer', 'min:0', 'max:1000000'], 'limit' => ['integer', 'min:1', 'max:20'],
-            'include_estimate_links' => ['boolean'], 'include_quantities' => ['boolean'], 'include_properties' => ['boolean']])->validate();
+            'include_estimate_links' => ['boolean'], 'include_quantities' => ['boolean'], 'include_properties' => ['boolean'],
+            'answer_kind' => ['string', 'in:elements,materials']])->validate();
         if (array_diff(array_keys($filters), ['model_query', 'element_query', 'project_id', 'version_id', 'compare_version_id', 'offset', 'limit', 'include_estimate_links',
-            'property_name', 'property_value', 'material_query', 'classification_query', 'storey_query', 'quantity_name', 'equipment_kind', 'include_quantities', 'include_properties']) !== []) {
+            'property_name', 'property_value', 'material_query', 'classification_query', 'storey_query', 'quantity_name', 'equipment_kind', 'include_quantities', 'include_properties', 'answer_kind']) !== []) {
             throw new \InvalidArgumentException('unsupported_bim_model_argument');
         }
 
-        return ['model_query' => isset($filters['model_query']) ? trim($filters['model_query']) : null,
+        return ['answer_kind' => $filters['answer_kind'] ?? 'elements', 'model_query' => isset($filters['model_query']) ? trim($filters['model_query']) : null,
             'element_query' => isset($filters['element_query']) ? trim($filters['element_query']) : null,
             'project_id' => isset($filters['project_id']) ? (int) $filters['project_id'] : null,
             'version_id' => isset($filters['version_id']) ? (int) $filters['version_id'] : null,
@@ -342,7 +343,8 @@ final readonly class AssistantBimModelReader
             'equipment_kind' => $filters['equipment_kind'] ?? null,
             'offset' => (int) ($filters['offset'] ?? 0), 'limit' => (int) ($filters['limit'] ?? 20),
             'include_estimate_links' => (bool) ($filters['include_estimate_links'] ?? false),
-            'include_quantities' => (bool) ($filters['include_quantities'] ?? false), 'include_properties' => (bool) ($filters['include_properties'] ?? false)];
+            'include_quantities' => ($filters['answer_kind'] ?? 'elements') !== 'materials' && (bool) ($filters['include_quantities'] ?? false),
+            'include_properties' => (bool) ($filters['include_properties'] ?? false)];
     }
 
     private function units(mixed $units): array
@@ -465,6 +467,7 @@ final readonly class AssistantBimModelReader
 
     private function summary(array $models, array $filters, bool $tooMany): string
     {
+        if (($filters['answer_kind'] ?? 'elements') === 'materials') { return $this->materialAnswer($models, $tooMany); }
         $complete = $models !== [] && ! $tooMany && ($filters['compare_version_id'] ?? null) === null;
         $sum = 0;
         $projects = [];
@@ -494,6 +497,7 @@ final readonly class AssistantBimModelReader
 
     private function format(array $models, array $filters, bool $tooMany): string
     {
+        if (($filters['answer_kind'] ?? 'elements') === 'materials') { return $this->materialAnswer($models, $tooMany); }
         if ($models === []) {
             return trans_message('ai_assistant_bim.model_not_found');
         }
@@ -581,6 +585,33 @@ final readonly class AssistantBimModelReader
         }
 
         return implode("\n\n", $lines);
+    }
+
+    private function materialAnswer(array $models, bool $tooMany): string
+    {
+        if ($models === []) { return trans_message('ai_assistant_bim.model_not_found'); }
+        $lines = [trans_message('ai_assistant_bim.material_summary_intro')];
+        foreach ($models as $model) {
+            $name = $this->text((string) ($model['source_scope']['artifact']['title'] ?? $model['version']['title'] ?? ''));
+            $summary = $model['material_summary'] ?? null;
+            $covered = ! $tooMany && ($model['index_coverage']['status'] ?? null) === 'complete'
+                && ($model['semantic_coverage']['status'] ?? null) === 'complete' && is_array($summary);
+            if (! $covered) { $lines[] = trans_message('ai_assistant_bim.material_summary_unavailable', ['name' => $name]); continue; }
+            $names = $summary['names'];
+            $lines[] = trans_message('ai_assistant_bim.material_summary_model', ['name' => $name]);
+            foreach ($names as $material) { $lines[] = '• '.$this->text($material); }
+            if ($summary['coverage'] === 'full_matching_index' && $summary['total'] === 0) {
+                $lines[] = trans_message('ai_assistant_bim.material_summary_empty');
+            } elseif ($summary['coverage'] !== 'full_matching_index') {
+                $lines[] = trans_message('ai_assistant_bim.material_summary_unconfirmed');
+            } elseif ($summary['truncated']) {
+                $lines[] = trans_message('ai_assistant_bim.material_summary_partial', ['shown' => count($names), 'total' => $summary['total']]);
+            } elseif ($names === []) {
+                $lines[] = trans_message('ai_assistant_bim.material_summary_finished', ['total' => $summary['total']]);
+            }
+        }
+
+        return implode("\n", $lines);
     }
 
     private function categoryLabel(?string $category): string

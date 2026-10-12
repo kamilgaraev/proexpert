@@ -97,6 +97,8 @@ final readonly class AssistantBimIndexQuery
             'scan_complete' => $complete, 'scanned_count' => $indexedCount, 'index_fingerprint' => $fingerprint,
             'schema2_row_count' => $schema2Count,
             'matching_count_coverage' => 'full_index_query',
+            'material_summary' => ($filters['answer_kind'] ?? 'elements') === 'materials'
+                ? (new AssistantBimMaterialSummary($this->projection))->read($scope, $filters['offset'], $filters['limit']) : null,
             'quantity_totals' => $quantityRows, 'comparison_rows' => $rows];
     }
 }

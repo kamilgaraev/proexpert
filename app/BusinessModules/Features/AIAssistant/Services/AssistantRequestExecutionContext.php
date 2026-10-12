@@ -209,7 +209,14 @@ final class AssistantRequestExecutionContext
                 return;
             }
 
-            app(self::class)->applyStatementTimeout($connection);
+            $context = app(self::class);
+            if ($context->databaseGuardsActive && $connection->getDriverName() === 'pgsql'
+                && strtoupper(trim($query)) === 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY') {
+                $context->remainingMilliseconds();
+
+                return;
+            }
+            $context->applyStatementTimeout($connection);
         });
         self::$guardedConnections[$connection] = true;
     }

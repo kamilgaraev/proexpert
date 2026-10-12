@@ -166,6 +166,34 @@ final class AssistantToolFirstQualityTest extends TestCase
         ];
     }
 
+    public function test_material_list_binding_preserves_floor_and_pagination_despite_untrusted_model_alias(): void
+    {
+        $name = 'get_bim_model_elements';
+        $schema = (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetBimModelElementsTool(
+            (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantBimModelReader::class))->newInstanceWithoutConstructor()))->getParametersSchema();
+        $arguments = [];
+        foreach ($schema['properties'] as $key => $property) {
+            $types = (array) $property['type'];
+            $arguments[$key] = in_array('null', $types, true) ? null : (in_array('boolean', $types, true) ? false : (in_array('integer', $types, true) ? 1 : 'elements'));
+        }
+        $arguments = array_replace($arguments, ['project_id' => 52, 'model_query' => 'на третьем этаже', 'storey_query' => 'Этаж 3',
+            'offset' => 20, 'limit' => 5, 'include_properties' => true, 'include_quantities' => true]);
+        $call = $this->toolCall($name);
+        $call['function']['arguments'] = json_encode($arguments, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $service = $this->service([$name => ['status' => 'success', 'source_refs' => []]],
+            [['content' => '', 'tool_calls' => [$call]], ['content' => 'Проверено.']], toolSchemas: [$name => $schema]);
+        $service->verifiedBim = ['text' => 'Материалы прочитаны.', 'validation_status' => 'verified', 'source_refs' => [],
+            'replaced' => true, 'needs_clarification' => false];
+
+        $service->ask('Какие материалы встречаются в модели на третьем этаже?', 15, $this->actor(), 7);
+
+        self::assertSame('materials', $this->executedArguments[0]['answer_kind']);
+        self::assertSame('Этаж 3', $this->executedArguments[0]['storey_query']);
+        self::assertSame(20, $this->executedArguments[0]['offset']);
+        self::assertSame(5, $this->executedArguments[0]['limit']);
+        self::assertFalse($this->executedArguments[0]['include_quantities']);
+    }
+
     public function test_actual_ask_renders_model_selected_presentation_from_checked_rows_only(): void
     {
         $query = 'Какой статус у проекта?';
