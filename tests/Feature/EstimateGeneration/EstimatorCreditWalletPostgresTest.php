@@ -91,7 +91,8 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         return [[true], [false]];
     }
 
-    public function test_real_engineer_candidate_identity_matches_the_paid_physical_attempt_and_replays_once(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('engineerPartitionApprovals')]
+    public function test_real_engineer_candidate_identity_matches_the_paid_physical_attempt_and_replays_once(int $linkCount, bool $enoughParts): void
     {
         $this->seedGlobalSettings();
         [$organization, $actor, $scope] = $this->fixture();
@@ -99,20 +100,33 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         $permissions->allows('canCurrent')->andReturn(true);
         $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
         $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
-        $session->update(['input_payload' => ['profile_id' => 'industrial']]);
+        $session->update(['input_payload' => ['profile_id' => 'industrial',
+            'selected_sections' => $enoughParts ? ['structure', 'finishing'] : ['structure']]]);
         app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:engineer-identity');
         $operationId = (string) Str::uuid();
         $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
         $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $operationId, 'generation');
         DB::transaction(fn () => $operations->begin($actor, $session, 0, $operationId, $quote['quote_id'], 'generation'));
         $history = [];
-        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler([
-            new \GuzzleHttp\Psr7\Response(200, ['Content-Type' => 'application/json'], json_encode([
+        $version = 'sha256:'.str_repeat('a', 64);
+        $facts = $links = [];
+        for ($index = 0; $index < $linkCount; $index++) {
+            foreach (['a', 'b'] as $suffix) {
+                $facts[] = ['id' => 'fact:'.$index.':'.$suffix, 'source_version' => $version, 'current' => true];
+            }
+            $links[] = ['id' => 'link:room-'.$index, 'fact_ids' => ['fact:'.$index.':a', 'fact:'.$index.':b']];
+        }
+        $parts = (new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisBatchPlanner)->plan($links, []);
+        $responses = [];
+        foreach ($parts as $part) {
+            $content = json_encode(['accepted_link_ids' => array_column($part['links'], 'id'), 'question_conflict_ids' => []], JSON_THROW_ON_ERROR);
+            $responses[] = new \GuzzleHttp\Psr7\Response(200, ['Content-Type' => 'application/json'], json_encode([
                 'id' => 'chatcmpl-engineer', 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
-                'choices' => [['index' => 0, 'finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => '{"accepted_link_ids":["link:room"],"question_conflict_ids":[]}']]],
+                'choices' => [['index' => 0, 'finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => $content]]],
                 'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 50, 'total_tokens' => 150],
-            ], JSON_THROW_ON_ERROR)),
-        ]));
+            ], JSON_THROW_ON_ERROR));
+        }
+        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler($responses));
         $handler->push(\GuzzleHttp\Middleware::history($history));
         config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
         $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class,
@@ -121,23 +135,37 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
                 app(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard::class),
                 app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
                 httpClient: new \GuzzleHttp\Client(['handler' => $handler])));
-        $version = 'sha256:'.str_repeat('a', 64);
         $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisInput(
             (int) $organization->id, $scope->projectId, $scope->sessionId, [$version],
-            [['id' => 'fact:a', 'source_version' => $version, 'current' => true], ['id' => 'fact:b', 'source_version' => $version, 'current' => true]],
+            $facts,
             [], [], ['arbiter' => [], 'geometry_expert' => []],
             \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis::PROMPT_CONTRACT,
             new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $operationId));
-        $links = [['id' => 'link:room', 'fact_ids' => ['fact:a', 'fact:b']]];
         $engineer = app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\RunProjectSynthesis::class);
-        $first = $engineer->run($input, $links, []);
-        self::assertSame(['link:room'], $first->acceptedLinkIds);
-        self::assertSame($first->toArray(), $engineer->run($input, $links, [])->toArray());
-        self::assertCount(1, $history);
-        self::assertSame(1, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
-        self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        if (! $enoughParts) {
+            try {
+                $engineer->run($input, $links, []);
+                self::fail('Unapproved engineer parts were sent.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('project_synthesis_parts_exceed_approved_plan', $exception->getMessage());
+                self::assertCount(0, $history);
+                self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+            }
+        } else {
+            $first = $engineer->run($input, $links, []);
+            self::assertCount($linkCount, $first->acceptedLinkIds);
+            self::assertSame($first->toArray(), $engineer->run($input, $links, [])->toArray());
+            self::assertCount(count($parts), $history);
+            self::assertSame(count($parts), DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+            self::assertSame(count($parts), DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
         DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
             ->abort($session->fresh(), $operationId, 'fixture_finished'));
+    }
+
+    public static function engineerPartitionApprovals(): array
+    {
+        return [[1, true], [65, true], [65, false]];
     }
 
     public function test_an_unknown_legacy_paid_balance_keeps_legacy_billing_without_a_new_shared_reserve(): void

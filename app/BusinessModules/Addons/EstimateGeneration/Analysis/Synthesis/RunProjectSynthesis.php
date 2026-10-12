@@ -25,6 +25,7 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         private ProjectSynthesisModel $model,
         private string $modelName,
         private ProjectSynthesisValidator $validator = new ProjectSynthesisValidator,
+        private int $maxInputBytes = 524288,
     ) {}
 
     /**
@@ -36,6 +37,44 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
         array $candidateLinks,
         array $candidateQuestions,
     ): ProjectSynthesisSelection {
+        $validated = $this->validator->validate(['links' => $candidateLinks, 'questions' => $candidateQuestions], $input);
+        $parts = (new ProjectSynthesisBatchPlanner)->plan($validated['links'], $validated['questions']);
+        if (count($parts) === 1) {
+            return $this->runPart($input, $validated['links'], $validated['questions']);
+        }
+        if ($input->wireScope?->creditOperationId !== null) {
+            $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
+                ->where('organization_id', $input->organizationId)->where('project_id', $input->projectId)
+                ->where('session_id', $input->sessionId)->where('operation_id', $input->wireScope->creditOperationId)->first(['processing_plan']);
+            $plan = $operation === null ? [] : json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+            if (count($parts) > (int) ($plan['synthesis_part_limit'] ?? 1)) {
+                throw new InvalidArgumentException('project_synthesis_parts_exceed_approved_plan');
+            }
+        }
+        $prepared = [];
+        foreach ($parts as $part) {
+            $partInput = $input->withPart($part['id']);
+            $bytes = strlen(json_encode(['project' => $partInput->canonicalPayload(), 'candidate_links' => $part['links'],
+                'candidate_questions' => $part['questions']], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            if ($bytes > $this->maxInputBytes) {
+                throw new InvalidArgumentException('project_synthesis_input_limit_exceeded');
+            }
+            $prepared[] = $partInput;
+        }
+        $links = $questions = [];
+        foreach ($parts as $index => $part) {
+            $selected = $this->runPart($prepared[$index], $part['links'], $part['questions']);
+            array_push($links, ...$selected->acceptedLinkIds);
+            array_push($questions, ...$selected->questionConflictIds);
+        }
+        sort($links, SORT_STRING);
+        sort($questions, SORT_STRING);
+
+        return new ProjectSynthesisSelection($links, $questions);
+    }
+
+    private function runPart(ProjectSynthesisInput $input, array $candidateLinks, array $candidateQuestions): ProjectSynthesisSelection
+    {
         $validatedCandidates = $this->validator->validate([
             'links' => $candidateLinks,
             'questions' => $candidateQuestions,
@@ -50,8 +89,8 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
             documentId: null,
             pageId: null,
             subjectType: 'estimate_session',
-            subjectId: (string) $input->sessionId,
-            subjectVersion: $input->aggregateSourceVersion(),
+            subjectId: (string) $input->sessionId.($input->partId === 'whole' ? '' : ':'.$input->partId),
+            subjectVersion: $input->aggregateSourceVersion().($input->partId === 'whole' ? '' : ':'.$input->partId),
             role: AiAnalysisRole::ProjectEngineer,
             model: $this->modelName,
             promptContractVersion: self::PROMPT_CONTRACT,

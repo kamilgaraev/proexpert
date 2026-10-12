@@ -57,6 +57,13 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertSame(54, $plan['maximum_calls']);
     }
 
+    public function test_complex_operation_reserves_every_engineer_part_before_execution(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, true, $this->tariff());
+        self::assertSame(3, $plan['synthesis_part_limit']);
+        self::assertSame(9, $plan['roles']['project_synthesis']['max_calls']);
+    }
+
     private function tariff(): AiPriceSnapshot
     {
         return AiPriceSnapshot::fromArray(['input_per_million' => '13.5', 'cached_input_per_million' => '13.5',

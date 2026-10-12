@@ -20,6 +20,7 @@ final class EstimatorProcessingPlan
             throw new DomainException('estimator_processing_plan_limit');
         }
         $roles = [];
+        $synthesisParts = 0;
         if ($kind === 'dialogue') {
             $roles['estimate_dialogue_interpretation'] = $this->role(3, 80000, 2048, $tariff);
         } else {
@@ -32,7 +33,8 @@ final class EstimatorProcessingPlan
                     (int) config('estimate-generation.vision.max_input_tokens', 32768), 4096, $tariff, true);
             }
             if ($complex && $kind !== 'documents') {
-                $roles['project_synthesis'] = $this->role(3, (int) config('estimate-generation.project_engineer.max_input_bytes', 524288),
+                $synthesisParts = \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems);
+                $roles['project_synthesis'] = $this->role($synthesisParts * 3, (int) config('estimate-generation.project_engineer.max_input_bytes', 524288),
                     (int) config('estimate-generation.project_engineer.max_output_tokens', 4096), $tariff);
             }
             if ($kind !== 'documents') {
@@ -61,7 +63,8 @@ final class EstimatorProcessingPlan
             'maximum_calls' => $calls, 'maximum_provider_cost_micro_rub' => $maximum->toInt(),
             'raster_units' => $rasterUnits, 'work_item_limit' => $workItems, 'complex' => $complex, 'rerank' => $rerank,
             'audit_part_limit' => $kind === 'documents' || $kind === 'dialogue' ? 0
-                : \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems)];
+                : \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditBatchPlanner::partCeiling($workItems),
+            'synthesis_part_limit' => isset($roles['project_synthesis']) ? $synthesisParts : 0];
     }
 
     private function role(int $calls, int $inputCeiling, int $outputCeiling, AiPriceSnapshot $tariff, bool $image = false): array

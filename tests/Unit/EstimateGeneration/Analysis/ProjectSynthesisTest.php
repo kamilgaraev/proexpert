@@ -17,6 +17,46 @@ use PHPUnit\Framework\TestCase;
 
 final class ProjectSynthesisTest extends TestCase
 {
+    public function test_engineer_runs_two_real_parts_with_complete_source_context_and_cached_replay(): void
+    {
+        $facts = $links = [];
+        $source = $this->version('a');
+        for ($index = 0; $index < 65; $index++) {
+            foreach (['a', 'b'] as $suffix) {
+                $facts[] = ['id' => 'fact:'.$index.':'.$suffix, 'source_version' => $source, 'current' => true];
+            }
+            $links[] = ['id' => 'link:'.$index, 'fact_ids' => ['fact:'.$index.':a', 'fact:'.$index.':b']];
+        }
+        $input = new ProjectSynthesisInput(10, 20, 30, [$source], $facts, [], [], ['arbiter' => [], 'geometry_expert' => []], RunProjectSynthesis::PROMPT_CONTRACT);
+        $model = new class implements ProjectSynthesisModel
+        {
+            public int $calls = 0;
+
+            public array $inputs = [];
+
+            public function synthesize(ProjectSynthesisInput $input, array $candidateLinks, array $candidateQuestions, callable $onPhysicalAttemptReserved): array
+            {
+                $this->inputs[] = $input;
+                $onPhysicalAttemptReserved('00000000-0000-4000-8000-00000000000'.++$this->calls);
+
+                return ['accepted_link_ids' => array_column($candidateLinks, 'id'), 'question_conflict_ids' => []];
+            }
+        };
+        $runs = new SynthesisRoleRunMemoryRepository;
+        $engineer = new RunProjectSynthesis($runs, $model, 'openai/gpt-6-luna');
+        $first = $engineer->run($input, $links, []);
+        self::assertCount(65, $first->acceptedLinkIds);
+        self::assertSame(2, $model->calls);
+        self::assertCount(2, array_unique(array_column($runs->inputs, 'subjectId')));
+        foreach ($model->inputs as $part) {
+            self::assertSame($input->facts, $part->facts);
+            self::assertSame($input->sourceVersions, $part->sourceVersions);
+            self::assertNotSame('whole', $part->partId);
+        }
+        self::assertSame($first->toArray(), $engineer->run($input, array_reverse($links), [])->toArray());
+        self::assertSame(2, $model->calls);
+    }
+
     public function test_physical_engineer_identity_includes_the_exact_candidate_set_and_canonical_business_input(): void
     {
         $input = $this->input();

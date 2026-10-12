@@ -701,6 +701,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(AiRoleRunRepository::class),
             $app->make(ProjectSynthesisModel::class),
             (string) config('estimate-generation.project_engineer.model'),
+            maxInputBytes: (int) config('estimate-generation.project_engineer.max_input_bytes'),
         ));
         $this->app->alias(RunProjectSynthesis::class, ProjectSynthesisRunner::class);
         $this->app->singleton(TimewebEstimateComposerModel::class, static fn ($app): TimewebEstimateComposerModel => new TimewebEstimateComposerModel(

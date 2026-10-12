@@ -27,6 +27,7 @@ final readonly class ProjectSynthesisInput
         public array $roleFingerprints,
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
+        public string $partId = 'whole',
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || $sourceVersions === [] || ! array_is_list($sourceVersions)
@@ -39,6 +40,9 @@ final readonly class ProjectSynthesisInput
             if (! is_string($sourceVersion) || preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceVersion) !== 1) {
                 throw new InvalidArgumentException('project_synthesis_source_version_invalid');
             }
+        }
+        if ($partId !== 'whole' && preg_match('/\Apart:[a-f0-9]{40}\z/', $partId) !== 1) {
+            throw new InvalidArgumentException('project_synthesis_part_identity_invalid');
         }
         foreach ($roleFingerprints as $fingerprints) {
             if (! array_is_list($fingerprints)) {
@@ -96,7 +100,14 @@ final readonly class ProjectSynthesisInput
             'decisions' => $this->sorted($this->decisions),
             'role_fingerprints' => $roles,
             'contract_version' => $this->contractVersion,
+            ...($this->partId === 'whole' ? [] : ['part_id' => $this->partId]),
         ];
+    }
+
+    public function withPart(string $partId): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->sourceVersions, $this->facts,
+            $this->derivedQuantities, $this->decisions, $this->roleFingerprints, $this->contractVersion, $this->wireScope, $partId);
     }
 
     /** @param list<array<string, mixed>> $records @return list<array<string, mixed>> */

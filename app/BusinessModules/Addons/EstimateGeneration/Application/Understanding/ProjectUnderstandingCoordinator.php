@@ -202,8 +202,11 @@ final readonly class ProjectUnderstandingCoordinator
         if ($result->links === [] && $candidateQuestions === []) {
             $selection = new ProjectSynthesisSelection([], []);
         } else {
+            $synthesisProviderCalls = count((new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Synthesis\ProjectSynthesisBatchPlanner)->plan($result->links, $candidateQuestions));
+            if ($synthesisProviderCalls + $result->providerCalls > $this->budget->maxProviderCalls) {
+                return $this->budgetLimitation();
+            }
             $selection = $this->synthesis->run($synthesisInput, $result->links, $candidateQuestions);
-            $synthesisProviderCalls = 1;
         }
         $acceptedLinks = array_values(array_filter(
             $result->links,
