@@ -2338,6 +2338,10 @@ class AIAssistantService
                 'exception_class' => $exception::class,
                 'tool_failure_stage' => $toolFailureStage,
             ];
+            if ($exception instanceof \App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException) {
+                $technicalContext['report_error_code'] = $exception->errorCode->value;
+                $technicalContext['previous_exception_class'] = $exception->getPrevious() !== null ? $exception->getPrevious()::class : null;
+            }
             $activeRequestId = $this->activeRequest?->request_id;
             if (is_string($activeRequestId) && \Illuminate\Support\Str::isUuid($activeRequestId)) {
                 $technicalContext['request_id'] = $activeRequestId;

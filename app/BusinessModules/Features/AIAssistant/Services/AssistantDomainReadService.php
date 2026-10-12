@@ -83,7 +83,7 @@ final class AssistantDomainReadService
         $columns = $this->columns[$table] ??= \Illuminate\Support\Facades\Schema::getColumnListing($table);
         $safeColumns = AssistantExtendedDomainRegistry::values('safeSelectColumns')[$entityType] ?? $columns;
         $selected = self::projectedColumns($operation, $fields, $columns, $safeColumns,
-            AssistantExtendedDomainRegistry::values('versionColumns')[$entityType] ?? [], $query->getModel()->getKeyName());
+            AssistantExtendedDomainRegistry::values('versionColumns')[$entityType] ?? [], $query->getModel()->getKeyName(), $entityType);
         $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $selected));
         $resultWindow = null;
         if ($operation === 'search') {
@@ -192,9 +192,18 @@ final class AssistantDomainReadService
         $factRows = [];
         $attachmentMessages = [];
         $fetchedAt = now()->toISOString();
+        $scheduleProjects = [];
+        if ($entityType === 'schedule_task' && $models->isNotEmpty()) {
+            $scheduleIds = $models->pluck('schedule_id')->unique()->values()->all();
+            $parents = $this->access->entityQuery($actor, $organizationId, 'schedule');
+            if ($parents !== null) {
+                $table = $parents->getModel()->getTable();
+                $scheduleProjects = $parents->whereKey($scheduleIds)->select([$table.'.id', $table.'.project_id'])->pluck('project_id', 'id')->all();
+            }
+        }
         foreach ($models as $model) {
             $returnedFields = $operation === 'navigation' ? ['id'] : array_keys(array_intersect_key($model->attributesToArray(), array_flip($fields)));
-            $reference = $this->reference($actor, $model, $definition, $entityType, $organizationId, $returnedFields, $fetchedAt);
+            $reference = $this->reference($actor, $model, $definition, $entityType, $organizationId, $returnedFields, $fetchedAt, $scheduleProjects);
             $references[] = $reference;
             $results[] = $operation === 'navigation'
                 ? $reference
@@ -273,14 +282,14 @@ final class AssistantDomainReadService
         return $payload['after'];
     }
 
-    private static function projectedColumns(string $operation, array $fields, array $columns, array $safeColumns, array $versionColumns, string $key): array
+    private static function projectedColumns(string $operation, array $fields, array $columns, array $safeColumns, array $versionColumns, string $key, string $entityType = ''): array
     {
         $requested = $operation === 'navigation' ? [] : array_intersect($fields, $safeColumns);
         $availableVersionColumns = array_intersect(['slug', 'updated_at', ...$versionColumns], $safeColumns);
-        return array_values(array_intersect(array_unique([$key, 'project_id', ...$availableVersionColumns, ...$requested]), $columns));
+        return array_values(array_intersect(array_unique([$key, 'project_id', ...($entityType === 'schedule_task' ? ['schedule_id'] : []), ...$availableVersionColumns, ...$requested]), $columns));
     }
 
-    private function reference(User $actor, Model $model, AssistantDomainDefinition $definition, string $entityType, int $organizationId, array $fields, string $fetchedAt): array
+    private function reference(User $actor, Model $model, AssistantDomainDefinition $definition, string $entityType, int $organizationId, array $fields, string $fetchedAt, array $scheduleProjects = []): array
     {
         $template = AssistantExtendedDomainRegistry::values('navigationTemplates')[$entityType] ?? match ($entityType) {
             'crm_deal' => '/crm/deals/{id}',
@@ -297,7 +306,10 @@ final class AssistantDomainReadService
             'design_artifact', 'design_artifact_version', 'design_review_comment', 'design_model_set' => '/design-management',
             default => $definition->navigation,
         };
-        $url = str_replace(['{id}', '{slug}', '{project_id}'], [(string) $model->getKey(), rawurlencode((string) $model->getAttribute('slug')), rawurlencode((string) $model->getAttribute('project_id'))], $template);
+        $projectId = $entityType === 'schedule_task' ? ($scheduleProjects[$model->getAttribute('schedule_id')] ?? null)
+            : $this->access->resolvedEntityProjectId($actor, $organizationId, $entityType, $model);
+        $projectId = is_numeric($projectId) && (int) $projectId > 0 ? (int) $projectId : null;
+        $url = str_replace(['{id}', '{slug}', '{project_id}'], [(string) $model->getKey(), rawurlencode((string) $model->getAttribute('slug')), rawurlencode((string) $projectId)], $template);
         if (in_array($entityType, ['estimate_item', 'estimate_section', 'estimate_item_resource'], true)) {
             $estimateId = $model->getAttribute('estimate_id') ?? $model->getRelationValue('item')?->estimate_id;
             $url = '/estimates/'.rawurlencode((string) $estimateId);
@@ -311,7 +323,7 @@ final class AssistantDomainReadService
             || ! $this->access->canCurrentPermission($actor, $organizationId, 'payments.invoice.view'))) {
             $url = '';
         }
-        if (str_contains($template, '{project_id}') && $model->getAttribute('project_id') === null) { $url = ''; }
+        if (str_contains($template, '{project_id}') && $projectId === null) { $url = ''; }
         $requiredPermissions = $definition->permissions;
         if (isset($definition->entityPermissions[$entityType])) {
             $requiredPermissions = array_merge($requiredPermissions, (array) $definition->entityPermissions[$entityType]);
@@ -324,7 +336,7 @@ final class AssistantDomainReadService
         $policyDomain = match ($definition->domain) { 'works' => 'projects', 'acts' => 'contracts', default => $definition->domain };
         $version = $model->getRawOriginal('updated_at') ?? AssistantSourceReferenceIdentity::key(array_intersect_key($model->getAttributes(), array_flip($fields)));
         $reference = ['organization_id' => $organizationId, 'source_type' => $definition->sourceType, 'entity_type' => $entityType, 'entity_id' => $model->getKey(),
-            'project_id' => $model->getAttribute('project_id'), 'navigation' => ['url' => $url], 'content_scope' => 'structured',
+            'project_id' => $projectId, 'navigation' => ['url' => $url], 'content_scope' => 'structured',
             'checked_fields' => array_values(array_unique($fields)), 'required_permissions' => array_values(array_unique($requiredPermissions)),
             'required_domains' => [$policyDomain], 'source_version' => (string) $version, 'fetched_at' => $fetchedAt,
             'source_field_identity' => AssistantSourceReferenceIdentity::key(array_intersect_key($model->getAttributes(), array_flip($fields)))];

@@ -57,6 +57,8 @@ final class AssistantScheduleOverdueCountTest extends TestCase
         self::assertCount(1, $result['results']);
         self::assertSame(24, $result['result_window']['total']);
         self::assertTrue($result['result_window']['has_more']);
+        self::assertTrue((new \App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope(true, $this->project->id))
+            ->allowsReferences(\App\BusinessModules\Features\AIAssistant\Services\AssistantRequestProjectScope::references($result), [$result]));
         $proof = (new AssistantStructuredFactVerifier)->guard('Есть на нашем объекте просроченные задачи? Сколько их?',
             'Найдено 1.', [$result], ['project_id' => $this->project->id]);
         self::assertSame('verified', $proof['validation_status']);
@@ -112,6 +114,23 @@ final class AssistantScheduleOverdueCountTest extends TestCase
     {
         return ['domain' => 'schedule', 'entity_type' => 'schedule_task', 'predicate' => 'overdue', 'query' => '',
             'project_id' => $this->project->id, 'limit' => 1, 'cursor' => null, 'fields' => ['id', 'name', 'status', 'planned_end_date']];
+    }
+
+    public function test_task_project_reference_uses_current_authorized_parent_and_rejects_forged_or_moved_scope(): void
+    {
+        $this->task($this->schedule);
+        $result = app(AssistantDomainReadService::class)->execute('search', array_replace($this->arguments(), ['fields' => ['id', 'name']]),
+            $this->fixture->member, $this->fixture->organization->id);
+        $reference = array_values(array_filter($result['source_refs'], static fn (array $ref): bool => $ref['entity_type'] === 'schedule_task'))[0];
+        self::assertSame($this->project->id, $reference['project_id']);
+        self::assertNotContains('schedule_id', $reference['checked_fields']);
+        $guard = app(AssistantSourceReferenceGuard::class);
+        self::assertTrue($guard->fresh($this->fixture->member, $this->fixture->organization->id, [$reference]));
+        $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->fixture->organization->id]));
+        $this->fixture->member->assignedProjects()->attach($other->id, ['is_active' => true, 'role' => 'member']);
+        self::assertFalse($guard->fresh($this->fixture->member, $this->fixture->organization->id, [array_replace($reference, ['project_id' => $other->id])]));
+        $this->schedule->update(['project_id' => $other->id]);
+        self::assertFalse($guard->fresh($this->fixture->member, $this->fixture->organization->id, [$reference]));
     }
 
     private function schedule(Project $project): ProjectSchedule
