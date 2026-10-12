@@ -94,6 +94,18 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
                 ->whereRaw("COALESCE(design_package_sections.metadata->>'composition_active', 'true') != 'false'")));
         $documents = (clone $artifacts)->where('artifact_type', '!=', DesignArtifactTypeEnum::MODEL->value);
         $models = (clone $artifacts)->where('artifact_type', DesignArtifactTypeEnum::MODEL->value);
+        $currentModelVersions = DesignArtifactVersion::query()->select('design_artifact_versions.id')
+            ->where('is_current', true)
+            ->whereIn('artifact_id', (clone $models)->select('design_artifacts.id'));
+        $eligibleDerivatives = DesignModelDerivative::query()->select(['version_id', 'metadata'])
+            ->where('status', DesignDerivativeStatusEnum::READY->value)
+            ->where('viewer_provider', 'thatopen')
+            ->where('derivative_format', 'thatopen_frag')
+            ->whereIn('version_id', $currentModelVersions)
+            ->offset(0);
+        $readyModelVersions = DB::query()->fromSub($eligibleDerivatives, 'eligible_derivatives')
+            ->select('version_id')->distinct()
+            ->whereRaw("COALESCE(metadata->>'converter_version', '0')::integer >= ?", [DesignViewerConverter::version()]);
         $blockingPackages = (clone $query)->withOpenBlockingCount()->get(['design_packages.id']);
         $sections = DesignPackageSection::query()->where('organization_id', $organizationId)->whereIn('package_id', $packageIds)
             ->whereRaw("COALESCE(design_package_sections.metadata->>'composition_active', 'true') != 'false'")
@@ -105,8 +117,8 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
             'documents_count' => (clone $documents)->count(),
             'uploaded_documents_count' => (clone $documents)->whereHas('currentVersion')->count(),
             'models_count' => (clone $models)->count(),
-            'ready_models_count' => (clone $models)->whereHas('currentVersion.readyDerivative', static fn ($derivative) => $derivative
-                ->whereRaw("COALESCE(metadata->>'converter_version', '0')::integer >= ?", [DesignViewerConverter::version()]))->count(),
+            'ready_models_count' => (clone $models)->whereHas('currentVersion', static fn ($version) => $version
+                ->whereIn('design_artifact_versions.id', $readyModelVersions))->count(),
             'blocking_issue_occurrences_count' => $blockingPackages->sum('open_blocking_comments_count'),
             'blocked_packages_count' => $blockingPackages->where('open_blocking_comments_count', '>', 0)->count(),
             'overdue_count' => (clone $query)->whereDate('planned_issue_date', '<', now()->toDateString())

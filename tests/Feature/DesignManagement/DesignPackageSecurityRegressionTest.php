@@ -277,6 +277,100 @@ final class DesignPackageSecurityRegressionTest extends TestCase
             ->assertOk()->assertJsonPath('data.0.id', $second->id)->assertJsonPath('meta.total', 1);
     }
 
+    public function test_ready_model_summary_does_not_repeat_derivative_scans(): void
+    {
+        $actor = $this->context(['view']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $package = $this->package($actor, $project);
+        for ($index = 0; $index < 16; $index++) {
+            $version = $this->version($actor, $package, 'model', 'ifc');
+            if ($index < 15) {
+                $this->readyDerivative($version, ['payload' => str_repeat(hash('sha256', (string) $index), 2000)]);
+            }
+        }
+
+        DB::enableQueryLog();
+        try {
+            $summary = app(DesignManagementService::class)->packageSummary($actor->organization->id, ['project_id' => $project->id], $actor->user);
+            $queries = array_values(array_filter(DB::getQueryLog(), static fn (array $query): bool =>
+                str_contains($query['query'], 'select count(*) as aggregate from "design_artifacts"')
+                && str_contains($query['query'], 'design_model_derivatives')));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        self::assertSame(16, $summary['models_count']);
+        self::assertSame(15, $summary['ready_models_count']);
+        self::assertCount(1, $queries);
+        $rows = DB::select('EXPLAIN (ANALYZE, TIMING FALSE, FORMAT JSON) '.$queries[0]['query'], $queries[0]['bindings']);
+        $plan = json_decode($rows[0]->{'QUERY PLAN'}, true, 512, JSON_THROW_ON_ERROR)[0]['Plan'];
+        $visited = 0;
+        $walk = function (array $node) use (&$walk, &$visited): void {
+            if (str_contains($node['Filter'] ?? '', 'converter_version')) {
+                $visited += (($node['Actual Rows'] ?? 0) + ($node['Rows Removed by Filter'] ?? 0)) * ($node['Actual Loops'] ?? 0);
+            }
+            foreach ($node['Plans'] ?? [] as $child) {
+                $walk($child);
+            }
+        };
+        $walk($plan);
+        self::assertGreaterThan(0, $visited);
+        self::assertLessThanOrEqual(15, $visited, 'Converter metadata must be evaluated once per eligible derivative.');
+    }
+
+    public function test_ready_model_summary_preserves_version_viewer_composition_and_scope_filters(): void
+    {
+        $actor = $this->context(['view']);
+        $project = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $package = $this->package($actor, $project);
+        $ready = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($ready);
+        $alsoCurrent = $ready->replicate();
+        $alsoCurrent->version_number = '2';
+        $alsoCurrent->save();
+        $this->readyDerivative($alsoCurrent);
+
+        $newer = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($newer, ['converter_version' => DesignViewerConverter::version() + 1]);
+        $outdated = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($outdated, ['converter_version' => DesignViewerConverter::version() - 1]);
+        $missing = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($missing)->update(['metadata' => []]);
+        foreach (['status' => 'failed', 'viewer_provider' => 'other', 'derivative_format' => 'other'] as $key => $value) {
+            $version = $this->version($actor, $package, 'model', 'ifc');
+            $this->readyDerivative($version, ['converter_version' => 'broken'])->update([$key => $value]);
+        }
+        $historical = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($historical, ['converter_version' => 'broken']);
+        $historical->update(['is_current' => false]);
+        $document = $this->version($actor, $package, 'text_document', 'pdf');
+        $this->readyDerivative($document, ['converter_version' => 'broken']);
+        $inactive = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($inactive, ['converter_version' => 'broken']);
+        $inactive->artifact->update(['metadata' => ['composition_active' => false]]);
+        $section = DesignPackageSection::query()->create([
+            'organization_id' => $actor->organization->id, 'project_id' => $project->id,
+            'package_id' => $package->id, 'code' => 'AR', 'title' => 'AR', 'project_stage' => 'pd',
+            'metadata' => ['composition_active' => false],
+        ]);
+        $sectionModel = $this->version($actor, $package, 'model', 'ifc');
+        $this->readyDerivative($sectionModel, ['converter_version' => 'broken']);
+        $sectionModel->artifact->update(['section_id' => $section->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $actor->organization->id]);
+        $otherPackage = $this->package($actor, $otherProject);
+        $this->readyDerivative($this->version($actor, $otherPackage, 'model', 'ifc'), ['converter_version' => 'broken']);
+        $foreign = $this->context(['view']);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreign->organization->id]);
+        $foreignPackage = $this->package($foreign, $foreignProject);
+        $this->readyDerivative($this->version($foreign, $foreignPackage, 'model', 'ifc'), ['converter_version' => '2147483648']);
+
+        $summary = app(DesignManagementService::class)->packageSummary($actor->organization->id, ['project_id' => $project->id], $actor->user);
+        self::assertSame(2, $summary['ready_models_count']);
+        self::assertSame(8, $summary['models_count']);
+        self::assertSame(0, app(DesignManagementService::class)->packageSummary($actor->organization->id, ['project_id' => $foreignProject->id], $actor->user)['ready_models_count']);
+    }
+
     public function test_package_metadata_edit_checks_lock_and_the_displayed_update_timestamp(): void
     {
         $actor = $this->context(['view', 'edit']);
@@ -387,6 +481,15 @@ final class DesignPackageSecurityRegressionTest extends TestCase
         self::assertSame('ready', app(DesignCompletenessService::class)->run($package->fresh(), $actor->user->id)->status->value);
 
         return $package->fresh();
+    }
+
+    private function readyDerivative(DesignArtifactVersion $version, array $metadata = []): DesignModelDerivative
+    {
+        return DesignModelDerivative::query()->create([
+            'organization_id' => $version->organization_id, 'project_id' => $version->project_id,
+            'version_id' => $version->id, 'viewer_provider' => 'thatopen', 'derivative_format' => 'thatopen_frag',
+            'status' => 'ready', 'metadata' => array_replace(['converter_version' => DesignViewerConverter::version()], $metadata),
+        ]);
     }
 
     private function context(array $permissions): AdminApiTestContext
