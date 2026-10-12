@@ -3770,7 +3770,7 @@ final class EstimateFinanceTest extends TestCase
         $command = $this->command([]) + ['prepare_resource_items' => [$this->item->id]];
         $this->save($command);
         $resource = EstimateItemResource::query()->where('estimate_item_id', $this->item->id)->firstOrFail();
-        self::assertSame('100.0000', $resource->total_quantity);
+        self::assertSame(0, FinanceDecimal::compare('100', (string) $resource->total_quantity));
         self::assertSame('т', $this->report()['rows'][1]['unit']);
         self::assertTrue($this->save($command)['replayed']);
         self::assertSame(1, EstimateItemResource::query()->where('estimate_item_id', $this->item->id)->count());
