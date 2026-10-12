@@ -205,6 +205,11 @@ final class AssistantDocumentService
 
     public function status(User $actor, int $organizationId, AIAssistantDocument $document): AIAssistantDocument
     {
+        if (AssistantNativeDocumentRegistry::forDocument($document) !== null) {
+            return $this->policy->accessibleDocuments($actor, $organizationId, AIAssistantDocument::query()->whereKey($document->id))
+                ->select(['id', 'filename', 'status', 'coverage_status', 'processed_at', 'metadata'])->first()
+                ?? throw new RuntimeException('ai_assistant_document_access_denied');
+        }
         $this->assertReadable($actor, $organizationId, $document);
 
         return $document;

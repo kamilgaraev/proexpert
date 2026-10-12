@@ -31,6 +31,36 @@ use Tests\TestCase;
 
 final class AssistantSalesNativeFileAdapterTest extends TestCase
 {
+    public function test_native_status_returns_current_metadata_without_downloading_body_and_rejects_changed_mapping(): void
+    {
+        [$fixture, $batch, $adapter] = $this->fixture();
+        $document = $adapter->map($fixture->owner, $fixture->organization->id, 'crm_import_batch', $batch->id);
+        AIAssistantDocument::query()->whereKey($document->id)->update(['status' => 'ready', 'coverage_status' => 'full']);
+        $this->app->instance(AssistantSalesNativeFileAdapter::class, $this->noStorageAdapter());
+        $service = app(AssistantDocumentService::class);
+        $current = $service->status($fixture->owner, $fixture->organization->id, $document);
+        self::assertSame('ready', $current->status);
+        self::assertSame('full', $current->coverage_status);
+        self::assertSame($document->filename, $current->filename);
+        self::assertArrayNotHasKey('extracted_text', $current->getAttributes());
+        self::assertArrayNotHasKey('storage_path', $current->getAttributes());
+        $batch->update(['stored_path' => 'org-'.$fixture->organization->id.'/crm/imports/'.Str::uuid().'.csv']);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('ai_assistant_document_access_denied');
+        $service->status($fixture->owner, $fixture->organization->id, $document);
+    }
+
+    public function test_native_status_rechecks_current_role_before_returning_metadata(): void
+    {
+        [$fixture, $batch, $adapter] = $this->fixture();
+        $document = $adapter->map($fixture->owner, $fixture->organization->id, 'crm_import_batch', $batch->id);
+        $this->app->instance(AssistantSalesNativeFileAdapter::class, $this->noStorageAdapter());
+        UserRoleAssignment::query()->where('user_id', $fixture->owner->id)->update(['is_active' => false]);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('ai_assistant_document_access_denied');
+        app(AssistantDocumentService::class)->status($fixture->owner, $fixture->organization->id, $document);
+    }
+
     public function test_completed_metadata_list_checks_twenty_current_native_sources_without_downloading_bodies(): void
     {
         [$fixture, $batch, $adapter] = $this->fixture();
