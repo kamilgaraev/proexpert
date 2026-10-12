@@ -18,20 +18,30 @@ use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOper
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
+use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use App\Services\Storage\FileService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Mockery;
 use RuntimeException;
-use Tests\Support\EstimateGeneration\EstimateGenerationApplicationTestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase;
 
-final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicationTestCase
+final class DocumentStorageAtomicPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
-    private string $schema;
+    private EstimateGenerationSession $target;
+
+    private EstimateGenerationSession $source;
+
+    private User $actor;
+
+    private string $targetPrefix;
+
+    private string $sourcePrefix;
 
     private array $objects = [];
 
@@ -40,38 +50,16 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
     protected function setUp(): void
     {
         parent::setUp();
-        self::assertSame('pgsql', DB::getDriverName());
-        self::assertStringEndsWith('_testing', DB::connection()->getDatabaseName());
-        $this->schema = 'most_storage_atomic_'.bin2hex(random_bytes(8));
-        DB::unprepared('CREATE SCHEMA "'.$this->schema.'"');
-        DB::unprepared('SET search_path TO "'.$this->schema.'"');
-        DB::unprepared(<<<'SQL'
-            CREATE TABLE organizations (id bigint PRIMARY KEY, deleted_at timestamp NULL);
-            CREATE TABLE estimate_generation_sessions (
-                id bigint PRIMARY KEY, organization_id bigint NOT NULL, project_id bigint NOT NULL,
-                user_id bigint NOT NULL, status varchar(32) NOT NULL,
-                processing_stage varchar(80), processing_progress integer NOT NULL DEFAULT 0,
-                state_version integer NOT NULL DEFAULT 0, resume_status varchar(32),
-                input_payload jsonb NOT NULL DEFAULT '{}', analysis_payload jsonb NOT NULL DEFAULT '{}',
-                last_error text, failure_code text, created_at timestamp, updated_at timestamp
-            );
-            CREATE TABLE estimate_generation_documents (
-                id bigserial PRIMARY KEY, organization_id bigint NOT NULL, project_id bigint NOT NULL,
-                session_id bigint NOT NULL, user_id bigint NOT NULL,
-                filename text NOT NULL, mime_type text, storage_path text NOT NULL,
-                status varchar(32), processing_stage varchar(80), progress_percent integer,
-                processing_control_status varchar(32) NOT NULL DEFAULT 'active',
-                file_size_bytes bigint, checksum_sha256 varchar(64), source_version varchar(80),
-                processed_page_count integer, ocr_attempts integer,
-                structured_payload jsonb NOT NULL DEFAULT '{}', meta jsonb NOT NULL DEFAULT '{}',
-                created_at timestamp, updated_at timestamp
-            );
-            CREATE TABLE estimate_generation_processing_units (id bigint PRIMARY KEY, document_id bigint NOT NULL);
-            INSERT INTO organizations (id) VALUES (10);
-            INSERT INTO estimate_generation_sessions
-                (id, organization_id, project_id, user_id, status)
-                VALUES (30, 10, 20, 40, 'processing_documents'), (31, 10, 20, 40, 'draft');
-            SQL);
+        config(['cache.default' => 'array']);
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->for($organization)->create();
+        $this->actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $scope = ['organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $this->actor->id,
+            'state_version' => 0, 'input_payload' => []];
+        $this->target = EstimateGenerationSession::query()->create([...$scope, 'status' => 'processing_documents']);
+        $this->source = EstimateGenerationSession::query()->create([...$scope, 'status' => 'draft']);
+        $this->targetPrefix = 'org-'.$organization->id.'/estimate-generation/sessions/'.$this->target->id.'/documents/';
+        $this->sourcePrefix = 'org-'.$organization->id.'/estimate-generation/sessions/'.$this->source->id.'/documents/';
         Queue::fake();
         Event::fake([static fn (string $event): bool => str_ends_with($event, ': '.EstimateGenerationDocument::class)]);
         $authorization = $this->createMock(EstimateGenerationActionAuthorization::class);
@@ -83,15 +71,6 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
         $this->app->instance(EffectiveSettingsResolver::class, $this->settings());
     }
 
-    protected function tearDown(): void
-    {
-        if (isset($this->schema) && preg_match('/^most_storage_atomic_[a-f0-9]{16}$/D', $this->schema) === 1) {
-            DB::unprepared('SET search_path TO public');
-            DB::unprepared('DROP SCHEMA "'.$this->schema.'" CASCADE');
-        }
-        parent::tearDown();
-    }
-
     public function test_failure_of_second_upload_rolls_back_rows_version_jobs_and_new_objects(): void
     {
         $this->storage(failHeadAt: 2);
@@ -99,7 +78,7 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
             app(UploadEstimateGenerationDocuments::class)->handle($this->generationSession(), 0, $this->files(), $this->actor());
             self::fail('Expected the second object verification to fail.');
         } catch (TypedFailureException) {
-            self::assertSame(0, EstimateGenerationDocument::query()->count());
+            self::assertSame(0, $this->target->documents()->count());
             self::assertSame(0, $this->generationSession()->state_version);
             self::assertCount(2, $this->deleted);
             self::assertSame([], $this->objects);
@@ -122,7 +101,7 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
             app(UploadEstimateGenerationDocuments::class)->handle($this->generationSession(), 0, $this->files(), $this->actor());
             self::fail('Expected fresh authorization to reject publication.');
         } catch (AuthorizationException) {
-            self::assertSame(0, EstimateGenerationDocument::query()->count());
+            self::assertSame(0, $this->target->documents()->count());
             self::assertSame(0, $this->generationSession()->state_version);
             self::assertCount(2, $this->deleted);
             self::assertSame([], $this->objects);
@@ -141,7 +120,7 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
             app(UploadEstimateGenerationDocuments::class)->handle($stale, 0, [$this->files()[1]], $this->actor());
             self::fail('Expected stale state rejection.');
         } catch (StaleEstimateGenerationState) {
-            self::assertSame(1, EstimateGenerationDocument::query()->count());
+            self::assertSame(1, $this->target->documents()->count());
             self::assertCount(1, $this->objects);
             self::assertSame([], $this->deleted);
         }
@@ -152,25 +131,26 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
         $this->storage(failCopyAt: 2);
         $contents = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
         foreach (['one', 'two'] as $name) {
-            $path = 'org-10/estimate-generation/sessions/31/documents/'.$name.'.pdf';
+            $path = $this->sourcePrefix.$name.'.pdf';
             $this->objects[$path] = strlen($contents);
             EstimateGenerationDocument::query()->create([
-                'organization_id' => 10, 'project_id' => 20, 'session_id' => 31, 'user_id' => 40,
+                'organization_id' => $this->source->organization_id, 'project_id' => $this->source->project_id,
+                'session_id' => $this->source->id, 'user_id' => $this->actor->id,
                 'filename' => $name.'.pdf', 'mime_type' => 'application/pdf', 'storage_path' => $path,
                 'status' => 'ready', 'file_size_bytes' => strlen($contents), 'checksum_sha256' => hash('sha256', $contents),
                 'source_version' => 'sha256:'.hash('sha256', $contents), 'meta' => ['original_extension' => 'pdf'],
             ]);
         }
         try {
-            app(ReuseEstimateGenerationDocuments::class)->handle($this->generationSession(), 0, 31, $this->actor());
+            app(ReuseEstimateGenerationDocuments::class)->handle($this->generationSession(), 0, (int) $this->source->id, $this->actor());
             self::fail('Expected copy verification failure.');
         } catch (TypedFailureException) {
             self::assertSame(0, $this->generationSession()->documents()->count());
-            self::assertSame(2, EstimateGenerationDocument::query()->count());
+            self::assertSame(2, $this->source->documents()->count());
             self::assertCount(2, $this->objects);
             self::assertCount(2, $this->deleted);
             foreach ($this->deleted as $path) {
-                self::assertStringStartsWith('org-10/estimate-generation/sessions/30/documents/', $path);
+                self::assertStringStartsWith($this->targetPrefix, $path);
             }
             self::assertSame(0, $this->generationSession()->state_version);
             Queue::assertNothingPushed();
@@ -202,7 +182,7 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
         app(UploadEstimateGenerationDocuments::class)->handle($session, 0, [$this->files()[0]], $this->actor());
         $input = $this->generationSession()->input_payload;
         self::assertSame('user', $input['generation_actor_type']);
-        self::assertSame(40, $input['generation_actor_id']);
+        self::assertSame($this->actor->id, $input['generation_actor_id']);
         self::assertNull($input['generation_attempt_id']);
         self::assertSame(1, $this->generationSession()->state_version);
     }
@@ -211,13 +191,13 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
     {
         $service = $this->storage();
         $document = EstimateGenerationDocument::query()->create([
-            'organization_id' => 10, 'project_id' => 20, 'session_id' => 30, 'user_id' => 40,
-            'filename' => 'saved.pdf', 'storage_path' => 'org-10/estimate-generation/sessions/30/documents/saved.pdf',
+            'organization_id' => $this->target->organization_id, 'project_id' => $this->target->project_id,
+            'session_id' => $this->target->id, 'user_id' => $this->actor->id,
+            'filename' => 'saved.pdf', 'storage_path' => $this->targetPrefix.Str::uuid().'.pdf',
         ]);
         self::assertFalse($service->removeUnpublishedDocumentObject($this->generationSession(), $document));
-        foreach (['org-11/estimate-generation/sessions/30/documents/foreign.pdf',
-            'org-10/estimate-generation/sessions/31/documents/source.pdf',
-            'org-10/estimate-generation/sessions/30/documents/../source.pdf'] as $path) {
+        foreach (['org-999999/estimate-generation/sessions/'.$this->target->id.'/documents/foreign.pdf',
+            $this->sourcePrefix.'source.pdf', $this->targetPrefix.'../source.pdf'] as $path) {
             $document->storage_path = $path;
             self::assertFalse($service->removeUnpublishedDocumentObject($this->generationSession(), $document));
         }
@@ -226,15 +206,12 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
 
     private function generationSession(): EstimateGenerationSession
     {
-        return EstimateGenerationSession::query()->findOrFail(30);
+        return $this->target->fresh();
     }
 
     private function actor(): User
     {
-        $actor = new User;
-        $actor->id = 40;
-
-        return $actor;
+        return $this->actor;
     }
 
     private function files(): array
@@ -251,7 +228,8 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
         $copies = 0;
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('upload')->andReturnUsing(function (UploadedFile $file) use (&$uploads): string {
-            $path = 'org-10/estimate-generation/sessions/30/documents/upload-'.++$uploads.'.pdf';
+            $uploads++;
+            $path = $this->targetPrefix.Str::uuid().'.pdf';
             $this->objects[$path] = (int) $file->getSize();
 
             return $path;
@@ -272,13 +250,18 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
             $this->deleted[] = $path;
             unset($this->objects[$path]);
         });
+        $files->shouldReceive('describeCurrent')->andReturnUsing(function (string $path): array {
+            $body = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
+
+            return ['size' => $this->objects[$path], 'sha256' => hash('sha256', $body)];
+        });
         $service = new OcrDocumentStorageService($files);
         $this->app->instance(OcrDocumentStorageService::class, $service);
         $sources = Mockery::mock(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage::class);
-        $sources->shouldReceive('open')->andReturnUsing(static function (EstimateGenerationDocument $document, string $version) {
+        $sources->shouldReceive('open')->andReturnUsing(function (EstimateGenerationDocument $document, string $version) {
             $contents = file_get_contents(base_path('tests/Fixtures/EstimateGeneration/ocr/vector-plan.pdf'));
-            self::assertSame(10, (int) $document->organization_id);
-            self::assertSame(20, (int) $document->project_id);
+            self::assertSame((int) $this->target->organization_id, (int) $document->organization_id);
+            self::assertSame((int) $this->target->project_id, (int) $document->project_id);
             self::assertSame(strlen($contents), $document->file_size_bytes);
             self::assertSame(hash('sha256', $contents), $document->checksum_sha256);
             self::assertSame('sha256:'.hash('sha256', $contents), $version);
@@ -307,9 +290,9 @@ final class DocumentStorageAtomicPostgresTest extends EstimateGenerationApplicat
             'budgets' => ['daily' => '100.00', 'monthly' => '1000.00', 'currency' => 'RUB'],
         ];
         $settings = EffectiveEstimateGenerationSettings::fromRecord([
-            'snapshot_id' => 1, 'scope' => 'organization', 'organization_id' => 10, 'version' => 1,
+            'snapshot_id' => 1, 'scope' => 'organization', 'organization_id' => (int) $this->target->organization_id, 'version' => 1,
             'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
-        ], 10);
+        ], (int) $this->target->organization_id);
         $store = new class($settings) implements EffectiveSettingsOperationStore
         {
             public function __construct(private EffectiveEstimateGenerationSettings $settings) {}

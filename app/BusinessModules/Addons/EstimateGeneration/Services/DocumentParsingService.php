@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UnpublishedDocumentObjectBatch;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -30,15 +31,15 @@ class DocumentParsingService
      * @param  array<int, UploadedFile>  $files
      * @return Collection<int, EstimateGenerationDocument>
      */
-    public function storeParsedDocuments(EstimateGenerationSession $session, array $files, User $user): Collection
+    public function storeParsedDocuments(EstimateGenerationSession $session, array $files, User $user, ?UnpublishedDocumentObjectBatch $batch = null): Collection
     {
         $this->documentReconciler->assertMutable($session);
         $documents = collect();
 
         try {
-            DB::transaction(function () use ($session, $files, $user, $documents): void {
+            DB::transaction(function () use ($session, $files, $user, $documents, $batch): void {
                 foreach ($files as $file) {
-                    $documents->push($this->storageService->storeUploadedDocument($session, $file, $user));
+                    $documents->push($this->storageService->storeUploadedDocument($session, $file, $user, $batch));
                 }
                 $this->startProcessing($session, $documents);
                 foreach ($documents as $document) {
@@ -57,7 +58,7 @@ class DocumentParsingService
      * @param  Collection<int, EstimateGenerationDocument>  $sourceDocuments
      * @return Collection<int, EstimateGenerationDocument>
      */
-    public function reuseDocuments(EstimateGenerationSession $session, Collection $sourceDocuments, User $user): Collection
+    public function reuseDocuments(EstimateGenerationSession $session, Collection $sourceDocuments, User $user, ?UnpublishedDocumentObjectBatch $batch = null): Collection
     {
         $this->documentReconciler->assertMutable($session);
         $existingSourceIds = $session->documents()
@@ -68,12 +69,12 @@ class DocumentParsingService
         $documents = collect();
 
         try {
-            DB::transaction(function () use ($session, $sourceDocuments, $existingSourceIds, $user, $documents): void {
+            DB::transaction(function () use ($session, $sourceDocuments, $existingSourceIds, $user, $documents, $batch): void {
                 foreach ($sourceDocuments as $sourceDocument) {
                     if (in_array((int) $sourceDocument->id, $existingSourceIds, true)) {
                         continue;
                     }
-                    $documents->push($this->storageService->storeReusedDocument($session, $sourceDocument, $user));
+                    $documents->push($this->storageService->storeReusedDocument($session, $sourceDocument, $user, $batch));
                 }
                 $this->startProcessing($session, $documents);
                 foreach ($documents as $document) {

@@ -985,6 +985,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->withoutOverlapping(5)
                     ->onOneServer();
                 $this->app->make(Schedule::class)
+                    ->call(fn (): int => $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverUnpublishedDocumentObjects::class)->handle())
+                    ->name('estimate-generation:recover-unpublished-document-objects')
+                    ->everyTenMinutes()->withoutOverlapping(10)->onOneServer();
+                $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationPipelinesJob)
                     ->everyMinute()
                     ->withoutOverlapping();

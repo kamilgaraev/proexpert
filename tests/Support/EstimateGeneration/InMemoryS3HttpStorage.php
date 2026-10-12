@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Support\EstimateGeneration;
 
 use Aws\S3\S3Client;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Response;
@@ -22,12 +23,16 @@ final class InMemoryS3HttpStorage
 
     private array $objects = [];
 
-    public function install(): void
+    public function install(?\Closure $intercept = null): void
     {
         $client = new S3Client(['version' => '2006-03-01', 'region' => 'us-east-1',
             'endpoint' => 'https://s3.fixture.invalid', 'use_path_style_endpoint' => true,
             'credentials' => ['key' => 'test-only', 'secret' => 'test-only'],
-            'http_handler' => $this->handle(...)]);
+            'http_handler' => function (RequestInterface $request) use ($intercept): PromiseInterface {
+                $response = $intercept?->__invoke($request);
+
+                return $response instanceof Response ? $this->response($request, $response) : $this->handle($request);
+            }]);
         $adapter = new FlysystemS3Adapter($client, self::BUCKET);
         Storage::set('s3', new AwsS3V3Adapter(new Filesystem($adapter), $adapter, ['bucket' => self::BUCKET], $client));
     }
@@ -43,11 +48,11 @@ final class InMemoryS3HttpStorage
         parse_str($request->getUri()->getQuery(), $query);
         $method = $request->getMethod();
         if ($method === 'PUT' && array_key_exists('tagging', $query)) {
-            return Create::promiseFor(new Response(isset($this->objects[$key]) ? 200 : 404));
+            return $this->response($request, new Response(isset($this->objects[$key]) ? 200 : 404));
         }
         if ($method === 'PUT') {
             if ($request->getHeaderLine('If-None-Match') === '*' && isset($this->objects[$key])) {
-                return Create::promiseFor(new Response(412, ['Content-Type' => 'application/xml'],
+                return $this->response($request, new Response(412, ['Content-Type' => 'application/xml'],
                     '<Error><Code>PreconditionFailed</Code><Message>Object exists</Message></Error>'));
             }
             $body = (string) $request->getBody();
@@ -61,11 +66,11 @@ final class InMemoryS3HttpStorage
         if (in_array($method, ['HEAD', 'GET'], true)) {
             $object = $this->objects[$key] ?? null;
             if ($object === null) {
-                return Create::promiseFor(new Response(404, ['Content-Type' => 'application/xml'], '<Error><Code>NoSuchKey</Code></Error>'));
+                return $this->response($request, new Response(404, ['Content-Type' => 'application/xml'], '<Error><Code>NoSuchKey</Code></Error>'));
             }
             if (($query['versionId'] ?? $object['headers']['x-amz-version-id']) !== $object['headers']['x-amz-version-id']
                 || ($request->hasHeader('If-Match') && $request->getHeaderLine('If-Match') !== $object['headers']['ETag'])) {
-                return Create::promiseFor(new Response(412, ['Content-Type' => 'application/xml'], '<Error><Code>PreconditionFailed</Code></Error>'));
+                return $this->response($request, new Response(412, ['Content-Type' => 'application/xml'], '<Error><Code>PreconditionFailed</Code></Error>'));
             }
 
             return Create::promiseFor(new Response(200, $object['headers'], $method === 'GET' ? $object['body'] : ''));
@@ -76,5 +81,13 @@ final class InMemoryS3HttpStorage
             return Create::promiseFor(new Response(204));
         }
         throw new RuntimeException('Unexpected test S3 operation.');
+    }
+
+    private function response(RequestInterface $request, Response $response): PromiseInterface
+    {
+        // AWS expects HTTP failures as rejected promises, just like its Guzzle transport.
+        return $response->getStatusCode() >= 400
+            ? Create::rejectionFor(['response' => $response, 'exception' => new RequestException('Fixture HTTP failure.', $request, $response)])
+            : Create::promiseFor($response);
     }
 }

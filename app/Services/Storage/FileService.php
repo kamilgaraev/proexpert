@@ -999,6 +999,7 @@ class FileService
         ?Organization $organization = null,
         bool $respectRequestedVisibility = false,
         bool $privacyMode = false,
+        ?\Closure $onObjectPrepared = null,
     ): string|false {
         $disk = $this->disk($organization);
 
@@ -1161,6 +1162,7 @@ class FileService
                     'visibility' => $visibilityParam,
                 ]);
 
+                $onObjectPrepared?->__invoke($fullPath);
                 $result = $disk->put($fullPath, $fileContent, $visibilityParam);
                 if ($result === true) {
                     $this->tagEstimateGenerationObject($fullPath, true);
