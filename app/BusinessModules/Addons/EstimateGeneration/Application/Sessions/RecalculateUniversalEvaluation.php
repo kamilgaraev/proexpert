@@ -89,7 +89,8 @@ final readonly class RecalculateUniversalEvaluation
                 'construction_type' => $payload['construction_type'] ?? 'new_construction', 'price_policy' => $payload['price_policy'] ?? 'normative',
                 'scope_selection' => $payload['scope_selection'] ?? null,
                 'scenario_selections' => $payload['scenario_selections'] ?? null,
-                'currency_selections' => $payload['currency_selections'] ?? []];
+                'currency_selections' => $payload['currency_selections'] ?? [],
+                'contingency_selection' => $payload['contingency_selection'] ?? null];
             $draft = $this->arithmetic->recalculate($draft, $context, $snapshot, $decisions, $actor, $session);
             $draft['source_input_version'] = $version;
             $draft['evaluation_result'] = $this->builder->build($draft, $snapshot, $decisions);

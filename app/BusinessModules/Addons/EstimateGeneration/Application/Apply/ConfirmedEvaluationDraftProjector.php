@@ -115,14 +115,21 @@ final readonly class ConfirmedEvaluationDraftProjector
                 $localEstimates[] = [...$estimate, 'title' => $estimate['title'] ?? $estimate['key'] ?? 'Выбранный состав', 'sections' => $sections];
             }
         }
+        $contingency = $selected['scenario']['contingency'] ?? null;
         if (count($consumed) !== count($positions) || $positions === []
-            || ! BigDecimal::of((string) ($fresh['contingency_amount'] ?? '0'))->isZero()
-            || ! BigDecimal::of((string) ($fresh['contingency_percent'] ?? '0'))->isZero()) {
+            || ($contingency === null && (! BigDecimal::of((string) ($fresh['contingency_amount'] ?? '0'))->isZero()
+                || ! BigDecimal::of((string) ($fresh['contingency_percent'] ?? '0'))->isZero()))) {
             $this->reject();
         }
         $projection = [...$fresh, 'local_estimates' => $localEstimates, 'generation_contract' => self::CONTRACT,
             'stage6_status' => 'ready', 'is_complete' => true, 'confirmed_evaluation' => $selection,
-            'accepted_payable_total' => $selected['total_by_currency']['RUB'], 'contingency_amount' => '0.00'];
+            'accepted_payable_total' => $selected['total_by_currency']['RUB'], 'contingency_amount' => $contingency['money']['net_amount'] ?? '0.00',
+            'contingency_kind' => 'fixed',
+            ...($contingency === null ? [] : ['source_contingency_money' => $contingency['money'], 'confirmed_contingency' => $contingency])];
+        unset($projection['contingency_percent']);
+        if (isset($projection['totals']['contingency'])) {
+            $projection['totals']['contingency'] = ['kind' => 'fixed', 'amount' => $projection['contingency_amount']];
+        }
         $this->quantities->assertCurrent(...[...$scope, $projection]);
 
         return (new BuildMostEstimateDraft)->seal($projection);

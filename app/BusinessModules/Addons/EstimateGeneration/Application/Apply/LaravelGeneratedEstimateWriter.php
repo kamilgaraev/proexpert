@@ -217,7 +217,9 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                             ? ['vat_calculation_method' => \App\BusinessModules\Features\BudgetEstimates\Services\EstimateSourceVatCalculator::METHOD,
                                 'source_money_work_keys' => array_merge(...array_map(static fn (array $local): array => array_merge(...array_map(
                                     static fn (array $section): array => array_column($section['work_items'], 'key'), $local['sections'])), $draft['local_estimates'])),
-                                'confirmed_evaluation' => $draft['confirmed_evaluation']] : []),
+                                'confirmed_evaluation' => $draft['confirmed_evaluation'],
+                                ...(isset($draft['source_contingency_money']) ? ['source_contingency_money' => $draft['source_contingency_money'],
+                                    'confirmed_contingency' => $draft['confirmed_contingency']] : [])] : []),
                         'generation_session_id' => $session->getKey(),
                         'draft_traceability' => $draft['traceability'] ?? [],
                         'quality_summary' => $draft['quality_summary'] ?? null,

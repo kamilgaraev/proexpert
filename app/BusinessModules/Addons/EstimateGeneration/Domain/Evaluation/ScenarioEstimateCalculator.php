@@ -102,6 +102,17 @@ final class ScenarioEstimateCalculator
                     'unit_price' => $hasSourcePrice ? (string) $unitPrice : null, 'total_cost' => $amount, 'pricing_status' => $status,
                     'money_breakdown' => $money];
             }
+            $contingency = null;
+            if (isset($scenario['contingency'])) {
+                if (! is_array($scenario['contingency'])) {
+                    throw new InvalidArgumentException('scenario_contingency_invalid');
+                }
+                $contingency = (new EvaluationContingency)->component($scenario['contingency']);
+                $totals['RUB'] = (string) BigDecimal::of($totals['RUB'] ?? '0')->plus($contingency['money']['quoted_amount'])->toScale(2);
+                $netTotals['RUB'] = (string) BigDecimal::of($netTotals['RUB'] ?? '0')->plus($contingency['money']['net_amount'])->toScale(2);
+                $vatTotals['RUB'] = (string) BigDecimal::of($vatTotals['RUB'] ?? '0')->plus($contingency['money']['vat_amount'])->toScale(2);
+                $grossTotals['RUB'] = (string) BigDecimal::of($grossTotals['RUB'] ?? '0')->plus($contingency['money']['gross_amount'])->toScale(2);
+            }
             ksort($totals);
             $currencyConversionRequired = $currencyConversionRequired || array_diff(array_keys($totals), ['RUB']) !== [];
             $costsComplete = $unknown === [] && $priceConditions === [] && $positions !== [];
@@ -114,7 +125,8 @@ final class ScenarioEstimateCalculator
                 'payable_total_by_currency' => $costsComplete && $taxUnknown === [] ? $grossTotals : null,
                 'price_conditions_unresolved' => $priceConditions,
                 'quoted_total_by_currency' => $costsComplete ? $totals : null,
-                'total_by_currency' => $costsComplete && $taxUnknown === [] ? $grossTotals : null];
+                'total_by_currency' => $costsComplete && $taxUnknown === [] ? $grossTotals : null,
+                ...($contingency === null ? [] : ['contingency' => $contingency])];
         }
         $range = null;
         if (count($results) > 1 && $scenarioCostsComplete) {

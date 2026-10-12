@@ -236,7 +236,49 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         return [['included', '47.70', '56.70'], ['excluded', '56.70', '68.40']];
     }
 
-    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100', string $currency = 'RUB'): array
+    #[\PHPUnit\Framework\Attributes\DataProvider('reserveCases')]
+    public function test_confirmed_fixed_contingency_is_preserved_as_a_separate_net_component_with_exact_payable_tax(string $mode, string $quoted,
+        string $reserveNet, string $totalNet, string $payable, string $legacyPercent = '0'): void
+    {
+        [$actor, $session, , $input] = $this->fixture('included', '0.03', 'RUB', ['vat_mode' => $mode, 'quoted_amount' => $quoted, 'legacy_percent' => $legacyPercent]);
+        Queue::fake();
+        config(['cache.default' => 'array']);
+        $confirmation = app(ConfirmEvaluationScenario::class)->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        $session->refresh();
+        self::assertSame($payable, $session->draft_payload['evaluation_result']['scenarios'][1]['total_by_currency']['RUB']);
+        self::assertCount(2, $session->draft_payload['evaluation_result']['scenarios'][1]['positions']);
+        $command = new \App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand(
+            (int) $session->id, (int) $session->organization_id, (int) $session->project_id, $confirmation['state_version'],
+            idempotencyKey: (string) Str::uuid(), artifactHash: $session->draft_payload['artifact_hash'], actor: $actor);
+        $published = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate::class)->handle($command);
+        $estimate = \App\Models\Estimate::query()->findOrFail($published->estimateId);
+        self::assertSame($reserveNet, $estimate->contingency_amount);
+        self::assertSame((string) \Brick\Math\BigDecimal::of($quoted)->toScale(2), $estimate->metadata['source_contingency_money']['quoted_amount']);
+        self::assertSame($mode, $estimate->metadata['source_contingency_money']['vat_mode']);
+        self::assertCount(2, $estimate->items);
+        self::assertNotEmpty($estimate->metadata['confirmed_contingency']['fact_id']);
+        for ($iteration = 0; $iteration < 2; $iteration++) {
+            app(\App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService::class)->recalculateAll($estimate->fresh());
+            $estimate->refresh();
+            self::assertSame($totalNet, $estimate->total_amount);
+            self::assertSame($payable, $estimate->total_amount_with_vat);
+            self::assertSame($reserveNet, $estimate->contingency_amount);
+            $export = (new \ReflectionMethod(\App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService::class, 'prepareTotalsData'))
+                ->invoke(app(\App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService::class), $estimate);
+            self::assertSame($payable, (string) \Brick\Math\BigDecimal::of((string) $export['total_amount_with_vat'])->toScale(2));
+            self::assertSame($reserveNet, (string) \Brick\Math\BigDecimal::of((string) $export['contingency_amount'])->toScale(2));
+        }
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+    }
+
+    public static function reserveCases(): array
+    {
+        return [['included', '120', '100.00', '100.53', '120.63'], ['excluded', '100', '100.00', '100.53', '120.63'],
+            ['not_applicable', '100', '100.00', '100.53', '100.63'], ['included', '0.03', '0.03', '0.56', '0.66'],
+            ['not_applicable', '0', '0.00', '0.53', '0.63', '7']];
+    }
+
+    private function fixture(string $vatMode = 'not_applicable', string $unitPrice = '100', string $currency = 'RUB', ?array $reserve = null): array
     {
         config(['estimate-generation.universal_enabled' => true]);
         $organization = Organization::factory()->create();
@@ -294,6 +336,17 @@ final class EvaluationScenarioConfirmationPostgresTest extends EstimateGeneratio
         }
         app(SaveEvaluationScenarioSet::class)->handle($actor, $scope[1], $scope[2], ['request_id' => (string) Str::uuid(),
             'state_version' => $session->fresh()->state_version, 'definitions' => $definitions]);
+        if ($reserve !== null) {
+            if (($reserve['legacy_percent'] ?? '0') !== '0') {
+                $legacyDraft = $session->fresh()->draft_payload;
+                $legacyDraft['contingency_percent'] = $reserve['legacy_percent'];
+                $session->update(['draft_payload' => (new BuildMostEstimateDraft)->seal($legacyDraft)]);
+            }
+            app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationContingency::class)->handle($actor, $scope[1], $scope[2],
+                ['request_id' => (string) Str::uuid(), 'state_version' => $session->fresh()->state_version, 'kind' => 'fixed', 'currency' => 'RUB',
+                    'quoted_amount' => $reserve['quoted_amount'], 'vat_mode' => $reserve['vat_mode'], 'vat_rate' => '20',
+                    'basis' => 'Подтверждённый резерв выбранного состава.']);
+        }
         $revision = app(RecalculateUniversalEvaluation::class)->handle($actor, $scope[1], $scope[2], $session->fresh()->state_version, (string) Str::uuid());
         self::assertTrue($revision['result']['scope_confirmed']);
         self::assertTrue($revision['result']['can_confirm_for_apply'], json_encode([

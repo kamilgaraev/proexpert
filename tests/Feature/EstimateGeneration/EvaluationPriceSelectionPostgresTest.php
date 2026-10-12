@@ -160,6 +160,33 @@ final class EvaluationPriceSelectionPostgresTest extends EstimateGenerationCanon
         $service->handle($actor, (int) $session->project_id, (int) $session->id, $request);
     }
 
+    public function test_explicit_reserve_is_a_free_canonical_choice_and_retry_does_not_create_another_fact(): void
+    {
+        [$actor, $session] = $this->fixture();
+        $service = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationContingency::class);
+        $input = ['request_id' => (string) Str::uuid(), 'state_version' => 0, 'kind' => 'fixed', 'currency' => 'RUB',
+            'quoted_amount' => '120', 'vat_mode' => 'included', 'vat_rate' => '20', 'basis' => 'Резерв согласован для выбранного состава.'];
+        $receipt = $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+        self::assertEquals($receipt, $service->handle($actor, (int) $session->project_id, (int) $session->id, $input));
+        self::assertSame('0', $receipt['cost_units']);
+        self::assertSame(1, $session->fresh()->state_version);
+        $snapshot = app(ProjectModelRepository::class)->snapshot((int) $session->organization_id, (int) $session->project_id, (int) $session->id);
+        self::assertCount(1, $snapshot->facts);
+        self::assertSame('evaluation_contingency', $snapshot->facts[0]->type);
+        self::assertSame('120.00', $snapshot->facts[0]->value['quoted_amount']);
+        self::assertSame($receipt['fact_id'], $session->fresh()->input_payload['contingency_selection']['fact_id']);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        try {
+            $service->handle($actor, (int) $session->project_id, (int) $session->id, [...$input, 'quoted_amount' => '121']);
+            self::fail('Conflicting reserve confirmation was accepted.');
+        } catch (ValidationException) {
+            self::assertSame(1, $session->fresh()->state_version);
+        }
+        $actor->update(['is_active' => false]);
+        $this->expectException(\Illuminate\Auth\Access\AuthorizationException::class);
+        $service->handle($actor, (int) $session->project_id, (int) $session->id, $input);
+    }
+
     private function fixture(): array
     {
         config(['estimate-generation.universal_enabled' => true]);

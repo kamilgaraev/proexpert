@@ -98,6 +98,17 @@ final class EstimateGenerationEvaluationController extends Controller
             $input['source_type'] ?? 'catalog', $input['search'] ?? '', (int) ($input['page'] ?? 1), (int) ($input['per_page'] ?? 25)))->header('Cache-Control', 'private, no-store');
     }
 
+    public function contingency(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationContingency $contingency): JsonResponse
+    {
+        $input = $request->validate(['request_id' => ['required', 'uuid'], 'state_version' => ['required', 'integer', 'min:0'],
+            'kind' => ['required', 'in:fixed'], 'currency' => ['required', 'in:RUB'], 'quoted_amount' => ['required', 'string', 'max:16'],
+            'vat_mode' => ['required', 'in:included,excluded,not_applicable'], 'vat_rate' => ['required', 'string', 'max:12'],
+            'basis' => ['required', 'string', 'max:1000']]);
+
+        return AdminResponse::success($contingency->handle($request->user(), (int) $project->id, (int) $session->id, $input))->header('Cache-Control', 'private, no-store');
+    }
+
     public function currency(Request $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SaveEvaluationCurrencySelection $currencies): JsonResponse
     {
