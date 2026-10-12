@@ -935,6 +935,18 @@ final class AssistantDataAccessPolicy
         });
     }
 
+    public function resolvedEntityProjectId(User $actor, int $organizationId, string $type, Model $entity): ?int
+    {
+        $projectId = $entity->getAttribute('project_id');
+        if ($type === 'schedule_task') {
+            $scheduleId = $entity->getAttribute('schedule_id');
+            if (! is_numeric($scheduleId) || (int) $scheduleId < 1) { return null; }
+            $projectId = $this->entityQuery($actor, $organizationId, 'schedule')?->whereKey($scheduleId)->value('project_id');
+        }
+
+        return is_numeric($projectId) && (int) $projectId > 0 ? (int) $projectId : null;
+    }
+
     public function entityQuery(User $user, int $organizationId, string $type): ?Builder
     {
         $this->currentCheckpoint?->__invoke();

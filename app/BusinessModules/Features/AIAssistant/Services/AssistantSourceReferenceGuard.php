@@ -96,14 +96,19 @@ class AssistantSourceReferenceGuard
             if ($query !== null && ($reference['content_scope'] ?? null) === 'structured') {
                 $table = $query->getModel()->getTable();
                 $columns = $this->columns[$table] ??= \Illuminate\Support\Facades\Schema::getColumnListing($table);
+                $internalColumns = $type === 'schedule_task' ? array_intersect(['schedule_id'], $columns) : [];
                 $safeColumns = $engineeringReference ? $allowed : (AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? $columns);
                 $columns = array_values(array_intersect($columns, $safeColumns));
                 if (array_diff($reference['checked_fields'] ?? [], $columns) !== []) { return false; }
-                $selected = array_values(array_intersect([$query->getModel()->getKeyName(), 'updated_at', ...($reference['checked_fields'] ?? [])], $columns));
+                $selected = array_values(array_unique([...$internalColumns, ...array_intersect([$query->getModel()->getKeyName(), 'updated_at', ...($reference['checked_fields'] ?? [])], $columns)]));
                 $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $selected));
             }
             $entity = $query?->whereKey($id)->first();
             if (! $entity) {
+                return false;
+            }
+            if ($type === 'schedule_task' && array_key_exists('project_id', $reference) && ($reference['content_scope'] ?? null) === 'structured'
+                && $reference['project_id'] !== $this->policy->resolvedEntityProjectId($actor, $organizationId, $type, $entity)) {
                 return false;
             }
             $unit = null;
