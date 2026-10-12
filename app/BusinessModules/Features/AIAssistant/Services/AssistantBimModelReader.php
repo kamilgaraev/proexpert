@@ -321,13 +321,20 @@ final readonly class AssistantBimModelReader
             'material_query' => ['nullable', 'string', 'max:200'], 'classification_query' => ['nullable', 'string', 'max:200'],
             'storey_query' => ['nullable', 'string', 'max:200'], 'quantity_name' => ['nullable', 'string', 'max:100'],
             'equipment_kind' => ['nullable', 'string', 'in:air_conditioner,fan,pump,boiler,chiller,unknown'],
+            'equipment_kinds' => ['nullable', 'array', 'min:1', 'max:6'],
+            'equipment_kinds.*' => ['string', 'distinct', 'in:air_conditioner,fan,pump,boiler,chiller,ventilation_unit'],
             'offset' => ['integer', 'min:0', 'max:1000000'], 'limit' => ['integer', 'min:1', 'max:20'],
             'include_estimate_links' => ['boolean'], 'include_quantities' => ['boolean'], 'include_properties' => ['boolean'],
             'answer_kind' => ['string', 'in:elements,materials']])->validate();
         if (array_diff(array_keys($filters), ['model_query', 'element_query', 'project_id', 'version_id', 'compare_version_id', 'offset', 'limit', 'include_estimate_links',
-            'property_name', 'property_value', 'material_query', 'classification_query', 'storey_query', 'quantity_name', 'equipment_kind', 'include_quantities', 'include_properties', 'answer_kind']) !== []) {
+            'property_name', 'property_value', 'material_query', 'classification_query', 'storey_query', 'quantity_name', 'equipment_kind', 'equipment_kinds', 'include_quantities', 'include_properties', 'answer_kind']) !== []) {
             throw new \InvalidArgumentException('unsupported_bim_model_argument');
         }
+        if (! empty($filters['equipment_kind']) && ! empty($filters['equipment_kinds'])) {
+            throw new \InvalidArgumentException('conflicting_bim_equipment_filters');
+        }
+        $equipmentKinds = $filters['equipment_kinds'] ?? [];
+        sort($equipmentKinds);
 
         return ['answer_kind' => $filters['answer_kind'] ?? 'elements', 'model_query' => isset($filters['model_query']) ? trim($filters['model_query']) : null,
             'element_query' => isset($filters['element_query']) ? trim($filters['element_query']) : null,
@@ -341,6 +348,7 @@ final readonly class AssistantBimModelReader
             'storey_query' => isset($filters['storey_query']) ? trim($filters['storey_query']) : null,
             'quantity_name' => isset($filters['quantity_name']) ? trim($filters['quantity_name']) : null,
             'equipment_kind' => $filters['equipment_kind'] ?? null,
+            'equipment_kinds' => $equipmentKinds === [] ? null : $equipmentKinds,
             'offset' => (int) ($filters['offset'] ?? 0), 'limit' => (int) ($filters['limit'] ?? 20),
             'include_estimate_links' => (bool) ($filters['include_estimate_links'] ?? false),
             'include_quantities' => ($filters['answer_kind'] ?? 'elements') !== 'materials' && (bool) ($filters['include_quantities'] ?? false),
@@ -473,12 +481,21 @@ final readonly class AssistantBimModelReader
         $projects = [];
         $versions = [];
         $lines = [];
+        $equipmentTotals = array_fill_keys($filters['equipment_kinds'] ?? [], 0);
         foreach ($models as $model) {
             $count = $model['semantic_matching_count'] ?? null;
             $covered = is_int($count) && $count >= 0 && ($model['scan_complete'] ?? false)
                 && ($model['index_coverage']['status'] ?? null) === 'complete'
                 && ($model['semantic_coverage']['status'] ?? null) === 'complete';
             $complete = $complete && $covered;
+            foreach ($equipmentTotals as $kind => $total) {
+                $value = $model['equipment_counts'][$kind] ?? null;
+                if (! $covered || ! is_int($value) || $value < 0 || $total > PHP_INT_MAX - $value) {
+                    $complete = false;
+                } else {
+                    $equipmentTotals[$kind] += $value;
+                }
+            }
             if ($covered && $sum <= PHP_INT_MAX - $count) { $sum += $count; } else { $complete = false; }
             $project = $model['version']['project_id'] ?? null;
             $version = $model['version']['id'] ?? null;
@@ -491,6 +508,10 @@ final readonly class AssistantBimModelReader
         }
         if ($complete && count($projects) === 1 && count($versions) === count($models)) {
             array_unshift($lines, trans_message('ai_assistant_bim.matching_total', ['count' => $sum]));
+            foreach ($equipmentTotals as $kind => $count) {
+                array_unshift($lines, trans_message('ai_assistant_bim.equipment_matching_count',
+                    ['name' => trans_message('ai_assistant_bim.equipment_labels.'.$kind), 'count' => $count]));
+            }
         }
         return implode("\n", $lines);
     }

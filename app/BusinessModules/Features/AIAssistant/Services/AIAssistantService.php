@@ -870,13 +870,22 @@ class AIAssistantService
             $hasCurrentChatImages = $this->currentAttachmentIds !== [];
             $documentCorpusIncomplete = ! $hasCurrentChatImages && $this->documentContextBlocked;
             $documentSearchPartial = false;
+            $currentDocumentRead = false;
+            $documentReadIncomplete = false;
             foreach ($this->activeToolResults as $toolResult) {
                 if ($hasCurrentChatImages || ($toolResult['_tool_name'] ?? null) !== 'search_assistant_documents') {
                     continue;
                 }
-                $documentCorpusIncomplete = $documentCorpusIncomplete || ($toolResult['status'] ?? null) === 'corpus_incomplete';
+                $currentDocumentRead = $currentDocumentRead || (($toolResult['status'] ?? null) === 'success'
+                    && in_array($toolResult['search_scope'] ?? null, ['ranked_candidates', 'document_units'], true)
+                    && ($toolResult['document_truncated'] ?? false) === false
+                    && is_array($toolResult['source_refs'] ?? null) && $toolResult['source_refs'] !== []
+                    && is_array($toolResult['rag_context']['sources'] ?? null) && $toolResult['rag_context']['sources'] !== []);
+                $documentReadIncomplete = $documentReadIncomplete || ($toolResult['status'] ?? null) === 'corpus_incomplete'
+                    || ($toolResult['document_truncated'] ?? false) === true;
                 $documentSearchPartial = $documentSearchPartial || ($toolResult['status'] ?? null) === 'partial';
             }
+            $documentCorpusIncomplete = $documentReadIncomplete || ($documentCorpusIncomplete && ! $currentDocumentRead);
             $verificationToolResults = $documentCorpusIncomplete || $documentSearchPartial
                 ? array_values(array_filter($this->activeToolResults,
                     static fn (array $toolResult): bool => ! in_array($toolResult['_tool_name'] ?? null,
@@ -2053,6 +2062,8 @@ class AIAssistantService
             $namedProject = AssistantBimModelSelector::namedProject($requestQuery);
             $requestedKind = (new AssistantBimIndexProjection)->queryEquipment($requestQuery);
             $bimSchema = $this->toolRegistry->getTool($toolName)?->getParametersSchema()['properties'] ?? [];
+            $requestedKinds = $this->simpleBimEquipmentKinds($requestQuery, $namedProject
+                ?? (is_string($args['model_query'] ?? null) ? trim($args['model_query']) : ''));
             if (isset($bimSchema['answer_kind'])) {
                 if (! array_key_exists('answer_kind', $args)) { $args['answer_kind'] = 'elements'; }
                 if (AssistantBimAnswerIntent::materialList($requestQuery)) {
@@ -2063,6 +2074,7 @@ class AIAssistantService
             if ($requestedKind !== null && isset($bimSchema['equipment_kind'])
                 && $this->simpleBimEquipmentQuestion($requestQuery, $namedProject ?? '')) {
                 $args['equipment_kind'] = $requestedKind;
+                if (isset($bimSchema['equipment_kinds'])) { $args['equipment_kinds'] = null; }
                 foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
                     'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
                     if (isset($bimSchema[$field])) { $args[$field] = null; }
@@ -2074,6 +2086,22 @@ class AIAssistantService
                     if (isset($bimSchema['offset'])) { $args['offset'] = 0; }
                     if (isset($bimSchema['limit'])) { $args['limit'] = 1; }
                 }
+            }
+            if ($requestedKinds !== [] && isset($bimSchema['equipment_kinds'])
+                && (count($requestedKinds) > 1 || $requestedKinds === ['ventilation_unit'])
+                && AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)) {
+                $args['equipment_kinds'] = $requestedKinds;
+                $args['equipment_kind'] = null;
+                $args['answer_kind'] = 'elements';
+                foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
+                    'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
+                    if (isset($bimSchema[$field])) { $args[$field] = null; }
+                }
+                foreach (['include_properties', 'include_quantities', 'include_estimate_links'] as $field) {
+                    if (isset($bimSchema[$field])) { $args[$field] = false; }
+                }
+                $args['offset'] = 0;
+                $args['limit'] = 1;
             }
             $projectScopeRequested = AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery);
             if ($projectScopeRequested && $namedProject === null) {
@@ -3751,7 +3779,7 @@ class AIAssistantService
         $toolNames = $this->resolveRelevantToolNames($taskPlan);
         if ($this->documentContextBlocked) {
             $toolNames = array_values(array_filter($toolNames,
-                static fn (string $toolName): bool => ! in_array($toolName, ['search_assistant_documents', 'generate_rag_pdf_report'], true)));
+                static fn (string $toolName): bool => $toolName !== 'generate_rag_pdf_report'));
         }
         if ($this->activeActor !== null) {
             if (! $metadataFrameActive) {
@@ -3859,15 +3887,21 @@ class AIAssistantService
 
     private function simpleBimEquipmentQuestion(string $question, string $alias): bool
     {
+        return count($this->simpleBimEquipmentKinds($question, $alias)) === 1;
+    }
+
+    private function simpleBimEquipmentKinds(string $question, string $alias): array
+    {
         $remaining = preg_replace('/(?<![\pL\pN])'.preg_quote($alias, '/').'(?![\pL\pN])/iu', ' ', $question);
-        $equipmentPattern = '/(?<![\pL\pN])(?:кондиционер[\pL]*|сплит[ -]?систем[\pL]*|вентилятор[\pL]*|насос[\pL]*|кот[её]л[\pL]*|котлы|котлов|чиллер[\pL]*)(?![\pL\pN])/iu';
+        $equipmentPattern = '/(?<![\pL\pN])(?:кондиционер[\pL]*|сплит[ -]?систем[\pL]*|вентилятор[\pL]*|(?:вентиляционн|приточн|вытяжн)[\pL]*\s+установ[\pL]*|вентустанов[\pL]*|насос[\pL]*|кот[её]л[\pL]*|котлы|котлов|чиллер[\pL]*)(?![\pL\pN])/iu';
         preg_match_all($equipmentPattern, $remaining ?? '', $equipmentTerms);
         $projection = new AssistantBimIndexProjection;
-        if (count(array_unique(array_map(fn (string $term): string => $projection->queryEquipment($term) ?? mb_strtolower($term), $equipmentTerms[0]))) !== 1) { return false; }
+        $kinds = array_values(array_unique(array_map(fn (string $term): string => $projection->queryEquipment($term) ?? 'ventilation_unit', $equipmentTerms[0])));
+        if ($kinds === []) { return []; }
         $remaining = preg_replace($equipmentPattern, ' ', $remaining ?? '');
-        $remaining = preg_replace('/(?<![\pL\pN])(?:у|нас|в|во|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
+        $remaining = preg_replace('/(?<![\pL\pN])(?:у|нас|в|во|и|проект[\pL]*|бим|bim|ifc|модел[\pL]*|комплект[\pL]*|есть|сколько|их|покажи|посчитай|найди|количество|общее|всего|все|доступных|текущих)(?![\pL\pN])/iu', ' ', $remaining ?? '');
 
-        return preg_match('/[\pL\pN]/u', $remaining ?? $question) === 0;
+        return preg_match('/[\pL\pN]/u', $remaining ?? $question) === 0 ? $kinds : [];
     }
 
     protected function verifyEmptyNamedProjectSearch(string $question, array $toolResults, User $actor, int $organizationId, ?int $projectId = null): ?array

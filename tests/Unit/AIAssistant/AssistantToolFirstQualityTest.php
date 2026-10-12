@@ -353,6 +353,93 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame('11', $response['message']['metadata']['source_refs'][0]['entity_id']);
     }
 
+    public function test_current_scoped_document_reads_remain_available_when_global_corpus_is_incomplete(): void
+    {
+        $coverage = \Mockery::mock((new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class))->newInstanceWithoutConstructor());
+        $coverage->shouldReceive('coverage')->andReturn([]);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class, $coverage);
+        foreach (['ranked_candidates', 'document_units'] as $scope) {
+            $this->providerCalls = [];
+            $this->toolExecutions = 0;
+            $source = ['entity_type' => 'assistant_document', 'entity_id' => '11', 'content_scope' => 'unstructured',
+                'title' => 'Правила приёмки', 'excerpt' => 'До приёмки проверьте комплектность.'];
+            $result = ['status' => 'success', 'search_scope' => $scope, 'search_complete' => false,
+                'document_context' => $source['excerpt'], 'rag_context' => ['used' => true, 'sources' => [$source]], 'source_refs' => [$source]];
+            $service = $this->service(['search_assistant_documents' => $result], [
+                ['content' => '', 'tool_calls' => [$this->toolCall('search_assistant_documents')]],
+                ['content' => 'До приёмки проверьте комплектность [1].'],
+            ]);
+
+            $response = $service->ask('Прочитай текст правил приёмки из документа.', 15, $this->actor(), 7);
+
+            $this->assertSame(1, $this->toolExecutions, $scope);
+            $this->assertSame('До приёмки проверьте комплектность [1].', $response['message']['content'], $scope);
+            $this->assertTrue($response['message']['metadata']['rag_context']['used'], $scope);
+            $this->assertSame('11', $response['message']['metadata']['source_refs'][0]['entity_id'], $scope);
+        }
+    }
+
+    public function test_incomplete_global_corpus_without_a_current_document_read_still_blocks_document_claims(): void
+    {
+        $coverage = \Mockery::mock((new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class))->newInstanceWithoutConstructor());
+        $coverage->shouldReceive('coverage')->andReturn([]);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class, $coverage);
+        $service = $this->service(['search_assistant_documents' => ['status' => 'corpus_incomplete']], [
+            ['content' => 'В документе написано, что проверять комплектность не нужно.'],
+        ]);
+
+        $response = $service->ask('Прочитай текст правил приёмки из документа.', 15, $this->actor(), 7);
+
+        $this->assertSame(trans_message('ai_assistant.document_corpus_incomplete'), $response['message']['content']);
+        $this->assertSame([], $response['message']['metadata']['source_refs']);
+        $this->assertFalse($response['message']['metadata']['rag_context']['used']);
+    }
+
+    public function test_empty_search_or_partially_extracted_document_does_not_override_global_document_gap(): void
+    {
+        $coverage = \Mockery::mock((new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class))->newInstanceWithoutConstructor());
+        $coverage->shouldReceive('coverage')->andReturn([]);
+        app()->instance(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentCoverageService::class, $coverage);
+        $source = ['entity_type' => 'assistant_document', 'entity_id' => '11', 'content_scope' => 'unstructured',
+            'title' => 'Правила', 'excerpt' => 'Частичная выдержка.'];
+        foreach ([['status' => 'success', 'search_scope' => 'ranked_candidates', 'source_refs' => [], 'rag_context' => ['sources' => []]],
+            ['status' => 'success', 'search_scope' => 'document_units', 'document_truncated' => true,
+                'source_refs' => [$source], 'rag_context' => ['sources' => [$source]]]] as $result) {
+            $this->providerCalls = [];
+            $service = $this->service(['search_assistant_documents' => $result], [
+                ['content' => '', 'tool_calls' => [$this->toolCall('search_assistant_documents')]],
+                ['content' => 'В документе написано, что проверять комплектность не нужно.'],
+            ]);
+            $response = $service->ask('Прочитай текст правил приёмки из документа.', 15, $this->actor(), 7);
+            $this->assertSame(trans_message('ai_assistant.document_corpus_incomplete'), $response['message']['content']);
+            $this->assertSame([], $response['message']['metadata']['source_refs']);
+            $this->assertFalse($response['message']['metadata']['rag_context']['used']);
+        }
+    }
+
+    public function test_complete_document_read_does_not_hide_another_incomplete_document_read(): void
+    {
+        $source = ['entity_type' => 'assistant_document', 'entity_id' => '11', 'content_scope' => 'unstructured',
+            'title' => 'Правила', 'excerpt' => 'Частичная выдержка.'];
+        $read = ['status' => 'success', 'search_scope' => 'document_units', 'source_refs' => [$source],
+            'rag_context' => ['used' => true, 'sources' => [$source]]];
+        $first = $this->toolCall('search_assistant_documents');
+        $first['function']['arguments'] = json_encode(['document_id' => 11]);
+        $second = $this->toolCall('search_assistant_documents');
+        $second['id'] = 'call_read_second';
+        $second['function']['arguments'] = json_encode(['document_id' => 12]);
+        $service = $this->service(['search_assistant_documents' => static fn (array $arguments): array => $read
+            + ['document_truncated' => $arguments['document_id'] === 12]], [
+            ['content' => '', 'tool_calls' => [$first]], ['content' => '', 'tool_calls' => [$second]],
+            ['content' => 'Оба документа полностью подтверждают правило.'],
+        ], toolSchemas: ['search_assistant_documents' => ['type' => 'object', 'properties' => ['document_id' => ['type' => 'integer']], 'additionalProperties' => false]]);
+        $response = $service->ask('Прочитай текст правил из обоих документов.', 15, $this->actor(), 7);
+        $this->assertSame(2, $this->toolExecutions);
+        $this->assertSame(trans_message('ai_assistant.document_corpus_incomplete'), $response['message']['content']);
+        $this->assertSame([], $response['message']['metadata']['source_refs']);
+        $this->assertFalse($response['message']['metadata']['rag_context']['used']);
+    }
+
     public function test_three_large_position_reads_fit_next_provider_without_losing_server_receipts_or_causal_messages(): void
     {
         $query = 'Найди позиции в сметах и покажи состав материалов с количеством и единицами.';
@@ -1520,7 +1607,7 @@ final class AssistantToolFirstQualityTest extends TestCase
                 if ($result instanceof \Throwable) {
                     throw $result;
                 }
-                return $result;
+                return is_callable($result) ? $result($arguments) : $result;
             });
             $registry->registerTool($tool);
         }

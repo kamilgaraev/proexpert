@@ -798,6 +798,36 @@ final class AssistantBimModelReaderTest extends TestCase
         self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
     }
 
+    public function test_mixed_equipment_counts_cover_all_rows_and_keep_ventilation_units_distinct_from_fans(): void
+    {
+        $version = $this->model('Севгу', 'mixed.ifc');
+        $derivative = $this->readyIndex($version, 10);
+        foreach ([['IFCBUILDINGELEMENTPROXY', 'Кондиционер первый'], ['IFCBUILDINGELEMENTPROXY', 'Кондиционер последний'],
+            ['IFCFAN', 'Вентилятор'], ['IFCBUILDINGELEMENTPROXY', '(ME)_Универсальная приточная установка:П3.3'],
+            ['IFCBUILDINGELEMENTPROXY', 'Кронштейн приточной установки'], ['IFCWALL', 'Приточная установка'],
+            ['IFCBUILDINGELEMENTPROXY', 'Датчик температуры приточной установки'],
+            ['IFCBUILDINGELEMENTPROXY', 'Шкаф управления вентиляционной установкой'],
+            ['IFCBUILDINGELEMENTPROXY', 'Приточная установка https://private.example']] as [$category, $name]) {
+            $element = $this->element($version, $category, $name);
+            $element->updateQuietly(['derivative_id' => $derivative->id, 'properties' => ['_ifc' => ['schema_version' => 2]]]);
+        }
+        $room = $this->element($version, 'IFCBUILDINGELEMENTPROXY', 'Приточная установка помещения');
+        $room->updateQuietly(['name' => 'Приточная установка', 'derivative_id' => $derivative->id,
+            'properties' => ['_ifc' => ['schema_version' => 2], 'Прочее' => ['Категория' => 'Помещения']]]);
+        $result = $this->read(['version_id' => $version->id, 'equipment_kinds' => ['ventilation_unit', 'air_conditioner'], 'limit' => 1]);
+        self::assertSame(3, $result['models'][0]['total']);
+        self::assertSame(['air_conditioner' => 2, 'ventilation_unit' => 1], $result['models'][0]['equipment_counts']);
+        self::assertCount(1, $result['models'][0]['elements']);
+        self::assertStringContainsString('Кондиционеры: 2', $result['server_formatted_answer']);
+        self::assertStringContainsString('наименованию: 1', $result['server_formatted_answer']);
+        self::assertNotNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        $element->updateQuietly(['name' => 'Приточная установка последняя']);
+        self::assertNull($this->reader->verifiedAnswer($result, $this->fixture->member, $this->fixture->organization->id));
+        $derivative->updateQuietly(['metadata' => ['indexed_element_count' => 11, 'source_schema_version' => 2]]);
+        $partial = $this->read(['version_id' => $version->id, 'equipment_kinds' => ['air_conditioner', 'ventilation_unit'], 'limit' => 1]);
+        self::assertStringNotContainsString('Кондиционеры: 2', $partial['server_formatted_answer']);
+    }
+
     public function test_stored_equipment_kind_matches_private_bounded_projection_and_all_raw_mutations(): void
     {
         $version = $this->model('Гаражная', 'гаражная.ifc');
