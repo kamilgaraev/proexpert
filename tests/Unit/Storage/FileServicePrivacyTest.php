@@ -7,9 +7,9 @@ namespace Tests\Unit\Storage;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
+use Illuminate\Container\Container;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
 
@@ -18,7 +18,7 @@ final class FileServicePrivacyTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $container = new Container();
+        $container = new Container;
         $container->instance('log', new class
         {
             public function __call(string $name, array $arguments): void {}
@@ -51,7 +51,7 @@ final class FileServicePrivacyTest extends TestCase
             }
         };
         $service = $this->service($logging, $disk);
-        $organization = new Organization();
+        $organization = new Organization;
         $organization->id = 17;
 
         $result = $service->upload(
@@ -87,7 +87,7 @@ final class FileServicePrivacyTest extends TestCase
             }
         };
         $service = $this->service($logging, $disk);
-        $organization = new Organization();
+        $organization = new Organization;
         $organization->id = 17;
 
         $result = $service->upload(
@@ -120,7 +120,7 @@ final class FileServicePrivacyTest extends TestCase
             }
         };
         $service = $this->service($logging, $disk);
-        $organization = new Organization();
+        $organization = new Organization;
         $organization->id = 17;
 
         $result = $service->upload(
@@ -137,6 +137,36 @@ final class FileServicePrivacyTest extends TestCase
         self::assertIsArray($failedUpload);
         self::assertSame('s3_object_tagging_failed', $failedUpload[1]['failure_code'] ?? null);
         self::assertSame('redacted', $failedUpload[1]['exception_message'] ?? null);
+    }
+
+    public function test_estimator_preview_signing_failure_does_not_log_paths_signed_urls_or_document_contents(): void
+    {
+        $logger = new class
+        {
+            public array $contexts = [];
+
+            public function warning(string $message, array $context): void
+            {
+                $this->contexts[] = $context;
+            }
+        };
+        \Illuminate\Support\Facades\Log::swap($logger);
+        $disk = new class extends FilesystemAdapter
+        {
+            public function __construct() {}
+
+            public function temporaryUrl($path, $expiration, array $options = []): string
+            {
+                throw new \RuntimeException('https://private.example.test/document?signature=signing-canary secret-drawing-content');
+            }
+        };
+        $result = $this->service($this->loggingSpy(), $disk)->temporaryUrl('org-17/estimate-generation/sessions/42/secret-project.pdf');
+        self::assertNull($result);
+        $encoded = var_export($logger->contexts, true);
+        foreach (['secret-project.pdf', 'org-17', 'signing-canary', 'private.example.test', 'secret-drawing-content'] as $secret) {
+            self::assertStringNotContainsString($secret, $encoded);
+        }
+        self::assertSame('estimate_document_preview_signing_failed', $logger->contexts[0]['failure_code']);
     }
 
     private function service(LoggingService $logging, FilesystemAdapter $disk): FileService

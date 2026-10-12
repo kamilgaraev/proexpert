@@ -1462,10 +1462,10 @@ class FileService
         try {
             $url = $disk->temporaryUrl($path, now()->addMinutes($minutes), $responseParameters);
         } catch (\Throwable $e) {
-            Log::warning('[FileService] temporaryUrl() failed', [
-                'path' => $path,
-                'error' => $e->getMessage(),
-            ]);
+            $estimator = preg_match('#^org-[1-9][0-9]*/estimate-generation/#D', $path) === 1;
+            Log::warning('[FileService] temporaryUrl() failed', $estimator
+                ? ['path' => 'redacted', 'failure_code' => 'estimate_document_preview_signing_failed', 'exception_class' => $e::class]
+                : ['path' => $path, 'error' => $e->getMessage()]);
 
             return null;
         }
