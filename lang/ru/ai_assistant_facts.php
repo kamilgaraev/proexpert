@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'project_list_empty' => 'В доступных записях выбранного проекта совпадений с указанными условиями не найдено.',
     'schedule_overdue_count' => 'Просроченных незавершённых задач графика в указанной области: :count.',
     'returned_scope' => 'Показаны поля найденных записей. Полнота списка и общие итоги не подтверждены.',
     'search_record_count' => 'В проверенном поиске найдено записей: :count.',
@@ -106,6 +107,11 @@ return [
         'is_active' => 'Активна',
         'is_paid' => 'Оплачена',
         'quantity' => 'Количество',
+        'requested_quantity' => 'Заказано',
+        'reserved_quantity' => 'Зарезервировано',
+        'shipped_quantity' => 'Отгружено',
+        'accepted_quantity' => 'Принято',
+        'planned_delivery_date' => 'Плановая дата поставки',
         'quantity_per_unit' => 'Количество на единицу',
         'completed_quantity' => 'Выполненное количество',
         'quantity_total' => 'Общее количество',

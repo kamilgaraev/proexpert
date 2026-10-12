@@ -438,6 +438,21 @@ final class AssistantStatusSnapshotTest extends TestCase
         self::assertSame(0, $proof['value']['document_coverage']['total']);
     }
 
+    public function test_document_status_reads_current_coverage_while_unrelated_rag_sources_change(): void
+    {
+        [$organization, $actor, $project, $service] = $this->scope();
+        $before = $service->status((int) $organization->id, $actor, 'documents');
+        self::assertTrue($before['status_available']);
+        $source = RagSource::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+            'source_type' => 'project', 'entity_type' => 'project', 'entity_id' => (string) $project->id,
+            'title' => 'Изменяемый источник проекта', 'checksum' => hash('sha256', 'document-status-unrelated')]);
+        $source->forceFill(['title' => 'Изменённый источник проекта'])->save();
+        $after = $service->status((int) $organization->id, $actor, 'documents');
+        self::assertTrue($after['status_available']);
+        self::assertSame($before['document_coverage'], $after['document_coverage']);
+        Queue::assertNotPushed(RefreshAssistantIndexStatusJob::class);
+    }
+
     public function test_snapshot_refresh_diagnostics_only_emit_bounded_failure_reasons(): void
     {
         $events = [];

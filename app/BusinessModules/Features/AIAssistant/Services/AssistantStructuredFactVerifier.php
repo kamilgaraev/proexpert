@@ -16,6 +16,10 @@ final class AssistantStructuredFactVerifier
         if (AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
             return $this->verifiedProjectExpenses($query, $text, $toolResults, $requestScope);
         }
+        if (is_int($requestScope['project_id'] ?? null)
+            && ($list = AssistantRequiredProjectRead::projectListArguments($query, $requestScope['project_id'])) !== null) {
+            return $this->verifiedProjectList($query, $text, $toolResults, $list);
+        }
         $planCandidate = AssistantPresentationPlanner::isPlanCandidate($text);
         if (AssistantDomainSearchCountEvidence::isCountRequest($query)) {
             return $this->verifiedCount($query, $text, $toolResults, $requestScope);
@@ -46,6 +50,10 @@ final class AssistantStructuredFactVerifier
         if ($query !== null && AssistantFactIntentClassifier::isProjectExpenseRequest($query)) {
             return $this->verifiedProjectExpenses($query, '', $toolResults, $requestScope);
         }
+        if ($query !== null && is_int($requestScope['project_id'] ?? null)
+            && ($list = AssistantRequiredProjectRead::projectListArguments($query, $requestScope['project_id'])) !== null) {
+            return $this->verifiedProjectList($query, '', $toolResults, $list);
+        }
         if ($query !== null && AssistantDomainSearchCountEvidence::isCountRequest($query)) {
             return $this->verifiedCount($query, '', $toolResults, $requestScope);
         }
@@ -65,6 +73,28 @@ final class AssistantStructuredFactVerifier
             $answer = AssistantStructuredFactFormatter::presentation($rows, $query);
             return ['text' => $answer, 'validation_status' => 'partial', 'source_refs' => array_column($rows, 'source_ref'),
                 'replaced' => $text !== $answer, 'needs_clarification' => false, 'structured_evidence_truncated' => ($result['has_more'] ?? false) === true];
+        }
+        return ['text' => trans_message('ai_assistant_facts.live_proof_required'), 'validation_status' => 'partial', 'source_refs' => [],
+            'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];
+    }
+
+    private function verifiedProjectList(string $query, string $text, array $toolResults, array $arguments): array
+    {
+        foreach ($toolResults as $result) {
+            $count = is_array($result) ? ($result['domain_search_count_evidence'] ?? null) : null;
+            $scope = is_array($count) ? ($count['source_ref']['_search_count_query'] ?? null) : null;
+            if (! is_array($count) || ! is_array($scope) || ! AssistantDomainSearchCountEvidence::trusted($count)) { continue; }
+            foreach (['domain', 'entity_type', 'predicate', 'project_id', 'query'] as $field) {
+                if (($scope[$field] ?? null) !== $arguments[$field]) { continue 2; }
+            }
+            if ($count['value'] === 0) {
+                return ['text' => trans_message('ai_assistant_facts.project_list_empty'), 'validation_status' => 'verified',
+                    'source_refs' => [$count['source_ref']], 'replaced' => true, 'needs_clarification' => false, 'structured_evidence_truncated' => false];
+            }
+            $answer = $this->verifiedResults($query, '', [$result]);
+            if ($answer['source_refs'] !== []) { $answer['source_refs'][] = $count['source_ref']; }
+            $answer['replaced'] = $answer['text'] !== $text;
+            return $answer;
         }
         return ['text' => trans_message('ai_assistant_facts.live_proof_required'), 'validation_status' => 'partial', 'source_refs' => [],
             'replaced' => true, 'needs_clarification' => true, 'structured_evidence_truncated' => false];

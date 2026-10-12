@@ -785,6 +785,24 @@ final class AssistantToolFirstQualityTest extends TestCase
         $this->assertSame(4, $this->toolExecutions);
     }
 
+    public function test_last_allowed_native_project_stock_read_is_executed_and_publishes_its_checked_answer(): void
+    {
+        $refs = [['entity_type' => 'project', 'entity_id' => 52, 'project_id' => 52, 'organization_id' => 15]];
+        $responses = array_fill(0, 3, ['content' => '', 'tool_calls' => [$this->toolCall('assistant_domain_discover_capabilities')]]);
+        $responses[] = ['content' => '', 'tool_calls' => [$this->toolCall('get_project_material_stock')]];
+        $schema = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Actions\Domains\GetProjectMaterialStockTool::class))
+            ->newInstanceWithoutConstructor()->getParametersSchema();
+        $service = $this->service(['assistant_domain_discover_capabilities' => ['capabilities' => []],
+            'get_project_material_stock' => ['status' => 'success', 'source_refs' => $refs, 'stock_evidence' => ['version' => 'stock-v1']]],
+            $responses, requestContext: ['entity_refs' => [['type' => 'project', 'id' => 52]]], toolSchemas: ['get_project_material_stock' => $schema]);
+        $service->verifiedStock = ['text' => 'Арматура: доступный остаток 95.000 кг.', 'source_refs' => $refs,
+            'validation_status' => 'verified', 'replaced' => true, 'needs_clarification' => false];
+        $response = $service->ask('Что сейчас есть на складе текущего объекта и сколько осталось?', 15, $this->actor(), 7);
+        self::assertSame(4, $this->toolExecutions);
+        self::assertStringContainsString('95.000 кг', $response['message']['content']);
+        self::assertSame($refs, $response['message']['metadata']['source_refs']);
+    }
+
     #[\PHPUnit\Framework\Attributes\DataProvider('compoundBimStockStatuses')]
     public function test_compound_bim_and_stock_question_preserves_both_checked_answers(string $stockStatus, bool $needsClarification): void
     {

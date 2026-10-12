@@ -46,8 +46,8 @@ abstract class AssistantDomainTool implements AIToolInterface
         ];
         if ($this->operation() === 'search') {
             $properties += ['query' => ['type' => 'string', 'maxLength' => 200, 'description' => trans_message('ai_assistant_search.query_description')], 'project_id' => ['type' => ['integer', 'null'], 'minimum' => 1], 'limit' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20]];
-            $properties['predicate'] = ['type' => ['string', 'null'], 'enum' => ['overdue', null],
-                'description' => 'overdue только для schedule/schedule_task: просроченные незавершённые задачи. query оставьте пустым для полного количества; project_id задаёт проект. null — обычный поиск.'];
+            $properties['predicate'] = ['type' => ['string', 'null'], 'enum' => ['overdue', 'confirmed', 'supplier_waiting', 'unresolved', null],
+                'description' => 'overdue: schedule/schedule_task; confirmed: works/completed_work; supplier_waiting: warehouse/project_material_delivery; unresolved: quality/quality_defect. Пустой query читает весь разрешённый список, project_id задаёт проект.'];
             $properties['cursor'] = ['type' => ['string', 'null'], 'maxLength' => 2048,
                 'description' => 'Opaque next_cursor from the previous page. Keep domain, entity_type, query, project_id, limit and fields unchanged.'];
         } else {

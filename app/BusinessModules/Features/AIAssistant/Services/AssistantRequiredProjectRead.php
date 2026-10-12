@@ -17,6 +17,12 @@ final readonly class AssistantRequiredProjectRead
         if (($arguments = AssistantDomainSearchCountEvidence::overdueCountArguments($query, $scope->projectId)) !== null) {
             return ['name' => 'assistant_domain_search', 'arguments' => $arguments + ['limit' => 1, 'cursor' => null, 'fields' => null]];
         }
+        if (($arguments = self::projectListArguments($query, $scope->projectId)) !== null) {
+            return ['name' => 'assistant_domain_search', 'arguments' => $arguments];
+        }
+        if (self::simpleProjectStock($query)) {
+            return ['name' => 'get_project_material_stock', 'arguments' => ['project_id' => $scope->projectId, 'offset' => 0, 'limit' => 20]];
+        }
         if (! AssistantFactIntentClassifier::isProjectExpenseRequest($query) || ! self::simpleExpenseTotal($query)) {
             return null;
         }
@@ -40,6 +46,18 @@ final readonly class AssistantRequiredProjectRead
         return null;
     }
 
+    public static function bindArguments(array $plan, string $toolName, array $arguments): array
+    {
+        $read = self::fromPlan($plan);
+        if (($read['name'] ?? null) !== $toolName) { return $arguments; }
+        $bound = $read['arguments'];
+        if (($toolName === 'search_estimate_positions'
+            || $toolName === 'assistant_domain_search' && ($bound['predicate'] ?? null) !== 'overdue')
+            && is_string($arguments['cursor'] ?? null)) { $bound['cursor'] = $arguments['cursor']; }
+        if ($toolName === 'get_project_material_stock' && is_int($arguments['offset'] ?? null)) { $bound['offset'] = $arguments['offset']; }
+        return $bound;
+    }
+
     private static function simpleExpenseTotal(string $query): bool
     {
         $months = 'январ[ьяе]|феврал[ьяе]|март[ае]?|апрел[ьяе]|ма[йяе]|июн[ьяе]|июл[ьяе]|август[ае]?|сентябр[ьяе]|октябр[ьяе]|ноябр[ьяе]|декабр[ьяе]';
@@ -48,6 +66,31 @@ final readonly class AssistantRequiredProjectRead
         preg_match_all('/[\pL\pN_]+/u', mb_strtolower($semantic), $words);
         $allowed = explode(' ', 'покажи покажите показать скажи скажите подскажи подскажите посчитай рассчитай какие сколько всего расходы затрат затраты фактические фактических нашего наш текущего текущий выбранного выбранный этом этого проект проекта проекте проекту объект объекта объекте объекту на по у нас пожалуйста');
 
+        return $words[0] !== [] && array_diff($words[0], $allowed) === [];
+    }
+
+    public static function projectListArguments(string $query, int $projectId): ?array
+    {
+        preg_match_all('/[\pL\pN_]+/u', mb_strtolower($query), $words);
+        $allowed = explode(' ', 'что какие есть покажи покажите перечисли список все ещё еще уже ждём ждем ожидаем от поставщиков поставки ожидаемые работы приняли принятые принято незакрытые закрытые не замечания дефекты по качеству на в у нас нашем нашего текущем текущего выбранном этом этого проекте проекта объекте объекта пожалуйста');
+        if ($words[0] === [] || array_diff($words[0], $allowed) !== []) { return null; }
+        $target = match (true) {
+            preg_match('/работ[а-яё]*.*(?:приняли|принят[а-яё]*)|принят[а-яё]*\s+работ/iu', $query) === 1 => ['works', 'completed_work', 'confirmed'],
+            preg_match('/(?:жд[её]м|ожидаем).*поставщик|ожидаем[а-яё]*\s+поставк/iu', $query) === 1 => ['warehouse', 'project_material_delivery', 'supplier_waiting'],
+            preg_match('/(?:незакрыт[а-яё]*|не\s+закрыт[а-яё]*)\s+(?:замечан[а-яё]*|дефект[а-яё]*)/iu', $query) === 1 => ['quality', 'quality_defect', 'unresolved'],
+            default => null,
+        };
+        if ($target === null || $projectId < 1) { return null; }
+        if ($target[2] !== 'unresolved' && preg_match('/(?<!\pL)не(?!\pL)/iu', $query) === 1) { return null; }
+        return ['domain' => $target[0], 'entity_type' => $target[1], 'predicate' => $target[2], 'project_id' => $projectId,
+            'query' => '', 'limit' => 20, 'cursor' => null, 'fields' => null];
+    }
+
+    private static function simpleProjectStock(string $query): bool
+    {
+        if (preg_match('/склад|остат/iu', $query) !== 1) { return false; }
+        preg_match_all('/[\pL\pN_]+/u', mb_strtolower($query), $words);
+        $allowed = explode(' ', 'что какие сколько сейчас есть осталось остатки материалы покажи покажите на в у нас складе склад текущего текущем выбранного нашем нашего этом этого объекте объекта проекте проекта и пожалуйста');
         return $words[0] !== [] && array_diff($words[0], $allowed) === [];
     }
 }

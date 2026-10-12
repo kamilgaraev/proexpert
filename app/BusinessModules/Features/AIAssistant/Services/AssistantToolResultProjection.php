@@ -26,8 +26,8 @@ final class AssistantToolResultProjection
 
             return $view;
         }
-        if ($toolName === 'get_material_stock') {
-            return array_intersect_key($result, array_flip(['status', 'stock', 'quantity_scope', 'server_formatted_answer', 'validation_status', 'error', 'reason']));
+        if (in_array($toolName, ['get_material_stock', 'get_project_material_stock'], true)) {
+            return array_intersect_key($result, array_flip(['status', 'stock', 'quantity_scope', 'server_formatted_answer', 'validation_status', 'error', 'reason', 'total', 'has_more', 'next_offset']));
         }
         if ($toolName === 'get_bim_model_elements') {
             $view = array_intersect_key($result, array_flip(['status', 'needs_clarification', 'validation_status', 'error', 'reason']));
@@ -272,7 +272,7 @@ final class AssistantToolResultProjection
         if (!is_array($reference)) { return $reference; }
         return array_diff_key($reference, array_flip(['version', 'source_version', 'checksum', 'source_field_identity', 'source_link_identity', 'checked_fields',
             'required_permissions', 'required_domains', 'projection_source_version', 'assistant_public_schema_revision',
-            '_search_count_query', '_search_count_actor', '_search_count_proof', 'unit_checksum', 'document_checksum', 'rag_source_checksum', 'estimate_projection']));
+            '_search_count_query', '_search_count_actor', '_search_count_proof', 'unit_checksum', 'document_checksum', 'rag_source_checksum', 'estimate_projection', 'related_field_projection']));
     }
 
     private static function sharedSourceContext(array $view): array

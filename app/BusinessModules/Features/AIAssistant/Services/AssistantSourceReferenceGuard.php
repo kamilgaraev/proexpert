@@ -74,6 +74,10 @@ class AssistantSourceReferenceGuard
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            if ($type === AssistantProjectMaterialStockReader::TYPE) {
+                if (! app(AssistantProjectMaterialStockReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
             if ($type === 'published_report_financial_projection') {
                 if (! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }
@@ -94,6 +98,12 @@ class AssistantSourceReferenceGuard
                 : ($engineeringReference ? $this->policy->engineeringEntityQuery($actor, $organizationId, $type)
                     : $this->policy->entityQuery($actor, $organizationId, $type));
             $allowed = [];
+            $relatedFields = [];
+            if (isset($reference['related_field_projection'])) {
+                if ($reference['related_field_projection'] !== AssistantDomainRelatedFields::PROJECTION
+                    || AssistantDomainRelatedFields::fields($type) === []) { return false; }
+                $relatedFields = AssistantDomainRelatedFields::fields($type);
+            }
             if ($engineeringReference && $query !== null) {
                 $allowed = array_map(static fn (string $column): string => substr($column, strrpos($column, '.') + 1), $query->getQuery()->columns ?? []);
                 if (! is_array($reference['checked_fields'] ?? null) || array_diff($reference['checked_fields'], $allowed) !== []) { return false; }
@@ -101,10 +111,11 @@ class AssistantSourceReferenceGuard
             if ($query !== null && ($reference['content_scope'] ?? null) === 'structured') {
                 $table = $query->getModel()->getTable();
                 $columns = $this->columns[$table] ??= \Illuminate\Support\Facades\Schema::getColumnListing($table);
-                $internalColumns = $type === 'schedule_task' ? array_intersect(['schedule_id'], $columns) : [];
+                $internalColumns = array_intersect([...($type === 'schedule_task' ? ['schedule_id'] : []),
+                    ...($relatedFields === [] ? [] : [AssistantDomainRelatedFields::parentColumn($type)])], $columns);
                 $safeColumns = $engineeringReference ? $allowed : (AssistantExtendedDomainRegistry::values('safeSelectColumns')[$type] ?? $columns);
                 $columns = array_values(array_intersect($columns, $safeColumns));
-                if (array_diff($reference['checked_fields'] ?? [], $columns) !== []) { return false; }
+                if (array_diff($reference['checked_fields'] ?? [], [...$columns, ...$relatedFields]) !== []) { return false; }
                 $selected = array_values(array_unique([...$internalColumns, ...array_intersect([$query->getModel()->getKeyName(), 'updated_at', ...($reference['checked_fields'] ?? [])], $columns)]));
                 $query->select(array_map(static fn (string $column): string => $table.'.'.$column, $selected));
             }
@@ -112,6 +123,7 @@ class AssistantSourceReferenceGuard
             if (! $entity) {
                 return false;
             }
+            if ($relatedFields !== []) { AssistantDomainRelatedFields::hydrate([$entity], $type, $organizationId); }
             if ($type === 'schedule_task' && array_key_exists('project_id', $reference) && ($reference['content_scope'] ?? null) === 'structured'
                 && $reference['project_id'] !== $this->policy->resolvedEntityProjectId($actor, $organizationId, $type, $entity)) {
                 return false;
