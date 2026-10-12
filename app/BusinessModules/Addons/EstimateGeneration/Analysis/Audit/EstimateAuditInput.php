@@ -21,6 +21,7 @@ final readonly class EstimateAuditInput
         public array $evidence,
         public string $contractVersion,
         public ?AiSessionWireScope $wireScope = null,
+        public string $partId = 'whole',
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1
             || preg_match('/^[a-f0-9]{64}$/D', $snapshotToken) !== 1
@@ -31,6 +32,9 @@ final readonly class EstimateAuditInput
             || ! array_is_list($evidence) || count($evidence) > 20000
             || $draft === [] || array_is_list($draft)) {
             throw new InvalidArgumentException('estimate_audit_input_invalid');
+        }
+        if ($partId !== 'whole' && preg_match('/\Apart:[a-f0-9]{40}\z/', $partId) !== 1) {
+            throw new InvalidArgumentException('estimate_audit_part_identity_invalid');
         }
         $factIds = [];
         foreach ($facts as $fact) {
@@ -66,6 +70,7 @@ final readonly class EstimateAuditInput
             'draft' => $this->draft,
             'evidence' => $this->evidence,
             'contract_version' => $this->contractVersion,
+            ...($this->partId === 'whole' ? [] : ['part_id' => $this->partId]),
         ];
     }
 
@@ -93,7 +98,14 @@ final readonly class EstimateAuditInput
             $this->evidence,
             $this->contractVersion,
             $this->wireScope,
+            $this->partId,
         );
+    }
+
+    public function withPart(array $draft, string $partId): self
+    {
+        return new self($this->organizationId, $this->projectId, $this->sessionId, $this->snapshotToken, $this->cycle,
+            $this->facts, $this->derivedQuantities, $draft, $this->evidence, $this->contractVersion, $this->wireScope, $partId);
     }
 
     private function canonicalJson(array $payload): string

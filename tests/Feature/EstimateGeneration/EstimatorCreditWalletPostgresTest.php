@@ -23,6 +23,74 @@ use Tests\Support\EstimateGeneration\EstimateGenerationCanonicalPostgresTestCase
 
 final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonicalPostgresTestCase
 {
+    #[\PHPUnit\Framework\Attributes\DataProvider('auditPartitionApprovals')]
+    public function test_real_audit_parts_use_the_original_reserve_and_reject_an_unapproved_expansion(bool $enoughParts): void
+    {
+        $this->seedGlobalSettings();
+        [$organization, $actor, $scope] = $this->fixture();
+        $permissions = \Mockery::mock(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $permissions->allows('canCurrent')->andReturn(true);
+        $this->app->instance(\App\Domain\Authorization\Services\AuthorizationService::class, $permissions);
+        $session = EstimateGenerationSession::query()->findOrFail($scope->sessionId);
+        $session->update(['input_payload' => ['selected_sections' => $enoughParts ? ['finishing', 'structure', 'equipment'] : ['finishing']]]);
+        app(AICreditService::class)->grant($organization, 5000000, 'purchase', null, 'test:audit-parts');
+        $operationId = (string) Str::uuid();
+        $operations = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperations::class);
+        $quote = $operations->quote($actor, $scope->projectId, $scope->sessionId, 0, $operationId, 'generation');
+        DB::transaction(fn () => $operations->begin($actor, $session, 0, $operationId, $quote['quote_id'], 'generation'));
+        $responses = [];
+        for ($index = 0; $index < 3; $index++) {
+            $responses[] = new \GuzzleHttp\Psr7\Response(200, ['Content-Type' => 'application/json'], json_encode([
+                'id' => 'chatcmpl-part-'.$index, 'object' => 'chat.completion', 'created' => 1, 'model' => 'openai/gpt-6-luna',
+                'choices' => [['index' => 0, 'finish_reason' => 'stop', 'message' => ['role' => 'assistant', 'content' => '{"accepted":true,"findings":[]}']]],
+                'usage' => ['prompt_tokens' => 100, 'completion_tokens' => 50, 'total_tokens' => 150],
+            ], JSON_THROW_ON_ERROR));
+        }
+        config(['ai-assistant.llm.timeweb.api_key' => 'fixture-not-a-real-key', 'ai-assistant.llm.timeweb.base_uri' => 'https://timeweb.example.test/v1']);
+        $httpHistory = [];
+        $handler = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\MockHandler($responses));
+        $handler->push(\GuzzleHttp\Middleware::history($httpHistory));
+        $wire = new \App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient(
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebChatCompletionPayloadFactory::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Observability\SessionAiCostGuard::class),
+            app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\DurableAiPhysicalResponseStore::class),
+            httpClient: new \GuzzleHttp\Client(['handler' => $handler]));
+        $this->app->instance(\App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient::class, $wire);
+        $items = array_map(static fn (int $index): array => ['key' => 'work:'.$index, 'name' => 'Работа '.$index, 'quantity' => '1', 'unit' => 'm2'], range(1, 65));
+        $input = new \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\EstimateAuditInput(
+            (int) $organization->id, $scope->projectId, $scope->sessionId, str_repeat('a', 64), 0, [], [],
+            ['local_estimates' => [['key' => 'building', 'sections' => [['key' => 'works', 'work_items' => $items]]]]], [],
+            \App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\RunEstimateAudit::PROMPT_CONTRACT,
+            new \App\BusinessModules\Addons\EstimateGeneration\Observability\AiSessionWireScope(0, null, $operationId));
+        $cycles = app(\App\BusinessModules\Addons\EstimateGeneration\Analysis\Audit\ApplyComposerCorrectionCycle::class);
+        if (! $enoughParts) {
+            try {
+                $cycles->apply($input);
+                self::fail('The auditor expanded the approved part plan.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertSame('estimate_audit_parts_exceed_approved_plan', $exception->getMessage());
+                self::assertCount(0, $httpHistory);
+                self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+            }
+        } else {
+            $first = $cycles->apply($input);
+            self::assertSame('accepted', $first['audit']['status']);
+            self::assertCount(3, $httpHistory);
+            self::assertSame($first, $cycles->apply($input));
+            self::assertCount(3, $httpHistory);
+            self::assertSame(3, DB::table('estimate_generation_credit_attempts')->where('operation_id', $operationId)->count());
+            self::assertSame(3, DB::table('estimate_generation_ai_usage')->where('session_id', $session->id)->count());
+        }
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
+        DB::transaction(fn () => app(\App\BusinessModules\Addons\EstimateGeneration\Application\Credits\EstimatorCreditOperationSettlement::class)
+            ->abort($session->fresh(), $operationId, 'fixture_finished'));
+    }
+
+    public static function auditPartitionApprovals(): array
+    {
+        return [[true], [false]];
+    }
+
     public function test_an_unknown_legacy_paid_balance_keeps_legacy_billing_without_a_new_shared_reserve(): void
     {
         [$organization, $actor, $request] = $this->fixture();
@@ -67,7 +135,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             $retry->handle($command);
             self::fail('An old client started paid retry without a quote.');
         } catch (\Illuminate\Validation\ValidationException) {
-            self::assertSame(0, DB::table('ai_credit_reservations')->count());
+            self::assertSame(0, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
             self::assertSame('failed', $session->fresh()->status->value);
         }
         $credits = app(AICreditService::class);
@@ -83,7 +151,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame($id, $started->input_payload['generation_credit_operation_id']);
         $replayed = $retry->handle($approved);
         self::assertSame($started->state_version, $replayed->state_version);
-        self::assertSame(1, DB::table('ai_credit_reservations')->count());
+        self::assertSame(1, DB::table('ai_credit_reservations')->where('organization_id', $organization->id)->count());
         \Illuminate\Support\Facades\Queue::assertPushed(\App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob::class, 1);
     }
 
@@ -129,7 +197,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
         self::assertSame('failed', DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('status'));
         self::assertSame(0, (int) DB::table('estimate_generation_credit_operations')->where('operation_id', $id)->value('consumed_units_minor'));
         self::assertSame(1000000, $credits->balance($organization)['available_minor']);
-        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('organization_id', $organization->id)->count());
     }
 
     public function test_service_expense_limit_is_independent_of_a_large_customer_balance(): void
@@ -145,7 +213,7 @@ final class EstimatorCreditWalletPostgresTest extends EstimateGenerationCanonica
             self::assertSame('estimator_credit_service_expense_limit_reached', $exception->reason);
         }
         self::assertSame(1000000, app(AICreditService::class)->balance($organization)['available_minor']);
-        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->count());
+        self::assertSame(0, DB::table('estimate_generation_credit_attempts')->where('organization_id', $organization->id)->count());
     }
 
     public function test_document_units_are_paused_until_the_exact_manifest_is_approved_and_mutation_invalidates_it(): void

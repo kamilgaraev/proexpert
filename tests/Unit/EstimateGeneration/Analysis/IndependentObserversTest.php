@@ -386,7 +386,7 @@ final class InMemoryAiRoleRunRepository implements AiRoleRunRepository
         return new AiRoleRunClaim($runId, 'owned', $ownerUuid);
     }
 
-    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void
     {
         $this->physicalAttemptIds[] = $physicalAttemptId;
     }

@@ -36,8 +36,8 @@ final readonly class RunEstimateAudit
             null,
             null,
             'estimate_audit_cycle',
-            $input->sessionId.':'.$input->cycle,
-            'audit-cycle:'.$input->cycle.':'.$input->snapshotToken,
+            $input->sessionId.':'.$input->cycle.($input->partId === 'whole' ? '' : ':'.$input->partId),
+            'audit-cycle:'.$input->cycle.':'.$input->snapshotToken.($input->partId === 'whole' ? '' : ':'.$input->partId),
             AiAnalysisRole::EstimateAuditor,
             $this->modelName,
             self::PROMPT_CONTRACT,
@@ -53,8 +53,9 @@ final readonly class RunEstimateAudit
         }
         $physicalAttemptId = null;
         try {
-            $raw = $this->model->audit($input, function (string $attemptId) use ($claim, &$physicalAttemptId): void {
-                $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId);
+            $raw = $this->model->audit($input, function (string $attemptId) use ($input, $claim, &$physicalAttemptId): void {
+                $creditId = $input->wireScope?->creditOperationId;
+                $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId, $creditId, $creditId === null ? null : 'estimate_audit');
                 $physicalAttemptId = $attemptId;
             });
             if ($physicalAttemptId === null) {

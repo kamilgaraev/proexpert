@@ -34,6 +34,32 @@ use Tests\Support\EstimateGeneration\InMemoryProjectModelRepository;
 
 final class EstimateAuditTest extends TestCase
 {
+    public function test_large_audit_really_runs_distinct_parts_preserves_all_context_and_replays_them(): void
+    {
+        $items = [];
+        for ($index = 0; $index < 65; $index++) {
+            $items[] = [...$this->item('work:'.$index), 'name' => 'Участок '.$index];
+        }
+        $runs = new InMemoryAiRoleRunRepository;
+        $model = new RecordedEstimateAuditModel(array_fill(0, 3, ['accepted' => true, 'findings' => []]));
+        $cycles = new ApplyComposerCorrectionCycle(new RunEstimateAudit($runs, $model, 'openai/gpt-6-luna'), $this->corrector());
+        $root = $this->input($this->draft($items));
+        $result = $cycles->apply($root);
+        self::assertSame('accepted', $result['audit']['status']);
+        self::assertSame(3, $model->calls);
+        self::assertCount(3, array_unique(array_column($runs->inputs, 'subjectId')));
+        self::assertCount(3, $result['audit']['parts']);
+        self::assertCount(65, $result['draft']['local_estimates'][0]['sections'][0]['work_items']);
+        foreach ($model->inputs as $part) {
+            self::assertSame($root->facts, $part->facts);
+            self::assertSame($root->evidence, $part->evidence);
+            self::assertSame($root->derivedQuantities, $part->derivedQuantities);
+            self::assertNotSame('whole', $part->partId);
+        }
+        self::assertSame($result, $cycles->apply($root));
+        self::assertSame(3, $model->calls);
+    }
+
     public function test_accepted_audit_replays_without_second_model_call(): void
     {
         $runs = new InMemoryAiRoleRunRepository;
@@ -606,10 +632,13 @@ final class RecordedEstimateAuditModel implements EstimateAuditModel
 {
     public int $calls = 0;
 
+    public array $inputs = [];
+
     public function __construct(private readonly array $results) {}
 
     public function audit(EstimateAuditInput $input, callable $onAttemptStarted): array
     {
+        $this->inputs[] = $input;
         $onAttemptStarted('00000000-0000-4000-8000-00000000000'.($this->calls + 1));
 
         return $this->results[$this->calls++];

@@ -121,17 +121,23 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
         }, 3);
     }
 
-    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void
     {
         $this->assertUuid($ownerUuid);
         $this->assertUuid($physicalAttemptId);
+        if (($creditOperationId === null) !== ($creditRole === null)) {
+            throw new UsageInvariantViolation('AI role run credit identity is incomplete.');
+        }
+        if ($creditOperationId !== null) {
+            $this->assertUuid($creditOperationId);
+        }
         $now = new DateTimeImmutable;
         $scope = $this->database->table(self::TABLE)->where('id', $runId)
             ->first(['organization_id', 'project_id', 'session_id']);
         if ($scope === null) {
             throw new UsageInvariantViolation('AI role run physical attempt ownership lost.');
         }
-        $updated = $this->database->transaction(function () use ($runId, $ownerUuid, $physicalAttemptId, $now, $scope): int {
+        $updated = $this->database->transaction(function () use ($runId, $ownerUuid, $physicalAttemptId, $now, $scope, $creditOperationId, $creditRole): int {
             $session = $this->database->table('estimate_generation_sessions')
                 ->where('id', (int) $scope->session_id)
                 ->where('organization_id', (int) $scope->organization_id)
@@ -166,6 +172,7 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 'owner_token' => $ownerUuid,
                 'lease_expires_at' => $run->lease_expires_at,
                 'usage_recorded' => false,
+                ...($creditOperationId === null ? [] : ['credit_operation_id' => $creditOperationId, 'credit_role' => $creditRole]),
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -179,6 +186,8 @@ final readonly class EloquentAiRoleRunRepository implements AiRoleRunRepository
                 || (int) $attempt->session_id !== (int) $run->session_id
                 || $this->nullableInt($attempt->document_id) !== $this->nullableInt($run->document_id)
                 || $this->nullableInt($attempt->page_id) !== $this->nullableInt($run->page_id)
+                || ($creditOperationId !== null && (($attempt->credit_operation_id ?? null) !== $creditOperationId
+                    || ($attempt->credit_role ?? null) !== $creditRole))
                 || ! $this->physicalAttemptMatchesRun($attempt, $run)) {
                 throw new UsageInvariantViolation('AI role run physical attempt scope collision.');
             }

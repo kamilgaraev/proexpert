@@ -101,7 +101,7 @@ final class BatchComposerMemoryRepository implements AiRoleRunRepository
         return new AiRoleRunClaim($id, 'owned', $ownerUuid);
     }
 
-    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {

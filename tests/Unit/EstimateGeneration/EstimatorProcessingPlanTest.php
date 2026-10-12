@@ -48,6 +48,15 @@ final class EstimatorProcessingPlanTest extends TestCase
         self::assertArrayNotHasKey('estimate_composer_correction', $plan['roles']);
     }
 
+    public function test_a_large_operation_reserves_three_audits_two_corrections_and_three_sends_per_part(): void
+    {
+        $plan = (new EstimatorProcessingPlan)->build('generation', 0, 65, false, $this->tariff());
+        self::assertSame(3, $plan['audit_part_limit']);
+        self::assertSame(27, $plan['roles']['estimate_audit']['max_calls']);
+        self::assertSame(18, $plan['roles']['estimate_composer_correction']['max_calls']);
+        self::assertSame(54, $plan['maximum_calls']);
+    }
+
     private function tariff(): AiPriceSnapshot
     {
         return AiPriceSnapshot::fromArray(['input_per_million' => '13.5', 'cached_input_per_million' => '13.5',

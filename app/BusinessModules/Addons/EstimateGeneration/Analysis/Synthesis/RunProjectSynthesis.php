@@ -74,8 +74,9 @@ final readonly class RunProjectSynthesis implements ProjectSynthesisRunner
                 $input,
                 $candidateLinks,
                 $candidateQuestions,
-                function (string $attemptId) use ($claim, &$physicalAttemptId): void {
-                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId);
+                function (string $attemptId) use ($input, $claim, &$physicalAttemptId): void {
+                    $creditId = $input->wireScope?->creditOperationId;
+                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId, $creditId, $creditId === null ? null : 'project_synthesis');
                     $physicalAttemptId = $attemptId;
                 },
             );

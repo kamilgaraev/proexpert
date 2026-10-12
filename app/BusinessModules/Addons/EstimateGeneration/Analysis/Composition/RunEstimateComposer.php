@@ -98,8 +98,9 @@ final readonly class RunEstimateComposer
         try {
             $raw = $this->model->compose(
                 $input,
-                function (string $attemptId) use ($claim, &$physicalAttemptId): void {
-                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId);
+                function (string $attemptId) use ($input, $claim, &$physicalAttemptId): void {
+                    $creditId = $input->wireScope?->creditOperationId;
+                    $this->runs->startPhysicalAttempt($claim->runId, $claim->ownerUuid, $attemptId, $creditId, $creditId === null ? null : 'estimate_composition');
                     $physicalAttemptId = $attemptId;
                 },
             );

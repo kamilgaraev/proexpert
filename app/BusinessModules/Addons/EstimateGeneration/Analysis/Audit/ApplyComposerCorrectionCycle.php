@@ -17,6 +17,78 @@ final readonly class ApplyComposerCorrectionCycle
     /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
     public function apply(EstimateAuditInput $root): array
     {
+        $parts = (new EstimateAuditBatchPlanner)->plan($root->draft);
+        if (count($parts) === 1) {
+            return $this->applyPart($root);
+        }
+        if ($root->wireScope?->creditOperationId !== null) {
+            $operation = \Illuminate\Support\Facades\DB::table('estimate_generation_credit_operations')
+                ->where('organization_id', $root->organizationId)->where('project_id', $root->projectId)
+                ->where('session_id', $root->sessionId)->where('operation_id', $root->wireScope->creditOperationId)->first(['processing_plan']);
+            $plan = $operation === null ? [] : json_decode($operation->processing_plan, true, 64, JSON_THROW_ON_ERROR);
+            if (count($parts) > (int) ($plan['audit_part_limit'] ?? 1)) {
+                throw new \InvalidArgumentException('estimate_audit_parts_exceed_approved_plan');
+            }
+        }
+        $draft = $root->draft;
+        $findings = $reviews = $history = [];
+        $allAccepted = true;
+        $maximumCycles = 0;
+        // Validate every serialized part before the first physical audit request.
+        $inputs = array_map(static fn (array $part): EstimateAuditInput => $root->withPart($part['draft'], $part['id']), $parts);
+        foreach ($parts as $partIndex => $part) {
+            $outcome = $this->applyPart($inputs[$partIndex]);
+            $originalKeys = array_fill_keys($part['work_keys'], true);
+            $replacements = [];
+            foreach ($outcome['draft']['local_estimates'] ?? [] as $localIndex => $local) {
+                $newItems = [];
+                foreach ($local['sections'] ?? [] as $section) {
+                    foreach ($section['work_items'] ?? [] as $item) {
+                        if (isset($originalKeys[$item['key']])) {
+                            $replacements[$item['key']] = $item;
+                        } else {
+                            $newItems[] = $item;
+                        }
+                    }
+                }
+                if ($newItems !== []) {
+                    $draft['local_estimates'][] = [...$local, 'key' => 'audit-'.substr($part['id'], 5).'-'.$localIndex,
+                        'sections' => [['key' => 'audit-added', 'title' => $local['title'] ?? 'Дополнения', 'work_items' => $newItems]]];
+                }
+            }
+            foreach ($draft['local_estimates'] as &$local) {
+                foreach ($local['sections'] as &$section) {
+                    $section['work_items'] = array_values(array_filter(array_map(
+                        static fn (array $item): ?array => isset($originalKeys[$item['key']]) ? ($replacements[$item['key']] ?? null) : $item,
+                        $section['work_items'],
+                    )));
+                }
+                unset($section);
+            }
+            unset($local);
+            $allAccepted = $allAccepted && $outcome['audit']['status'] === 'accepted';
+            $maximumCycles = max($maximumCycles, $outcome['audit']['correction_cycles']);
+            array_push($findings, ...$outcome['audit']['findings']);
+            array_push($reviews, ...$outcome['draft']['audit_review_items']);
+            foreach ($outcome['audit']['history'] as $entry) {
+                $history[] = [...$entry, 'part_id' => $part['id']];
+            }
+        }
+        $audit = ['schema_version' => 1, 'snapshot_token' => $root->snapshotToken,
+            'status' => $allAccepted ? 'accepted' : 'review_required', 'correction_cycles' => $maximumCycles,
+            'parts' => array_map(static fn (array $part): array => ['id' => $part['id'], 'work_keys' => $part['work_keys']], $parts),
+            'findings' => $findings, 'history' => $history];
+        $draft['audit_review_items'] = $reviews;
+        $draft['independent_audit'] = $audit;
+        // A proposed new row must not collide with a work in another part.
+        (new EstimateAuditBatchPlanner)->plan($draft);
+
+        return ['draft' => $this->refreshArtifactHash($draft), 'audit' => $audit];
+    }
+
+    /** @return array{draft:array<string,mixed>,audit:array<string,mixed>} */
+    private function applyPart(EstimateAuditInput $root): array
+    {
         $draft = $root->draft;
         $history = [];
         $correctionCycles = 0;

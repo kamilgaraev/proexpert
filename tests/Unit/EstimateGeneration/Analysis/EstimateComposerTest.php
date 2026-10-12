@@ -573,7 +573,7 @@ final class ComposerRoleRunMemoryRepository implements AiRoleRunRepository
             : new AiRoleRunClaim(1, 'replay', result: $this->result);
     }
 
-    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId): void {}
+    public function startPhysicalAttempt(int $runId, string $ownerUuid, string $physicalAttemptId, ?string $creditOperationId = null, ?string $creditRole = null): void {}
 
     public function complete(int $runId, string $ownerUuid, AiRoleRunResult $result): void
     {
