@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveDocumentStatusEnum;
 use App\BusinessModules\Features\ExecutiveDocumentation\Enums\ExecutiveDocumentTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
@@ -38,6 +39,7 @@ final class AssistantStructuredFactLabels
             'supplier_proposal.status' => SupplierProposalStatusEnum::tryFrom($value)?->label(),
             'purchase_order.status' => PurchaseOrderStatusEnum::tryFrom($value)?->label(),
             'purchase_receipt.status' => PurchaseReceiptStatusEnum::tryFrom($value)?->label(),
+            'project_material_delivery.status' => ProjectMaterialDeliveryStatusEnum::tryFrom($value)?->label(),
             'quality_defect.status' => QualityDefectStatusEnum::tryFrom($value)?->label(),
             'quality_defect.severity' => QualityDefectSeverityEnum::tryFrom($value)?->label(),
             'executive_document.status' => ExecutiveDocumentStatusEnum::tryFrom($value)?->label(),
@@ -56,6 +58,7 @@ final class AssistantStructuredFactLabels
             'design_package.project_stage' => 'design_management.project_stages',
             'estimate.status' => 'budget_estimates.mobile.statuses',
             'project.status' => 'ai_assistant_facts.project_statuses',
+            'completed_work.status' => 'workflow_management.statuses',
             'machinery_asset.status' => 'machinery_operations.asset_statuses',
             'machinery_assignment.status' => 'machinery_operations.assignment_statuses',
             'machinery_shift_report.status' => 'machinery_operations.shift_statuses',
