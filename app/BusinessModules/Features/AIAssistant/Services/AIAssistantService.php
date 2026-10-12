@@ -578,6 +578,9 @@ class AIAssistantService
             if (! empty($tools)) {
                 $options['tools'] = $tools;
             }
+            if (($requiredToolChoice = AssistantRequiredProjectRead::toolChoice($taskPlan, $tools)) !== null) {
+                $options['tool_choice'] = $requiredToolChoice;
+            }
 
             $toolFailures = [];
             $toolEvidence = [];
@@ -587,6 +590,7 @@ class AIAssistantService
             $budgetStopNotice = null;
 
             $responseEnvelope = $this->requestAssistantResponse($messages, $options, $organizationId, $user);
+            unset($options['tool_choice']);
             $response = $responseEnvelope['response'];
             $degradedMode = (bool) ($responseEnvelope['degraded_mode'] ?? false);
 
@@ -2033,6 +2037,10 @@ class AIAssistantService
         $args = is_array($arguments) ? $arguments : [];
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
+        $requiredRead = AssistantRequiredProjectRead::fromPlan($taskPlan);
+        if (($requiredRead['name'] ?? null) === $toolName) {
+            $args = $requiredRead['arguments'];
+        }
         if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             if ($args['project_id'] === null) {

@@ -58,6 +58,15 @@ final class AssistantStructuredFactVerifier
         $candidates = [];
         foreach ($toolResults as $result) {
             $evidence = is_array($result) ? ($result['financial_evidence'] ?? null) : null;
+            if (is_array($result) && ($result['_tool_name'] ?? null) === 'get_live_project_financial_evidence'
+                && ($result['source_covered'] ?? false) === true && is_array($evidence)
+                && $this->validEmptyFinancialPeriod($evidence, $projectId, $period->dateFrom, $period->dateTo)) {
+                $answer = trans_message('ai_assistant_financial.project_expense_no_records', ['from' => $period->dateFrom, 'to' => $period->dateTo]);
+                $candidate = ['text' => $answer, 'validation_status' => 'verified', 'source_refs' => $evidence['source_refs'],
+                    'replaced' => $text !== $answer, 'needs_clarification' => false, 'structured_evidence_truncated' => false];
+                $candidates[AssistantSourceReferenceIdentity::key($candidate)] = $candidate;
+                continue;
+            }
             if (! is_array($result) || ($result['_tool_name'] ?? null) !== 'get_live_project_financial_evidence'
                 || ($result['source_covered'] ?? false) !== true || ! is_array($evidence)
                 || ($evidence['scope'] ?? null) !== 'authorized_project_period_totals'
@@ -101,6 +110,33 @@ final class AssistantStructuredFactVerifier
             }
         }
         return count($candidates) === 1 ? reset($candidates) : $unverified;
+    }
+
+    private function validEmptyFinancialPeriod(array $evidence, int $projectId, string $from, string $to): bool
+    {
+        $absence = $evidence['absence'] ?? null;
+        $ref = is_array($absence) ? ($absence['source_ref'] ?? null) : null;
+        if (($evidence['scope'] ?? null) !== 'authorized_project_period_empty' || ($evidence['rows'] ?? null) !== []
+            || ($evidence['validation_status'] ?? null) !== 'verified' || ! is_array($absence) || ! is_array($ref)
+            || ($absence['record_count'] ?? null) !== 0 || ($evidence['source_refs'] ?? null) !== [$ref]
+            || ($evidence['version'] ?? null) !== AssistantSourceReferenceIdentity::key($absence)
+            || ($ref['entity_type'] ?? null) !== 'live_project_financial_projection'
+            || ($ref['projection_name'] ?? null) !== 'live_project_financial_projection' || ($ref['entity_id'] ?? null) !== $projectId
+            || ($ref['formula_version'] ?? null) !== 'native_project_margin_no_records_v1'
+            || ($ref['evidence_time_basis'] ?? null) !== 'live_ledger_read'
+            || ($ref['requested_currency'] ?? null) !== null
+            || ($ref['composite_key'] ?? null) !== ['project_id' => $projectId, 'period_start' => $from, 'period_end' => $to, 'currency' => null]
+            || ! is_string($ref['source_hash'] ?? null) || ! is_string($ref['fetched_at'] ?? null)
+            || ($ref['source_version'] ?? null) !== AssistantSourceReferenceIdentity::key(['source_hash' => $ref['source_hash'], 'record_count' => 0])) {
+            return false;
+        }
+        try {
+            $age = time() - (new \DateTimeImmutable($ref['fetched_at']))->getTimestamp();
+
+            return $age >= -60 && $age <= 600;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function verifiedCount(string $query, string $text, array $toolResults, array $requestScope = []): array

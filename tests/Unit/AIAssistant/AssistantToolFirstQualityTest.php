@@ -64,6 +64,7 @@ final class AssistantToolFirstQualityTest extends TestCase
     private array $providerCalls = [];
     private int $toolExecutions = 0;
     private int $assistantMessages = 0;
+    private array $executedArguments = [];
 
     protected function setUp(): void
     {
@@ -131,6 +132,38 @@ final class AssistantToolFirstQualityTest extends TestCase
         $definitions = $providerRequest['options']['tools'];
         $this->assertSame(['assistant_domain_discover_capabilities'], array_column($definitions, 'name'));
         $this->assertSame('object', $definitions[0]['parameters']['type']);
+    }
+
+    #[DataProvider('requiredProjectReads')]
+    public function test_simple_project_facts_force_only_first_native_read_and_bind_user_scope(string $query, string $name, array $expected): void
+    {
+        $call = $this->toolCall($name);
+        $call['function']['arguments'] = '{"project_id":999,"query":"invented","period_start":"2024-01-01"}';
+        $schema = $name === 'assistant_domain_search'
+            ? (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\SearchAssistantDomainTool(new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::defaults()),
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class))->newInstanceWithoutConstructor()))->getParametersSchema()
+            : (new \App\BusinessModules\Features\AIAssistant\Actions\Domains\GetLiveProjectFinancialEvidenceTool(
+                (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantLiveProjectFinanceReader::class))->newInstanceWithoutConstructor()))->getParametersSchema();
+        $service = $this->service([$name => ['status' => 'success', 'source_refs' => [['entity_type' => 'project', 'entity_id' => 52, 'organization_id' => 15]]]],
+            [['content' => '', 'tool_calls' => [$call]], ['content' => 'Проверено.']],
+            requestContext: ['entity_refs' => [['type' => 'project', 'id' => 52]]], toolSchemas: [$name => $schema]);
+
+        $service->ask($query, 15, $this->actor(), 7);
+
+        self::assertSame(['type' => 'function', 'function' => ['name' => $name]], $this->providerCalls[0]['options']['tool_choice']);
+        self::assertArrayNotHasKey('tool_choice', $this->providerCalls[1]['options']);
+        self::assertSame([$expected], $this->executedArguments, json_encode($service->providerSourceResults, JSON_UNESCAPED_UNICODE));
+        self::assertSame(1, $this->toolExecutions);
+    }
+
+    public static function requiredProjectReads(): array
+    {
+        return [
+            ['Есть на нашем объекте просроченные задачи? Сколько их?', 'assistant_domain_search',
+                ['domain' => 'schedule', 'entity_type' => 'schedule_task', 'predicate' => 'overdue', 'query' => '', 'project_id' => 52, 'limit' => 1, 'cursor' => null, 'fields' => null]],
+            ['Покажи расходы нашего объекта за сентябрь 2025 года.', 'get_live_project_financial_evidence',
+                ['project_id' => 52, 'period_start' => '2025-09-01', 'period_end' => '2025-09-30', 'currency' => null]],
+        ];
     }
 
     public function test_actual_ask_renders_model_selected_presentation_from_checked_rows_only(): void
@@ -1425,17 +1458,18 @@ final class AssistantToolFirstQualityTest extends TestCase
 
     private function service(array $toolResults, array $responses, array $history = [], ?callable $payloadBuilder = null, ?array $navigationPermissions = null,
         ?AssistantDataAccessPolicy $navigationPolicy = null, ?callable $afterNavigationAccess = null,
-        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true): ToolFirstStubService
+        ?AssistantFinancialAnswerService $financialAnswers = null, ?IntentRecognizer $intentRecognizer = null, array $requestContext = [], bool $nativeFixture = true, array $toolSchemas = []): ToolFirstStubService
     {
         $registry = new AIToolRegistry;
         foreach ($toolResults as $name => $result) {
             $tool = $this->createMock(AIToolInterface::class);
             $tool->method('getName')->willReturn($name);
             $tool->method('getDescription')->willReturn('Readonly tool');
-            $tool->method('getParametersSchema')->willReturn(['type' => 'object',
+            $tool->method('getParametersSchema')->willReturn($toolSchemas[$name] ?? ['type' => 'object',
                 'properties' => $name === 'get_bim_model_elements' ? ['project_id' => ['type' => ['integer', 'null']], 'model_query' => ['type' => ['string', 'null']]] : [], 'additionalProperties' => false]);
-            $tool->method('execute')->willReturnCallback(function () use ($result): array {
+            $tool->method('execute')->willReturnCallback(function (array $arguments) use ($result): array {
                 $this->assertNotEmpty($this->providerCalls);
+                $this->executedArguments[] = $arguments;
                 $this->toolExecutions++;
                 if ($result instanceof \Throwable) {
                     throw $result;

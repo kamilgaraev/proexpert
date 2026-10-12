@@ -39,7 +39,7 @@ final class AssistantToolSurface
             '/договор|contract/iu' => ['get_contract_snapshot', 'search_contractors'],
             '/склад|warehouse|остат|материал|material/iu' => ['get_material_stock', 'search_warehouse', 'search_materials'],
             '/bim|ifc|бим|модел|design|кондицион|вентил|перекрыти|Ifc/iu' => ['get_bim_model_elements'],
-            '/плат[её]ж|финанс|finance|payment|прибыл|бюджет/iu' => ['get_live_project_financial_evidence', 'get_published_report_financial_evidence'],
+            '/плат[её]ж|финанс|finance|payment|прибыл|бюджет|расход|затрат/iu' => ['get_live_project_financial_evidence', 'get_published_report_financial_evidence'],
             '/график|schedule|срок/iu' => ['get_schedule_snapshot'],
             '/снабжен|закуп|procurement/iu' => ['get_procurement_snapshot'],
             '/проект|project/iu' => ['get_project_snapshot'],

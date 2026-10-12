@@ -75,11 +75,29 @@ final readonly class AssistantLiveProjectFinanceProjection
                 if (! $value->isEqualTo($sourceSums[$currency][$field] ?? BigDecimal::zero())) { return $this->insufficient('source_changed_during_read'); }
             }
         }
-        if ($totals === []) { return $this->insufficient('no_financial_sources'); }
         if (! is_string($native['fetched_at'] ?? null) || preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/D', $native['fetched_at']) !== 1) { return $this->insufficient('source_time_unavailable'); }
         $fetchedAt = new DateTimeImmutable($native['fetched_at']);
         if ($fetchedAt > new DateTimeImmutable('+1 minute') || ! is_string($native['fetched_at'] ?? null)) { return $this->insufficient('source_time_unavailable'); }
-        $sourceHash = AssistantSourceReferenceIdentity::key(['sources' => $sources, 'filters' => $filters, 'budget_version' => $native['budget_version'] ?? null]);
+        $sourceHash = AssistantSourceReferenceIdentity::key(['sources' => $sources, 'filters' => $filters, 'coverage' => $coverage, 'budget_version' => $native['budget_version'] ?? null]);
+        if ($totals === []) {
+            if (($filters['currency'] ?? null) !== null) { return $this->insufficient('filtered_empty_source'); }
+            $version = AssistantSourceReferenceIdentity::key(['source_hash' => $sourceHash, 'record_count' => 0]);
+            $ref = ['entity_type' => 'live_project_financial_projection', 'entity_id' => $projectId, 'organization_id' => $organizationId,
+                'projection_name' => 'live_project_financial_projection', 'composite_key' => ['project_id' => $projectId,
+                    'period_start' => $filters['period_start'], 'period_end' => $filters['period_end'], 'currency' => null],
+                'source_hash' => $sourceHash, 'source_version' => $version, 'fetched_at' => $fetchedAt->format(DATE_ATOM),
+                'as_of' => $fetchedAt->format(DATE_ATOM), 'requested_currency' => $filters['currency'] ?? null,
+                'evidence_time_basis' => 'live_ledger_read', 'formula_version' => 'native_project_margin_no_records_v1',
+                'budget_version' => $native['budget_version'] ?? null];
+            $absence = ['record_count' => 0, 'source_ref' => $ref];
+
+            return ['status' => 'success', 'useful' => true, 'source_covered' => true, 'source_refs' => [$ref],
+                'financial_evidence' => ['rows' => [], 'absence' => $absence, 'source_refs' => [$ref],
+                    'fetched_at' => $fetchedAt->format(DATE_ATOM), 'version' => AssistantSourceReferenceIdentity::key($absence),
+                    'validation_status' => 'verified', 'scope' => 'authorized_project_period_empty'],
+                'validation_status' => 'verified', 'server_formatted_answer' => trans_message('ai_assistant_financial.project_expense_no_records',
+                    ['from' => $filters['period_start'], 'to' => $filters['period_end']])];
+        }
         $rows = [];
         $lines = ['Точные суммы проекта за '.$filters['period_start'].' — '.$filters['period_end'].'. Данные прочитаны '.$fetchedAt->format(DATE_ATOM).'.'];
         foreach ($totals as $currency => $fields) {
