@@ -184,8 +184,7 @@ final class AssistantFinancialPresentationRegressionTest extends TestCase
     {
         foreach (['project' => 'budget_amount', 'contract' => 'total_amount', 'completed_work' => 'total_amount', 'purchase_request' => 'budget_amount'] as $type => $field) {
             $raw = $this->receipt(91, $type, [$field => '123.45']);
-            $row = AssistantStructuredFactFormatter::withUnknownCurrency($raw['structured_fact_evidence']['rows'][0]);
-            $receipt = AssistantStructuredFactFormatter::payload([$row], '2026-10-03T18:39:00Z');
+            $receipt = $raw;
             $receipt += AssistantDomainNumericEvidence::payload($raw['structured_fact_evidence']['rows'], '2026-10-03T18:39:00Z');
             $plan = $this->plan($receipt, [$field, 'currency']);
             $result = (new AssistantFinancialClaimVerifier)->guard('Сумма 0', [$receipt], $plan);
@@ -194,6 +193,8 @@ final class AssistantFinancialPresentationRegressionTest extends TestCase
             self::assertStringContainsString('Валюта: не указано', $result['text'], $type);
             self::assertStringNotContainsString('RUB', $result['text'], $type);
             self::assertSame([91], array_column($result['source_refs'], 'entity_id'), $type);
+            self::assertSame($raw['structured_fact_evidence']['source_refs'], $result['source_refs'], $type);
+            self::assertArrayNotHasKey('currency', $receipt['structured_fact_evidence']['rows'][0]['fields'], $type);
         }
     }
 

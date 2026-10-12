@@ -347,9 +347,7 @@ final class AssistantPresentationPlanner
         $availableFields = [];
         foreach ($set['rows'] as $row) {
             foreach ($row['_presentation_fields'] as $field) {
-                if (array_key_exists($field, $row['fields'])) {
-                    $availableFields[$field] = true;
-                }
+                $availableFields[$field] = true;
             }
         }
         foreach ($columns as $column) {
@@ -452,9 +450,9 @@ final class AssistantPresentationPlanner
             if (($row['fields'][$field] ?? null) !== null) {
                 $currencyShown = false;
                 foreach (array_intersect($selected, ['currency', 'budget_currency']) as $currencyField) {
-                    if (array_key_exists($currencyField, $row['fields'])
-                        && ($row['fields'][$currencyField] === null
-                            || (is_string($row['fields'][$currencyField]) && trim($row['fields'][$currencyField]) !== ''))) {
+                    $currency = $row['fields'][$currencyField] ?? null;
+                    if (in_array($currencyField, $row['_presentation_fields'], true)
+                        && ($currency === null || (is_string($currency) && trim($currency) !== ''))) {
                         $currencyShown = true;
                     }
                 }
