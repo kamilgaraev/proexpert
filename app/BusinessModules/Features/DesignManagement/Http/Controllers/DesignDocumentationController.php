@@ -90,7 +90,7 @@ final class DesignDocumentationController extends Controller
     public function generateSections(Request $request, int $packageId): JsonResponse
     {
         try {
-            $package = $this->package($request, $packageId);
+            $package = $this->package($request, $packageId, 'design-management.documents.manage_structure');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -123,7 +123,7 @@ final class DesignDocumentationController extends Controller
                 'normative_reference' => ['nullable', 'string', 'max:255'],
                 'sort_order' => ['nullable', 'integer', 'min:1', 'max:10000'],
             ]);
-            $package = $this->package($request, $packageId);
+            $package = $this->package($request, $packageId, 'design-management.documents.manage_structure');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -208,7 +208,7 @@ final class DesignDocumentationController extends Controller
         try {
             $validated = $request->validate([
                 'sheets' => ['required', 'array', 'min:1', 'max:1000'],
-                'sheets.*.sheet_number' => ['required', 'string', 'max:80'],
+                'sheets.*.sheet_number' => ['required', 'string', 'max:80', 'distinct'],
                 'sheets.*.sheet_code' => ['nullable', 'string', 'max:120'],
                 'sheets.*.sheet_title' => ['required', 'string', 'max:255'],
                 'sheets.*.revision' => ['nullable', 'string', 'max:80'],
@@ -217,7 +217,7 @@ final class DesignDocumentationController extends Controller
                 'sheets.*.status' => ['nullable', 'string', 'max:80'],
                 'sheets.*.metadata' => ['nullable', 'array'],
             ]);
-            $version = $this->documentArtifactService->findVersion($this->organizationId($request), $versionId);
+            $version = $this->documentArtifactService->findVersion($this->organizationId($request), $versionId, $request->user(), 'design-management.documents.edit');
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
@@ -241,7 +241,7 @@ final class DesignDocumentationController extends Controller
     public function runCompletenessCheck(Request $request, int $packageId): JsonResponse
     {
         try {
-            $package = $this->package($request, $packageId);
+            $package = $this->package($request, $packageId, 'design-management.norm_control.run');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -266,7 +266,7 @@ final class DesignDocumentationController extends Controller
                 'status' => ['nullable', 'string', Rule::in($this->reviewCommentStatuses())],
                 'severity' => ['nullable', 'string', Rule::in($this->reviewCommentSeverities())],
             ]);
-            $package = $this->package($request, $packageId);
+            $package = $this->package($request, $packageId, 'design-management.review');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -299,7 +299,7 @@ final class DesignDocumentationController extends Controller
                 'due_date' => ['nullable', 'date'],
                 'metadata' => ['nullable', 'array'],
             ]);
-            $package = $this->package($request, $packageId);
+            $package = $this->package($request, $packageId, 'design-management.review');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
@@ -352,16 +352,18 @@ final class DesignDocumentationController extends Controller
     public function issueRegister(Request $request, int $packageId): JsonResponse
     {
         try {
-            $package = $this->package($request, $packageId);
+            $package = $this->package($request, $packageId, 'design-management.export');
 
             if ($package === null) {
                 return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
             }
 
             return AdminResponse::success(
-                $this->issueRegisterService->build($package),
+                $this->issueRegisterService->build($package, $request->integer('workflow_event_id') ?: null, $request->user()),
                 trans_message('design_management.messages.issue_register_loaded')
             );
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
             return $this->failed('issue_register', $packageId, $e);
         }
@@ -370,13 +372,13 @@ final class DesignDocumentationController extends Controller
     public function downloadDocumentSourceFile(Request $request, int $versionId): JsonResponse|StreamedResponse
     {
         try {
-            $version = $this->documentArtifactService->findVersion($this->organizationId($request), $versionId);
+            $version = $this->documentArtifactService->findVersion($this->organizationId($request), $versionId, $request->user());
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
             }
 
-            return $this->streamFile($this->documentArtifactService->sourceFileStream($version));
+            return $this->streamFile($this->documentArtifactService->sourceFileStream($version, $request->user()));
         } catch (DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
@@ -384,9 +386,9 @@ final class DesignDocumentationController extends Controller
         }
     }
 
-    private function package(Request $request, int $packageId)
+    private function package(Request $request, int $packageId, string $permission = 'design-management.documents.view')
     {
-        return $this->managementService->findPackage($this->organizationId($request), $packageId);
+        return $this->managementService->findPackage($this->organizationId($request), $packageId, $request->user(), $permission);
     }
 
     private function section(Request $request, int $packageId, int $sectionId): ?DesignPackageSection

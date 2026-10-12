@@ -118,7 +118,7 @@ final class BimConstructionProgressApiTest extends TestCase
     public function test_journal_work_requires_current_approval_and_the_same_project(): void
     {
         $this->postJson($this->url(), $this->payload(), $this->context->authHeaders())->assertCreated();
-        $journal = DB::table('construction_journals')->insertGetId(['organization_id' => $this->context->organization->id, 'project_id' => $this->projectId, 'name' => 'Journal', 'start_date' => '2026-01-01', 'created_by_user_id' => $this->context->user->id]);
+        $journal = DB::table('construction_journals')->insertGetId(['organization_id' => $this->context->organization->id, 'performing_organization_id' => $this->context->organization->id, 'project_id' => $this->projectId, 'name' => 'Journal', 'start_date' => '2026-01-01', 'created_by_user_id' => $this->context->user->id]);
         $entry = DB::table('construction_journal_entries')->insertGetId(['journal_id' => $journal, 'entry_date' => '2026-01-15', 'entry_number' => 1, 'work_description' => 'Walls', 'status' => 'draft', 'created_by_user_id' => $this->context->user->id]);
         $work = $this->work(10, 'confirmed', '2026-01-15');
         DB::table('completed_works')->where('id', $work)->update(['journal_entry_id' => $entry]);

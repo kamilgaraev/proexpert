@@ -40,6 +40,7 @@ final class MobileDesignManagementRequest extends FormRequest
             'per_page' => ['sometimes', 'integer', 'between:1,100'],
             'search' => ['sometimes', 'nullable', 'string', 'max:255'],
             'status' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'package_id' => ['sometimes', 'integer', 'min:1'],
             'project_id' => [in_array($action, ['versions', 'packages', 'sets', 'issues', 'assignees', 'sessions', 'storeSession'], true) ? 'required' : 'sometimes', 'integer', 'min:1'],
             'version_id' => ['sometimes', 'integer', 'min:1'],
             'idempotency_key' => ['sometimes', 'string', 'regex:/^[A-Za-z0-9_-]{16,128}$/'],

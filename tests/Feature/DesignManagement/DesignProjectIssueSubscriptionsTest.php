@@ -31,6 +31,7 @@ final class DesignProjectIssueSubscriptionsTest extends TestCase
     public function test_pir_issue_read_requires_its_subscription_and_project_membership(bool $pir, bool $quality, bool $member): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $context->organization->users()->updateExistingPivot($context->user->id, ['project_access_mode' => 'assigned_projects']);
         $project = Project::factory()->create(['organization_id' => $context->organization->id]);
         if ($member) {
             $project->users()->attach($context->user->id, ['role' => 'project_manager', 'is_active' => true]);

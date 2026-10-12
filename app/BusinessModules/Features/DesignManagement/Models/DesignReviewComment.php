@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\DesignManagement\Models;
 
 use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentSeverityEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -50,6 +51,32 @@ final class DesignReviewComment extends Model
         'status' => 'open',
         'metadata' => '{}',
     ];
+
+    protected static function booted(): void
+    {
+        $invalidate = static function (self $comment): void {
+            $scopes = [
+                [(int) $comment->package_id, (int) $comment->organization_id, (int) $comment->project_id],
+                [(int) $comment->getOriginal('package_id'), (int) $comment->getOriginal('organization_id'), (int) $comment->getOriginal('project_id')],
+            ];
+            usort($scopes, static fn (array $left, array $right): int => $left[0] <=> $right[0]);
+            $seen = [];
+            foreach ($scopes as [$packageId, $organizationId, $projectId]) {
+                $key = $packageId . ':' . $organizationId . ':' . $projectId;
+                if ($packageId === 0 || isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
+                $package = DesignPackage::query()->whereKey($packageId)
+                    ->where('organization_id', $organizationId)->where('project_id', $projectId)->first();
+                if ($package !== null) {
+                    app(DesignCompletenessService::class)->invalidateLockedInputs($package);
+                }
+            }
+        };
+        static::saved($invalidate);
+        static::deleted($invalidate);
+    }
 
     public function organization(): BelongsTo
     {

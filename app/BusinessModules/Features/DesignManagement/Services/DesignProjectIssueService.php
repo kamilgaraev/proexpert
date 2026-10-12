@@ -45,14 +45,9 @@ final class DesignProjectIssueService
             ->when(isset($filters['package_id']), static fn ($query) => $query->where('metadata->design_issue_context->package_id', (int) $filters['package_id']))
             ->when(isset($filters['status']), static fn ($query) => $query->where('status', $filters['status']))
             ->when(isset($filters['version_id']), static fn ($query) => $query->whereJsonContains('metadata->design_issue_context->version_id', (int) $filters['version_id']))
+            ->with(['createdBy:id,name', 'assignedUser:id,name', 'statusHistory.changedBy:id,name', 'photos', 'organization'])
             ->latest('id')
             ->get();
-
-        $issues->filter(static function (QualityDefect $issue): bool {
-            $path = ($issue->metadata ?? [])['design_issue_context']['snapshot']['path'] ?? null;
-
-            return is_string($path) && $path !== '';
-        })->load('organization');
 
         return $issues;
     }
@@ -60,7 +55,7 @@ final class DesignProjectIssueService
     public function find(User $actor, int $organizationId, int $issueId): ?QualityDefect
     {
         $issue = QualityDefect::query()->forOrganization($organizationId)->projectIssues()
-            ->with(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy'])
+            ->with(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy', 'photos', 'organization'])
             ->find($issueId);
 
         if ($issue !== null) {
@@ -97,7 +92,9 @@ final class DesignProjectIssueService
         $this->project($organizationId, $projectId);
         $this->authorize($actor, 'design-management.review', $organizationId, $projectId);
         $context = $this->context($actor, $organizationId, $projectId, $payload);
-        $issue = $this->defects->create($organizationId, (int) $actor->id, [
+        return DB::transaction(function () use ($actor, $organizationId, $projectId, $payload, $context): QualityDefect {
+            $packages = $this->lockAffectedPackages($organizationId, $projectId, $context);
+            $issue = $this->defects->create($organizationId, (int) $actor->id, [
             'project_id' => $projectId,
             'kind' => 'project',
             'assigned_to' => $payload['assignee_id'] ?? null,
@@ -109,38 +106,43 @@ final class DesignProjectIssueService
             'metadata' => ['design_issue_context' => $context],
         ]);
 
-        return $issue->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy']);
+            $this->invalidatePackages($packages);
+            return $issue->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy', 'photos', 'organization']);
+        });
     }
 
     public function assign(QualityDefect $issue, User $actor, int $assigneeId, ?string $comment): QualityDefect
     {
         $this->authorize($actor, 'design-management.review', (int) $issue->organization_id, (int) $issue->project_id);
 
-        return $this->defects->assign($issue, $assigneeId, (int) $actor->id, $comment);
+        return $this->withRevision($issue, (int) $issue->getAttribute('row_version'), fn (QualityDefect $locked): QualityDefect => $this->defects->assign($locked, $assigneeId, (int) $actor->id, $comment));
     }
 
     public function resolve(QualityDefect $issue, User $actor, ?string $comment): QualityDefect
     {
         $this->authorize($actor, 'design-management.review', (int) $issue->organization_id, (int) $issue->project_id);
 
-        return $this->defects->resolve($issue, (int) $actor->id, ['comment' => $comment]);
+        return $this->withRevision($issue, (int) $issue->getAttribute('row_version'), fn (QualityDefect $locked): QualityDefect => $this->defects->resolve($locked, (int) $actor->id, ['comment' => $comment]));
     }
 
     public function verify(QualityDefect $issue, User $actor, bool $accepted, ?string $comment): QualityDefect
     {
         $this->authorize($actor, 'design-management.review', (int) $issue->organization_id, (int) $issue->project_id);
 
-        return $this->defects->verify($issue, (int) $actor->id, $accepted, $comment);
+        return $this->withRevision($issue, (int) $issue->getAttribute('row_version'), fn (QualityDefect $locked): QualityDefect => $this->defects->verify($locked, (int) $actor->id, $accepted, $comment));
     }
 
     public function setBlocking(QualityDefect $issue, User $actor, bool $active, ?string $reason): QualityDefect
     {
         return DB::transaction(function () use ($issue, $actor, $active, $reason): QualityDefect {
+            $packages = $this->lockAffectedPackages((int) $issue->organization_id, (int) $issue->project_id, (array) ($issue->metadata['design_issue_context'] ?? []));
             $locked = QualityDefect::query()->forOrganization((int) $issue->organization_id)
                 ->where('project_id', $issue->project_id)->projectIssues()->whereKey($issue->id)
                 ->lockForUpdate()->firstOrFail();
 
-            return $this->applyBlocking($locked, $actor, $active, $reason);
+            $result = $this->applyBlocking($locked, $actor, $active, $reason);
+            $this->invalidatePackages($packages);
+            return $result;
         });
     }
 
@@ -183,7 +185,7 @@ final class DesignProjectIssueService
             }
         }
 
-        return $issue->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy']);
+        return $issue->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy', 'photos', 'organization']);
     }
 
     public function storeSnapshot(QualityDefect $issue, User $actor, UploadedFile $file): QualityDefect
@@ -195,6 +197,7 @@ final class DesignProjectIssueService
     public function withRevision(QualityDefect $issue, int $expectedRevision, callable $operation): QualityDefect
     {
         return DB::transaction(function () use ($issue, $expectedRevision, $operation): QualityDefect {
+            $packages = $this->lockAffectedPackages((int) $issue->organization_id, (int) $issue->project_id, (array) ($issue->metadata['design_issue_context'] ?? []));
             $locked = QualityDefect::query()->forOrganization((int) $issue->organization_id)
                 ->where('project_id', $issue->project_id)->projectIssues()->whereKey($issue->id)
                 ->lockForUpdate()->firstOrFail();
@@ -202,7 +205,9 @@ final class DesignProjectIssueService
                 throw new DomainException(trans_message('design_issues.errors.stale_revision'));
             }
 
-            return $operation($locked);
+            $result = $operation($locked);
+            $this->invalidatePackages($packages);
+            return $result->loadMissing(['createdBy:id,name', 'assignedUser:id,name', 'statusHistory.changedBy:id,name', 'photos', 'organization']);
         });
     }
 
@@ -220,7 +225,7 @@ final class DesignProjectIssueService
         $metadata['design_issue_context'] = $context;
         $issue->update(['metadata' => $metadata, 'row_version' => (int) $issue->getAttribute('row_version') + 1]);
 
-        return $issue->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy']);
+        return $issue->fresh(['createdBy:id,name,email', 'assignedUser:id,name,email', 'statusHistory.changedBy', 'photos', 'organization']);
     }
 
     public function bimContext(QualityDefect $issue, User $actor): array
@@ -275,11 +280,41 @@ final class DesignProjectIssueService
     private function snapshotUrl(QualityDefect $issue, array $context): ?string
     {
         $path = $context['snapshot']['path'] ?? null;
-        if (! is_string($path) || $path === '') {
+        if (! is_string($path) || ! str_starts_with($path, 'org-'.$issue->organization_id.'/')) {
             return null;
         }
 
         return $this->files->temporaryUrl($path, 60, Organization::query()->find($issue->organization_id));
+    }
+
+    private function lockAffectedPackages(int $organizationId, int $projectId, array $context): Collection
+    {
+        $versionIds = array_merge(array_column((array) ($context['elements'] ?? []), 'version_id'), array_column((array) ($context['view_models'] ?? []), 'version_id'));
+        if (isset($context['version_id'])) {
+            $versionIds[] = (int) $context['version_id'];
+        }
+        if (isset($context['model_set_revision_id'])) {
+            $revision = DesignModelSetRevision::query()->whereKey((int) $context['model_set_revision_id'])
+                ->whereHas('modelSet', static fn ($query) => $query->where('organization_id', $organizationId)->where('project_id', $projectId))->first();
+            $versionIds = array_merge($versionIds, $revision?->version_ids ?? []);
+        }
+        $packageIds = \App\BusinessModules\Features\DesignManagement\Models\DesignArtifact::query()
+            ->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->whereHas('versions', static fn ($query) => $query->whereIn('id', array_unique(array_map('intval', $versionIds))))
+            ->pluck('package_id')->all();
+        if (isset($context['package_id'])) {
+            $packageIds[] = (int) $context['package_id'];
+        }
+        return DesignPackage::query()->where('organization_id', $organizationId)->where('project_id', $projectId)
+            ->whereIn('id', array_unique($packageIds))->orderBy('id')->lockForUpdate()->get();
+    }
+
+    private function invalidatePackages(Collection $packages): void
+    {
+        foreach ($packages as $package) {
+            $package->refresh();
+            app(DesignCompletenessService::class)->invalidateLockedInputs($package);
+        }
     }
 
     private function project(int $organizationId, int $projectId): void

@@ -42,7 +42,7 @@ final readonly class MobileDesignManagementIssueService
         $page = QualityDefect::query()->forOrganization($organizationId)->projectIssues()->where('project_id', $projectId)
             ->when(isset($filters['status']), fn ($query) => $query->where('status', $filters['status']))
             ->when(isset($filters['version_id']), fn ($query) => $query->whereJsonContains('metadata->design_issue_context->version_id', (int) $filters['version_id']))
-            ->with(['photos', 'statusHistory.changedBy', 'createdBy', 'assignedUser'])->latest('id')
+            ->with(['photos', 'statusHistory.changedBy', 'createdBy', 'assignedUser', 'organization'])->latest('id')
             ->paginate($filters['per_page'] ?? 20, ['*'], 'page', $filters['page'] ?? 1);
 
         return ['items' => $page->getCollection(), 'meta' => $this->models->meta($page)];
@@ -51,7 +51,7 @@ final readonly class MobileDesignManagementIssueService
     public function find(User $actor, int $organizationId, int $issueId, string $permission = 'design-management.view'): QualityDefect
     {
         $issue = QualityDefect::query()->forOrganization($organizationId)->projectIssues()
-            ->with(['photos', 'statusHistory.changedBy', 'createdBy', 'assignedUser'])->find($issueId);
+            ->with(['photos', 'statusHistory.changedBy', 'createdBy', 'assignedUser', 'organization'])->find($issueId);
         if (! $issue instanceof QualityDefect) {
             throw new BusinessLogicException(trans_message('design_issues.errors.not_found'), 404);
         }
@@ -182,15 +182,14 @@ final readonly class MobileDesignManagementIssueService
 
     private function revision(QualityDefect $issue, int $expectedRevision, callable $operation): QualityDefect
     {
-        return DB::transaction(function () use ($issue, $expectedRevision, $operation): QualityDefect {
-            $locked = QualityDefect::query()->forOrganization((int) $issue->organization_id)->projectIssues()
-                ->where('project_id', $issue->project_id)->whereKey($issue->id)->lockForUpdate()->firstOrFail();
-            if ((int) $locked->getAttribute('row_version') !== $expectedRevision) {
-                throw new BusinessLogicException(trans_message('design_issues.errors.stale_revision'), 409);
+        try {
+            return $this->issues->withRevision($issue, $expectedRevision, $operation);
+        } catch (\DomainException $exception) {
+            if ($exception->getMessage() === trans_message('design_issues.errors.stale_revision')) {
+                throw new BusinessLogicException(trans_message('design_issues.errors.stale_revision'), 409, $exception);
             }
-
-            return $operation($locked);
-        });
+            throw $exception;
+        }
     }
 
     private function stageAttachment(QualityDefect $issue, UploadedFile $file, string $type, ?string $key): array

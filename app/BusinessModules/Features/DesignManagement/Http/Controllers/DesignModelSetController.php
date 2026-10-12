@@ -31,24 +31,19 @@ final class DesignModelSetController extends Controller
         private readonly DesignModelSessionStateService $sessionState,
     ) {}
 
-    public function index(Request $request): JsonResponse
+    public function index(\App\BusinessModules\Features\DesignManagement\Http\Requests\ListDesignModelSetsRequest $request): JsonResponse
     {
-        $request->validate(['project_id' => ['required', 'integer', 'min:1']]);
-        if (! $this->sessionAccess->canAccessProject($request->user(), $this->org($request), $request->integer('project_id'))) {
-            return AdminResponse::error(trans_message('design_bim.errors.forbidden'), 403);
-        }
-        $sets = DesignModelSet::query()
-            ->where('organization_id', $this->org($request))
-            ->when($request->integer('project_id'), fn ($query, $id) => $query->where('project_id', $id))
-            ->with('revisions')
-            ->latest()
-            ->paginate(min(100, max(1, $request->integer('per_page', 25))));
+        try {
+            $sets = $this->service->listSets($this->org($request), $request->user(), $request->validated());
 
-        return AdminResponse::paginated(
-            DesignModelSetResource::collection($sets->getCollection()),
-            ['current_page' => $sets->currentPage(), 'last_page' => $sets->lastPage(), 'per_page' => $sets->perPage(), 'total' => $sets->total()],
-            trans_message('design_bim.messages.sets_loaded')
-        );
+            return AdminResponse::paginated(
+                DesignModelSetResource::collection($sets->getCollection()),
+                ['current_page' => $sets->currentPage(), 'last_page' => $sets->lastPage(), 'per_page' => $sets->perPage(), 'total' => $sets->total()],
+                trans_message('design_bim.messages.sets_loaded')
+            );
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        }
     }
 
     public function store(StoreDesignModelSetRequest $request): JsonResponse
@@ -60,7 +55,7 @@ final class DesignModelSetController extends Controller
                 201
             );
         } catch (DomainException $e) {
-            return AdminResponse::error($e->getMessage(), 422);
+            return AdminResponse::error($e->getMessage(), $e->getCode() === 409 ? 409 : 422);
         }
     }
 
@@ -107,33 +102,43 @@ final class DesignModelSetController extends Controller
 
     public function storeSession(StoreDesignModelSessionRequest $request): JsonResponse
     {
-        return AdminResponse::success(
-            new DesignModelSessionResource($this->service->createSession($this->org($request), $request->user(), $request->validated())),
-            trans_message('design_bim.messages.session_created'),
-            201
-        );
+        try {
+            return AdminResponse::success(
+                new DesignModelSessionResource($this->service->createSession($this->org($request), $request->user(), $request->validated())),
+                trans_message('design_bim.messages.session_created'),
+                201
+            );
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), $exception->getCode() === 409 ? 409 : 422);
+        }
     }
 
     public function sessions(ListDesignModelSessionsRequest $request): JsonResponse
     {
-        $data = $request->validated();
-        $sessions = $this->service->listSessions(
-            $this->org($request),
-            $request->user(),
-            (int) $data['project_id'],
-            min(100, max(1, (int) ($data['per_page'] ?? 25)))
-        );
+        try {
+            $data = $request->validated();
+            $sessions = $this->service->listSessions(
+                $this->org($request),
+                $request->user(),
+                (int) $data['project_id'],
+                min(100, max(1, (int) ($data['per_page'] ?? 25))),
+                $data['search'] ?? null,
+                (int) ($data['page'] ?? 1)
+            );
 
-        return AdminResponse::paginated(
-            DesignModelSessionListResource::collection($sessions->getCollection()),
-            [
-                'current_page' => $sessions->currentPage(),
-                'last_page' => $sessions->lastPage(),
-                'per_page' => $sessions->perPage(),
-                'total' => $sessions->total(),
-            ],
-            trans_message('design_bim.messages.sessions_loaded')
-        );
+            return AdminResponse::paginated(
+                DesignModelSessionListResource::collection($sessions->getCollection()),
+                [
+                    'current_page' => $sessions->currentPage(),
+                    'last_page' => $sessions->lastPage(),
+                    'per_page' => $sessions->perPage(),
+                    'total' => $sessions->total(),
+                ],
+                trans_message('design_bim.messages.sessions_loaded')
+            );
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 403);
+        }
     }
 
     public function bootstrap(Request $request, int $sessionId): JsonResponse

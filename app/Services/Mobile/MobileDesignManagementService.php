@@ -43,7 +43,7 @@ final readonly class MobileDesignManagementService
 
     public function package(User $actor, int $organizationId, int $packageId): array
     {
-        $package = $this->models->findPackage($organizationId, $packageId);
+        $package = $this->models->findPackage($organizationId, $packageId, $actor);
         if ($package === null) {
             throw new BusinessLogicException(trans_message('design_management.errors.package_not_found'), 404);
         }
@@ -57,8 +57,9 @@ final readonly class MobileDesignManagementService
         $projectId = (int) $filters['project_id'];
         $this->access->project($actor, $organizationId, $projectId);
         $query = $this->versionsQuery($organizationId, $projectId)
+            ->when(isset($filters['package_id']), fn ($query) => $query->whereHas('artifact', fn ($artifact) => $artifact->where('package_id', (int) $filters['package_id'])))
             ->select(['id', 'artifact_id', 'project_id', 'title', 'version_number', 'revision', 'is_current', 'status'])
-            ->with(['artifact:id,package_id,title', 'derivatives' => fn ($derivatives) => $derivatives
+            ->with(['artifact:id,package_id,title', 'artifact.package:id,title', 'derivatives' => fn ($derivatives) => $derivatives
                 ->where('organization_id', $organizationId)->where('project_id', $projectId)
                 ->where('viewer_provider', 'thatopen')->where('derivative_format', 'thatopen_frag')
                 ->select(['id', 'version_id', 'viewer_provider', 'derivative_format', 'status', 'progress_percent', 'processing_stage'])
@@ -68,7 +69,8 @@ final readonly class MobileDesignManagementService
             $pattern = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search).'%';
             $query->where(fn ($models) => $models->where('title', 'ilike', $pattern)
                 ->orWhere('source_original_name', 'ilike', $pattern)->orWhere('version_number', 'ilike', $pattern)
-                ->orWhereHas('artifact', fn ($artifacts) => $artifacts->where('title', 'ilike', $pattern)));
+                ->orWhereHas('artifact', fn ($artifacts) => $artifacts->where('title', 'ilike', $pattern))
+                ->orWhereHas('artifact.package', fn ($packages) => $packages->where('organization_id', $organizationId)->where('project_id', $projectId)->where('title', 'ilike', $pattern)));
         }
         $status = $filters['status'] ?? null;
         $derivativeScope = fn ($derivatives) => $derivatives->where('organization_id', $organizationId)->where('project_id', $projectId)
@@ -98,7 +100,7 @@ final readonly class MobileDesignManagementService
         $version->setRelation('derivatives', $version->derivatives->filter(fn ($derivative): bool => (int) $derivative->organization_id === $organizationId
             && (int) $derivative->project_id === (int) $version->project_id
             && ($derivative->derivative_file_path === null || str_starts_with((string) $derivative->derivative_file_path, 'org-'.$organizationId.'/'))));
-        $payload = $this->models->viewerPayload($version);
+        $payload = $this->models->viewerPayload($version, $actor);
         $payload['available_actions'] = $this->versionActions($actor, $organizationId, (int) $version->project_id);
 
         return $payload;
@@ -228,7 +230,7 @@ final readonly class MobileDesignManagementService
 
         return ['id' => (int) $version->id, 'version_id' => (int) $version->id, 'artifact_id' => (int) $version->artifact_id,
             'package_id' => (int) $version->artifact->package_id, 'project_id' => (int) $version->project_id,
-            'title' => $version->title, 'model_title' => $version->artifact->title,
+            'package_title' => $version->artifact->package?->title, 'title' => $version->title, 'model_title' => $version->artifact->title,
             'version_number' => $version->version_number, 'revision' => $version->revision, 'is_current' => $version->is_current,
             'status' => $version->status instanceof BackedEnum ? $version->status->value : $version->status,
             'derivative_status' => $publicStatus,
@@ -267,7 +269,7 @@ final readonly class MobileDesignManagementService
     {
         $canEdit ??= $this->access->can($actor, $organizationId, (int) $set->project_id, 'design-management.models.edit');
 
-        return (new DesignModelSetResource($set))->resolve() + ['available_actions' => [$this->action('update', $canEdit), $this->action('delete', $canEdit)]];
+        return (new DesignModelSetResource($set))->resolve() + ['available_actions' => [$this->action('update', $canEdit), $this->action('delete', $canEdit), $this->action('create_issue', $this->access->can($actor, $organizationId, (int) $set->project_id, 'design-management.review'))]];
     }
 
     private function assertSetVersions(User $actor, int $organizationId, int $projectId, array $data): void

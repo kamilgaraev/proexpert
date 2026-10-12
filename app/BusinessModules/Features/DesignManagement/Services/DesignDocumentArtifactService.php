@@ -16,6 +16,8 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use App\Models\Organization;
+use App\Models\User;
+use Illuminate\Validation\ValidationException;
 use App\Services\Storage\FileService;
 use DomainException;
 use Illuminate\Http\UploadedFile;
@@ -43,12 +45,18 @@ final class DesignDocumentArtifactService
             throw new DomainException(trans_message('design_management.errors.section_not_found'));
         }
 
-        $this->assertPackageAcceptsDocumentChanges($package);
+        app(DesignAccessService::class)->assertPackage($package, User::query()->findOrFail($userId), 'design-management.documents.upload');
         $metadata = $this->metadataExtractor->inspect($file);
         $fileFormat = (string) $metadata['file_format'];
         $this->assertFormatAllowed($section, (string) $payload['document_code'], $fileFormat);
 
         return DB::transaction(function () use ($section, $package, $userId, $file, $payload, $metadata, $fileFormat): DesignArtifactVersion {
+            $package = $this->lockPackage($package);
+            $section = DesignPackageSection::query()->whereKey($section->id)->where('package_id', $package->id)->where('organization_id', $package->organization_id)->where('project_id', $package->project_id)->lockForUpdate()->firstOrFail();
+            if (($section->metadata['composition_active'] ?? true) === false) {
+                throw new DomainException(trans_message('design_management.errors.section_not_found'));
+            }
+            $this->assertFormatAllowed($section, (string) $payload['document_code'], $fileFormat);
             $artifact = $this->resolveArtifact($section, $userId, $payload);
             $version = $artifact->versions()->create([
                 'organization_id' => $package->organization_id,
@@ -90,6 +98,7 @@ final class DesignDocumentArtifactService
                 $this->setCurrentVersion($version, $userId);
             }
 
+            $this->invalidate($package, $userId);
             $section->update([
                 'status' => DesignDocumentSectionStatusEnum::IN_WORK,
             ]);
@@ -112,9 +121,20 @@ final class DesignDocumentArtifactService
             throw new DomainException(trans_message('design_management.errors.version_not_found'));
         }
 
-        $this->assertPackageAcceptsDocumentChanges($package);
+        $this->assertDocumentVersion($version);
+        app(DesignAccessService::class)->assertVersion($version, User::query()->findOrFail($userId), 'design-management.documents.edit');
+        $this->validateSheets($sheets);
 
         DB::transaction(function () use ($version, $artifact, $package, $sheets, $userId): void {
+            $package = $this->lockPackage($package);
+            $version = DesignArtifactVersion::query()->whereKey($version->id)->where('artifact_id', $artifact->id)->lockForUpdate()->firstOrFail();
+            if ($version->is_current && in_array($version->status->value, ['archived', 'superseded'], true)) {
+                throw new DomainException(trans_message('design_management.errors.version_not_found'));
+            }
+            if (\App\BusinessModules\Features\DesignManagement\Models\DesignWorkflowEvent::query()->where('package_id', $package->id)->where('organization_id', $package->organization_id)->where('action', 'issue')->whereJsonContains('metadata->artifact_version_ids', (int) $version->id)->exists()) {
+                throw new DomainException(trans_message('design_management.errors.package_locked_for_document_changes'));
+            }
+            $this->invalidate($package, $userId);
             app(DesignRagMutationBridge::class)->changedRows(DesignDocumentSheet::class, DesignDocumentSheet::query()->where('version_id', $version->id));
             DesignDocumentSheet::query()
                 ->where('version_id', $version->id)
@@ -149,15 +169,31 @@ final class DesignDocumentArtifactService
         return $version->fresh(['artifact.section', 'sheets']);
     }
 
-    public function findVersion(int $organizationId, int $versionId): ?DesignArtifactVersion
+    public function findVersion(int $organizationId, int $versionId, ?User $actor = null, string $permission = 'design-management.documents.view'): ?DesignArtifactVersion
     {
-        return DesignArtifactVersion::forOrganization($organizationId)
+        $access = app(DesignAccessService::class);
+        $actor = $access->requireActor($actor);
+        $version = DesignArtifactVersion::forOrganization($organizationId)
             ->with(['artifact.section', 'artifact.package.project:id,name,organization_id', 'sheets'])
             ->find($versionId);
+        if ($version !== null) {
+            try {
+                $access->assertVersion($version, $actor, $permission);
+            } catch (DomainException) {
+                return null;
+            }
+            $this->assertDocumentVersion($version);
+        }
+        return $version;
     }
 
-    public function sourceFileStream(DesignArtifactVersion $version): array
+    public function sourceFileStream(DesignArtifactVersion $version, ?User $actor = null): array
     {
+        $this->assertDocumentVersion($version);
+        app(DesignAccessService::class)->assertVersion($version, app(DesignAccessService::class)->requireActor($actor), 'design-management.documents.view');
+        if (! str_starts_with((string) $version->source_file_path, 'org-'.$version->organization_id.'/')) {
+            throw new DomainException(trans_message('design_management.errors.document_file_not_available'));
+        }
         return $this->fileStream(
             (int) $version->organization_id,
             (string) $version->source_file_path,
@@ -165,6 +201,57 @@ final class DesignDocumentArtifactService
             $version->source_mime_type ?: 'application/octet-stream',
             trans_message('design_management.errors.document_file_not_available')
         );
+    }
+
+    private function assertDocumentVersion(DesignArtifactVersion $version): void
+    {
+        $version->loadMissing('artifact.section');
+        $artifact = $version->artifact;
+        if ($artifact === null || ($artifact->artifact_type === DesignArtifactTypeEnum::MODEL
+            && ($artifact->section_id === null || $artifact->section === null || trim((string) $artifact->document_code) === ''))) {
+            throw new DomainException(trans_message('design_management.errors.version_not_found'));
+        }
+    }
+
+    private function lockPackage(DesignPackage $package): DesignPackage
+    {
+        $locked = DesignPackage::query()->whereKey($package->id)->where('organization_id', $package->organization_id)
+            ->where('project_id', $package->project_id)->lockForUpdate()->firstOrFail();
+        $this->assertPackageAcceptsDocumentChanges($locked);
+        return $locked;
+    }
+
+    private function invalidate(DesignPackage $package, int $userId): void
+    {
+        app(DesignCompletenessService::class)->invalidateLockedInputs($package, $userId);
+        $package->refresh();
+        foreach ($package->sections()->get() as $section) {
+            $sectionMetadata = $section->metadata ?? [];
+            $sectionMetadata['readiness_status'] = 'not_checked';
+            $sectionMetadata['readiness_results'] = [];
+            $section->update(['metadata' => $sectionMetadata]);
+        }
+    }
+
+    private function validateSheets(array $sheets): void
+    {
+        $seen = [];
+        if ($sheets === [] || count($sheets) > 1000) {
+            throw ValidationException::withMessages(['sheets' => trans_message('design_management.errors.validation_failed')]);
+        }
+        foreach ($sheets as $index => $sheet) {
+            $number = is_array($sheet) ? trim((string) ($sheet['sheet_number'] ?? '')) : '';
+            $title = is_array($sheet) ? trim((string) ($sheet['sheet_title'] ?? '')) : '';
+            if ($number === '' || $title === '' || mb_strlen($number) > 80 || mb_strlen($title) > 255 || isset($seen[$number])) {
+                throw ValidationException::withMessages(['sheets.'.$index => trans_message('design_management.errors.validation_failed')]);
+            }
+            $seen[$number] = true;
+            foreach (['file_page_number', 'total_sheets'] as $field) {
+                if (isset($sheet[$field]) && (filter_var($sheet[$field], FILTER_VALIDATE_INT) === false || (int) $sheet[$field] < 1)) {
+                    throw ValidationException::withMessages(['sheets.'.$index.'.'.$field => trans_message('design_management.errors.validation_failed')]);
+                }
+            }
+        }
     }
 
     private function resolveArtifact(DesignPackageSection $section, int $userId, array $payload): DesignArtifact
@@ -183,6 +270,7 @@ final class DesignDocumentArtifactService
                     'requires_sheet_registry' => (bool) ($payload['requires_sheet_registry'] ?? $artifact->requires_sheet_registry),
                 ]);
             }
+            throw new DomainException(trans_message('design_management.errors.version_not_found'));
         }
 
         $documentCode = (string) $payload['document_code'];
@@ -237,6 +325,10 @@ final class DesignDocumentArtifactService
                 return;
             }
 
+            throw new DomainException(trans_message('design_management.errors.document_format_not_allowed'));
+        }
+        $section->loadMissing('package');
+        if ($section->package?->composition_revision_id !== null) {
             throw new DomainException(trans_message('design_management.errors.document_format_not_allowed'));
         }
     }

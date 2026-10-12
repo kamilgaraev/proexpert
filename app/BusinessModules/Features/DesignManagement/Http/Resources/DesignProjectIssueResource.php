@@ -6,7 +6,6 @@ namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Models\Organization;
 use App\Models\User;
 use App\Services\Storage\FileService;
 use BackedEnum;
@@ -19,6 +18,11 @@ final class DesignProjectIssueResource extends JsonResource
     {
         /** @var QualityDefect $issue */
         $issue = $this->resource;
+        $organization = $issue->relationLoaded('organization') ? $issue->getRelation('organization') : null;
+        $author = $issue->relationLoaded('createdBy') ? $issue->getRelation('createdBy') : null;
+        $assignee = $issue->relationLoaded('assignedUser') ? $issue->getRelation('assignedUser') : null;
+        $history = $issue->relationLoaded('statusHistory') ? $issue->getRelation('statusHistory') : collect();
+        $photos = $issue->relationLoaded('photos') ? $issue->getRelation('photos') : collect();
         $context = (array) (($issue->metadata ?? [])['design_issue_context'] ?? []);
 
         return [
@@ -32,6 +36,11 @@ final class DesignProjectIssueResource extends JsonResource
             'status' => $this->value($issue->status),
             'author_id' => $issue->created_by,
             'assignee_id' => $issue->assigned_to,
+            'author' => $author ? ['id' => (int) $author->id, 'name' => $author->name] : null,
+            'assignee' => $assignee ? ['id' => (int) $assignee->id, 'name' => $assignee->name] : null,
+            'history' => $history->filter(static fn ($event): bool => (int) $event->organization_id === (int) $issue->organization_id)->map(fn ($event): array => ['id' => (int) $event->id, 'from_status' => $this->value($event->from_status), 'to_status' => $this->value($event->to_status), 'comment' => $event->comment, 'changed_by' => $event->changed_by, 'author' => $event->relationLoaded('changedBy') && $event->changedBy ? ['id' => (int) $event->changedBy->id, 'name' => $event->changedBy->name] : null, 'changed_at' => $event->changed_at?->toISOString(), 'evidence_refs' => $event->reporting_evidence_refs ?? []])->values()->all(),
+            'photos' => $photos->filter(static fn ($photo): bool => (int) $photo->organization_id === (int) $issue->organization_id && str_starts_with((string) $photo->url, 'org-'.$issue->organization_id.'/'))->map(static fn ($photo): array => ['id' => (int) $photo->id, 'type' => $photo->type, 'caption' => $photo->caption, 'url' => app(FileService::class)->temporaryUrl($photo->url, 60, $organization), 'mime_type' => $photo->mime_type, 'size_bytes' => $photo->size_bytes, 'created_at' => $photo->created_at?->toISOString()])->values()->all(),
+            'result' => ['resolved_at' => $issue->resolved_at?->toISOString(), 'verified_at' => $issue->verified_at?->toISOString()],
             'due_date' => $issue->due_date?->format('Y-m-d'),
             'resolved_at' => $issue->resolved_at?->toIso8601String(),
             'verified_at' => $issue->verified_at?->toIso8601String(),
@@ -71,13 +80,13 @@ final class DesignProjectIssueResource extends JsonResource
     private function snapshotUrl(QualityDefect $issue, array $context): ?string
     {
         $path = $context['snapshot']['path'] ?? null;
-        if (! is_string($path) || $path === '') {
+        if (! is_string($path) || ! str_starts_with($path, 'org-'.$issue->organization_id.'/')) {
             return null;
         }
 
         $organization = $issue->relationLoaded('organization')
             ? $issue->getRelation('organization')
-            : Organization::query()->find($issue->organization_id);
+            : null;
 
         return app(FileService::class)->temporaryUrl($path, 60, $organization);
     }

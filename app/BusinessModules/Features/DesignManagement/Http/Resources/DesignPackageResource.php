@@ -21,12 +21,13 @@ final class DesignPackageResource extends JsonResource
         $currentVersion = DesignPackageWorkflow::currentVersion($package);
         $derivative = DesignPackageWorkflow::preferredDerivative($currentVersion);
         $problemFlags = DesignPackageWorkflow::problemFlags($package, $currentVersion, $derivative);
-        $artifactsCount = $package->relationLoaded('artifacts') ? $package->artifacts->count() : 0;
+        $activeArtifacts = $package->relationLoaded('artifacts') ? $package->artifacts->filter(static fn ($artifact): bool => DesignPackageWorkflow::isActiveArtifact($package, $artifact)) : null;
+        $artifactsCount = $activeArtifacts?->count() ?? 0;
         $models = $package->relationLoaded('artifacts')
-            ? $package->artifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) === 'model')->values()
+            ? $activeArtifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) === 'model')->values()
             : null;
         $documents = $package->relationLoaded('artifacts')
-            ? $package->artifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) !== 'model')->values()
+            ? $activeArtifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) !== 'model')->values()
             : null;
         $availableActions = DesignPackageWorkflow::availableActions($package);
 
@@ -49,6 +50,7 @@ final class DesignPackageResource extends JsonResource
             'issued_by' => $package->issued_by,
             'metadata' => $package->metadata ?? [],
             'composition_status' => $package->composition_status,
+            'composition_revision_number' => $package->composition_revision_id === null ? null : \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->where('package_id', $package->id)->value('revision_number'),
             'composition_revision_id' => $package->composition_revision_id,
             'open_blocking_comments_count' => DesignPackageWorkflow::openBlockingCommentsCount($package),
             'project' => $this->whenLoaded('project', fn () => $package->project ? [
@@ -63,8 +65,10 @@ final class DesignPackageResource extends JsonResource
             'sections' => DesignPackageSectionResource::collection($this->whenLoaded('sections')),
             'review_comments' => DesignReviewCommentResource::collection($this->whenLoaded('reviewComments')),
             'workflow_events' => DesignWorkflowEventResource::collection($this->whenLoaded('workflowEvents')),
+            'completeness_is_fresh' => app(\App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService::class)->isFreshForPackage($package, $package->latestCompletenessCheck),
             'latest_completeness_check' => new DesignCompletenessCheckResource($this->whenLoaded('latestCompletenessCheck')),
             'current_version' => $currentVersion ? new DesignArtifactVersionResource($currentVersion) : null,
+            'viewer_status' => DesignPackageWorkflow::viewerStatus($package),
             'derivative' => $derivative ? new DesignModelDerivativeResource($derivative) : $this->missingDerivative(),
             'problem_flags' => $problemFlags,
             'problem_flag_details' => DesignPackageWorkflow::problemFlagDetails($problemFlags),

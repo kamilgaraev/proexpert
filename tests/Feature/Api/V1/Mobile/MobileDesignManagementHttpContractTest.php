@@ -52,6 +52,16 @@ final class MobileDesignManagementHttpContractTest extends TestCase
         self::assertCount(0, $upload);
     }
 
+    public function test_viewer_service_uses_explicit_actor_without_http_authentication(): void
+    {
+        [$context, $project, $version] = $this->fixture();
+        self::assertNull(auth()->user());
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->andReturn('https://storage.test/model.ifc');
+        $payload = app(\App\Services\Mobile\MobileDesignManagementService::class)->viewer($context->user, (int) $context->organization->id, (int) $version->id);
+        self::assertSame($version->id, $payload['version']['id']);
+        self::assertSame('https://storage.test/model.ifc', $payload['source']['download_url']);
+    }
+
     public function test_catalog_includes_all_versions_and_paginated_preparation_status(): void
     {
         [$context, $project, $version] = $this->fixture();
@@ -70,6 +80,17 @@ final class MobileDesignManagementHttpContractTest extends TestCase
             ->assertJsonPath('data.0.available_actions.0.key', 'prepare_viewer');
         $this->withHeaders($context->mobileAuthHeaders())->getJson($this->base().'/project-model-versions?project_id='.$project->id.'&status=missing')
             ->assertOk()->assertJsonPath('data.0.id', $old->id)->assertJsonPath('data.0.derivative.processing_stage', 'stale');
+    }
+
+    public function test_catalog_exposes_package_title_and_filters_package_search(): void
+    {
+        [$context, $project, $version] = $this->fixture();
+        $package = $version->artifact->package;
+        $package->update(['title' => 'Уникальный комплект']);
+        $this->withHeaders($context->mobileAuthHeaders())->getJson($this->base().'/project-model-versions?project_id='.$project->id.'&package_id='.$package->id.'&search='.urlencode('Уникальный'))
+            ->assertOk()->assertJsonPath('data.0.package_title', 'Уникальный комплект')->assertJsonPath('meta.total', 1);
+        $this->withHeaders($context->mobileAuthHeaders())->getJson($this->base().'/project-model-versions?project_id='.$project->id.'&package_id=999999')
+            ->assertOk()->assertJsonPath('meta.total', 0);
     }
 
     public function test_catalog_keeps_current_converter_status_with_large_private_metadata(): void

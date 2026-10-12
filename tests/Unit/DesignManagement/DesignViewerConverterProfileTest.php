@@ -37,24 +37,47 @@ final class DesignViewerConverterProfileTest extends TestCase
     public function test_node_converter_preserves_properties_and_project_coordinates(): void
     {
         $script = file_get_contents(base_path('resources/js/design-management/convert-ifc-to-frag.mjs'));
-        $reader = file_get_contents(base_path('resources/js/design-management/ifc-reader.mjs'));
         $index = file_get_contents(base_path('resources/js/design-management/ifc-index-data.mjs'));
+        $loader = file_get_contents(base_path('resources/js/design-management/ifc-reader.mjs'));
+        $relationships = file_get_contents(base_path('resources/js/design-management/ifc-relationships.mjs'));
+        $properties = file_get_contents(base_path('resources/js/design-management/ifc-element-properties.mjs'));
 
         $this->assertIsString($script);
-        $this->assertIsString($reader);
         $this->assertIsString($index);
+        $this->assertIsString($loader);
+        $this->assertIsString($relationships);
+        $this->assertIsString($properties);
         $this->assertStringContainsString('VIEWER_GEOMETRY_PROFILE', $script);
         $this->assertStringContainsString('importer.includeUniqueAttributes = true', $script);
         $this->assertStringContainsString('importer.includeRelationNames = true', $script);
-        $this->assertStringContainsString('openIfcSource, IFC_LOADER_SETTINGS', $script);
+        $this->assertStringContainsString('export const IFC_LOADER_SETTINGS = Object.freeze({', $loader);
+        $this->assertStringContainsString('COORDINATE_TO_ORIGIN: false', $loader);
+        $this->assertStringContainsString('import { openIfcSource, IFC_LOADER_SETTINGS } from "./ifc-reader.mjs";', $script);
         $this->assertStringContainsString('importer.webIfcSettings = IFC_LOADER_SETTINGS', $script);
-        $this->assertStringContainsString('COORDINATE_TO_ORIGIN: false', $reader);
         $this->assertStringContainsString('OpenModelFromCallback', $script);
+        $this->assertStringContainsString('api.OpenModelFromCallback(source.read, IFC_LOADER_SETTINGS)', $script);
         $this->assertStringContainsString('getElementPropertySets', $script);
         $this->assertStringContainsString('createIfcIndexReader', $script);
         $this->assertStringContainsString('materialNames', $index);
         $this->assertStringContainsString('indexReader.materialNames', $script);
+        $this->assertStringContainsString('export const createIfcIndexReader', $index);
+        $this->assertStringContainsString('import { ifcValue as value, namedProperties, createIfcIndexReader } from "./ifc-index-data.mjs";', $script);
+        $this->assertStringContainsString('const indexReader = createIfcIndexReader(api, modelID, propertyLookup)', $script);
+        $this->assertStringContainsString('export const getElementPropertySets', $properties);
+        $this->assertStringContainsString('export const createPropertySetReader', $properties);
+        $this->assertStringContainsString('import { getElementPropertySets, createPropertySetReader } from "./ifc-element-properties.mjs";', $script);
+        $this->assertStringContainsString('getElementPropertySets(api, modelID, expressID, readPropertySet, propertyLookup, types)', $script);
+        $this->assertStringContainsString('export const createIfcPropertyLookup', $relationships);
+        $this->assertStringContainsString('"IFCRELASSOCIATESMATERIAL", "RelatingMaterial"', $relationships);
+        $this->assertStringContainsString('materialIds:', $relationships);
+        $this->assertStringContainsString('import { createIfcPropertyLookup } from "./ifc-relationships.mjs";', $script);
+        $this->assertStringContainsString('const propertyLookup = createIfcPropertyLookup(api, modelID)', $script);
+        $this->assertStringContainsString('materialNames: (references)', $index);
+        $this->assertStringContainsString('materials: indexReader.materialNames(propertyLookup.materialIds(expressID))', $script);
         $this->assertStringContainsString('classificationMap', $script);
+        $this->assertStringContainsString('const classifications = classificationMap(api, modelID)', $script);
+        $this->assertStringContainsString('classifications: classifications.get(expressID) ?? []', $script);
         $this->assertStringContainsString('coordination_matrix', $script);
+        $this->assertStringContainsString('coordination_matrix: api.GetCoordinationMatrix(modelID)', $script);
     }
 }

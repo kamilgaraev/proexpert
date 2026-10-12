@@ -66,7 +66,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
         $files->shouldReceive('reportS3Client')->once()->andReturn($client);
         $files->shouldReceive('reportBucket')->once()->andReturn('offline-example-bucket');
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package, 15, null);
         $result = (new DesignModelMultipartUploadService($files, new DesignStoragePathService, $registrar))->start($package, 15, [
             'file_size_bytes' => 6_000_000,
             'original_name' => 'building.ifc',
@@ -158,6 +158,8 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             true
         );
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
+        $registrar->shouldReceive('findPackage')->once()->with(7, 21, 15, 'design-management.models.upload')->andReturn($this->persistedPackage());
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with(Mockery::type(DesignPackage::class), 15, null);
         $service = new DesignModelMultipartUploadService(
             $files,
             new DesignStoragePathService,
@@ -180,7 +182,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
         Cache::flush();
         $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package, 15, null);
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('startMultipart')
             ->once()
@@ -223,7 +225,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
         Cache::flush();
         $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->twice()->with($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->twice()->with($package, 15, null);
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('startMultipart')->once()->andReturnUsing(
             static fn (string $path, string $mime, int $partSize, array $metadata): MultipartUpload => new MultipartUpload($path, 'provider-resume', $mime, $partSize, $metadata)
@@ -276,6 +278,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
         ]);
         $files = Mockery::mock(FileService::class);
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
+        $registrar->shouldReceive('findPackage')->once()->with(7, 21, 15, 'design-management.models.upload')->andReturn($this->persistedPackage());
 
         $result = (new DesignModelMultipartUploadService($files, new DesignStoragePathService, $registrar))
             ->complete(7, 15, $uploadId);
@@ -287,7 +290,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     {
         $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package, 15, null);
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('startMultipart')
             ->once()
@@ -321,7 +324,7 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
     {
         $package = $this->persistedPackage();
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package, 15, null);
         $files = Mockery::mock(FileService::class);
         $files->shouldReceive('startMultipart')
             ->once()
@@ -382,10 +385,13 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             null,
             true,
         );
+        $registrar = Mockery::mock(DesignModelRegistrationService::class);
+        $registrar->shouldReceive('findPackage')->once()->with(7, 21, 15, 'design-management.models.upload')->andReturn($this->persistedPackage());
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with(Mockery::type(DesignPackage::class), 15, null);
         $service = new DesignModelMultipartUploadService(
             $files,
             new DesignStoragePathService,
-            Mockery::mock(DesignModelRegistrationService::class),
+            $registrar,
         );
 
         $this->expectException(\DomainException::class);
@@ -450,8 +456,8 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
                 return $stored;
             });
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('findPackage')->twice()->with(7, 21)->andReturn($package);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->twice()->with($package);
+        $registrar->shouldReceive('findPackage')->twice()->with(7, 21, 15, 'design-management.models.upload')->andReturn($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->twice()->with($package, 15, null);
         $registrar->shouldReceive('registerStoredIfcModel')
             ->once()
             ->withArgs(static fn (
@@ -587,8 +593,8 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
         $files->shouldReceive('verifyCurrentMultipart')->once()->andReturn($stored);
         $files->shouldReceive('deleteCurrent')->once()->with($path);
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('findPackage')->once()->with(7, 21)->andReturn($package);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $registrar->shouldReceive('findPackage')->once()->with(7, 21, 15, 'design-management.models.upload')->andReturn($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package, 15, null);
         $registrar->shouldReceive('registerStoredIfcModel')
             ->once()
             ->andThrow(new \DomainException('registration_failed'));
@@ -625,8 +631,8 @@ final class DesignModelMultipartUploadServiceTest extends TestCase
             ->with($path)
             ->andThrow(new \RuntimeException('storage_unavailable'));
         $registrar = Mockery::mock(DesignModelRegistrationService::class);
-        $registrar->shouldReceive('findPackage')->once()->with(7, 21)->andReturn($package);
-        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package);
+        $registrar->shouldReceive('findPackage')->once()->with(7, 21, 15, 'design-management.models.upload')->andReturn($package);
+        $registrar->shouldReceive('ensurePackageAcceptsModelChanges')->once()->with($package, 15, null);
         Cache::shouldReceive('get')
             ->twice()
             ->with('design_management:model_upload:'.$uploadId)
