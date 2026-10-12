@@ -122,6 +122,37 @@ final class AssistantLiveProjectFinanceSourceTest extends TestCase
         }
     }
 
+    public function test_real_completed_work_quality_flags_keep_exact_management_amount_and_explicit_limitations(): void
+    {
+        [$actor, $project, $input] = $this->fixture();
+        $unit = DB::table('measurement_units')->insertGetId(['organization_id' => $actor->current_organization_id,
+            'name' => 'Контрольные штуки', 'short_name' => 'фин.шт', 'type' => 'work']);
+        $workType = DB::table('work_types')->insertGetId(['organization_id' => $actor->current_organization_id,
+            'name' => 'Контрольная работа', 'measurement_unit_id' => $unit, 'is_active' => true]);
+        DB::table('completed_works')->insert(['organization_id' => $actor->current_organization_id, 'project_id' => $project->id,
+            'work_type_id' => $workType, 'user_id' => $actor->id, 'quantity' => '1.000', 'completion_date' => '2026-09-20',
+            'status' => 'confirmed', 'total_amount' => '100.00']);
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('canCurrent')->willReturn(true);
+        $authorization->method('can')->willReturn(true);
+        $service = new ProjectMarginReportService(new ProjectMarginCalculator, $authorization);
+        $native = $service->exactFinancialSourceRows($input, [$project->id], $actor);
+        $workSources = array_values(array_filter($native['sources'], static fn (array $source): bool => $source['source_type'] === 'completed_work'));
+        self::assertCount(1, $workSources);
+        self::assertStringContainsString('missing_source_document', $workSources[0]['problem_flags']);
+        $result = (new AssistantLiveProjectFinanceProjection)->project($native, (int) $actor->current_organization_id, (int) $project->id);
+        self::assertSame('partial', $result['status']);
+        self::assertFalse($result['useful']);
+        self::assertTrue($result['source_covered']);
+        $rows = array_column($result['financial_evidence']['rows'], null, 'currency');
+        self::assertSame('100.00', $rows['RUB']['fields']['actual_revenue']);
+        self::assertSame('native_management_report', $rows['RUB']['source_ref']['currency_basis']);
+        self::assertContains('missing_source_document', $rows['RUB']['source_ref']['quality_flags']);
+        self::assertStringContainsString('не является подтверждённым бухгалтерским итогом', $result['server_formatted_answer']);
+        $native['coverage'][2]['problem_rows_count'] = 0;
+        self::assertSame('insufficient_data', (new AssistantLiveProjectFinanceProjection)->project($native, (int) $actor->current_organization_id, (int) $project->id)['status']);
+    }
+
     public function test_closed_project_cannot_be_read_even_with_financial_report_permissions(): void
     {
         [$actor, $project, $input] = $this->fixture();

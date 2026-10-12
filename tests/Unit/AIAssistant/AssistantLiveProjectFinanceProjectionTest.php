@@ -11,6 +11,8 @@ use PHPUnit\Framework\TestCase;
 
 final class AssistantLiveProjectFinanceProjectionTest extends TestCase
 {
+    use UsesAssistantUnitTranslations;
+
     public function test_exact_native_decimal_sums_retain_large_values_and_only_money_metrics(): void
     {
         $native = $this->native('9007199254740993.21', '1.005', '0.005');
@@ -71,6 +73,26 @@ final class AssistantLiveProjectFinanceProjectionTest extends TestCase
         self::assertContains('plan_revenue', $output['unavailable_fields']);
     }
 
+    public function test_known_analytic_flags_keep_exact_management_totals_with_explicit_free_partial_warning(): void
+    {
+        $native = $this->native();
+        $native['sources'][1]['problem_flags'] = 'missing_budget_article,missing_source_document';
+        $native['aggregates'][0]['problem_flags'] = 'missing_budget_article,missing_source_document';
+        foreach ($native['coverage'] as &$coverage) {
+            if ($coverage['source_type'] === 'completed_work') { $coverage['problem_rows_count'] = 1; }
+        }
+        unset($coverage);
+        $output = (new AssistantLiveProjectFinanceProjection)->project($native, 1, 7);
+        self::assertSame('partial', $output['status']);
+        self::assertFalse($output['useful']);
+        self::assertTrue($output['source_covered']);
+        self::assertSame('0.25', $output['financial_evidence']['rows'][0]['fields']['actual_cost']);
+        self::assertSame(['missing_budget_article', 'missing_source_document'], $output['source_refs'][0]['quality_flags']);
+        self::assertSame('native_management_report', $output['source_refs'][0]['currency_basis']);
+        self::assertStringContainsString('не подтверждение валюты каждого первичного документа', $output['server_formatted_answer']);
+        self::assertStringContainsString('не является подтверждённым бухгалтерским итогом', $output['server_formatted_answer']);
+    }
+
     #[DataProvider('incompleteCases')]
     public function test_incomplete_or_inconsistent_native_source_does_not_create_full_totals_proof(string $case): void
     {
@@ -82,6 +104,8 @@ final class AssistantLiveProjectFinanceProjectionTest extends TestCase
             'coverage flags' => $native['coverage'][0]['problem_rows_count'] = 1,
             'missing coverage source' => array_pop($native['coverage']),
             'source flags' => $native['sources'][0]['problem_flags'] = 'missing_project',
+            'unknown flags' => $native['sources'][0]['problem_flags'] = 'unverified_money',
+            'currency mismatch' => $native['sources'][0]['currency'] = 'USD',
             'source cap' => $native['status'] = 'insufficient_data',
         };
         $output = (new AssistantLiveProjectFinanceProjection)->project($native, 1, 7);
@@ -94,7 +118,7 @@ final class AssistantLiveProjectFinanceProjectionTest extends TestCase
 
     public static function incompleteCases(): array
     {
-        return array_map(static fn (string $case): array => [$case], ['changed sum', 'lost source', 'scope mismatch', 'coverage flags', 'missing coverage source', 'source flags', 'source cap']);
+        return array_map(static fn (string $case): array => [$case], ['changed sum', 'lost source', 'scope mismatch', 'coverage flags', 'missing coverage source', 'source flags', 'unknown flags', 'currency mismatch', 'source cap']);
     }
 
     public function test_float_native_money_is_never_promoted_to_exact_financial_proof(): void

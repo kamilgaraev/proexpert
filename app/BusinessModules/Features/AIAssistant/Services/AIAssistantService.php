@@ -299,6 +299,7 @@ class AIAssistantService
 
     private function shouldCheckDocumentCorpus(string $query, array $conversationContext): bool
     {
+        if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::metadataOnly($query)) { return false; }
         if ($this->isDocumentKnowledgeRequest($query)) {
             return true;
         }
@@ -355,6 +356,7 @@ class AIAssistantService
 
     protected function documentEvidenceRequiredForAnswer(string $query): bool
     {
+        if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::metadataOnly($query)) { return false; }
         return ! AssistantFactIntentClassifier::isClarificationRequest($query) || $this->isDocumentKnowledgeRequest($query);
     }
 
@@ -888,7 +890,8 @@ class AIAssistantService
             $documentCorpusIncomplete = $documentReadIncomplete || ($documentCorpusIncomplete && ! $currentDocumentRead);
             $verificationToolResults = $documentCorpusIncomplete || $documentSearchPartial
                 ? array_values(array_filter($this->activeToolResults,
-                    static fn (array $toolResult): bool => ! in_array($toolResult['_tool_name'] ?? null,
+                    static fn (array $toolResult): bool => ($toolResult['read_scope'] ?? null) === 'document_metadata'
+                        || ! in_array($toolResult['_tool_name'] ?? null,
                         ['search_assistant_documents', 'generate_rag_pdf_report'], true)))
                 : $this->activeToolResults;
             $ragMetadata = $this->ragMetadataFromToolResults($query, $verificationToolResults);
@@ -2049,6 +2052,12 @@ class AIAssistantService
         $bimScopeMissing = false;
         $requestQuery = (string) ($taskPlan['request']['message'] ?? '');
         $args = AssistantRequiredProjectRead::bindArguments($taskPlan, $toolName, $args);
+        if ($toolName === 'search_assistant_documents'
+            && \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentRequestIntent::metadataOnly($requestQuery)) {
+            $args['read_mode'] = 'metadata';
+            $args['include_document_id'] = preg_match('/идентификатор|(?<!\pL)id(?!\pL)/iu', $requestQuery) === 1;
+            foreach (['document_id', 'unit_id', 'cursor', 'text_offset'] as $field) { $args[$field] = null; }
+        }
         if (in_array($toolName, ['resolve_estimate', 'get_estimate_answer'], true) && AssistantEstimateResolver::requiresCurrentProject($requestQuery)) {
             $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
             if ($args['project_id'] === null) {

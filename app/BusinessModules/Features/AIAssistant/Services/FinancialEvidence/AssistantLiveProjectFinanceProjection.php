@@ -15,6 +15,7 @@ final readonly class AssistantLiveProjectFinanceProjection
 {
     private const FIELDS = ['plan_revenue', 'plan_cost', 'forecast_revenue', 'forecast_cost', 'actual_revenue', 'actual_cost'];
     private const SOURCES = ['budget_amount', 'contract_performance_act', 'completed_work', 'payment_document', 'warehouse_movement', 'time_entry', 'machinery_shift', 'machinery_maintenance'];
+    private const ANALYTIC_FLAGS = ['missing_budget_article', 'missing_responsibility_center', 'missing_contract', 'missing_counterparty', 'missing_source_document'];
     private const LABELS = ['plan_revenue' => 'Плановая выручка', 'plan_cost' => 'Плановые затраты', 'forecast_revenue' => 'Прогноз выручки', 'forecast_cost' => 'Прогноз затрат',
         'actual_revenue' => 'Фактическая выручка', 'actual_cost' => 'Фактические затраты', 'margin' => 'Фактическая маржа'];
 
@@ -30,10 +31,15 @@ final readonly class AssistantLiveProjectFinanceProjection
         $coverage = $native['coverage'] ?? [];
         if (! is_array($sources) || ! is_array($aggregates) || ! is_array($coverage) || count($sources) > 500) { return $this->insufficient('source_coverage_incomplete'); }
         $sourceSums = [];
+        $qualityFlags = [];
+        $sourceProblems = [];
         foreach ($sources as $source) {
             if (! is_array($source) || ! in_array($source['source_type'] ?? null, self::SOURCES, true)
-                || ! is_numeric($source['source_id'] ?? null) || (int) ($source['project_id'] ?? 0) !== $projectId
-                || ($source['problem_flags'] ?? '') !== '') { return $this->insufficient('source_coverage_incomplete'); }
+                || ! is_numeric($source['source_id'] ?? null) || (int) ($source['project_id'] ?? 0) !== $projectId) { return $this->insufficient('source_coverage_incomplete'); }
+            $flags = $this->analyticFlags($source['problem_flags'] ?? '');
+            if ($flags === null) { return $this->insufficient('source_coverage_incomplete'); }
+            $qualityFlags = array_unique([...$qualityFlags, ...$flags]);
+            if ($flags !== []) { $sourceProblems[$source['source_type']] = ($sourceProblems[$source['source_type']] ?? 0) + 1; }
             $currency = $this->currency($source['currency'] ?? null);
             $component = $source['component'] ?? null;
             $direction = $source['direction'] ?? null;
@@ -49,7 +55,9 @@ final readonly class AssistantLiveProjectFinanceProjection
         $totals = [];
         $aggregateCount = 0;
         foreach ($aggregates as $aggregate) {
-            if (! is_array($aggregate) || (int) ($aggregate['project_id'] ?? 0) !== $projectId || ($aggregate['problem_flags'] ?? '') !== '') { return $this->insufficient('source_coverage_incomplete'); }
+            if (! is_array($aggregate) || (int) ($aggregate['project_id'] ?? 0) !== $projectId) { return $this->insufficient('source_coverage_incomplete'); }
+            $flags = $this->analyticFlags($aggregate['problem_flags'] ?? '');
+            if ($flags === null || array_diff($flags, $qualityFlags) !== []) { return $this->insufficient('source_coverage_incomplete'); }
             $currency = $this->currency($aggregate['currency'] ?? null);
             $aggregateCount += (int) ($aggregate['source_rows_count'] ?? -1);
             foreach (self::FIELDS as $field) {
@@ -63,7 +71,7 @@ final readonly class AssistantLiveProjectFinanceProjection
         foreach ($coverage as $item) {
             if (! is_array($item) || ! in_array($item['source_type'] ?? null, self::SOURCES, true) || isset($coveredTypes[$item['source_type']])
                 || ! is_bool($item['available'] ?? null) || (($item['available'] ?? false) === false && $item['source_type'] !== 'budget_amount')
-                || (int) ($item['problem_rows_count'] ?? -1) !== 0) { return $this->insufficient('source_coverage_incomplete'); }
+                || (int) ($item['problem_rows_count'] ?? -1) !== ($sourceProblems[$item['source_type']] ?? 0)) { return $this->insufficient('source_coverage_incomplete'); }
             $coveredTypes[$item['source_type']] = true;
             $coverageCount += (int) ($item['included_source_rows'] ?? -1);
         }
@@ -99,6 +107,7 @@ final readonly class AssistantLiveProjectFinanceProjection
                     ['from' => $filters['period_start'], 'to' => $filters['period_end']])];
         }
         $rows = [];
+        sort($qualityFlags);
         $lines = ['Точные суммы проекта за '.$filters['period_start'].' — '.$filters['period_end'].'. Данные прочитаны '.$fetchedAt->format(DATE_ATOM).'.'];
         foreach ($totals as $currency => $fields) {
             $fields['margin'] = $fields['actual_revenue']->minus($fields['actual_cost']);
@@ -111,12 +120,16 @@ final readonly class AssistantLiveProjectFinanceProjection
                 'projection_name' => 'live_project_financial_projection', 'composite_key' => ['project_id' => $projectId, 'period_start' => $filters['period_start'], 'period_end' => $filters['period_end'], 'currency' => $currency],
                 'source_hash' => $sourceHash, 'source_version' => $version, 'fetched_at' => $fetchedAt->format(DATE_ATOM), 'as_of' => $fetchedAt->format(DATE_ATOM),
                 'requested_currency' => $filters['currency'] ?? null,
-                'evidence_time_basis' => 'live_ledger_read', 'formula_version' => 'native_project_margin_money_scale2_half_up', 'budget_version' => $native['budget_version'] ?? null];
+                'evidence_time_basis' => 'live_ledger_read', 'formula_version' => 'native_project_margin_money_scale2_half_up', 'budget_version' => $native['budget_version'] ?? null,
+                'quality_flags' => $qualityFlags, 'currency_basis' => 'native_management_report'];
             $rows[] = ['entity_type' => $ref['entity_type'], 'entity_id' => $projectId, 'fields' => $values, 'currency' => $currency, 'precision' => 2, 'unit' => 'currency_major',
                 'scope' => 'authorized_project_period_totals', 'source_ref' => $ref, 'source_version' => $version, 'version' => $version];
             foreach ($values as $field => $value) { $lines[] = self::LABELS[$field].': '.$value.' '.$currency; }
         }
-        return ['status' => ($native['budget_version'] ?? null) === null ? 'partial' : 'success', 'useful' => ($native['budget_version'] ?? null) !== null,
+        $lines[] = trans_message('ai_assistant_financial.native_management_currency');
+        if ($qualityFlags !== []) { $lines[] = trans_message('ai_assistant_financial.native_management_quality'); }
+        return ['status' => ($native['budget_version'] ?? null) === null || $qualityFlags !== [] ? 'partial' : 'success',
+            'useful' => ($native['budget_version'] ?? null) !== null && $qualityFlags === [],
             'source_covered' => true, 'source_refs' => array_column($rows, 'source_ref'), 'financial_evidence' => ['rows' => $rows, 'source_refs' => array_column($rows, 'source_ref'),
             'fetched_at' => $fetchedAt->format(DATE_ATOM), 'version' => AssistantSourceReferenceIdentity::key($rows), 'validation_status' => 'partial', 'scope' => 'authorized_project_period_totals'],
             'validation_status' => 'partial', 'server_formatted_answer' => implode("\n", $lines), 'unavailable_fields' => ($native['budget_version'] ?? null) === null ? ['plan_revenue', 'plan_cost', 'forecast_revenue', 'forecast_cost'] : []];
@@ -132,6 +145,14 @@ final readonly class AssistantLiveProjectFinanceProjection
     {
         if ((! is_int($value) && ! is_string($value)) || preg_match('/^-?\d+(?:\.\d+)?$/D', (string) $value) !== 1) { throw new DomainException('live_project_finance_noncanonical_money'); }
         return BigDecimal::of($value);
+    }
+
+    private function analyticFlags(mixed $value): ?array
+    {
+        if (! is_string($value) || strlen($value) > 2000) { return null; }
+        if ($value === '') { return []; }
+        $flags = array_values(array_unique(explode(',', $value)));
+        return array_diff($flags, self::ANALYTIC_FLAGS) === [] ? $flags : null;
     }
 
     private function currency(mixed $value): string

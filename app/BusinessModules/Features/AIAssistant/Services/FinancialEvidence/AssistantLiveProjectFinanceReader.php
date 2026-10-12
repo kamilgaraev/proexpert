@@ -82,7 +82,9 @@ final readonly class AssistantLiveProjectFinanceReader
             foreach ($response['source_refs'] as $current) {
                 if (AssistantSourceReferenceIdentity::key($current['composite_key']) === AssistantSourceReferenceIdentity::key($key)
                     && ($current['source_hash'] ?? null) === ($reference['source_hash'] ?? null) && $current['source_version'] === $reference['source_version']
-                    && $current['formula_version'] === ($reference['formula_version'] ?? null) && $current['evidence_time_basis'] === ($reference['evidence_time_basis'] ?? null)) { return true; }
+                    && $current['formula_version'] === ($reference['formula_version'] ?? null) && $current['evidence_time_basis'] === ($reference['evidence_time_basis'] ?? null)
+                    && ($current['quality_flags'] ?? null) === ($reference['quality_flags'] ?? null)
+                    && ($current['currency_basis'] ?? null) === ($reference['currency_basis'] ?? null)) { return true; }
             }
         } catch (Throwable) { return false; }
         return false;
