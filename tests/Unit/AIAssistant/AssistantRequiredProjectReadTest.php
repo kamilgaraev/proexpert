@@ -38,8 +38,17 @@ final class AssistantRequiredProjectReadTest extends TestCase
     {
         $plan = $this->plan('Какой бюджет у нашего объекта? В какой валюте сумма?');
         $expected = ['name' => 'assistant_domain_read', 'arguments' => ['domain' => 'projects',
-            'entity_type' => 'project', 'id' => 52, 'fields' => ['name', 'budget_amount']]];
+            'entity_type' => 'project', 'id' => 52, 'fields' => ['name', 'budget_amount'],
+            'projection' => null, 'projection_offset' => 0, 'projection_limit' => 20]];
         self::assertSame($expected, AssistantRequiredProjectRead::fromPlan($plan));
+        $catalog = new \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog(
+            \App\BusinessModules\Features\AIAssistant\Services\AssistantDomainCatalog::defaults());
+        $reader = (new \ReflectionClass(\App\BusinessModules\Features\AIAssistant\Services\AssistantDomainReadService::class))->newInstanceWithoutConstructor();
+        $tool = new class($catalog, $reader) extends \App\BusinessModules\Features\AIAssistant\Actions\Domains\AssistantDomainTool {
+            protected function operation(): string { return 'read'; }
+        };
+        (new \App\BusinessModules\Features\AIAssistant\Services\AssistantToolArgumentValidator)->validate(
+            AssistantRequiredProjectRead::fromPlan($plan)['arguments'], $tool->getParametersSchema());
         self::assertSame($expected['arguments'], AssistantRequiredProjectRead::bindArguments($plan, 'assistant_domain_read',
             ['domain' => 'payments', 'entity_type' => 'payment_document', 'id' => 99, 'fields' => ['currency']]));
         foreach (['Какой бюджет нашего объекта в долларах?', 'Какой бюджет нашего объекта и сколько потрачено?',

@@ -12,7 +12,7 @@ final class AssistantStructuredFactFormatter
     public const MAX_ROWS = 25;
 
     private const FIELDS = [
-        'id', 'name', 'title', 'subject', 'number', 'document_number', 'order_number', 'request_number', 'budget_currency',
+        'id', 'name', 'title', 'filename', 'file_id', 'coverage_status', 'subject', 'number', 'document_number', 'order_number', 'request_number', 'budget_currency',
         'incident_number', 'position_number', 'status', 'stage_code', 'pipeline_code', 'severity', 'address',
         'email', 'worker_name', 'code', 'asset_code', 'inventory_number', 'version', 'currency',
         'document_type', 'incident_type', 'item_type', 'resource_type', 'date', 'start_date', 'end_date',
@@ -145,10 +145,10 @@ final class AssistantStructuredFactFormatter
             $requestedFields = array_merge($requestedFields, $fields);
         }
         $details = preg_match('/(?:подробн|детал[ьи]|реквизит)/iu', $query ?? '') === 1;
-        $titles = ['name', 'title', 'subject', 'document_title', 'material_name', 'worker_name'];
+        $titles = ['name', 'title', 'filename', 'subject', 'document_title', 'material_name', 'worker_name'];
         $identityFields = ['number', 'document_number', 'order_number', 'request_number', 'incident_number', 'position_number',
             'code', 'asset_code', 'inventory_number', 'document_code', 'revision_label'];
-        $defaultFields = array_merge($identityFields, ['status', 'stage_code', 'stage', 'project_stage', 'severity', 'priority',
+        $defaultFields = array_merge($identityFields, ['status', 'coverage_status', 'stage_code', 'stage', 'project_stage', 'severity', 'priority',
             'is_active', 'is_paid', 'is_current', 'currency', 'budget_currency', 'material_unit', 'unit', 'unit_name', 'unit_short_name']);
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
         $numericFields = array_merge(self::NUMERIC_FIELDS, AssistantExtendedDomainRegistry::values('numericFields'));
@@ -175,7 +175,7 @@ final class AssistantStructuredFactFormatter
             $financial = in_array($entityType, ['estimate', 'estimate_item', 'estimate_item_resource', 'contract', 'payment_document',
                 'performance_act', 'performance_act_line', 'production_labor_payroll_accrual'], true);
             foreach ($fields as $field => $value) {
-                $requested = in_array($field, $requestedFields, true);
+                $requested = in_array($field, $requestedFields, true) || ($field === 'id' && self::documentMetadataIdAllowed($row));
                 $technical = $field === 'id' || str_ends_with($field, '_id') || str_ends_with($field, '_ids')
                     || in_array($field, ['created_at', 'updated_at', 'deleted_at', 'fetched_at', 'version', 'source_size_bytes', 'source_mime_type'], true);
                 if ($field === $titleField || ! in_array($field, $allowedFields, true)
@@ -291,9 +291,9 @@ final class AssistantStructuredFactFormatter
         $allowed = array_merge(self::FIELDS, AssistantExtendedDomainRegistry::values('structuredFields'));
         $checked = $row['source_ref']['checked_fields'] ?? [];
 
-        $fields = array_values(array_filter(array_keys($row['fields'] ?? []), static function (string $field) use ($allowed, $checked): bool {
+        $fields = array_values(array_filter(array_keys($row['fields'] ?? []), static function (string $field) use ($allowed, $checked, $row): bool {
             return in_array($field, $allowed, true) && in_array($field, $checked, true)
-                && $field !== 'id' && ! str_ends_with($field, '_id') && ! str_ends_with($field, '_ids')
+                && ($field !== 'id' || self::documentMetadataIdAllowed($row)) && ! str_ends_with($field, '_id') && ! str_ends_with($field, '_ids')
                 && ! in_array($field, ['version', 'source_size_bytes', 'source_mime_type', 'fetched_at', 'created_at', 'updated_at', 'deleted_at'], true);
         }));
         $moneyFields = array_merge(...AssistantFactIntentClassifier::requirements('Цена, сумма и бюджет'));
@@ -303,6 +303,14 @@ final class AssistantStructuredFactFormatter
         }
 
         return $fields;
+    }
+
+    private static function documentMetadataIdAllowed(array $row): bool
+    {
+        return ($row['entity_type'] ?? null) === 'assistant_document'
+            && ($row['source_ref']['content_scope'] ?? null) === 'structured'
+            && ($row['source_ref']['document_metadata_id_requested'] ?? false) === true
+            && isset($row['fields']['id'], $row['entity_id']) && (string) $row['fields']['id'] === (string) $row['entity_id'];
     }
 
     public static function renderVerifiedRows(array $sets, array $plan): string
