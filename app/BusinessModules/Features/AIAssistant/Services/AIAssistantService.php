@@ -2044,6 +2044,23 @@ class AIAssistantService
         }
         if ($toolName === 'get_bim_model_elements') {
             $namedProject = AssistantBimModelSelector::namedProject($requestQuery);
+            $requestedKind = (new AssistantBimIndexProjection)->queryEquipment($requestQuery);
+            $bimSchema = $this->toolRegistry->getTool($toolName)?->getParametersSchema()['properties'] ?? [];
+            if ($requestedKind !== null && isset($bimSchema['equipment_kind'])
+                && $this->simpleBimEquipmentQuestion($requestQuery, $namedProject ?? '')) {
+                $args['equipment_kind'] = $requestedKind;
+                foreach (['element_query', 'material_query', 'classification_query', 'storey_query', 'property_name',
+                    'property_value', 'quantity_name', 'version_id', 'compare_version_id'] as $field) {
+                    if (isset($bimSchema[$field])) { $args[$field] = null; }
+                }
+                if (AssistantDomainSearchCountEvidence::isCountRequest($requestQuery)) {
+                    foreach (['include_properties', 'include_quantities', 'include_estimate_links'] as $field) {
+                        if (isset($bimSchema[$field])) { $args[$field] = false; }
+                    }
+                    if (isset($bimSchema['offset'])) { $args['offset'] = 0; }
+                    if (isset($bimSchema['limit'])) { $args['limit'] = 1; }
+                }
+            }
             $projectScopeRequested = AssistantBimModelSelector::hasProjectScope($requestQuery) || AssistantEstimateResolver::requiresCurrentProject($requestQuery);
             if ($projectScopeRequested && $namedProject === null) {
                 $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
