@@ -143,7 +143,8 @@ final class EstimateOperationCalculator
                     $row['node']['quantity'] = Decimal::multiply($row['node']['quantity'], $factor, 8);
                     $row['node']['attributes']['measurement_unit_id'] = $output[$target]['node']['attributes']['measurement_unit_id'];
                     $row['node']['attributes']['quantity_total'] = $row['quantity'];
-                    $row['node']['attributes']['quantity'] = Decimal::divide($row['quantity'], (string) ($row['node']['attributes']['quantity_coefficient'] ?: '1'), 8);
+                    $row['node']['attributes']['quantity'] = $this->rawQuantity($output[$target]['node'], $row['quantity']);
+                    $row['node']['attributes']['quantity_coefficient'] = $output[$target]['node']['attributes']['quantity_coefficient'];
                     foreach (['unit_price', 'current_unit_price', 'base_unit_price'] as $field) {
                         if (isset($row['node']['attributes'][$field])) {
                             $row['node']['attributes'][$field] = Decimal::divide((string) $row['node']['attributes'][$field], $factor, 4);
@@ -275,13 +276,26 @@ final class EstimateOperationCalculator
         $ratio = Decimal::compare($oldQuantity, '0') === 0 ? '0' : Decimal::divide($quantity, $oldQuantity, 12);
         $attrs = &$node['attributes'];
         $original = $attrs;
+        $factor = Decimal::multiply((string) ($attrs['price_coefficient'] ?: '1'), (string) ($attrs['coefficient_total'] ?: '1'), 12);
+        $oldParts = $this->childCosts($node);
+        $oldEquipment = Decimal::compare((string) ($original['equipment_cost'] ?? '0'), $oldParts['equipment']) > 0 ? (string) $original['equipment_cost'] : $oldParts['equipment'];
+        $originalDirect = (string) ($original['direct_costs'] ?? '0');
+        if ($attrs['item_type'] === 'work' && Decimal::compare((string) ($original['total_amount'] ?? '0'), '0') > 0) {
+            $netDirect = Decimal::subtract((string) $original['total_amount'], Decimal::add($oldEquipment, Decimal::add((string) ($original['overhead_amount'] ?? '0'), (string) ($original['profit_amount'] ?? '0'))));
+            if (Decimal::compare($netDirect, '0') >= 0) {
+                $originalDirect = $netDirect;
+            }
+        }
+        $completeResources = $node['children'] !== [] && Decimal::compare($originalDirect, '0') > 0
+            && Decimal::compare(Decimal::multiply($oldParts['direct'], $factor), Decimal::value($originalDirect)) === 0;
         if (Decimal::compare((string) ($attrs['quantity_coefficient'] ?? '1'), '0') <= 0 || (Decimal::compare($oldQuantity, '0') === 0 && ! $attrs['is_not_accounted'] && Decimal::compare((string) ($attrs['total_amount'] ?? '0'), '0') > 0)) {
             $conflicts[] = $this->conflict('match:'.$node['key'], 'quantity_invalid');
 
             return;
         }
+        $attrs['quantity'] = $this->rawQuantity($node, $quantity);
         $attrs['quantity_total'] = $quantity;
-        $attrs['quantity'] = Decimal::divide($quantity, (string) ($attrs['quantity_coefficient'] ?: '1'), 8);
+        $node['quantity'] = $quantity;
         foreach (['direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost', 'labor_hours', 'machinery_hours', 'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'base_machinery_labor_cost', 'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
             $attrs[$field] = Decimal::multiply((string) ($attrs[$field] ?? '0'), $ratio, str_contains($field, 'hours') ? 8 : 2);
         }
@@ -307,7 +321,7 @@ final class EstimateOperationCalculator
         }
         $decision = $resolutions['price:'.$node['key']] ?? null;
         $resolved = $prices[$node['key']] ?? ['error' => 'price_missing'];
-        $derived = $node['children'] !== [] && ! $attrs['is_manual'] && $attrs['item_type'] !== 'equipment';
+        $derived = $completeResources && ! $attrs['is_manual'] && $attrs['item_type'] === 'work';
         if ($derived && isset($resolved['error'])) {
             $resolved = ['unit_price' => '0', 'source' => ['kind' => 'resources']];
         }
@@ -332,14 +346,13 @@ final class EstimateOperationCalculator
             return;
         }
         $attrs['unit_price'] = Decimal::value($resolved['unit_price'], 4);
-        $attrs['current_unit_price'] = $attrs['unit_price'];
+        $attrs['current_unit_price'] = Decimal::multiply($attrs['unit_price'], $factor, 4);
         $node['price_source'] = $resolved['source'];
         if (($resolved['source']['kind'] ?? null) === 'normative') {
             $attrs['normative_rate_id'] = $resolved['source']['rate_id'];
         } elseif (($resolved['source']['kind'] ?? null) === 'manual') {
             $attrs['is_manual'] = true;
         }
-        $factor = Decimal::multiply((string) ($attrs['price_coefficient'] ?: '1'), (string) ($attrs['coefficient_total'] ?: '1'), 12);
         $direct = Decimal::multiply(Decimal::multiply($quantity, $attrs['unit_price'], 8), $factor);
         $attrs['direct_costs'] = $direct;
         $attrs['equipment_cost'] = $attrs['item_type'] === 'equipment' ? $direct : '0';
@@ -347,10 +360,10 @@ final class EstimateOperationCalculator
         $attrs['labor_cost'] = isset($resolved['labor_unit_price']) ? $labor : ($attrs['item_type'] === 'labor' ? $direct : '0');
         $attrs['materials_cost'] = isset($resolved['materials_unit_price']) ? Decimal::multiply(Decimal::multiply($quantity, $resolved['materials_unit_price'], 8), $factor) : ($attrs['item_type'] === 'material' ? $direct : '0');
         $attrs['machinery_cost'] = isset($resolved['machinery_unit_price']) ? Decimal::multiply(Decimal::multiply($quantity, $resolved['machinery_unit_price'], 8), $factor) : ($attrs['item_type'] === 'machinery' ? $direct : '0');
-        $attrs['other_cost'] = Decimal::compare((string) ($original['direct_costs'] ?? '0'), '0') > 0 ? Decimal::multiply($direct, Decimal::divide((string) ($original['other_cost'] ?? '0'), (string) $original['direct_costs'], 12)) : '0';
-        if ($original['is_manual'] && $attrs['item_type'] === 'work' && ! isset($resolved['labor_unit_price']) && Decimal::compare((string) ($original['direct_costs'] ?? '0'), '0') > 0) {
+        $attrs['other_cost'] = Decimal::compare($originalDirect, '0') > 0 ? Decimal::multiply($direct, Decimal::divide((string) ($original['other_cost'] ?? '0'), $originalDirect, 12)) : '0';
+        if ($original['is_manual'] && $attrs['item_type'] === 'work' && ! isset($resolved['labor_unit_price']) && Decimal::compare($originalDirect, '0') > 0) {
             foreach (['materials', 'machinery', 'labor'] as $kind) {
-                $attrs[$kind.'_cost'] = Decimal::multiply($direct, Decimal::divide((string) ($original[$kind.'_cost'] ?? '0'), (string) $original['direct_costs'], 12));
+                $attrs[$kind.'_cost'] = Decimal::multiply($direct, Decimal::divide((string) ($original[$kind.'_cost'] ?? '0'), $originalDirect, 12));
             }
         }
         $root = $attrs['parent_work_id'] === null;
@@ -395,6 +408,22 @@ final class EstimateOperationCalculator
             $resource['total_amount'] = Decimal::multiply($resource['total_quantity'], $resourcePrice);
         }
         unset($resource);
+        if ($attrs['item_type'] === 'work') {
+            $attrs['equipment_cost'] = $this->childCosts($node)['equipment'];
+            if (Decimal::compare($oldEquipment, $oldParts['equipment']) > 0) {
+                $equipmentKey = 'price:'.$node['key'].':equipment';
+                $equipmentQuote = $resolutions[$equipmentKey] ?? null;
+                if (isset($equipmentQuote['unit_price']) && trim((string) ($equipmentQuote['source'] ?? '')) !== '') {
+                    $attrs['equipment_cost'] = Decimal::add($attrs['equipment_cost'], Decimal::multiply($quantity, (string) $equipmentQuote['unit_price']));
+                    $node['equipment_price_source'] = ['kind' => 'manual', 'description' => $equipmentQuote['source']];
+                } else {
+                    $equipmentConflict = $this->conflict($equipmentKey, 'price_missing');
+                    $equipmentConflict['position_name'] = $attrs['name'].' — оборудование без расшифровки';
+                    $equipmentConflict['unit'] = $node['unit'];
+                    $conflicts[] = $equipmentConflict;
+                }
+            }
+        }
         if ($attrs['item_type'] === 'equipment') {
             $quoted = $direct;
             $parts = $this->childCosts($node);
@@ -409,12 +438,13 @@ final class EstimateOperationCalculator
         }
         if ($derived) {
             $parts = $this->childCosts($node);
-            foreach ($parts as &$amount) {
-                $amount = Decimal::multiply($amount, $factor);
+            foreach ($parts as $kind => &$amount) {
+                if ($kind !== 'equipment') {
+                    $amount = Decimal::multiply($amount, $factor);
+                }
             }
             unset($amount);
             $attrs['direct_costs'] = $parts['direct'];
-            $attrs['equipment_cost'] = $parts['equipment'];
             foreach (['materials', 'machinery', 'labor'] as $kind) {
                 $attrs[$kind.'_cost'] = $parts[$kind];
             }
@@ -422,8 +452,8 @@ final class EstimateOperationCalculator
             $attrs['profit_amount'] = $root ? Decimal::multiply($parts['direct'], Decimal::divide((string) $parameters['profit_rate'], '100', 8)) : '0';
             $attrs['total_amount'] = Decimal::add(Decimal::add($parts['direct'], $parts['equipment']), Decimal::add($attrs['overhead_amount'], $attrs['profit_amount']));
             $attrs['current_total_amount'] = $attrs['total_amount'];
-            $attrs['unit_price'] = Decimal::divide(Decimal::add($parts['direct'], $parts['equipment']), $quantity, 4);
-            $attrs['current_unit_price'] = $attrs['unit_price'];
+            $attrs['current_unit_price'] = Decimal::divide($parts['direct'], $quantity, 4);
+            $attrs['unit_price'] = Decimal::divide($attrs['current_unit_price'], $factor, 4);
             $node['price_source'] = ['kind' => 'resources', 'basis' => $resolved['source']];
             // Mixed resource quotes have no single confirmed normative base.
             $attrs['base_unit_price'] = null;
@@ -439,7 +469,7 @@ final class EstimateOperationCalculator
                 $oldBasis = (string) ($original['labor_cost'] ?? '0');
                 $newBasis = (string) $attrs['labor_cost'];
                 if (Decimal::compare($oldBasis, '0') <= 0 || Decimal::compare($newBasis, '0') <= 0) {
-                    $oldBasis = (string) ($original['direct_costs'] ?? '0');
+                    $oldBasis = $originalDirect;
                     $newBasis = (string) $attrs['direct_costs'];
                 }
                 if (Decimal::compare($oldBasis, '0') <= 0 && Decimal::compare((string) ($original[$field] ?? '0'), '0') > 0) {
@@ -475,8 +505,13 @@ final class EstimateOperationCalculator
             if ($child['attributes']['is_not_accounted']) {
                 continue;
             }
+            $attrs = $child['attributes'];
+            if ($attrs['item_type'] === 'equipment' && $child['children'] === []) {
+                $attrs['direct_costs'] = '0';
+                $attrs['equipment_cost'] = Decimal::subtract((string) ($attrs['total_amount'] ?? '0'), Decimal::add((string) ($attrs['overhead_amount'] ?? '0'), (string) ($attrs['profit_amount'] ?? '0')));
+            }
             foreach (['direct' => 'direct_costs', 'equipment' => 'equipment_cost', 'materials' => 'materials_cost', 'machinery' => 'machinery_cost', 'labor' => 'labor_cost'] as $field => $attribute) {
-                $totals[$field] = Decimal::add($totals[$field], (string) ($child['attributes'][$attribute] ?? '0'));
+                $totals[$field] = Decimal::add($totals[$field], (string) ($attrs[$attribute] ?? '0'));
             }
         }
 
@@ -608,10 +643,12 @@ final class EstimateOperationCalculator
 
     private function mergeNodes(array &$target, array $source): void
     {
+        $quantity = Decimal::add((string) $target['attributes']['quantity_total'], (string) $source['attributes']['quantity_total']);
+        $target['attributes']['quantity'] = $this->rawQuantity($target, $quantity);
         foreach (['quantity_total', 'direct_costs', 'materials_cost', 'machinery_cost', 'labor_cost', 'equipment_cost', 'other_cost', 'labor_hours', 'machinery_hours', 'base_materials_cost', 'base_machinery_cost', 'base_labor_cost', 'base_overhead_amount', 'base_profit_amount', 'overhead_amount', 'profit_amount', 'total_amount', 'current_total_amount'] as $field) {
             $target['attributes'][$field] = Decimal::add((string) ($target['attributes'][$field] ?? '0'), (string) ($source['attributes'][$field] ?? '0'));
         }
-        $target['attributes']['quantity'] = Decimal::divide($target['attributes']['quantity_total'], (string) ($target['attributes']['quantity_coefficient'] ?: '1'), 8);
+        $target['quantity'] = $target['attributes']['quantity_total'];
         foreach ($target['resources'] as $i => &$resource) {
             foreach (['total_quantity', 'total_amount'] as $field) {
                 $resource[$field] = Decimal::add((string) $resource[$field], (string) $source['resources'][$i][$field]);
@@ -629,5 +666,14 @@ final class EstimateOperationCalculator
         }
         unset($child);
         $target['totals'] = [];
+    }
+
+    private function rawQuantity(array $node, string $quantity): string
+    {
+        if (Decimal::compare($node['quantity'], '0') === 0) {
+            return '0.00000000';
+        }
+
+        return Decimal::divide(Decimal::multiply((string) $node['attributes']['quantity'], $quantity, 16), $node['quantity'], 8);
     }
 }

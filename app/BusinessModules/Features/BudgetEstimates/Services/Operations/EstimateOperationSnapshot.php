@@ -82,7 +82,7 @@ final class EstimateOperationSnapshot
                     'attributes' => $attributes,
                     'unit' => $this->text((string) ($item->measurementUnit?->short_name ?: $item->measurementUnit?->name ?: $item->normativeRate?->measurement_unit ?: (is_string($fallbackUnit) ? $fallbackUnit : ''))),
                     'section_path' => $path,
-                    'quantity' => Decimal::multiply((string) $item->quantity, (string) ($item->quantity_coefficient ?: '1'), 8),
+                    'quantity' => Decimal::value((string) ($item->quantity_total ?? $item->quantity ?? '0'), 8),
                     'resources' => $item->resources->map(fn ($r): array => $r->attributesToArray() + ['operation_price_key' => $this->text($r->name).'|'.$r->resource_type.'|'.$this->text((string) ($r->measurementUnit?->short_name ?: $r->measurementUnit?->name ?: ''))])->all(),
                     'works' => $item->works->map(fn ($r): array => $r->attributesToArray())->all(),
                     'totals' => $item->totals->map(fn ($r): array => $r->attributesToArray())->all(),
