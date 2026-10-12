@@ -259,10 +259,10 @@ class ConstructionJournalContractCoverageTest extends TestCase
     {
         Storage::fake('s3');
         [$organization, $user, $contract, , $estimate, $estimateItem] = $this->createJournalFixture();
+        app(EstimateCoverageService::class)->syncCoverageItems($contract, $estimate, [$estimateItem->id], actor: $user);
         $snapshotPath = "org-{$organization->id}/estimates/{$estimate->id}/structure_snapshot.json";
         $estimate->update(['structure_cache_path' => $snapshotPath]);
         Storage::disk('s3')->put($snapshotPath, '{"sections":[]}');
-        $this->coverEstimateItem($contract, $estimate, $estimateItem, 1, 1000);
         $additionalItem = $estimateItem->replicate();
         $additionalItem->position_number = '6';
         $additionalItem->save();
@@ -282,8 +282,8 @@ class ConstructionJournalContractCoverageTest extends TestCase
         $this->assertDatabaseHas('contract_estimate_items', [
             'contract_id' => $contract->id,
             'estimate_item_id' => $estimateItem->id,
-            'quantity' => 1,
-            'amount' => 1000,
+            'quantity' => 50,
+            'amount' => 50000,
         ]);
         $this->assertSame($snapshotPath, $estimate->fresh()->structure_cache_path);
         Storage::disk('s3')->assertExists($snapshotPath);

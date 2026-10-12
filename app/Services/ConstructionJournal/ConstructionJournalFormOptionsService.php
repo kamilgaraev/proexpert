@@ -25,6 +25,8 @@ use Illuminate\Auth\Access\AuthorizationException;
 
 class ConstructionJournalFormOptionsService
 {
+    private array $projectContractOptions = [];
+    private array $reservedQuantities = [];
     public function __construct(
         private readonly ConstructionJournalAccessService $access,
         private readonly JournalContractCoverageService $coverage,
@@ -66,6 +68,10 @@ class ConstructionJournalFormOptionsService
 
     private function buildProjectContractOptions(Project $project): array
     {
+        $key = $project->organization_id.':'.$project->id;
+        if (isset($this->projectContractOptions[$key])) {
+            return $this->projectContractOptions[$key];
+        }
         $contracts = Contract::query()
             ->where('organization_id', $project->organization_id)
             ->where(function ($query) use ($project): void {
@@ -79,7 +85,7 @@ class ConstructionJournalFormOptionsService
             ->orderBy('number')
             ->get();
 
-        return [
+        return $this->projectContractOptions[$key] = [
             'contracts' => $contracts->map(static fn (Contract $contract): array => [
                 'id' => $contract->id,
                 'number' => $contract->number,
@@ -115,6 +121,7 @@ class ConstructionJournalFormOptionsService
             ->get();
 
         return [
+            'contracts' => $this->buildProjectContractOptions($journal->project)['contracts'],
             'estimates' => $estimates->map(function (Estimate $estimate) use ($journal): array {
                 $sections = $estimate->sections->keyBy('id');
 
@@ -154,8 +161,14 @@ class ConstructionJournalFormOptionsService
     public function mapEstimateItem(EstimateItem $item, ConstructionJournal $journal): array
     {
         $item->loadMissing(self::estimateItemRelations());
+        $allowedIds = array_column($this->buildProjectContractOptions($journal->project)['contracts'], 'id');
+        $links = $item->contractLinks->whereIn('contract_id', $allowedIds)->values();
+        $scopedItem = clone $item;
+        $scopedItem->setRelation('contractLinks', $links);
+        $reservations = $this->reservations($journal);
+        $itemReservations = $reservations[$item->id] ?? ['total' => 0.0, 'contracts' => []];
         $currentContractLink = $journal->contract_id
-            ? $item->contractLinks->firstWhere('contract_id', $journal->contract_id)
+            ? $links->firstWhere('contract_id', $journal->contract_id)
             : null;
         $plannedValue = $item->quantity_total ?? $item->quantity;
         $plannedQuantity = $plannedValue === null ? null : (float) $plannedValue;
@@ -171,19 +184,32 @@ class ConstructionJournalFormOptionsService
             'quantity' => $item->quantity === null ? null : (float) $item->quantity,
             'quantity_total' => $item->quantity_total === null ? $plannedQuantity : (float) $item->quantity_total,
             'estimate_planned_quantity' => $plannedQuantity,
+            'remaining_quantity' => $plannedQuantity === null ? null : max(0.0, $plannedQuantity - $itemReservations['total']),
+            'suggested_contract_id' => $links->count() === 1 ? $links->first()->contract_id : null,
             'contract_agreed_quantity' => $currentContractLink?->quantity === null ? null : (float) $currentContractLink->quantity,
             'work_type_id' => $item->work_type_id,
             'measurement_unit_id' => $item->measurement_unit_id,
             'workType' => $item->workType ? $this->mapWorkType($item->workType) : null,
             'measurementUnit' => $this->mapMeasurementUnit($item->measurementUnit),
-            'contract_links' => $item->contractLinks->map(static fn ($link): array => [
+            'contract_links' => $links->map(static fn ($link): array => [
                 'contract_id' => $link->contract_id,
                 'contract_number' => $link->contract?->number,
                 'contractor_name' => $link->contract?->contractor?->name,
+                'agreed_quantity' => $link->quantity === null ? null : (float) $link->quantity,
+                'remaining_quantity' => $link->quantity === null ? null : max(0.0, (float) $link->quantity - ($itemReservations['contracts'][$link->contract_id] ?? 0.0)),
             ])->values()->all(),
-            'contract_coverage' => $this->coverage->resolve($journal, $item),
+            'contract_coverage' => $this->coverage->resolve($journal, $scopedItem),
             'resources' => $this->resources->map($item, (int) $journal->organization_id),
         ];
+    }
+
+    private function reservations(ConstructionJournal $journal): array
+    {
+        $key = $journal->organization_id.':'.$journal->project_id;
+        if (isset($this->reservedQuantities[$key])) {
+            return $this->reservedQuantities[$key];
+        }
+        return $this->reservedQuantities[$key] = app(JournalQuantityReservationService::class)->forJournal($journal);
     }
 
     private function mapWorkType(WorkType $workType): array

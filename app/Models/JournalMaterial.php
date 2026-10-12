@@ -15,6 +15,7 @@ class JournalMaterial extends Model
 
     protected $fillable = [
         'journal_entry_id',
+        'contract_id',
         'material_id',
         'estimate_item_id',
         'project_material_delivery_id',
@@ -27,6 +28,7 @@ class JournalMaterial extends Model
     ];
 
     protected $casts = [
+        'contract_id' => 'integer',
         'quantity' => 'decimal:8',
     ];
 
@@ -45,6 +47,11 @@ class JournalMaterial extends Model
     public function estimateItem(): BelongsTo
     {
         return $this->belongsTo(EstimateItem::class, 'estimate_item_id');
+    }
+
+    public function contract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class);
     }
 
     public function projectMaterialDelivery(): BelongsTo

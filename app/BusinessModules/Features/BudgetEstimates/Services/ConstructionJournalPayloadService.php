@@ -32,6 +32,10 @@ class ConstructionJournalPayloadService
         'journal.performingOrganization',
         'workVolumes.workType',
         'workVolumes.measurementUnit',
+        'workVolumes.contract.contractor',
+        'workers.contract.contractor',
+        'equipment.contract.contractor',
+        'materials.contract.contractor',
         'materials.material',
         'materials.estimateItem',
         'equipment.estimateItem',
@@ -71,6 +75,7 @@ class ConstructionJournalPayloadService
 
         $payload = [
             'id' => $journal->id,
+            'entries_summary' => $includeEntries ? app(\App\Services\ConstructionJournal\JournalEntryQueryService::class)->summary($journal, []) : null,
             'organization_id' => $journal->organization_id,
             'performing_organization_id' => $journal->performing_organization_id,
             'approval_context' => app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->approvalContext($journal),
@@ -167,7 +172,12 @@ class ConstructionJournalPayloadService
                 : null,
             'workVolumes' => $entry->relationLoaded('workVolumes')
                 ? $entry->workVolumes->map(function ($volume) use ($entry): array {
-                    $coverage = $this->journalContractCoverageService->resolve($entry->journal, $volume->estimateItem);
+                    $coverageJournal = clone $entry->journal;
+                    $coverageJournal->contract_id = $volume->contract_id;
+                    $coverageJournal->setRelation('contract', $volume->contract);
+                    $coverage = $volume->contract_id === null
+                        ? ['contract_id' => null, 'contract_number' => null, 'contractor_name' => null, 'contract_coverage_status' => 'missing_contract', 'can_auto_attach_contract_coverage' => false]
+                        : $this->journalContractCoverageService->resolve($coverageJournal, $volume->estimateItem);
 
                     return [
                         'id' => $volume->id,
@@ -180,6 +190,8 @@ class ConstructionJournalPayloadService
                         'measurement_unit_id' => $volume->measurement_unit_id,
                         'notes' => $volume->notes,
                         ...$coverage,
+                        'contract_id' => $volume->contract_id,
+                        'contract' => $this->mapRowContract($volume),
                         'contract_coverage' => $coverage,
                         'estimateItem' => $volume->relationLoaded('estimateItem') && $volume->estimateItem
                             ? $this->formOptions->mapEstimateItem($volume->estimateItem, $entry->journal)
@@ -203,6 +215,8 @@ class ConstructionJournalPayloadService
             'workers' => $entry->relationLoaded('workers')
                 ? $entry->workers->map(fn ($worker): array => [
                     'id' => $worker->id,
+                    'contract_id' => $worker->contract_id,
+                    'contract' => $this->mapRowContract($worker),
                     'journal_entry_id' => $worker->journal_entry_id,
                     'estimate_item_id' => $worker->estimate_item_id,
                     'specialty' => $worker->specialty,
@@ -222,6 +236,8 @@ class ConstructionJournalPayloadService
             'equipment' => $entry->relationLoaded('equipment')
                 ? $entry->equipment->map(fn ($equipment): array => [
                     'id' => $equipment->id,
+                    'contract_id' => $equipment->contract_id,
+                    'contract' => $this->mapRowContract($equipment),
                     'journal_entry_id' => $equipment->journal_entry_id,
                     'estimate_item_id' => $equipment->estimate_item_id,
                     'equipment_name' => $equipment->equipment_name,
@@ -242,6 +258,8 @@ class ConstructionJournalPayloadService
             'materials' => $entry->relationLoaded('materials')
                 ? $entry->materials->map(fn ($material): array => [
                     'id' => $material->id,
+                    'contract_id' => $material->contract_id,
+                    'contract' => $this->mapRowContract($material),
                     'journal_entry_id' => $material->journal_entry_id,
                     'material_id' => $material->material_id,
                     'estimate_item_id' => $material->estimate_item_id,
@@ -318,6 +336,13 @@ class ConstructionJournalPayloadService
         return $this->buildJournalSummary($journal);
     }
 
+    private function mapRowContract(\Illuminate\Database\Eloquent\Model $row): ?array
+    {
+        $contract = $row->contract;
+
+        return $contract ? ['id' => $contract->id, 'number' => $contract->number, 'contractor_name' => $contract->contractor?->name] : null;
+    }
+
     public function buildJournalActions(Project|ConstructionJournal $subject, User $user): array
     {
         $actions = ['view'];
@@ -372,6 +397,10 @@ class ConstructionJournalPayloadService
             if ($entry->status?->canSubmit() && $this->entryReadyForSubmission($entry)) {
                 $actions[] = 'submit';
             }
+        }
+
+        if (Gate::forUser($user)->allows('assignContract', $entry)) {
+            $actions[] = 'assign_contract';
         }
 
         if (Gate::forUser($user)->allows('delete', $entry)) {

@@ -30,6 +30,7 @@ class MobileConstructionJournalService
         'upload_attachment',
         'submit',
         'approve',
+        'assign_contract',
         'reject',
         'export_daily_report',
         'close',
@@ -117,7 +118,8 @@ class MobileConstructionJournalService
     {
         $this->assertJournalAccess($user, $journal);
 
-        $query = $journal->entries()
+        $entryQueries = app(\App\Services\ConstructionJournal\JournalEntryQueryService::class);
+        $query = $entryQueries->query($journal, $filters)
             ->with(ConstructionJournalPayloadService::ENTRY_RELATIONS);
 
         if (! empty($filters['status'])) {
@@ -149,11 +151,11 @@ class MobileConstructionJournalService
 
         return [
             'items' => collect($entries->items())
-                ->map(fn (ConstructionJournalEntry $entry): array => $this->mapMobileEntry($entry, $user))
+                ->map(fn (ConstructionJournalEntry $entry): array => $entryQueries->filterPayload($this->mapMobileEntry($entry, $user), $filters))
                 ->values()
                 ->all(),
             'meta' => $this->payloadService->paginationMeta($entries),
-            'summary' => $this->payloadService->buildEntrySummary($journal),
+            'summary' => $entryQueries->summary($journal, $filters),
             'available_actions' => $this->mapActionList($this->payloadService->buildJournalActions($journal, $user)),
         ];
     }

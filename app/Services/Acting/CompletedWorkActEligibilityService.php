@@ -51,6 +51,9 @@ final class CompletedWorkActEligibilityService
                     ->orWhere(function (Builder $fallbackQuery) use ($contractId): void {
                         $fallbackQuery
                             ->whereNull('contract_id')
+                            ->whereNull('journal_entry_id')
+                            ->whereNull('journal_work_volume_id')
+                            ->where('work_origin_type', '!=', CompletedWork::ORIGIN_JOURNAL)
                             ->whereHas('estimateItem.contractLinks', static function (Builder $linkQuery) use ($contractId): void {
                                 $linkQuery->where('contract_id', $contractId);
                             });

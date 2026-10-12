@@ -264,6 +264,9 @@ class ActingActWizardService
         if ($work->contract_id !== null) {
             return;
         }
+        if ($work->work_origin_type === CompletedWork::ORIGIN_JOURNAL || $work->journal_entry_id !== null || $work->journal_work_volume_id !== null) {
+            throw new BusinessLogicException(trans_message('act_reports.work_not_available_for_acting'), 422);
+        }
 
         $hasContractCoverage = $work->estimateItem?->contractLinks
             ?->contains(fn ($link): bool => (int) $link->contract_id === (int) $contract->id) ?? false;

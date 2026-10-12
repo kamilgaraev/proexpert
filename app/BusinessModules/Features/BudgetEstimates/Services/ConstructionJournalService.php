@@ -49,17 +49,15 @@ class ConstructionJournalService
         }
 
         return DB::transaction(function () use ($project, $data, $user): ConstructionJournal {
-            if (! isset($data['contract_id'])) {
-                throw new DomainException(trans_message('construction_journal.errors.contract_required'));
+            if (($data['contract_id'] ?? null) !== null) {
+                $this->assertContractScope($project, (int) $data['contract_id']);
             }
-
-            $this->assertContractScope($project, $data['contract_id']);
 
             $journal = ConstructionJournal::create([
                 'organization_id' => $project->organization_id,
                 'performing_organization_id' => $user->current_organization_id,
                 'project_id' => $project->id,
-                'contract_id' => $data['contract_id'],
+                'contract_id' => $data['contract_id'] ?? null,
                 'name' => $data['name'],
                 'journal_number' => $data['journal_number'] ?? $this->generateJournalNumber($project),
                 'start_date' => $data['start_date'] ?? now(),
@@ -79,7 +77,7 @@ class ConstructionJournalService
     {
         $this->assertJournalWrite($journal, ['edit', '*'], $actor);
         $data = array_intersect_key($data, array_flip(['name', 'journal_number', 'contract_id', 'start_date', 'end_date']));
-        if (array_key_exists('contract_id', $data)) {
+        if (($data['contract_id'] ?? null) !== null) {
             $this->assertContractScope($journal->project, $data['contract_id']);
         }
 
@@ -452,6 +450,7 @@ class ConstructionJournalService
                 : null;
 
             $entry->workVolumes()->create([
+                'contract_id' => app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume),
                 'estimate_item_id' => $estimateItemId,
                 'work_name' => $estimateItemId ? null : trim((string) ($volume['work_name'] ?? '')),
                 'work_type_id' => $this->resolveWorkVolumeTypeId($entry, $volume, $estimateItem),
@@ -490,8 +489,10 @@ class ConstructionJournalService
             $model = $volumeId ? $existing->get($volumeId) : null;
 
             if ($model) {
+                $payload['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume, $model);
                 $model->update($payload);
             } else {
+                $payload['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)->resolveForWrite($entry, $volume);
                 $model = $entry->workVolumes()->create($payload);
             }
 
@@ -552,7 +553,7 @@ class ConstructionJournalService
     {
         $rows = [];
         foreach ($workers as $worker) {
-            $rows[] = ['id' => $worker['id'] ?? null, 'payload' => [
+            $rows[] = ['id' => $worker['id'] ?? null, 'input' => $worker, 'payload' => [
                 'estimate_item_id' => $worker['estimate_item_id'] ?? null,
                 'specialty' => $worker['specialty'],
                 'workers_count' => $worker['workers_count'],
@@ -566,7 +567,7 @@ class ConstructionJournalService
     {
         $rows = [];
         foreach ($equipment as $item) {
-            $rows[] = ['id' => $item['id'] ?? null, 'payload' => [
+            $rows[] = ['id' => $item['id'] ?? null, 'input' => $item, 'payload' => [
                 'estimate_item_id' => $item['estimate_item_id'] ?? null,
                 'equipment_name' => $item['equipment_name'],
                 'equipment_type' => $item['equipment_type'] ?? null,
@@ -581,7 +582,7 @@ class ConstructionJournalService
     {
         $rows = [];
         foreach ($materials as $material) {
-            $rows[] = ['id' => $material['id'] ?? null, 'payload' => [
+            $rows[] = ['id' => $material['id'] ?? null, 'input' => $material, 'payload' => [
                 'material_id' => $material['material_id'] ?? null,
                 'estimate_item_id' => $material['estimate_item_id'] ?? null,
                 'project_material_delivery_id' => $material['project_material_delivery_id'] ?? null,
@@ -602,6 +603,8 @@ class ConstructionJournalService
         $keptIds = [];
         foreach ($rows as $row) {
             $model = isset($row['id']) ? $existing->get((int) $row['id']) : null;
+            $row['payload']['contract_id'] = app(\App\Services\ConstructionJournal\JournalRowContractService::class)
+                ->resolveForWrite($entry, $row['input'], $model, false);
             if ($model) {
                 $model->update($row['payload']);
             } else {

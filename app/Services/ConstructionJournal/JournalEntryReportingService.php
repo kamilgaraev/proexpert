@@ -42,7 +42,6 @@ final class JournalEntryReportingService
             ->where('organization_id', $source->journal->organization_id)
             ->where('performing_organization_id', (int) $actor->current_organization_id)
             ->where('status', JournalStatusEnum::ACTIVE)
-            ->whereNotNull('contract_id')
             ->with('project', 'contract')
             ->orderBy('journal_number')->orderBy('id')->get();
 
@@ -72,9 +71,9 @@ final class JournalEntryReportingService
                 throw new AuthorizationException(trans_message('construction_journal.errors.access_denied'));
             }
             $target->loadMissing('contract.projects');
-            if (! $target->contract || (int) $target->contract->organization_id !== (int) $target->organization_id
+            if ($target->contract_id !== null && (! $target->contract || (int) $target->contract->organization_id !== (int) $target->organization_id
                 || ((int) $target->contract->project_id !== (int) $target->project_id
-                    && ! $target->contract->projects->contains('id', $target->project_id))) {
+                    && ! $target->contract->projects->contains('id', $target->project_id)))) {
                 throw new DomainException(trans_message('construction_journal.errors.reporting_unavailable'));
             }
             $existing = ConstructionJournalEntry::query()->where('journal_id', $target->id)->where('source_entry_id', $source->id)->first();
@@ -126,10 +125,10 @@ final class JournalEntryReportingService
             || (int) $source->journal->project_id !== (int) $entry->journal->project_id
             || (int) $source->journal->organization_id !== (int) $entry->journal->organization_id
             || $this->access->approvalOrganizationId($source->journal) !== (int) $entry->journal->performing_organization_id
-            || ! $entry->journal->contract
+            || ($entry->journal->contract_id !== null && (! $entry->journal->contract
             || (int) $entry->journal->contract->organization_id !== (int) $entry->journal->organization_id
             || ((int) $entry->journal->contract->project_id !== (int) $entry->journal->project_id
-                && ! $entry->journal->contract->projects->contains('id', $entry->journal->project_id))
+                && ! $entry->journal->contract->projects->contains('id', $entry->journal->project_id))))
             || $entry->workVolumes()->exists() || $entry->workers()->exists() || $entry->equipment()->exists() || $entry->materials()->exists()) {
             throw new DomainException(trans_message('construction_journal.errors.reporting_unavailable'));
         }

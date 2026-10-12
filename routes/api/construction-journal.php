@@ -32,6 +32,8 @@ Route::middleware(['auth:api_admin'])->group(function () {
     });
 
     Route::prefix('construction-journals/{journal}')->group(function () {
+        Route::patch('entries/{entry}/rows/{rowType}/{rowId}/contract', [\App\Http\Controllers\Api\JournalRowContractController::class, 'update'])
+            ->whereIn('rowType', ['work-volumes', 'materials', 'equipment', 'workers'])->whereNumber('rowId');
         Route::get('entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'index']);
         Route::post('entries/{entry}/attachments', [JournalEntryAttachmentController::class, 'store']);
         Route::get('entries/{entry}/attachments/{attachment}/download', [JournalEntryAttachmentController::class, 'download'])->whereUuid('attachment');

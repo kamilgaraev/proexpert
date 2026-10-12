@@ -26,6 +26,51 @@ use Tests\TestCase;
 
 final class WarehouseJournalConsumptionTest extends TestCase
 {
+    use \Tests\Support\EnablesImmutableAuditWriter;
+
+    public function test_late_contract_assignment_keeps_original_material_write_off(): void
+    {
+        $this->enableImmutableAuditWriter();
+        $this->allowAdminAccess();
+        $context = AdminApiTestContext::create();
+        $setup = $this->createAcceptedDeliveryWithCustodyBalance($context, 10);
+        $service = app(ConstructionJournalService::class);
+        $entry = $service->createEntry($setup['journal'], [
+            'entry_date' => '2026-06-03', 'work_description' => 'Монтаж крепежа',
+            'materials' => [[
+                'material_id' => $setup['material']->id,
+                'project_material_delivery_id' => $setup['delivery']->id,
+                'material_name' => $setup['material']->name,
+                'quantity' => 4, 'measurement_unit' => 'шт', 'contract_id' => null,
+            ]],
+        ], $context->user);
+        $service->commitMaterialConsumption($entry);
+        $entry->update(['status' => 'approved']);
+        app(\App\Services\CompletedWork\CompletedWorkFactService::class)->syncFromJournalEntry($entry->fresh());
+        $material = $entry->materials()->firstOrFail();
+        $movementId = $material->warehouse_movement_id;
+        $factId = $entry->completedWorks()->firstOrFail()->id;
+        $movementCount = WarehouseMovement::query()->count();
+        $contractor = \App\Models\Contractor::create(['organization_id' => $context->organization->id, 'name' => 'Подрядчик']);
+        $contract = \App\Models\Contract::create([
+            'organization_id' => $context->organization->id, 'project_id' => $setup['project']->id,
+            'contractor_id' => $contractor->id,
+            'number' => 'WAREHOUSE-ROW', 'date' => '2026-06-01', 'subject' => 'Материалы',
+            'total_amount' => 1000, 'status' => 'active', 'contract_side_type' => 'subcontract',
+            'requires_contract_side_review' => false,
+        ]);
+        app(\App\Services\ConstructionJournal\JournalContractAssignmentService::class)->assign(
+            $setup['journal'], $entry, 'materials', $material->id, $contract->id, 'Уточнение договора', $context->user
+        );
+        self::assertSame($movementId, $material->fresh()->warehouse_movement_id);
+        self::assertSame($movementCount, WarehouseMovement::query()->count());
+        self::assertSame($factId, $entry->completedWorks()->firstOrFail()->id);
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $setup['custodyWarehouse']->id,
+            'material_id' => $setup['material']->id, 'available_quantity' => 6,
+        ]);
+    }
+
     public function test_journal_material_consumption_writes_off_from_responsible_custody_warehouse(): void
     {
         $context = AdminApiTestContext::create();

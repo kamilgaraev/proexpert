@@ -54,6 +54,10 @@ class CompletedWorkFactService
                 'workVolumes.estimateItem.contractLinks.contract.contractor',
                 'workVolumes.workType',
                 'workVolumes.measurementUnit',
+                'workVolumes.contract',
+                'materials.contract',
+                'equipment.contract',
+                'workers.contract',
                 'materials.estimateItem.contractLinks.contract.contractor',
                 'materials.material',
                 'equipment.estimateItem.contractLinks.contract.contractor',
@@ -91,15 +95,9 @@ class CompletedWorkFactService
                 ->whereNull('journal_worker_id')
                 ->values();
             $workVolumes = $entry->workVolumes->values();
-            $materials = $entry->materials
-                ->whereNotNull('estimate_item_id')
-                ->values();
-            $equipment = $entry->equipment
-                ->whereNotNull('estimate_item_id')
-                ->values();
-            $workers = $entry->workers
-                ->whereNotNull('estimate_item_id')
-                ->values();
+            $materials = $entry->materials->values();
+            $equipment = $entry->equipment->values();
+            $workers = $entry->workers->values();
             $syncedTaskIds = collect();
             $syncedWorkIds = collect();
 
@@ -475,7 +473,7 @@ class CompletedWorkFactService
         ?ScheduleTask $task,
     ): array {
         $estimateItem = $volume->estimate_item_id ? ($volume->estimateItem ?? $task?->estimateItem) : null;
-        $contractLink = $this->resolveContractLinkForEntry($entry, $estimateItem);
+        $contractLink = $this->resolveContractLinkForRow($volume->contract_id, $estimateItem);
 
         $price = null;
         $totalAmount = null;
@@ -509,13 +507,8 @@ class CompletedWorkFactService
             }
         }
 
-        $contractId = $contractLink?->contract_id;
-        $contractorId = $contractLink?->contract?->contractor_id;
-
-        if (! $estimateItem && $entry->journal->contract_id) {
-            $contractId = $entry->journal->contract_id;
-            $contractorId = $entry->journal->contract?->contractor_id;
-        }
+        $contractId = $estimateItem && ! $contractLink ? null : $volume->contract_id;
+        $contractorId = $contractId !== null ? $volume->contract?->contractor_id : null;
 
         return [
             'organization_id' => $entry->journal->organization_id,
@@ -561,6 +554,8 @@ class CompletedWorkFactService
             quantity: $quantity,
             linkField: 'journal_material_id',
             linkId: (int) $material->id,
+            contractId: $material->contract_id,
+            contract: $material->contract,
             notes: $material->notes ?: $material->material_name,
             additionalInfo: [
                 'fact_kind' => 'material',
@@ -588,6 +583,8 @@ class CompletedWorkFactService
             quantity: $factQuantity,
             linkField: 'journal_equipment_id',
             linkId: (int) $equipment->id,
+            contractId: $equipment->contract_id,
+            contract: $equipment->contract,
             notes: $equipment->equipment_name,
             additionalInfo: [
                 'fact_kind' => 'equipment',
@@ -616,6 +613,8 @@ class CompletedWorkFactService
             quantity: $factQuantity,
             linkField: 'journal_worker_id',
             linkId: (int) $worker->id,
+            contractId: $worker->contract_id,
+            contract: $worker->contract,
             notes: $worker->specialty,
             additionalInfo: [
                 'fact_kind' => 'labor',
@@ -633,19 +632,15 @@ class CompletedWorkFactService
         float $quantity,
         string $linkField,
         int $linkId,
+        ?int $contractId,
+        ?Contract $contract,
         ?string $notes,
         array $additionalInfo,
     ): array {
-        $contractLink = $this->resolveContractLinkForEntry($entry, $estimateItem);
+        $contractLink = $this->resolveContractLinkForRow($contractId, $estimateItem);
         [$price, $totalAmount] = $this->resolveFactPrice($estimateItem, $contractLink, $quantity);
 
-        $contractId = $contractLink?->contract_id;
-        $contractorId = $contractLink?->contract?->contractor_id;
-
-        if (! $estimateItem && $entry->journal->contract_id) {
-            $contractId = $entry->journal->contract_id;
-            $contractorId = $entry->journal->contract?->contractor_id;
-        }
+        $contractorId = $contract?->contractor_id;
 
         return [
             'organization_id' => $entry->journal->organization_id,
@@ -720,18 +715,53 @@ class CompletedWorkFactService
         return [null, null];
     }
 
-    private function resolveContractLinkForEntry(ConstructionJournalEntry $entry, ?EstimateItem $estimateItem): ?ContractEstimateItem
+    private function resolveContractLinkForRow(?int $contractId, ?EstimateItem $estimateItem): ?ContractEstimateItem
     {
-        if (! $estimateItem) {
+        if ($contractId === null || ! $estimateItem) {
             return null;
         }
 
         $estimateItem->loadMissing('contractLinks.contract.contractor');
 
-        return $this->journalContractCoverageService->resolveContractLink(
-            $entry->journal->contract_id,
-            $estimateItem->contractLinks->sortBy('id')->values(),
-        );
+        return $estimateItem->contractLinks->firstWhere('contract_id', $contractId);
+    }
+
+    public function syncJournalContractAssignment(ConstructionJournalEntry $entry, \Illuminate\Database\Eloquent\Model $row, User $actor): CompletedWork
+    {
+        if ((int) $row->journal_entry_id !== (int) $entry->id || $entry->isReportingEntry()
+            || $entry->status !== JournalEntryStatusEnum::APPROVED
+            || ! app(\App\Services\ConstructionJournal\ConstructionJournalAccessService::class)->canApprove($actor, $entry)) {
+            throw new \Illuminate\Auth\Access\AuthorizationException(trans_message('construction_journal.errors.access_denied'));
+        }
+        $row->loadMissing('estimateItem.contractLinks.contract.contractor', 'contract');
+        $entry->loadMissing('journal', 'scheduleTask');
+        $field = match (true) {
+            $row instanceof JournalWorkVolume => 'journal_work_volume_id',
+            $row instanceof JournalMaterial => 'journal_material_id',
+            $row instanceof JournalEquipment => 'journal_equipment_id',
+            $row instanceof JournalWorker => 'journal_worker_id',
+            default => throw new \DomainException(trans_message('construction_journal.errors.access_denied')),
+        };
+        $works = $entry->completedWorks()->where($field, $row->id)->lockForUpdate()->get();
+        if ($works->count() > 1) {
+            throw new BusinessLogicException(trans_message('completed_work.journal_duplicates_require_review'), 409);
+        }
+        $payload = match (true) {
+            $row instanceof JournalWorkVolume => $this->buildPayloadFromJournalVolume($entry, $row, $works->first()?->scheduleTask),
+            $row instanceof JournalMaterial => $this->buildPayloadFromJournalMaterial($entry, $row),
+            $row instanceof JournalEquipment => $this->buildPayloadFromJournalEquipment($entry, $row),
+            $row instanceof JournalWorker => $this->buildPayloadFromJournalWorker($entry, $row),
+        };
+        $work = $works->first();
+        if ($work) {
+            $work->fill(array_intersect_key($payload, array_flip(['contract_id', 'contractor_id', 'price', 'total_amount'])));
+            $this->assertJournalFactChangeAllowed($work);
+        } else {
+            $work = new CompletedWork($payload);
+        }
+        $work->save();
+
+        return $work;
     }
 
     private function mapJournalStatusToCompletedWorkStatus(JournalEntryStatusEnum|string|null $status): string
