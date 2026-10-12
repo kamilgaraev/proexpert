@@ -15,6 +15,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessRule;
 use App\BusinessModules\Features\DesignManagement\Support\DesignCompletenessRuleResult;
 use App\BusinessModules\Features\DesignManagement\Support\Rules\AllowedFileFormatRule;
+use App\BusinessModules\Features\DesignManagement\Support\Rules\CurrentSourceFileRule;
 use App\BusinessModules\Features\DesignManagement\Support\Rules\OpenBlockingCommentsRule;
 use App\BusinessModules\Features\DesignManagement\Support\Rules\RequiredCurrentArtifactRule;
 use App\BusinessModules\Features\DesignManagement\Support\Rules\RequiredSectionRule;
@@ -35,6 +36,7 @@ final class DesignCompletenessService
     public function __construct()
     {
         $this->rules = [
+            new CurrentSourceFileRule,
             new RequiredSectionRule,
             new RequiredCurrentArtifactRule,
             new AllowedFileFormatRule,
@@ -42,6 +44,11 @@ final class DesignCompletenessService
             new SheetRegistryRule,
             new OpenBlockingCommentsRule,
         ];
+    }
+
+    public function ruleCount(): int
+    {
+        return count($this->rules);
     }
 
     public function run(DesignPackage $package, int $userId): DesignCompletenessCheck
@@ -185,7 +192,8 @@ final class DesignCompletenessService
         }
         $metadata = is_array($check->metadata) ? $check->metadata : [];
 
-        return ($metadata['composition_revision_id'] ?? null) === $revision?->id
+        return ($metadata['rule_count'] ?? null) === $this->ruleCount()
+            && ($metadata['composition_revision_id'] ?? null) === $revision?->id
             && ($metadata['composition_fingerprint'] ?? null) === $revision?->fingerprint
             && ($metadata['completeness_invalidated_at'] ?? null) === $this->packageInvalidationStamp($package)
             && ($metadata['input_fingerprint'] ?? null) === $this->inputFingerprint($package);
@@ -211,7 +219,7 @@ final class DesignCompletenessService
     {
         $sections = $package->sections()->orderBy('id')->get()->map(static fn ($item): array => ['id' => $item->id, 'code' => $item->code, 'required' => $item->required, 'metadata' => array_diff_key($item->metadata ?? [], array_flip(['readiness_status', 'readiness_results', 'readiness_check_id']))])->all();
         $artifacts = DesignArtifact::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at'])->map(static fn (DesignArtifact $item): array => $item->only(['id', 'section_id', 'document_code', 'title', 'requires_sheet_registry', 'status', 'metadata', 'updated_at']))->all();
-        $versions = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query->where('package_id', $package->id))->orderBy('id')->get(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'page_count', 'sheet_count', 'metadata', 'updated_at'])->map(static fn (DesignArtifactVersion $item): array => $item->only(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'page_count', 'sheet_count', 'metadata', 'updated_at']))->all();
+        $versions = DesignArtifactVersion::query()->whereHas('artifact', static fn ($query) => $query->where('package_id', $package->id))->orderBy('id')->get(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'source_file_path', 'page_count', 'sheet_count', 'metadata', 'updated_at'])->map(static fn (DesignArtifactVersion $item): array => $item->only(['id', 'artifact_id', 'status', 'is_current', 'revision', 'revision_label', 'source_format', 'file_format', 'source_file_path', 'page_count', 'sheet_count', 'metadata', 'updated_at']))->all();
         $sheets = DesignDocumentSheet::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'version_id', 'status', 'revision', 'updated_at'])->map(static fn (DesignDocumentSheet $item): array => $item->only(['id', 'version_id', 'status', 'revision', 'updated_at']))->all();
         $comments = DesignReviewComment::query()->where('package_id', $package->id)->orderBy('id')->get(['id', 'status', 'severity', 'updated_at'])->map(static fn (DesignReviewComment $item): array => $item->only(['id', 'status', 'severity', 'updated_at']))->all();
         $issues = $this->blockingIssues($package);

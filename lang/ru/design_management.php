@@ -97,6 +97,7 @@ return [
         'open_blocking_comments' => 'Есть открытые блокирующие замечания.',
     ],
     'completeness' => [
+        'current_source_file_missing' => 'В действующем составе комплекта нет ни одного загруженного документа. Загрузите файл документа перед проверкой и выпуском.',
         'required_sections_not_generated' => 'Сформируйте структуру разделов по нормативному профилю.',
         'required_section_missing' => 'В обязательном разделе :section нет текущего документа.',
         'required_document_missing' => 'Не загружен обязательный документ ":document".',
