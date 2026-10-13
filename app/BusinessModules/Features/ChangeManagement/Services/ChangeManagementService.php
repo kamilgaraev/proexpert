@@ -28,6 +28,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Database\Eloquent\Builder;
 use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 final class ChangeManagementService
@@ -41,8 +42,17 @@ final class ChangeManagementService
 
     public function paginateRfis(int $organizationId, int $perPage, array $filters = [], bool $customer = false, ?int $actorUserId = null): LengthAwarePaginator
     {
+        return $this->rfiQuery($organizationId, $filters, $customer, $actorUserId)->latest('id')->paginate($perPage);
+    }
+
+    public function rfiQuery(int $organizationId, array $filters = [], bool $customer = false, ?int $actorUserId = null): Builder
+    {
+        $authorization = $this->authorization->forCurrentChecks(true);
+        $actor = $actorUserId === null ? null : User::query()->find($actorUserId);
         if ($actorUserId !== null) {
-            $this->assertPermission($actorUserId, $organizationId, 'change-management.view');
+            if (! $actor instanceof User || ! $authorization->canCurrent($actor, 'change-management.view', ['organization_id' => $organizationId])) {
+                throw new DomainException(trans_message('change_management.errors.rfi_forbidden'));
+            }
         }
         if (isset($filters['project_id'])) {
             $this->assertActiveParticipant((int) $filters['project_id'], $organizationId);
@@ -50,7 +60,7 @@ final class ChangeManagementService
         $manageAnyProjectRfi = ! $customer
             && $actorUserId !== null
             && isset($filters['project_id'])
-            && $this->hasPermission($actorUserId, $organizationId, 'change-management.rfi.reassign');
+            && $actor instanceof User && $authorization->canCurrent($actor, 'change-management.rfi.reassign', ['organization_id' => $organizationId]);
         if ($manageAnyProjectRfi) {
             $this->assertActiveParticipant((int) $filters['project_id'], $organizationId);
         }
@@ -96,7 +106,7 @@ final class ChangeManagementService
             $query->when(($filters['direction'] ?? null) === 'drafts', static fn ($builder) => $builder->where('organization_id', $organizationId)->where('status', 'draft'));
         }
 
-        return $query->latest('id')->paginate($perPage);
+        return $query;
     }
 
     public function paginateChanges(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
