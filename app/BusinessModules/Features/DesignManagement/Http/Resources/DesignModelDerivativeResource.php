@@ -38,7 +38,9 @@ final class DesignModelDerivativeResource extends JsonResource
             return $cached['payload'];
         }
 
-        $payload = parent::resolve($request);
+        $data = $this->toArray($request);
+        $preserveKeys = property_exists($this, 'preserveKeys') && $this->preserveKeys === true;
+        $payload = $this->filterNativeArrays($data, $preserveKeys) ?? $this->filter($data);
         $projections[$key] = [
             'model' => $derivative,
             'attributes' => $attributes,
@@ -49,6 +51,27 @@ final class DesignModelDerivativeResource extends JsonResource
         $request->attributes->set(self::REQUEST_PROJECTIONS, $projections);
 
         return $payload;
+    }
+
+    private function filterNativeArrays(array $data, bool $preserveKeys): ?array
+    {
+        $numericKeys = true;
+        foreach ($data as $key => $value) {
+            $numericKeys = $numericKeys && is_numeric($key);
+            if (is_array($value)) {
+                $filtered = $this->filterNativeArrays($value, $preserveKeys);
+                if ($filtered === null) {
+                    return null;
+                }
+                if ($filtered !== $value) {
+                    $data[$key] = $filtered;
+                }
+            } elseif ($value !== null && ! is_scalar($value)) {
+                return null;
+            }
+        }
+
+        return ! $preserveKeys && $numericKeys && ! array_is_list($data) ? array_values($data) : $data;
     }
 
     public function toArray(Request $request): array

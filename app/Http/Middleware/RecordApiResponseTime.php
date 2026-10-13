@@ -32,6 +32,8 @@ final class RecordApiResponseTime
             'api/v1/admin/procurement/purchase-requests',
             'api/v1/admin/design-management/packages',
             'api/v1/admin/executive-documentation/references',
+            'api/v1/admin/projects/*/construction-journals',
+            'api/v1/admin/construction-journals/*',
         ));
         $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
         $response = null;

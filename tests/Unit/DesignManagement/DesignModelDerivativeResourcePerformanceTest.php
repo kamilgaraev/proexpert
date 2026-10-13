@@ -18,6 +18,62 @@ use Tests\TestCase;
 
 final class DesignModelDerivativeResourcePerformanceTest extends TestCase
 {
+    public function test_native_pir_projection_preserves_laravel_numeric_and_sparse_metadata_keys(): void
+    {
+        foreach ([
+            [],
+            [2 => null, 7 => false, 11 => 1.5],
+            ['01' => ['1.5' => 'a', '2e2' => 'b'], '03' => 'c'],
+            ['01' => 'a', 'named' => [2 => 'b', 8 => 'c']],
+            ['points' => array_fill(0, 200, [1.5, 2.5, 3.5]), 'zero' => 0, 'empty' => '', 'null' => null],
+        ] as $geometry) {
+            $derivative = new DesignModelDerivative(['status' => 'ready', 'metadata' => ['converter_version' => DesignViewerConverter::version(), 'geometry' => $geometry]]);
+            $baseline = (new DesignModelDerivativeResource($derivative))->resolve(Request::create('/'));
+            $native = (new DesignModelDerivativeResource($derivative))->resolve(Request::create('/api/v1/admin/design-management/packages'));
+            self::assertSame($baseline, $native);
+            self::assertSame(json_encode($baseline, JSON_THROW_ON_ERROR), json_encode($native, JSON_THROW_ON_ERROR));
+        }
+    }
+
+    public function test_native_projection_key_preservation_matches_laravel_filter(): void
+    {
+        $data = ['geometry' => ['01' => [4 => 'a', 8 => 'b'], '03' => 'c']];
+        $baseline = new class([]) extends \Illuminate\Http\Resources\Json\JsonResource
+        {
+            public $preserveKeys = true;
+        };
+        $filter = new \ReflectionMethod(\Illuminate\Http\Resources\Json\JsonResource::class, 'filter');
+        $native = new \ReflectionMethod(DesignModelDerivativeResource::class, 'filterNativeArrays');
+        $resource = new DesignModelDerivativeResource(new DesignModelDerivative);
+        self::assertSame($data, $native->invoke($resource, $data, true));
+        self::assertSame($filter->invoke($baseline, $data), $native->invoke($resource, $data, true));
+    }
+
+    public function test_native_pir_projection_falls_back_for_objects_and_conditional_values(): void
+    {
+        foreach ([
+            ['object' => (object) ['value' => 1]],
+            ['removed' => new \Illuminate\Http\Resources\MissingValue, 'retained' => null],
+            [new \Illuminate\Http\Resources\MergeValue(['merged' => 1]), new \Illuminate\Http\Resources\MissingValue, null],
+            ['resource' => new \Illuminate\Http\Resources\Json\JsonResource(null)],
+        ] as $geometry) {
+            $derivative = new DesignModelDerivative(['status' => 'ready', 'metadata' => ['converter_version' => DesignViewerConverter::version(), 'geometry' => []]]);
+            Json::decodeUsing(static function (mixed $value, ?bool $associative = true) use ($geometry): mixed {
+                $metadata = json_decode($value, $associative);
+                $metadata['geometry'] = $geometry;
+
+                return $metadata;
+            });
+            try {
+                $baseline = (new DesignModelDerivativeResource($derivative))->resolve(Request::create('/'));
+                $native = (new DesignModelDerivativeResource($derivative))->resolve(Request::create('/api/v1/admin/design-management/packages'));
+                self::assertSame($baseline, $native);
+            } finally {
+                Json::decodeUsing(null);
+            }
+        }
+    }
+
     public function test_decoded_metadata_keeps_mutation_requests_instances_and_converter_checks_fresh(): void
     {
         $converter = DesignViewerConverter::version();
