@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Project;
 
+use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementRfiParticipantGuard;
 use App\Enums\ProjectOrganizationRole;
 use App\Events\ProjectOrganizationAdded;
 use App\Events\ProjectOrganizationRemoved;
@@ -14,11 +15,12 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectOrganization;
 use App\Models\User;
-use App\BusinessModules\Features\ChangeManagement\Services\ChangeManagementRfiParticipantGuard;
 use App\Services\Logging\LoggingService;
 use App\Services\Organization\OrganizationProfileService;
-use Illuminate\Support\Facades\DB;
+use Closure;
 use DomainException;
+use Illuminate\Database\Query\JoinClause;
+use Illuminate\Support\Facades\DB;
 
 class ProjectParticipantService
 {
@@ -40,20 +42,48 @@ class ProjectParticipantService
      */
     public function getHierarchy(Project $project): array
     {
-        $activeIds = $this->activeParticipantOrganizationIds($project);
-        $rows = DB::table('project_organization_hierarchy')
+        $activeParticipants = ProjectOrganization::query()
             ->where('project_id', $project->id)
-            ->whereIn('organization_id', $activeIds)
-            ->get(['organization_id', 'parent_organization_id'])
+            ->where('is_active', true)
+            ->select('organization_id')
+            ->toBase();
+        $activeParticipants->union(DB::query()->selectRaw('CAST(? AS bigint) AS organization_id', [(int) $project->organization_id]));
+        $customerRoot = ProjectOrganization::query()
+            ->where('project_id', $project->id)
+            ->where('is_active', true)
+            ->whereRaw("COALESCE(NULLIF(role_new, ''), role) = ?", [ProjectOrganizationRole::CUSTOMER->value])
+            ->select('organization_id')
+            ->limit(1);
+        $facts = DB::query()
+            ->useWritePdo()
+            ->fromSub($activeParticipants, 'active_participants')
+            ->leftJoin('project_organization_hierarchy as hierarchy', static function (JoinClause $join) use ($project): void {
+                $join->on('hierarchy.organization_id', '=', 'active_participants.organization_id')
+                    ->where('hierarchy.project_id', '=', $project->id);
+            })
+            ->leftJoinSub(Organization::query()->select(['id', 'name']), 'participant_organizations', 'participant_organizations.id', '=', 'active_participants.organization_id')
+            ->select([
+                'active_participants.organization_id',
+                'hierarchy.organization_id as hierarchy_organization_id',
+                'hierarchy.parent_organization_id',
+                'participant_organizations.name as organization_name',
+            ])
+            ->selectSub($customerRoot, 'customer_root_organization_id')
+            ->orderBy('active_participants.organization_id')
+            ->get();
+        $activeIds = $facts->pluck('organization_id')->map(static fn ($id): int => (int) $id)->all();
+        $rows = $facts->filter(static fn ($row): bool => $row->hierarchy_organization_id !== null)
             ->keyBy('organization_id');
-        $organizations = Organization::query()->whereIn('id', $activeIds)->pluck('name', 'id');
-        $configured = $this->isHierarchyConfiguredFor($project, $activeIds, $rows);
+        $organizations = $facts->pluck('organization_name', 'organization_id');
+        $customerRootId = $facts->first()?->customer_root_organization_id;
+        $customerRootId = $customerRootId === null ? null : (int) $customerRootId;
+        $configured = $this->isHierarchyConfiguredFor($project, $activeIds, $rows, static fn (): ?int => $customerRootId);
         $savedRoots = $rows->filter(static fn ($row): bool => $row->parent_organization_id === null);
         $rootId = $configured
             ? (int) $savedRoots->first()->organization_id
             : ($savedRoots->count() === 1
                 ? (int) $savedRoots->first()->organization_id
-                : $this->customerRootOrganizationId($project));
+                : $customerRootId);
 
         $participants = [];
         foreach ($activeIds as $organizationId) {
@@ -272,7 +302,7 @@ class ProjectParticipantService
         return $customerId === null ? null : (int) $customerId;
     }
 
-    private function isHierarchyConfiguredFor(Project $project, array $activeIds, $rows): bool
+    private function isHierarchyConfiguredFor(Project $project, array $activeIds, $rows, ?Closure $customerRootResolver = null): bool
     {
         if ($activeIds === [] || $rows->count() !== count($activeIds)) {
             return false;
@@ -290,7 +320,7 @@ class ProjectParticipantService
         }
 
         $rootId = (int) $roots->first()->organization_id;
-        $customerRootId = $this->customerRootOrganizationId($project);
+        $customerRootId = $customerRootResolver !== null ? $customerRootResolver() : $this->customerRootOrganizationId($project);
         if ($customerRootId !== null && $rootId !== $customerRootId) {
             return false;
         }

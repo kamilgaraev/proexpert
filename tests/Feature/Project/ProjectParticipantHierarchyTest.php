@@ -10,10 +10,111 @@ use App\Exceptions\BusinessLogicException;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Project\ProjectParticipantService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ProjectParticipantHierarchyTest extends TestCase
 {
+    public function test_hierarchy_reads_one_fresh_query_with_owner_scopes_and_deleted_names(): void
+    {
+        $owner = Organization::factory()->create(['is_active' => false]);
+        $customer = Organization::factory()->create();
+        $child = Organization::factory()->create();
+        $inactive = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $owner->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $owner->id]);
+        $service = app(ProjectParticipantService::class);
+        $service->attach($project, $customer->id, ProjectOrganizationRole::CUSTOMER, confirmedCapabilities: true);
+        $service->attach($project, $child->id, ProjectOrganizationRole::OBSERVER, confirmedCapabilities: true);
+        $service->attach($project, $inactive->id, ProjectOrganizationRole::OBSERVER, confirmedCapabilities: true);
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $owner->id)->delete();
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $inactive->id)->update(['is_active' => false]);
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $child->id)->update(['role_new' => '', 'role' => 'contractor']);
+        DB::table('project_organization_hierarchy')->insert([
+            ['project_id' => $project->id, 'organization_id' => $customer->id, 'parent_organization_id' => null],
+            ['project_id' => $project->id, 'organization_id' => $owner->id, 'parent_organization_id' => $customer->id],
+            ['project_id' => $project->id, 'organization_id' => $child->id, 'parent_organization_id' => $owner->id],
+            ['project_id' => $project->id, 'organization_id' => $inactive->id, 'parent_organization_id' => $customer->id],
+            ['project_id' => $otherProject->id, 'organization_id' => $owner->id, 'parent_organization_id' => null],
+        ]);
+        DB::table('organizations')->where('id', $child->id)->update(['deleted_at' => now()]);
+        $this->app->instance('request', Request::create('/api/v1/admin/construction-journals/1/entries'));
+
+        $hierarchy = $this->hierarchyWithOneQuery($service, $project);
+        self::assertSame([
+            'configured' => true,
+            'root_organization_id' => (int) $customer->id,
+            'parents' => [
+                ['organization_id' => (int) $owner->id, 'parent_organization_id' => (int) $customer->id],
+                ['organization_id' => (int) $child->id, 'parent_organization_id' => (int) $owner->id],
+            ],
+            'participants' => [
+                ['organization_id' => (int) $owner->id, 'organization_name' => $owner->name, 'parent_organization_id' => (int) $customer->id],
+                ['organization_id' => (int) $customer->id, 'organization_name' => $customer->name, 'parent_organization_id' => null],
+                ['organization_id' => (int) $child->id, 'organization_name' => '', 'parent_organization_id' => (int) $owner->id],
+            ],
+        ], $hierarchy);
+
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $customer->id)->update(['role_new' => ProjectOrganizationRole::OBSERVER->value]);
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $child->id)->update(['role_new' => ProjectOrganizationRole::CUSTOMER->value]);
+        $changedRole = $this->hierarchyWithOneQuery($service, $project);
+        self::assertFalse($changedRole['configured']);
+        self::assertSame((int) $customer->id, $changedRole['root_organization_id']);
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $child->id)->update(['role_new' => '', 'role' => 'contractor']);
+
+        DB::table('project_organization')->where('project_id', $project->id)->where('organization_id', $customer->id)->update(['is_active' => false]);
+        $fresh = $this->hierarchyWithOneQuery($service, $project);
+        self::assertFalse($fresh['configured']);
+        self::assertNull($fresh['root_organization_id']);
+        self::assertSame([(int) $owner->id, (int) $child->id], array_column($fresh['participants'], 'organization_id'));
+        self::assertNull($fresh['participants'][0]['parent_organization_id']);
+    }
+
+    public function test_hierarchy_distinguishes_missing_rows_multiple_roots_and_disconnected_cycles(): void
+    {
+        $owner = Organization::factory()->create();
+        $first = Organization::factory()->create();
+        $second = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $owner->id]);
+        $service = app(ProjectParticipantService::class);
+        $service->attach($project, $first->id, ProjectOrganizationRole::OBSERVER, confirmedCapabilities: true);
+        $service->attach($project, $second->id, ProjectOrganizationRole::OBSERVER, confirmedCapabilities: true);
+        $initial = $this->hierarchyWithOneQuery($service, $project);
+        self::assertFalse($initial['configured']);
+        self::assertNull($initial['root_organization_id']);
+        DB::table('project_organization_hierarchy')->insert([
+            ['project_id' => $project->id, 'organization_id' => $owner->id, 'parent_organization_id' => null],
+            ['project_id' => $project->id, 'organization_id' => $first->id, 'parent_organization_id' => null],
+            ['project_id' => $project->id, 'organization_id' => $second->id, 'parent_organization_id' => $first->id],
+        ]);
+        $multiple = $this->hierarchyWithOneQuery($service, $project);
+        self::assertFalse($multiple['configured']);
+        self::assertNull($multiple['root_organization_id']);
+        DB::table('project_organization_hierarchy')->where('project_id', $project->id)->where('organization_id', $first->id)->update(['parent_organization_id' => $second->id]);
+        $cycle = $this->hierarchyWithOneQuery($service, $project);
+        self::assertFalse($cycle['configured']);
+        self::assertSame((int) $owner->id, $cycle['root_organization_id']);
+        DB::table('project_organization_hierarchy')->where('project_id', $project->id)->where('organization_id', $first->id)->update(['parent_organization_id' => $owner->id]);
+        self::assertTrue($this->hierarchyWithOneQuery($service, $project)['configured']);
+    }
+
+    private function hierarchyWithOneQuery(ProjectParticipantService $service, Project $project): array
+    {
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        try {
+            $hierarchy = $service->getHierarchy($project);
+            $selects = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_starts_with(strtolower($query['query']), 'select'));
+            self::assertSame(1, count($selects));
+
+            return $hierarchy;
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+    }
+
     public function test_it_saves_project_hierarchy_and_exposes_direct_neighbors(): void
     {
         $owner = Organization::factory()->create();
