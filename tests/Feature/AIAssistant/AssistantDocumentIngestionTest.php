@@ -981,4 +981,30 @@ final class AssistantDocumentIngestionTest extends TestCase
         return new SearchAssistantDocumentsTool(app(RagRetriever::class), app(RagPromptContextBuilder::class), $this->policy,
             app(AIPermissionChecker::class), new AssistantToolArgumentValidator, $coverage);
     }
+
+    public function test_readiness_inventory_counts_all_authorized_statuses_before_examples_without_document_text(): void
+    {
+        for ($i = 0; $i < 7; $i++) {
+            $this->documents->process((int) $this->documents->registerFile($this->file('readiness-'.$i.'.txt', 'private_inventory_text'))->id);
+        }
+        $unsupported = $this->documents->registerFile($this->file('readiness-unsupported.wav', 'audio', null, 'audio/wav'));
+        $unsupported->updateQuietly(['status' => 'unsupported']);
+        $other = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $this->organization->id]));
+        $this->documents->process((int) $this->documents->registerFile($this->file('readiness-hidden.txt', 'private_hidden_inventory', $other))->id);
+        $this->deniedProjects[] = $other->id;
+        $reader = app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class);
+        $read = $reader->read($this->owner, $this->organization->id, ['project_id' => null]);
+        $groups = array_column($read['data']['groups'], null, 'status');
+        self::assertSame(8, $read['data']['total']);
+        self::assertSame(7, $groups['ready']['total']);
+        self::assertCount(3, $groups['ready']['examples']);
+        self::assertSame(1, $groups['unsupported']['total']);
+        foreach (['private_inventory_text', 'private_hidden_inventory', 'readiness-hidden.txt', 'extracted_text'] as $hidden) { self::assertStringNotContainsString($hidden, json_encode($read)); }
+        self::assertTrue(app(\App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard::class)->fresh($this->owner, $this->organization->id, $read['source_refs']));
+        $unsupported->updateQuietly(['status' => 'processing']);
+        self::assertFalse($reader->matchesReference($this->owner, $this->organization->id, $read['source_refs'][0]));
+        $read = $reader->read($this->owner, $this->organization->id, ['project_id' => null]);
+        $this->allowed = false;
+        self::assertFalse($reader->matchesReference($this->owner, $this->organization->id, $read['source_refs'][0]));
+    }
 }

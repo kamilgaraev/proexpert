@@ -388,6 +388,25 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertSame([], (new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
     }
 
+    public function test_canonical_machinery_source_scope_survives_actual_tool_handling(): void
+    {
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('assistant_domain_search');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => ['project_id' => ['type' => 'integer']]]);
+        $tool->method('execute')->willReturn(['status' => 'success', 'results' => [['entity_type' => 'machinery_asset', 'id' => 17]],
+            'source_refs' => [['entity_type' => 'machinery_asset', 'entity_id' => 17, 'project_id' => 52, 'machinery_project_scope' => 52]]]);
+        $registry = new AIToolRegistry;
+        $registry->registerTool($tool);
+        $service = $this->makeService($registry, true);
+        $plan = ['request' => ['message' => 'Покажи технику на нашем объекте.', 'context' => ['entity_refs' => [['type' => 'project', 'id' => 52]]]]];
+        $failures = [];
+        $result = $service->exposeHandleToolCall(['name' => 'assistant_domain_search', 'arguments' => '{"project_id":52}'], $plan, $failures);
+        self::assertSame('success', $result['status']);
+        self::assertSame(52, $result['source_refs'][0]['project_id']);
+        self::assertSame([], $failures);
+        self::assertNotEmpty((new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
+    }
+
     public function test_current_object_requires_unique_reference_instead_of_raw_project_context(): void
     {
         $tool = $this->createMock(AIToolInterface::class);

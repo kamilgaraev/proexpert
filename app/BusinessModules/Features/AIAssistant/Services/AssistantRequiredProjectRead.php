@@ -15,6 +15,10 @@ final readonly class AssistantRequiredProjectRead
             'analyze_project_schedule_impact' => AssistantProjectScheduleImpactReader::matches($query) ? AssistantProjectScheduleImpactReader::class : null,
             'get_project_workforce_summary' => AssistantProjectWorkforceReader::matches($query) ? AssistantProjectWorkforceReader::class : null,
             'get_project_payment_readiness' => AssistantProjectPaymentReader::matches($query) ? AssistantProjectPaymentReader::class : null,
+            'get_project_machinery_summary' => AssistantProjectMachineryReader::matches($query) ? AssistantProjectMachineryReader::class : null,
+            'get_project_contract_roster' => AssistantProjectContractRosterReader::matches($query) ? AssistantProjectContractRosterReader::class : null,
+            'get_document_readiness' => \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
+                ? \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class : null,
             default => null,
         };
     }
@@ -27,11 +31,21 @@ final readonly class AssistantRequiredProjectRead
         }
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
+        if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
+            && (! $scope->requested || $scope->projectId !== null)) {
+            return ['name' => 'get_document_readiness', 'arguments' => ['project_id' => $scope->requested ? $scope->projectId : null]];
+        }
         if ($scope->projectId !== null && AssistantProjectScheduleImpactReader::matches($query)
             && ($scope->requested || preg_match('/общий\s+срок\s+проекта\s*[?.!]|из\s+(?:перечисленных|просроченных)\s+задач/iu', $query) === 1)) {
             return ['name' => 'analyze_project_schedule_impact', 'arguments' => ['project_id' => $scope->projectId, 'focus' => AssistantProjectScheduleImpactReader::focus($query)]];
         }
         if (! $scope->requested || $scope->projectId === null) { return null; }
+        if (AssistantProjectContractRosterReader::matches($query)) {
+            return ['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => $scope->projectId]];
+        }
+        if (AssistantProjectMachineryReader::matches($query)) {
+            return ['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => $scope->projectId]];
+        }
         if (AssistantProjectPaymentReader::matches($query)) {
             return ['name' => 'get_project_payment_readiness', 'arguments' => ['project_id' => $scope->projectId]];
         }

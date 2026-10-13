@@ -244,6 +244,15 @@ final class AssistantDataAccessPolicy
         if ($type === AssistantProjectPaymentReader::TYPE) {
             return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectPaymentReader::class)->matchesReference($user, $organizationId, $reference));
         }
+        if ($type === AssistantProjectMachineryReader::TYPE) {
+            return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectMachineryReader::class)->matchesReference($user, $organizationId, $reference));
+        }
+        if ($type === AssistantProjectContractRosterReader::TYPE) {
+            return $this->withoutPendingEntityReads(fn (): bool => app(AssistantProjectContractRosterReader::class)->matchesReference($user, $organizationId, $reference));
+        }
+        if ($type === \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::TYPE) {
+            return $this->withoutPendingEntityReads(fn (): bool => app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class)->matchesReference($user, $organizationId, $reference));
+        }
         if ($type === 'published_report_financial_projection') {
             return app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)
                 ->matchesReference($user, $organizationId, $reference);
@@ -955,7 +964,7 @@ final class AssistantDataAccessPolicy
 
     public function resolvedEntityProjectId(User $actor, int $organizationId, string $type, Model $entity): ?int
     {
-        $projectId = $entity->getAttribute('project_id');
+        $projectId = $entity->getAttribute('project_id') ?? $entity->getAttribute('current_project_id');
         if ($type === 'schedule_task') {
             $scheduleId = $entity->getAttribute('schedule_id');
             if (! is_numeric($scheduleId) || (int) $scheduleId < 1) { return null; }
@@ -1238,7 +1247,7 @@ final class AssistantDataAccessPolicy
                 });
             }
         }
-        if (in_array('deleted_at', $columns, true)) {
+        if ($type !== 'operations_machinery_identity' && in_array('deleted_at', $columns, true)) {
             $query->whereNull($table.'.deleted_at');
         }
         if ($type === 'contract') {

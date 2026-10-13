@@ -1,0 +1,58 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\AIAssistant;
+
+use App\BusinessModules\Features\AIAssistant\Services\AssistantProjectContractRosterReader;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceGuard;
+use App\Models\Contract;
+use App\Models\ContractOrganizationView;
+use App\Models\Contractor;
+use App\Models\Project;
+use App\Services\Modules\PackageCatalogService;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Queue;
+use Tests\Support\AssistantRealAuthorizationFixture;
+use Tests\TestCase;
+
+final class AssistantContractRosterTest extends TestCase
+{
+    public function test_roster_matches_native_active_placement_status_and_multiproject_scope_without_shared_counterparty_leak(): void
+    {
+        Queue::fake(); config(['cache.default' => 'array']);
+        $fixture = Model::withoutEvents(fn () => AssistantRealAuthorizationFixture::create(array_column(app(PackageCatalogService::class)->allPackages(), 'slug')));
+        $project = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->organization->id]));
+        $foreignProject = Project::withoutEvents(fn () => Project::factory()->create(['organization_id' => $fixture->foreignOrganization->id]));
+        $counterparty = Contractor::withoutEvents(fn () => Contractor::query()->create(['organization_id' => $fixture->organization->id, 'name' => 'Подрядчик проекта']));
+        $base = ['organization_id' => $fixture->organization->id, 'project_id' => $project->id, 'contractor_id' => $counterparty->id,
+            'contract_side_type' => 'contract', 'date' => '2026-06-01', 'subject' => 'Договор', 'work_type_category' => 'smr',
+            'base_amount' => '100.00', 'total_amount' => '100.00', 'gp_percentage' => 0, 'planned_advance_amount' => 0,
+            'actual_advance_amount' => 0, 'status' => 'active', 'start_date' => '2026-06-01', 'end_date' => '2026-09-30',
+            'is_fixed_amount' => true, 'is_multi_project' => false, 'is_self_execution' => false];
+        $own = Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'OWN-ACTIVE'] + $base));
+        Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'DRAFT', 'status' => 'draft'] + $base));
+        $archived = Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'ARCHIVED-VIEW'] + $base));
+        ContractOrganizationView::query()->create(['contract_id' => $archived->id, 'organization_id' => $fixture->organization->id, 'visibility' => 'archived', 'version' => 1]);
+        $shared = Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'SHARED-ACTIVE', 'organization_id' => $fixture->foreignOrganization->id,
+            'project_id' => $foreignProject->id, 'end_date' => null, 'is_multi_project' => true] + $base));
+        Model::withoutEvents(fn () => $shared->projects()->attach($project->id));
+        $view = ContractOrganizationView::query()->create(['contract_id' => $shared->id, 'organization_id' => $fixture->organization->id, 'visibility' => 'active', 'version' => 1]);
+        Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'FOREIGN-NOT-SHARED', 'organization_id' => $fixture->foreignOrganization->id, 'project_id' => $foreignProject->id] + $base));
+        $reader = app(AssistantProjectContractRosterReader::class);
+        $read = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(2, $read['data']['total']);
+        $rows = array_column($read['data']['items'], null, 'id');
+        self::assertSame('Подрядчик проекта', $rows[$own->id]['counterparty']);
+        self::assertNull($rows[$shared->id]['counterparty']);
+        self::assertStringContainsString('дата уже прошла', mb_strtolower($read['server_formatted_answer']));
+        foreach (['DRAFT', 'ARCHIVED-VIEW', 'FOREIGN-NOT-SHARED', 'total_amount', '100.00'] as $excluded) { self::assertStringNotContainsString($excluded, json_encode($read)); }
+        self::assertTrue(app(AssistantSourceReferenceGuard::class)->fresh($fixture->owner, $fixture->organization->id, $read['source_refs']));
+        $view->update(['access_revoked_at' => now()]);
+        self::assertFalse($reader->matchesReference($fixture->owner, $fixture->organization->id, $read['source_refs'][0]));
+        for ($i = 0; $i < 21; $i++) { Contract::withoutEvents(fn () => Contract::query()->create(['number' => 'EXTRA-'.$i] + $base)); }
+        $full = $reader->read($fixture->owner, $fixture->organization->id, ['project_id' => $project->id]);
+        self::assertSame(22, $full['data']['total']);
+        self::assertCount(20, $full['data']['items']);
+    }
+}

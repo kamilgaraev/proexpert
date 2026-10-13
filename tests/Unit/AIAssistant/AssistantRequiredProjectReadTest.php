@@ -11,6 +11,30 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_active_contract_meeting_roster_is_scoped_and_does_not_replace_money_questions(): void
+    {
+        $plan = $this->plan('Какие действующие договоры и подрядчики у нашего объекта? Покажи номера и плановые сроки окончания, чтобы я мог подготовить встречу с ними.');
+        self::assertSame(['name' => 'get_project_contract_roster', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_contract_roster', ['project_id' => 999]));
+        self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', 'Какие действующие договоры нашего проекта и сколько по ним надо оплатить?'));
+        foreach (['Какие действующие договоры нашего проекта и сколько затрат за сентябрь?',
+            'Какие действующие договоры нашего проекта и какая по ним выручка?'] as $mixed) {
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));
+        }
+    }
+
+    public function test_machinery_summary_binds_current_project_and_is_terminal_read_only(): void
+    {
+        $plan = $this->plan('Какая техника сейчас закреплена за нашим объектом и есть ли среди неё простаивающая или ожидающая ремонта? Что мне нужно решить в первую очередь?');
+        self::assertSame(['name' => 'get_project_machinery_summary', 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+        self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, 'get_project_machinery_summary', ['project_id' => 999]));
+        self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', 'Какая техника закреплена за нашим объектом и сколько потрачено за сентябрь?'));
+        $mixed = 'Какая техника простаивает в нашем проекте и какие счета не оплачены?';
+        self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
+        self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_machinery_summary', $mixed));
+    }
+
     public function test_director_compound_finance_and_schedule_impact_bind_verified_scope(): void
     {
         $finance = $this->plan('Теперь по деньгам: какой бюджет у нашего объекта, сколько уже потрачено за сентябрь 2026 года и можем ли мы говорить о перерасходе?');
@@ -86,6 +110,7 @@ final class AssistantRequiredProjectReadTest extends TestCase
         self::assertTrue($method->invoke($service, 'analyze_project_schedule_impact'));
         self::assertTrue($method->invoke($service, 'get_project_workforce_summary'));
         self::assertTrue($method->invoke($service, 'get_project_payment_readiness'));
+        foreach (['get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster'] as $tool) { self::assertTrue($method->invoke($service, $tool)); }
         self::assertFalse($method->invoke($service, 'approve_payment_request'));
     }
 

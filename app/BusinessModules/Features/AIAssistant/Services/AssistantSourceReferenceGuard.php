@@ -94,6 +94,18 @@ class AssistantSourceReferenceGuard
                 if (! app(AssistantProjectPaymentReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            if ($type === AssistantProjectMachineryReader::TYPE) {
+                if (! app(AssistantProjectMachineryReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
+            if ($type === AssistantProjectContractRosterReader::TYPE) {
+                if (! app(AssistantProjectContractRosterReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
+            if ($type === \App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::TYPE) {
+                if (! app(\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
             if ($type === 'published_report_financial_projection') {
                 if (! app(\App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantPublishedReportReader::class)
                     ->matchesReference($actor, $organizationId, $reference)) { return false; }
@@ -113,6 +125,12 @@ class AssistantSourceReferenceGuard
             $query = $type === 'assistant_document' ? AIAssistantDocument::query()->where('organization_id', $organizationId)
                 : ($engineeringReference ? $this->policy->engineeringEntityQuery($actor, $organizationId, $type)
                     : $this->policy->entityQuery($actor, $organizationId, $type));
+            if ($type === 'machinery_asset' && isset($reference['machinery_project_scope'])) {
+                if ($query === null || ! is_int($reference['machinery_project_scope']) || $reference['machinery_project_scope'] < 1
+                    || ($reference['project_id'] ?? null) !== $reference['machinery_project_scope']) { return false; }
+                try { app(AssistantMachineryProjectScope::class)->apply($query, $actor, $organizationId, $reference['machinery_project_scope']); }
+                catch (\Throwable) { return false; }
+            }
             $allowed = [];
             $relatedFields = [];
             if (isset($reference['related_field_projection'])) {
