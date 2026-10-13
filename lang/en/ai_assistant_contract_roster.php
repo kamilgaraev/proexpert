@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 return [
+    'deadlines' => 'Recorded end date in the past: :overdue; date from today through :date inclusive: :soon; no recorded end date: :undated.',
+    'renewal' => 'Before renewal, check the current end date and status in the contract record and the required approval and amendment workflow. Contracts were not changed.',
     'description' => 'Active project contracts in the native organization register, including authorized shared and multiproject contracts. Active legal status and active placement only. Complete counts before examples, numbers, end dates and authorized counterparty names. Excludes money aggregates, drafts and archived placements.',
     'scope' => 'Project :project active contracts on :date.',
     'count' => 'Total in the authorized active register: :total. Shown :shown.',

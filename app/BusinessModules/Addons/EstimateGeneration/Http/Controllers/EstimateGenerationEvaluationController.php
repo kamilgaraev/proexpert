@@ -21,6 +21,21 @@ use Illuminate\Http\Request;
 
 final class EstimateGenerationEvaluationController extends Controller
 {
+    public function requirementSources(Request $request, Project $project, EstimateGenerationSession $session,
+        \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationRequirementSources $sources): JsonResponse
+    {
+        $input = $request->validate(['entity_id' => ['required', 'string', 'max:191'], 'section' => ['required', 'string', 'max:64'],
+            'requirement' => ['required', 'string', 'max:40'], 'state_version' => ['required', 'integer', 'min:0'],
+            'page' => ['sometimes', 'integer', 'min:1', 'max:100000']]);
+        $input['state_version'] = (int) $input['state_version'];
+        if (isset($input['page'])) {
+            $input['page'] = (int) $input['page'];
+        }
+
+        return AdminResponse::success($sources->handle($request->user(), (int) $project->id, (int) $session->id, $input))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function technologies(Request $request, Project $project, EstimateGenerationSession $session,
         \App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\GetEvaluationTechnologies $technologies): JsonResponse
     {

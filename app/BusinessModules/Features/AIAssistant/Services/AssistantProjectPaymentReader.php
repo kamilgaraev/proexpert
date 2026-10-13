@@ -6,9 +6,11 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\Models\User;
 use Brick\Math\BigDecimal;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 
 final readonly class AssistantProjectPaymentReader
 {
@@ -35,8 +37,8 @@ final readonly class AssistantProjectPaymentReader
             if ($project === null || $query === null) { throw new AuthorizationException; }
             $documents = $query->where('project_id', $projectId)->where('document_type', 'invoice')->whereNotIn('status', ['paid', 'cancelled', 'rejected'])
                 ->orderByRaw('due_date ASC NULLS LAST')->orderBy('id')->limit(10001)->get(['id', 'document_number', 'direction', 'status',
-                    'amount', 'paid_amount', 'remaining_amount', 'currency', 'due_date', 'updated_at']);
-            $rows = $documents->map(static fn ($document): array => $document->getAttributes())->all();
+                    'amount', 'paid_amount', 'remaining_amount', 'currency', 'due_date', 'overdue_since', 'updated_at']);
+            $rows = $documents->map(static fn ($document): array => $document->getAttributes() + ['is_overdue' => $document->isOverdue()])->all();
             $items = []; $unknown = 0;
             if (count($rows) <= 10000) {
                 foreach ($rows as $row) {
@@ -48,11 +50,18 @@ final readonly class AssistantProjectPaymentReader
                     $items[] = ['id' => (int) $row['id'], 'number' => $row['document_number'], 'amount' => $row['amount'], 'paid_amount' => $row['paid_amount'],
                         'remaining_amount' => $row['remaining_amount'], 'currency' => $row['currency'], 'status' => $row['status'], 'status_label' => $status?->label(),
                         'direction' => $row['direction'], 'direction_label' => $direction?->description(), 'due_date' => $row['due_date'],
-                        'status_allows_payment' => $status?->canBePaid() ?? false];
+                        'status_allows_payment' => $status?->canBePaid() ?? false, 'is_overdue' => (bool) $row['is_overdue']];
                 }
             }
+            $window = array_slice($items, 0, 20);
+            $approvals = $this->pendingApprovals($actor, $organizationId, array_column($window, 'id'));
+            foreach ($window as &$item) { $item['approvals'] = $approvals['documents'][$item['id']] ?? ['total' => $approvals['available'] ? 0 : null, 'unnamed' => $approvals['available'] ? 0 : null, 'examples' => []]; }
+            unset($item);
             $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => today()->toDateString(), 'complete' => count($rows) <= 10000,
-                'total' => count($rows) <= 10000 ? count($items) : null, 'unknown_balance_count' => count($rows) <= 10000 ? $unknown : null, 'items' => array_slice($items, 0, 20)];
+                'total' => count($rows) <= 10000 ? count($items) : null, 'unknown_balance_count' => count($rows) <= 10000 ? $unknown : null, 'items' => $window,
+                'overdue_outgoing' => count($rows) <= 10000 ? count(array_filter($items, static fn (array $item): bool => $item['is_overdue'] && $item['direction'] === 'outgoing')) : null,
+                'overdue_incoming' => count($rows) <= 10000 ? count(array_filter($items, static fn (array $item): bool => $item['is_overdue'] && $item['direction'] === 'incoming')) : null,
+                'approval_read_available' => $approvals['available']];
             $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
                 'actor_id' => (int) $actor->id, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
@@ -82,14 +91,43 @@ final readonly class AssistantProjectPaymentReader
         $lines = [trans_message('ai_assistant_decisions.payment_scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']])];
         if (! $data['complete']) { $lines[] = trans_message('ai_assistant_decisions.payment_limit'); return implode("\n", $lines); }
         $lines[] = trans_message('ai_assistant_decisions.payment_count', ['total' => $data['total'], 'shown' => count($data['items']), 'unknown' => $data['unknown_balance_count']]);
+        $lines[] = trans_message('ai_assistant_decisions.payment_overdue_counts', ['outgoing' => $data['overdue_outgoing'], 'incoming' => $data['overdue_incoming']]);
         foreach ($data['items'] as $item) {
             $lines[] = '- '.self::text((string) $item['number']).' (#'.$item['id'].'): '.trans_message('ai_assistant_decisions.payment_amounts',
                 ['amount' => $item['amount'], 'paid' => $item['paid_amount'], 'remaining' => $item['remaining_amount'], 'currency' => self::text((string) $item['currency'])]);
             $lines[] = self::text((string) $item['direction_label']).'; '.self::text((string) $item['status_label']).'. '.trans_message('ai_assistant_decisions.payment_due', ['date' => $item['due_date'] ?? '—']);
+            if ($item['is_overdue']) { $lines[] = trans_message('ai_assistant_decisions.payment_overdue'); }
+            if (! $data['approval_read_available']) { $lines[] = trans_message('ai_assistant_decisions.payment_approvals_unavailable'); }
+            elseif ($item['approvals']['total'] === 0) { $lines[] = trans_message('ai_assistant_decisions.payment_no_pending_approver'); }
+            else {
+                $lines[] = trans_message('ai_assistant_decisions.payment_pending_approvals', ['total' => $item['approvals']['total'], 'unnamed' => $item['approvals']['unnamed']]);
+                foreach ($item['approvals']['examples'] as $approval) { $lines[] = '- '.self::text($approval['name']); }
+            }
             $lines[] = trans_message($item['direction'] === 'outgoing' && $item['status_allows_payment'] ? 'ai_assistant_decisions.payment_status_ready' : 'ai_assistant_decisions.payment_status_check');
         }
         $lines[] = trans_message('ai_assistant_decisions.payment_basis');
         return implode("\n", $lines);
+    }
+
+    private function pendingApprovals(User $actor, int $organizationId, array $ids): array
+    {
+        if (! $this->access->canCurrentPermission($actor, $organizationId, 'payments.transaction.view')) { return ['available' => false, 'documents' => []]; }
+        $rows = PaymentApproval::query()->where('organization_id', $organizationId)->whereIn('payment_document_id', $ids)->where('status', 'pending')
+            ->orderBy('id')->limit(2001)->get(['id', 'payment_document_id', 'approver_user_id']);
+        if ($rows->count() > 2000) { return ['available' => false, 'documents' => []]; }
+        $members = DB::table('organization_user')->where('organization_id', $organizationId)->where('is_active', true)->select('user_id');
+        $names = User::query()->whereIn('id', $rows->pluck('approver_user_id')->filter()->unique()->all())->whereIn('id', $members)->get(['id', 'name'])->keyBy('id');
+        $facts = [];
+        foreach ($rows->groupBy('payment_document_id') as $id => $group) {
+            $examples = []; $unnamed = 0;
+            foreach ($group as $row) {
+                $name = $names->get($row->approver_user_id)?->name;
+                if ($name === null) { $unnamed++; continue; }
+                if (count($examples) < 3) { $examples[] = ['id' => (int) $row->approver_user_id, 'name' => $name]; }
+            }
+            $facts[$id] = ['total' => $group->count(), 'unnamed' => $unnamed, 'examples' => $examples];
+        }
+        return ['available' => true, 'documents' => $facts];
     }
 
     private static function money(mixed $value): bool { return is_string($value) && preg_match('/^\d+(?:\.\d{1,2})?$/D', $value) === 1; }

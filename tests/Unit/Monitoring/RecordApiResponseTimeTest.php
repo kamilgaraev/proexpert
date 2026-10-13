@@ -19,6 +19,22 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 final class RecordApiResponseTimeTest extends TestCase
 {
+    public function test_journal_body_size_is_measured_without_logging_body_or_query_values(): void
+    {
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+        $request = Request::create('/api/v1/admin/construction-journals/7?token=private', 'GET');
+        $original = new JsonResponse(['data' => ['fixture' => 'private']]);
+        $response = (new RecordApiResponseTime)->handle($request, fn () => $original);
+        self::assertSame($original, $response);
+        self::assertSame(strlen($original->getContent()), $captured['response_bytes']);
+        self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+    }
+
     public function test_pir_body_size_is_measured_without_logging_body_or_query_values(): void
     {
         $captured = null;

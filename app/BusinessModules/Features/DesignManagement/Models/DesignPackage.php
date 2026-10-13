@@ -92,6 +92,11 @@ final class DesignPackage extends Model
         return $this->hasMany(DesignPackageSection::class, 'package_id')->orderBy('sort_order')->orderBy('code');
     }
 
+    public function currentComposition(): BelongsTo
+    {
+        return $this->belongsTo(DesignCompositionRevision::class, 'composition_revision_id');
+    }
+
     public function reviewRounds(): HasMany
     {
         return $this->hasMany(DesignReviewRound::class, 'package_id')->orderByDesc('round_number');

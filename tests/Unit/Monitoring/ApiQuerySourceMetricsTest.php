@@ -194,6 +194,15 @@ final class ApiQuerySourceMetricsTest extends TestCase
         ApiQueryMetrics::recordProcessingPhase($request, 'list_encode', hrtime(true));
         self::assertArrayNotHasKey('processing_phases', $other->summary());
         self::assertSame(0, $metrics->summary()['sql_count']);
+        foreach (['journal_load', 'journal_prepare', 'journal_payload', 'journal_encode'] as $name) {
+            ApiQueryMetrics::recordProcessingPhase($request, $name, hrtime(true));
+            self::assertArrayNotHasKey('processing_phases', $other->summary());
+            $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $metrics);
+            ApiQueryMetrics::recordProcessingPhase($request, $name, hrtime(true));
+            self::assertSame(1, $metrics->summary()['processing_phases'][$name]['count']);
+            self::assertGreaterThanOrEqual(0, $metrics->summary()['processing_phases'][$name]['total_ms']);
+            $request->attributes->set(ApiQueryMetrics::REQUEST_ATTRIBUTE, $other);
+        }
     }
 
     public function test_snapshot_metadata_accepts_only_the_closed_schema(): void

@@ -102,7 +102,7 @@ final readonly class EstimateComposerInputFactory
                     }
                 }
 
-                return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->type,
+                return [...$this->fact($fact), 'entity_type' => $entity?->attributes['semantic_type'] ?? $entity?->attributes['properties']['semantic_type'] ?? $entity?->type,
                     'related_entity_ids' => array_values(array_unique($related)), ...$context];
             }, $snapshot->facts),
             derivedQuantities: array_map($this->derivedQuantity(...), $derivedQuantities),

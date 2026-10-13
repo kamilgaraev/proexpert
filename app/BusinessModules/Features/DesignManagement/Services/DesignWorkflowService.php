@@ -180,6 +180,7 @@ final class DesignWorkflowService
     {
         return [
             'project:id,name,organization_id',
+            'currentComposition:id,package_id,organization_id,project_id,revision_number,composition',
             'artifacts.section',
             'artifacts.currentVersion.readyDerivative' => static fn ($query) => $query->forResponse(),
             'artifacts.currentVersion.derivatives' => static fn ($query) => $query->forResponse(),

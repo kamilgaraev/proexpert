@@ -132,7 +132,7 @@ final class DesignNormativeCatalog
     {
         $sections = [
             ['GD', 'Общие данные', 'GD', 'Общие данные по рабочим чертежам', DesignArtifactTypeEnum::TEXT_DOCUMENT, [DesignFileFormatEnum::PDF, DesignFileFormatEnum::DWG, DesignFileFormatEnum::DOCX], true],
-            ['DRAWINGS', 'Основные комплекты рабочих чертежей', 'DRAWINGS', 'Основной комплект рабочих чертежей', DesignArtifactTypeEnum::DRAWING_SET, [DesignFileFormatEnum::PDF, DesignFileFormatEnum::DWG, DesignFileFormatEnum::DXF], true],
+            ['DRAWINGS', 'Рабочие чертежи', 'DRAWINGS', 'Чертежи и схемы', DesignArtifactTypeEnum::DRAWING_SET, [DesignFileFormatEnum::PDF, DesignFileFormatEnum::DWG, DesignFileFormatEnum::DXF], true],
             ['SPEC', 'Спецификации оборудования, изделий и материалов', 'SPEC', 'Спецификация оборудования, изделий и материалов', DesignArtifactTypeEnum::SPECIFICATION, [DesignFileFormatEnum::PDF, DesignFileFormatEnum::XLSX, DesignFileFormatEnum::XML]],
             ['VOLUME_LIST', 'Ведомости и перечни документов', 'VOLUME_LIST', 'Ведомость ссылочных и прилагаемых документов', DesignArtifactTypeEnum::STATEMENT, [DesignFileFormatEnum::PDF, DesignFileFormatEnum::XLSX, DesignFileFormatEnum::DOCX]],
             ['CHANGES', 'Ведомость изменений', 'CHANGES', 'Ведомость изменений рабочей документации', DesignArtifactTypeEnum::REGISTER, [DesignFileFormatEnum::PDF, DesignFileFormatEnum::XLSX, DesignFileFormatEnum::DOCX], false, false],

@@ -443,6 +443,21 @@ final readonly class ProjectModelEvidenceWriter
     /** @return array{type:string,attributes:array<string,mixed>,identity_key?:string,fact_type?:string}|null */
     private function projectModelEntity(ObservationClaim $claim): ?array
     {
+        $document = FactVocabulary::documentObservation($claim->factType, $claim->entityKey, $claim->value, $claim->unit);
+        if ($document !== null) {
+            $kind = $document['semantic_type'];
+            $physical = in_array($kind, Entity::TYPES, true) ? $kind : (FactVocabulary::entityType($claim->entityKey) !== null ? 'quantity' : 'equipment');
+            $sourceKey = is_string($claim->locator['source_entity_key'] ?? null) ? $claim->locator['source_entity_key'] : $claim->entityKey;
+            $name = preg_replace('/^[a-z_]+[:._-]/', '', $sourceKey) ?? $sourceKey;
+            $attributes = $physical === 'equipment'
+                ? ['name' => $name, 'equipment_code' => 'document:'.substr(hash('sha256', $claim->entityKey), 0, 32),
+                    'properties' => ['semantic_type' => $kind, 'document_context' => true, 'source_entity_key' => $sourceKey]]
+                : ['semantic_type' => $kind, 'identity' => ['source_entity_key' => $sourceKey, 'label' => $name]];
+
+            return ['type' => $physical,
+                'identity_key' => (new VisualObjectIdentity)->normalizeEntityKey($claim->entityKey),
+                'attributes' => $attributes];
+        }
         $type = mb_strtolower($claim->factType);
         $value = $claim->value['data'];
         $roomName = (new RoomIdentityObservation)->name($claim);

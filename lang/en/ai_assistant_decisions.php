@@ -3,6 +3,11 @@
 declare(strict_types=1);
 
 return [
+    'payment_overdue_counts' => 'Overdue by the invoice date or overdue flag: outgoing :outgoing; incoming :incoming. Only invoices with a confirmed positive balance are counted; an overdue record does not prove debt.',
+    'payment_overdue' => 'The invoice is marked overdue.',
+    'payment_approvals_unavailable' => 'Named approvers are unavailable in this read scope; the person responsible for resolving blockers is unconfirmed.',
+    'payment_no_pending_approver' => 'No pending approval records. The person responsible for other checks is not recorded in these facts; verify in the document record.',
+    'payment_pending_approvals' => 'Pending approval records: :total; without a confirmed approver name: :unnamed. Assigned approvers (up to three examples):',
     'payment_description' => 'Current project unpaid invoices: complete count before example limit, original currency, amount, consistent stored balance, status and payment direction. Missing/inconsistent balances remain unknown. Read-only; does not establish budget or document readiness.',
     'payment_scope' => 'Project :project invoices on :date. Paid, cancelled and rejected invoices excluded.',
     'payment_count' => 'Verified positive balance: :total; shown :shown. Unknown or inconsistent balance: :unknown.',

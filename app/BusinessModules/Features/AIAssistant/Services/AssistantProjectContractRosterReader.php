@@ -17,7 +17,7 @@ final readonly class AssistantProjectContractRosterReader
     public function __construct(private AssistantDataAccessPolicy $access, private ContractOrganizationListScope $nativeScope) {}
     public static function matches(string $query): bool
     {
-        return preg_match('/(?:действующ|активн)[а-яё]*\s+договор/iu', $query) === 1
+        return preg_match('/(?:действующ|активн)[а-яё]*\s+договор|договор[а-яё]*[\s\S]*действу(?:ют|ет)|договор[а-яё]*[\s\S]*активн/iu', $query) === 1
             && preg_match('/создай|измени|подпиши|заключи|расторгни|приостанови|закрой|архивируй|обнови|удали|отправь|бюджет|расход|затрат|потрач|выручк|прибыл|марж|рентабел|ден[еьё]|финанс|валют|цен[аы]|долг|задолж|остат|выплат|плат[её]ж|оплат|сумм|стоим|сч[её]т|табел|поставк|смет|дефект|замечан|техник|машин|механизм|документ|файл|график|задач|бим|ifc|bim/iu', $query) !== 1;
     }
     public function read(User $actor, int $organizationId, array $arguments): array
@@ -52,8 +52,13 @@ final readonly class AssistantProjectContractRosterReader
                     'counterparty' => $name, 'self_execution' => $own && (bool) $record->is_self_execution,
                     'shared' => ! $own, 'source_version' => $record->getRawOriginal('updated_at')];
             }
-            $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => today()->toDateString(), 'complete' => count($rows) <= 10000,
-                'total' => count($rows) <= 10000 ? count($rows) : null, 'items' => array_slice($rows, 0, 20)];
+            $asOf = today()->toDateString(); $endingBy = today()->addDays(7)->toDateString(); $complete = count($rows) <= 10000;
+            $payload = ['project' => ['id' => $projectId, 'name' => $project->name], 'as_of_date' => $asOf, 'complete' => $complete,
+                'total' => count($rows) <= 10000 ? count($rows) : null, 'items' => array_slice($rows, 0, 20),
+                'ending_by_date' => $endingBy,
+                'overdue_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) < $asOf)) : null,
+                'ending_soon_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] !== null && substr($row['end_date'], 0, 10) >= $asOf && substr($row['end_date'], 0, 10) <= $endingBy)) : null,
+                'missing_end_date_count' => $complete ? count(array_filter($rows, static fn (array $row): bool => $row['end_date'] === null)) : null];
             $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload, 'rows' => $rows]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId, 'project_id' => $projectId, 'organization_id' => $organizationId,
                 'actor_id' => (int) $actor->id, 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
@@ -80,6 +85,8 @@ final readonly class AssistantProjectContractRosterReader
         $lines = [trans_message('ai_assistant_contract_roster.scope', ['project' => self::text($data['project']['name']), 'date' => $data['as_of_date']])];
         if (! $data['complete']) { return $lines[0]."\n".trans_message('ai_assistant_contract_roster.limit'); }
         $lines[] = trans_message('ai_assistant_contract_roster.count', ['total' => $data['total'], 'shown' => count($data['items'])]);
+        $lines[] = trans_message('ai_assistant_contract_roster.deadlines', ['overdue' => $data['overdue_count'], 'soon' => $data['ending_soon_count'],
+            'date' => $data['ending_by_date'], 'undated' => $data['missing_end_date_count']]);
         foreach ($data['items'] as $item) {
             $name = $item['self_execution'] ? trans_message('ai_assistant_contract_roster.self_execution')
                 : ($item['counterparty'] === null ? trans_message('ai_assistant_contract_roster.counterparty_unknown') : self::text($item['counterparty']));
@@ -88,6 +95,7 @@ final readonly class AssistantProjectContractRosterReader
             if ($item['end_date'] !== null && substr($item['end_date'], 0, 10) < $data['as_of_date']) { $lines[] = trans_message('ai_assistant_contract_roster.overdue'); }
         }
         $lines[] = trans_message('ai_assistant_contract_roster.basis');
+        $lines[] = trans_message('ai_assistant_contract_roster.renewal');
         return implode("\n", $lines);
     }
     private static function text(string $value): string

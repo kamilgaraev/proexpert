@@ -26,6 +26,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
 use App\BusinessModules\Features\Procurement\Services\SupplierRequestVersionService;
+use App\BusinessModules\Features\Procurement\Services\SupplierRequestService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -40,8 +41,11 @@ use App\Modules\Core\AccessController;
 use App\Services\Storage\DTO\CurrentStoredFile;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Mail;
 use Mockery\MockInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\AdminApiTestContext;
 use Tests\Support\EnablesImmutableAuditWriter;
 use Tests\TestCase;
@@ -52,6 +56,95 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
     use RefreshDatabase;
 
     private const INCOMING_UPD_FILE_ID = 'ON_NSCHFDOPPR_2BM-7712345678-771201001-20260904-1_2BM-1654321098-165401001-20260904-1_20260904_1';
+
+    public function test_bulk_drafts_need_no_send_permission_and_create_no_public_link_or_email(): void
+    {
+        Mail::fake();
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'Draft Supplier', 'draft@example.test');
+        $this->allowAdminAccess('procurement.supplier_requests.send');
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/supplier-requests/bulk', [
+                'purchase_request_id' => $purchaseRequest->id,
+                'send_immediately' => false,
+                'suppliers' => [['supplier_id' => $supplier->id]],
+            ]);
+
+        $response->assertCreated()->assertJsonPath('data.0.status', SupplierRequestStatusEnum::DRAFT->value);
+        $response->assertJsonPath('data.0.public_url', null);
+        $request = SupplierRequest::query()->where('purchase_request_id', $purchaseRequest->id)->sole();
+        $this->assertNull($request->public_token);
+        $this->assertNull($request->sent_at);
+        $this->assertSame(0, $request->versions()->count());
+        Mail::assertNothingQueued();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/supplier-requests/{$request->id}/send")
+            ->assertForbidden();
+        $this->assertSame(SupplierRequestStatusEnum::DRAFT, $request->refresh()->status);
+        Mail::assertNothingQueued();
+    }
+
+    #[DataProvider('unauthorizedBulkSendModes')]
+    public function test_bulk_send_requires_send_permission_before_creating_records(?bool $sendImmediately): void
+    {
+        Mail::fake();
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $this->allowAdminAccess('procurement.supplier_requests.send');
+        $this->allowModuleAccess();
+        $payload = [
+            'purchase_request_id' => $purchaseRequest->id,
+            'suppliers' => [['external_supplier' => ['name' => 'Denied Supplier', 'email' => 'denied@example.test']]],
+        ];
+        if ($sendImmediately !== null) {
+            $payload['send_immediately'] = $sendImmediately;
+        }
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/procurement/supplier-requests/bulk', $payload)
+            ->assertForbidden()
+            ->assertJsonPath('message', trans_message('errors.unauthorized'));
+
+        $this->assertDatabaseMissing('supplier_requests', ['purchase_request_id' => $purchaseRequest->id]);
+        $this->assertDatabaseMissing('external_supplier_contacts', ['organization_id' => $context->organization->id]);
+        Mail::assertNothingQueued();
+    }
+
+    public static function unauthorizedBulkSendModes(): array
+    {
+        return ['explicit send' => [true], 'legacy default send' => [null]];
+    }
+
+    public function test_bulk_service_checks_send_permission_without_http_middleware(): void
+    {
+        Mail::fake();
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $this->allowAdminAccess('procurement.supplier_requests.send');
+
+        try {
+            app(SupplierRequestService::class)->createMany($context->organization->id, [
+                'purchase_request_id' => $purchaseRequest->id,
+                'send_immediately' => true,
+                'suppliers' => [['external_supplier' => ['name' => 'Denied Supplier']]],
+            ], $context->user);
+            $this->fail('Bulk sending must require send permission');
+        } catch (AuthorizationException) {
+            $this->assertDatabaseMissing('supplier_requests', ['purchase_request_id' => $purchaseRequest->id]);
+            $this->assertDatabaseMissing('external_supplier_contacts', ['organization_id' => $context->organization->id]);
+            Mail::assertNothingQueued();
+        }
+    }
 
     public function test_admin_can_run_supplier_flow_to_purchase_order_receipt_without_organization_leaks(): void
     {
@@ -1665,11 +1758,13 @@ XML;
         });
     }
 
-    private function allowAdminAccess(): void
+    private function allowAdminAccess(?string $deniedPermission = null): void
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($deniedPermission): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
-            $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission, ?array $context = null): bool => $permission !== $deniedPermission
+            );
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

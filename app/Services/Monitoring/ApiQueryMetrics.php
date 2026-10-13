@@ -110,6 +110,7 @@ final class ApiQueryMetrics
         $metrics = $request->attributes->get(self::REQUEST_ATTRIBUTE);
         if (! $metrics instanceof self || ! $metrics->captureSources || $startedAt < 0 || ! in_array($phase, [
             'list_prepare', 'list_encode', 'request_render', 'request_chain',
+            'journal_load', 'journal_prepare', 'journal_payload', 'journal_encode',
             'order_render', 'order_workflow', 'order_payment', 'order_chain',
             'admin_authorize', 'purchase_authorize', 'interface_access', 'procurement_modules', 'response_normalize',
             'rag_prepare', 'rag_schema_prefetch', 'rag_source_prepare', 'rag_source_acl', 'rag_source_counts',

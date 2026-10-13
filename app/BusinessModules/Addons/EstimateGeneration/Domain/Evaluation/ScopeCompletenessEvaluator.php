@@ -66,8 +66,9 @@ final class ScopeCompletenessEvaluator
             if (($position['included'] ?? true) !== true || ($position['selected'] ?? true) !== true) {
                 continue;
             }
-            if (is_string($position['entity_id'] ?? null) && is_string($position['section'] ?? null) && is_string($position['work_key'] ?? null)) {
-                $coveredWorks[$position['section']][$position['entity_id']][$position['work_key']] = $position['key'];
+            $requirement = $position['coverage_requirement'] ?? $position['work_key'] ?? null;
+            if (is_string($position['entity_id'] ?? null) && is_string($position['section'] ?? null) && is_string($requirement)) {
+                $coveredWorks[$position['section']][$position['entity_id']][$requirement] = $position['key'];
             }
         }
         $requirements = [];

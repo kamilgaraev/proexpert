@@ -12,7 +12,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 final readonly class AssistantDocumentReadinessReader
 {
     public const TYPE = 'live_document_readiness_projection';
-    public function __construct(private AssistantDataAccessPolicy $access) {}
+    public function __construct(private AssistantDataAccessPolicy $access, private AssistantDocumentCoverageService $coverage) {}
 
     public static function matches(string $query): bool
     {
@@ -42,8 +42,10 @@ final readonly class AssistantDocumentReadinessReader
                     ->select(['id', 'filename', 'status', 'coverage_status', 'project_id', 'updated_at'])->get()->map(static fn ($document): array => $document->getAttributes())->all();
                 $groups[] = ['status' => $status, 'total' => $number, 'examples' => $examples];
             }
-            $payload = ['project_id' => $projectId, 'total' => $total, 'groups' => $groups];
-            $version = AssistantSourceReferenceIdentity::key(['schema' => 1, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload]);
+            $fileCoverage = $this->coverage->coverage($organizationId, $actor, scope: ['project_id' => $projectId], countersOnly: true)['document_coverage'];
+            $fileCoverage = array_intersect_key($fileCoverage, array_flip(['total', 'ready', 'pending', 'ocr_required', 'ocr_processing', 'failed', 'unsupported', 'empty', 'needs_access_review', 'storage_unverified']));
+            $payload = ['project_id' => $projectId, 'total' => $total, 'groups' => $groups, 'file_coverage' => $fileCoverage];
+            $version = AssistantSourceReferenceIdentity::key(['schema' => 2, 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'payload' => $payload]);
             $ref = ['entity_type' => self::TYPE, 'entity_id' => $projectId ?? $organizationId, 'project_id' => $projectId,
                 'organization_id' => $organizationId, 'actor_id' => (int) $actor->id, 'readiness_arguments' => $arguments,
                 'source_version' => $version, 'fetched_at' => now()->toIso8601String()];
@@ -72,6 +74,11 @@ final readonly class AssistantDocumentReadinessReader
     private static function format(array $data): string
     {
         $lines = [trans_message($data['project_id'] === null ? 'ai_assistant_readiness.scope_all' : 'ai_assistant_readiness.scope_project', ['project' => $data['project_id'], 'total' => $data['total']])];
+        $coverage = $data['file_coverage'];
+        $lines[] = trans_message('ai_assistant_readiness.file_counts', ['total' => $coverage['total'], 'ready' => $coverage['ready'], 'pending' => $coverage['pending'],
+            'ocr' => $coverage['ocr_required'], 'ocr_processing' => $coverage['ocr_processing'], 'failed' => $coverage['failed'], 'unsupported' => $coverage['unsupported'],
+            'empty' => $coverage['empty'], 'review' => $coverage['needs_access_review'] ?? 0, 'unverified' => $coverage['storage_unverified'] ?? 0]);
+        $lines[] = trans_message('ai_assistant_readiness.registered_counts', ['total' => $data['total']]);
         foreach ($data['groups'] as $group) {
             $known = in_array($group['status'], ['queued', 'processing', 'ready', 'ocr_quote_required', 'ocr_approved', 'unsupported', 'damaged', 'failed'], true);
             $label = $known ? trans_message('ai_assistant_readiness.'.$group['status']) : trans_message('ai_assistant_readiness.unknown');

@@ -17,6 +17,29 @@ use Tests\Support\DatabaseLessTestCase;
 
 final class ProjectSheetAnalysisValidatorTest extends DatabaseLessTestCase
 {
+    public function test_document_context_has_a_typed_entity_and_cited_text_without_confirming_numeric_data(): void
+    {
+        $payload = $this->payload('specification', 'heating_specification');
+        $payload['facts'][0]['entityKey'] = 'heating_system.h1';
+        $payload['facts'][0]['value'] = ['type' => 'string', 'data' => 'Спецификация системы отопления H1: трубопроводы и приборы.'];
+        $payload['facts'][0]['unit'] = null;
+        $analysis = ProjectSheetAnalysisData::fromProviderArray($payload, ['page-1']);
+        self::assertCount(1, $analysis->facts);
+        self::assertSame('heating_specification', $analysis->facts[0]['factType']);
+        self::assertNull($analysis->facts[0]['unit']);
+        foreach ([['entityKey' => 'roof.1'], ['entityKey' => 'unbound.1'], ['entityKey' => 'heating_system.'], ['value' => ['type' => 'boolean', 'data' => true]],
+            ['value' => ['type' => 'number', 'data' => '20']], ['unit' => 'm2']] as $change) {
+            $invalid = $payload;
+            $invalid['facts'][0] = [...$invalid['facts'][0], ...$change];
+            $rejected = ProjectSheetAnalysisData::fromProviderArray($invalid, ['page-1']);
+            self::assertSame([], $rejected->facts);
+            self::assertSame('invalid_document_requirement_observation', $rejected->quarantinedItems[0]['reason']);
+        }
+        $roof = \App\BusinessModules\Addons\EstimateGeneration\Domain\ProjectModel\FactVocabulary::documentObservation(
+            'industry_work_checklist', 'roof_facet.1', ['type' => 'string', 'data' => 'Перечень работ для указанного ската.'], null);
+        self::assertSame('roof_facet', $roof['semantic_type']);
+    }
+
     #[Test]
     public function identity_labels_pass_the_real_sheet_contract_without_accepting_dimensions(): void
     {

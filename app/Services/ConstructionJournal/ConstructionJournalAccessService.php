@@ -25,13 +25,7 @@ final class ConstructionJournalAccessService
 
     public function canAccessProject(User $user, Project $project): bool
     {
-        $organizationId = (int) $user->current_organization_id;
-
-        return $organizationId > 0
-            && $user->organizations()->where('organizations.id', $organizationId)
-                ->where('organizations.is_active', true)->wherePivot('is_active', true)->exists()
-            && $project->hasOrganization($organizationId)
-            && $this->projects->canAccessProject($user, $project, $organizationId);
+        return $this->projects->canAccessCurrentOrganizationProject($user, $project);
     }
 
     public function hasPermission(User $user, Project $project, array $permissions): bool
@@ -56,7 +50,8 @@ final class ConstructionJournalAccessService
         }
 
         $organizationId = (int) $user->current_organization_id;
-        $hierarchy = $this->participants->getHierarchy($project);
+        $facts = $this->participants->getHierarchyWithActivity($project);
+        $hierarchy = $facts['hierarchy'];
         $visible = [$organizationId];
         if ($hierarchy['configured']) {
             do {
@@ -68,6 +63,10 @@ final class ConstructionJournalAccessService
                     }
                 }
             } while (count($visible) !== $count);
+        }
+
+        if (in_array($organizationId, array_column($hierarchy['participants'], 'organization_id'), true)) {
+            return array_values(array_intersect($facts['active_organization_ids'], $visible));
         }
 
         return Organization::query()->whereIn('id', $visible)->where('is_active', true)
@@ -103,14 +102,15 @@ final class ConstructionJournalAccessService
         if (! $project) {
             throw new DomainException(trans_message('construction_journal.errors.hierarchy_required'));
         }
-        $hierarchy = $this->participants->getHierarchy($project);
+        $facts = $this->participants->getHierarchyWithActivity($project);
+        $hierarchy = $facts['hierarchy'];
         $performerId = (int) $journal->performing_organization_id;
         $activeIds = array_column($hierarchy['participants'], 'organization_id');
         if (! in_array($performerId, $activeIds, true)
-            || ! Organization::query()->whereKey($performerId)->where('is_active', true)->exists()) {
+            || ! in_array($performerId, $facts['active_organization_ids'], true)) {
             throw new DomainException(trans_message('construction_journal.errors.access_denied'));
         }
-        if (Organization::query()->whereIn('id', $activeIds)->where('is_active', true)->count() !== count($activeIds)) {
+        if (count($facts['active_organization_ids']) !== count($activeIds)) {
             throw new DomainException(trans_message('construction_journal.errors.hierarchy_inactive_organization'));
         }
         if (count($activeIds) === 1) {
