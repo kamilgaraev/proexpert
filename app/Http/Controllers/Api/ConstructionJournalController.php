@@ -13,6 +13,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\ConstructionJournal;
 use App\Models\ConstructionJournalEntry;
 use App\Models\Project;
+use App\Services\Monitoring\ApiQueryMetrics;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
@@ -117,7 +118,7 @@ class ConstructionJournalController extends Controller
         try {
             $this->authorize('view', $journal);
 
-            $journal->load([
+            ApiQueryMetrics::measureProcessingPhase('journal_load', fn () => $journal->load([
                 'project',
                 'contract',
                 'createdBy',
@@ -128,11 +129,13 @@ class ConstructionJournalController extends Controller
                         ->orderByDesc('entry_number')
                         ->limit(10);
                 },
-            ])->loadCount(ConstructionJournalPayloadService::journalCountRelations());
+            ])->loadCount(ConstructionJournalPayloadService::journalCountRelations()));
 
-            $this->payloadService->prepareEntryPage($journal->entries);
+            ApiQueryMetrics::measureProcessingPhase('journal_prepare', fn () => $this->payloadService->prepareEntryPage($journal->entries));
 
-            return AdminResponse::success($this->payloadService->mapJournal($journal, $request->user(), true));
+            $payload = ApiQueryMetrics::measureProcessingPhase('journal_payload', fn () => $this->payloadService->mapJournal($journal, $request->user(), true));
+
+            return ApiQueryMetrics::measureProcessingPhase('journal_encode', fn () => AdminResponse::success($payload));
         } catch (AuthorizationException $exception) {
             throw $exception;
         } catch (DomainException $exception) {
