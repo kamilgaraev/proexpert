@@ -2877,7 +2877,7 @@ final class DesignManagementApiTest extends TestCase
         $version->load('artifact');
         $packageId = (int) $version->artifact->package_id;
 
-        DesignModelDerivative::query()->create([
+        $readyDerivative = DesignModelDerivative::query()->create([
             'organization_id' => $version->organization_id,
             'project_id' => $version->project_id,
             'version_id' => $version->id,
@@ -2903,9 +2903,45 @@ final class DesignManagementApiTest extends TestCase
             ],
         ]);
 
+        $historicalVersion = $version->replicate();
+        $historicalVersion->fill(['version_number' => 2, 'is_current' => false])->save();
+        $historicalDerivative = DesignModelDerivative::query()->where('version_id', $version->id)->firstOrFail()->replicate();
+        $historicalDerivative->version_id = $historicalVersion->id;
+        $historicalDerivative->status = 'processing';
+        $historicalDerivative->save();
+        $processingDerivative = $historicalDerivative->replicate();
+        $processingDerivative->version_id = $version->id;
+        $processingDerivative->derivative_format = 'glb';
+        $processingDerivative->save();
+
         $headers = $context->authHeaders();
         $show = $this->withHeaders($headers)->getJson("/api/v1/admin/design-management/packages/{$packageId}");
-        $list = $this->withHeaders($headers)->getJson('/api/v1/admin/design-management/packages?project_id='.$project->id);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $list = $this->withHeaders($headers)->getJson('/api/v1/admin/design-management/packages?project_id='.$project->id);
+            $projectionQueries = array_filter(DB::getQueryLog(), static fn (array $query): bool => str_contains($query['query'], 'response_metadata')
+                && str_contains($query['query'], 'from "design_model_derivatives"'));
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        $this->assertCount(2, $projectionQueries);
+        $list->assertJsonPath('data.0.models.0.current_version.id', $version->id);
+        $list->assertJsonPath('data.0.models.0.versions.0.id', $historicalVersion->id);
+        $list->assertJsonPath('data.0.models.0.versions.1.id', $version->id);
+        $list->assertJsonPath('data.0.derivative.id', $readyDerivative->id);
+        $list->assertJsonPath('data.0.models.0.current_version.derivative.id', $readyDerivative->id);
+        $list->assertJsonPath('data.0.models.0.current_version.derivative.status', 'ready');
+        $list->assertJsonPath('data.0.models.0.current_version.derivative.version_id', $version->id);
+        $list->assertJsonPath('data.0.models.0.current_version.derivatives.0.id', $processingDerivative->id);
+        $list->assertJsonPath('data.0.models.0.current_version.derivatives.0.status', 'processing');
+        $list->assertJsonPath('data.0.models.0.current_version.derivatives.0.version_id', $version->id);
+        $list->assertJsonPath('data.0.models.0.current_version.derivatives.1.id', $readyDerivative->id);
+        $list->assertJsonPath('data.0.models.0.versions.0.derivative.id', $historicalDerivative->id);
+        $list->assertJsonPath('data.0.models.0.versions.0.derivative.status', 'processing');
+        $list->assertJsonPath('data.0.models.0.versions.0.derivative.version_id', $historicalVersion->id);
+        $list->assertJsonPath('data.0.models.0.versions.1.derivative.id', $readyDerivative->id);
 
         $show->assertOk();
         $list->assertOk();

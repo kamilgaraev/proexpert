@@ -27,6 +27,7 @@ use BackedEnum;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -77,11 +78,39 @@ final class DesignManagementService implements Contracts\DesignModelRegistration
         $actor = $this->access->requireActor($actor);
         $perPage = max(1, min((int) ($filters['per_page'] ?? 15), 100));
 
-        return $this->packageQuery($organizationId, $filters, $actor)
+        $relations = self::packageRelations();
+        unset($relations['artifacts.currentVersion.derivatives']);
+        $packages = $this->packageQuery($organizationId, $filters, $actor)
             ->withOpenBlockingCount()
-            ->with(self::packageRelations())
+            ->with($relations)
             ->orderByDesc('id')
             ->paginate($perPage);
+
+        self::reuseCurrentVersionDerivatives($packages);
+
+        return $packages;
+    }
+
+    private static function reuseCurrentVersionDerivatives(LengthAwarePaginator $packages): void
+    {
+        $missingVersions = new Collection;
+        foreach ($packages as $package) {
+            foreach ($package->artifacts as $artifact) {
+                $currentVersion = $artifact->currentVersion;
+                if (! $currentVersion instanceof DesignArtifactVersion) {
+                    continue;
+                }
+                $version = $artifact->versions->firstWhere('id', $currentVersion->id);
+                if ($version instanceof DesignArtifactVersion && $version->relationLoaded('derivatives')) {
+                    $currentVersion->setRelation('derivatives', $version->getRelation('derivatives'));
+                } else {
+                    $missingVersions->push($currentVersion);
+                }
+            }
+        }
+        if ($missingVersions->isNotEmpty()) {
+            $missingVersions->load(['derivatives' => static fn ($query) => $query->forResponse()]);
+        }
     }
 
     public function packageSummary(int $organizationId, array $filters, ?User $actor = null): array
