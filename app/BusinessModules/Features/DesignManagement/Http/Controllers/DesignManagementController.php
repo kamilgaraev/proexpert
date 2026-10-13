@@ -8,8 +8,8 @@ use App\BusinessModules\Features\DesignManagement\DesignManagementModule;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignObjectTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
-use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactVersionResource;
 use App\BusinessModules\Features\DesignManagement\Http\Requests\UpdateDesignPackageRequest;
+use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactVersionResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
@@ -21,6 +21,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
+use App\Services\Monitoring\ApiQueryMetrics;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
@@ -59,13 +60,13 @@ final class DesignManagementController extends Controller
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
                 'page' => ['nullable', 'integer', 'min:1'],
             ]);
-            $paginator = $this->service->listPackages($this->organizationId($request), $validated, $request->user());
+            $paginator = ApiQueryMetrics::measureProcessingPhase('list_prepare', fn () => $this->service->listPackages($this->organizationId($request), $validated, $request->user()));
 
             return AdminResponse::paginated(
                 DesignPackageResource::collection($paginator->getCollection()),
                 $this->paginationMeta($paginator),
                 trans_message('design_management.messages.packages_loaded'),
-                summary: $this->service->packageSummary($this->organizationId($request), $validated, $request->user()),
+                summary: ApiQueryMetrics::measureProcessingPhase('list_prepare', fn () => $this->service->packageSummary($this->organizationId($request), $validated, $request->user())),
                 links: $this->paginationLinks($paginator)
             );
         } catch (ValidationException $e) {

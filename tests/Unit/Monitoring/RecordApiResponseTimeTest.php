@@ -19,6 +19,23 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 final class RecordApiResponseTimeTest extends TestCase
 {
+    public function test_pir_body_size_is_measured_without_logging_body_or_query_values(): void
+    {
+        $captured = null;
+        $this->expectLog(static function (array $context) use (&$captured): bool {
+            $captured = $context;
+
+            return true;
+        });
+        $request = Request::create('/api/v1/admin/design-management/packages?token=private', 'GET');
+        $original = new JsonResponse(['data' => ['fixture' => 'private']]);
+        $response = (new RecordApiResponseTime)->handle($request, fn () => $original);
+
+        self::assertSame($original, $response);
+        self::assertSame(strlen($original->getContent()), $captured['response_bytes']);
+        self::assertStringNotContainsString('private', json_encode($captured, JSON_THROW_ON_ERROR));
+    }
+
     public function test_query_metrics_are_numeric_request_local_and_restored_after_an_exception(): void
     {
         $request = Request::create('/api/private', 'GET');
@@ -91,6 +108,9 @@ final class RecordApiResponseTimeTest extends TestCase
             ['GET', '/api/v1/admin/project-command-center/detail', false],
             ['GET', '/api/v1/admin/procurement/purchase-requests', true], ['POST', '/api/v1/admin/procurement/purchase-requests', false],
             ['GET', '/api/v1/admin/procurement/purchase-requests/1', false],
+            ['GET', '/api/v1/admin/design-management/packages', true],
+            ['POST', '/api/v1/admin/design-management/packages', false],
+            ['GET', '/api/v1/admin/design-management/packages/1', false],
             ['GET', '/api/v1/admin/ai-assistant/conversations/1', false], ['GET', '/api/v1/mobile/ai-assistant/conversations', false]] as [$method, $path, $expected]) {
             Facade::clearResolvedInstances();
             $captured = null;

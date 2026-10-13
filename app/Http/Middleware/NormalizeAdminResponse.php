@@ -19,11 +19,21 @@ class NormalizeAdminResponse
     {
         $response = $next($request);
         $phaseStartedAt = hrtime(true);
+        $checkpoint = ApiQueryMetrics::processingCheckpoint($request);
+        $phaseStartedAt = $checkpoint['started_at'] ?? $phaseStartedAt;
+        $hadNormalizationMarker = $request->attributes->has(AdminResponse::NORMALIZATION_ATTRIBUTE);
+        $previousNormalizationMarker = $request->attributes->get(AdminResponse::NORMALIZATION_ATTRIBUTE);
+        $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, true);
 
         try {
             return $this->normalizeResponse($response);
         } finally {
-            ApiQueryMetrics::recordProcessingPhase($request, 'response_normalize', $phaseStartedAt);
+            if ($hadNormalizationMarker) {
+                $request->attributes->set(AdminResponse::NORMALIZATION_ATTRIBUTE, $previousNormalizationMarker);
+            } else {
+                $request->attributes->remove(AdminResponse::NORMALIZATION_ATTRIBUTE);
+            }
+            ApiQueryMetrics::recordProcessingPhase($request, 'response_normalize', $phaseStartedAt, $checkpoint);
         }
     }
 
