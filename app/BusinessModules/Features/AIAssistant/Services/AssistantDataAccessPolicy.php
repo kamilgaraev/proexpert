@@ -967,14 +967,109 @@ final class AssistantDataAccessPolicy
 
     public function resolvedEntityProjectId(User $actor, int $organizationId, string $type, Model $entity): ?int
     {
-        $projectId = $entity->getAttribute('project_id') ?? $entity->getAttribute('current_project_id');
-        if ($type === 'schedule_task') {
-            $scheduleId = $entity->getAttribute('schedule_id');
-            if (! is_numeric($scheduleId) || (int) $scheduleId < 1) { return null; }
-            $projectId = $this->entityQuery($actor, $organizationId, 'schedule')?->whereKey($scheduleId)->value('project_id');
-        }
+        return $this->resolveProjectFromParents($actor, $organizationId, $type, $entity, []);
+    }
 
-        return is_numeric($projectId) && (int) $projectId > 0 ? (int) $projectId : null;
+    public function entityProjectScopeColumns(string $type, Model $entity): array
+    {
+        return array_values(array_intersect(array_unique(['project_id', 'current_project_id', ...array_keys($this->projectParentLinks($type, $entity))]), $this->schemaColumns($entity->getTable())));
+    }
+
+    public function applyEntityProjectScope(User $actor, int $organizationId, string $type, Builder $query, int $projectId): bool
+    {
+        if ($projectId < 1 || ! $this->accessibleProjects($actor, $organizationId)->whereKey($projectId)->exists()) { throw new AccessDeniedHttpException; }
+        return $this->scopeProjectThroughParents($actor, $organizationId, $type, $query, $projectId, []);
+    }
+
+    private function projectParentLinks(string $type, Model $entity): array
+    {
+        $links = array_filter(AssistantEntityAccessCatalog::parentColumns()[$type] ?? [], static fn (array $link): bool => ! ($link['reference_only'] ?? false));
+        $intrinsic = AssistantEntityAccessCatalog::intrinsicParents()[$type] ?? null;
+        if ($intrinsic !== null) {
+            $relation = $entity->{$intrinsic[0]}();
+            if ($relation instanceof \Illuminate\Database\Eloquent\Relations\BelongsTo) {
+                $links[$relation->getForeignKeyName()] = ['type' => $intrinsic[1], 'key' => $relation->getOwnerKeyName(), 'nullable' => false];
+            }
+        }
+        return $links;
+    }
+
+    private function supportsProjectScope(string $type, array $path): bool
+    {
+        if (count($path) >= 8 || in_array($type, $path, true)) { return false; }
+        $definition = self::entityDefinitions()[$type] ?? null;
+        if ($definition === null) { return false; }
+        $class = $definition[1];
+        $entity = new $class;
+        if (! $entity instanceof Model) { return false; }
+        if ($type === 'project' || array_intersect(['project_id', 'current_project_id'], $this->schemaColumns($entity->getTable())) !== []) { return true; }
+        foreach ($this->projectParentLinks($type, $entity) as $link) {
+            if ($this->supportsProjectScope($link['type'], [...$path, $type])) { return true; }
+        }
+        return false;
+    }
+
+    private function scopeProjectThroughParents(User $actor, int $organizationId, string $type, Builder $query, int $projectId, array $path): bool
+    {
+        if (count($path) >= 8 || in_array($type, $path, true)) { return false; }
+        $entity = $query->getModel(); $table = $entity->getTable();
+        if ($type === 'project') { $query->whereKey($projectId); return true; }
+        $columns = $this->schemaColumns($table);
+        foreach (['project_id', 'current_project_id'] as $column) {
+            if (in_array($column, $columns, true)) { $query->where($table.'.'.$column, $projectId); return true; }
+        }
+        $parents = [];
+        foreach ($this->projectParentLinks($type, $entity) as $column => $link) {
+            if (! in_array($column, $columns, true) || ! $this->supportsProjectScope($link['type'], [...$path, $type])) { continue; }
+            $parent = $this->entityQuery($actor, $organizationId, $link['type']);
+            if ($parent === null) { $query->whereRaw('1 = 0'); return true; }
+            if (! $this->scopeProjectThroughParents($actor, $organizationId, $link['type'], $parent, $projectId, [...$path, $type])) { return false; }
+            $parentKey = $parent->getModel()->getTable().'.'.($link['key'] ?? $parent->getModel()->getKeyName());
+            $parent->select($parentKey);
+            $parents[] = ['column' => $table.'.'.$column, 'query' => $parent, 'nullable' => $link['nullable']];
+        }
+        if ($parents === []) { return false; }
+        foreach ($parents as $parent) {
+            $query->where(static function (Builder $linked) use ($parent): void {
+                $linked->whereIn($parent['column'], clone $parent['query']);
+                if ($parent['nullable']) { $linked->orWhereNull($parent['column']); }
+            });
+        }
+        if (array_filter($parents, static fn (array $parent): bool => ! $parent['nullable']) === []) {
+            $query->where(static function (Builder $linked) use ($parents): void {
+                foreach ($parents as $parent) { $linked->orWhereIn($parent['column'], clone $parent['query']); }
+            });
+        }
+        return true;
+    }
+
+    private function resolveProjectFromParents(User $actor, int $organizationId, string $type, Model $entity, array $path): ?int
+    {
+        if (count($path) >= 8 || in_array($type, $path, true)) { return null; }
+        if ($type === 'project') { return (int) $entity->getKey(); }
+        $columns = $this->schemaColumns($entity->getTable());
+        foreach (['project_id', 'current_project_id'] as $column) {
+            if (in_array($column, $columns, true)) {
+                $id = $entity->getAttribute($column);
+                return is_numeric($id) && (int) $id > 0 ? (int) $id : null;
+            }
+        }
+        $projects = [];
+        foreach ($this->projectParentLinks($type, $entity) as $column => $link) {
+            if (! $this->supportsProjectScope($link['type'], [...$path, $type])) { continue; }
+            $id = $entity->getAttribute($column);
+            if ($id === null && $link['nullable']) { continue; }
+            if (! is_scalar($id)) { return null; }
+            $query = $this->entityQuery($actor, $organizationId, $link['type']);
+            if ($query === null) { return null; }
+            $key = $link['key'] ?? $query->getModel()->getKeyName();
+            $selected = array_unique([$key, $query->getModel()->getKeyName(), ...$this->entityProjectScopeColumns($link['type'], $query->getModel())]);
+            $table = $query->getModel()->getTable();
+            $parent = $query->where($table.'.'.$key, $id)->select(array_map(static fn (string $column): string => $table.'.'.$column, $selected))->first();
+            if ($parent === null || ($project = $this->resolveProjectFromParents($actor, $organizationId, $link['type'], $parent, [...$path, $type])) === null) { return null; }
+            $projects[$project] = true;
+        }
+        return count($projects) === 1 ? (int) array_key_first($projects) : null;
     }
 
     public function entityQuery(User $user, int $organizationId, string $type): ?Builder
@@ -1007,6 +1102,7 @@ final class AssistantDataAccessPolicy
             $table = $query->getModel()->getTable();
             $columns = $this->schemaColumns($table);
             $internal = [$query->getModel()->getKeyName()];
+            array_push($internal, ...$this->entityProjectScopeColumns($type, $query->getModel()));
             array_push($internal, ...AssistantEntityAccessCatalog::referencedParentColumns($type));
             foreach (AssistantExtendedDomainRegistry::values('parentProjectionDefinitions')[$type] ?? [] as $projection) {
                 $internal[] = $projection['parent_key'] ?? $query->getModel()->getKeyName();
