@@ -38,6 +38,7 @@ return [
     ],
     'problem_flags' => [
         'schedule_task_blocked_by_defect' => 'Задача графика заблокирована дефектом качества',
+        'schedule_task_has_open_defect' => 'С задачей графика связано незакрытое замечание качества',
         'quality_defect_overdue' => 'Срок устранения дефекта просрочен',
         'verification_required' => 'Требуется повторная проверка результата',
     ],
