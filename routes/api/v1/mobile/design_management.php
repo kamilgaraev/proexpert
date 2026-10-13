@@ -2,11 +2,18 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Mobile\MobileDesignDrawingStrokeController as DrawingController;
 use App\Http\Controllers\Api\V1\Mobile\MobileDesignManagementController as Controller;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])
     ->prefix('design-management')->name('design-management.')->group(function (): void {
+        Route::prefix('document-versions/{versionId}/drawing-strokes')->whereNumber('versionId')
+            ->name('drawing-strokes.')->group(function (): void {
+                Route::get('/', [DrawingController::class, 'index'])->name('index');
+                Route::post('/', [DrawingController::class, 'store'])->name('store');
+                Route::delete('/{clientId}', [DrawingController::class, 'destroy'])->whereUuid('clientId')->name('destroy');
+            });
         Route::get('packages', [Controller::class, 'packages'])->name('packages.index');
         Route::get('packages/{packageId}', [Controller::class, 'package'])->whereNumber('packageId')->name('packages.show');
         Route::get('project-model-versions', [Controller::class, 'versions'])->name('versions.index');
