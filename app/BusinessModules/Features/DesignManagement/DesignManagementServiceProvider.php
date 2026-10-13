@@ -55,7 +55,7 @@ final class DesignManagementServiceProvider extends ServiceProvider
             require $routesPath;
         }
 
-        foreach (['routes-composition.php', 'routes-ifc.php', 'routes-bim.php', 'routes-issues.php', 'routes-links.php'] as $routeFile) {
+        foreach (['routes-composition.php', 'routes-ifc.php', 'routes-bim.php', 'routes-issues.php', 'routes-links.php', 'routes-drawings.php'] as $routeFile) {
             $moduleRoutes = __DIR__.'/'.$routeFile;
             if (is_file($moduleRoutes)) {
                 require $moduleRoutes;
