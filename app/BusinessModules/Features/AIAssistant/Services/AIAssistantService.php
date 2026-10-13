@@ -2039,7 +2039,7 @@ class AIAssistantService
             'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse',
             'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             'search_assistant_documents', 'get_estimate_answer', 'get_material_stock', 'get_bim_model_elements',
-            'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog',
+            'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_site_request_queue', 'get_project_tender_decisions', 'get_project_staff_roster', 'get_project_act_readiness',
         ], true);
     }
 
@@ -2162,12 +2162,11 @@ class AIAssistantService
                 || AssistantBimModelSelector::isProjectQuestion(is_string($args['model_query'] ?? null) ? $args['model_query'] : null, $requestQuery);
         }
         $requestProjectScope = AssistantRequestProjectScope::fromPlan($taskPlan);
-        if ($toolName === 'assistant_domain_search' && ! array_key_exists('project_id', $args)
-            && ! AssistantRequestProjectScope::organizationWide($requestQuery)) {
+        if ($toolName === 'assistant_domain_search') {
             $definition = app(AssistantDomainCatalog::class)->definition((string) ($args['domain'] ?? ''));
-            if ($definition !== null && in_array('project_id', $definition->fields, true)) {
-                $args['project_id'] = $this->resolveRagProjectId($taskPlan['request']['context'] ?? []);
-            }
+            $args = AssistantRequestProjectScope::bindSearchScope($requestQuery, $args,
+                $this->resolveRagProjectId($taskPlan['request']['context'] ?? []),
+                $definition !== null && in_array('project_id', $definition->fields, true));
         }
         $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
         $tool = $this->toolRegistry->getTool($toolName);
@@ -2299,7 +2298,7 @@ class AIAssistantService
                 'assistant_domain_search', 'assistant_domain_read', 'assistant_domain_navigation',
                 'resolve_estimate', 'get_estimate_answer', 'get_estimate_positions', 'search_estimate_positions', 'get_estimate_financial_snapshot',
                 'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',
-                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_bim_model_elements',
+                'search_projects', 'search_contractors', 'search_materials', 'search_users', 'search_warehouse', 'get_material_stock', 'get_project_material_stock', 'get_project_attention', 'get_project_finance_overview', 'analyze_project_schedule_impact', 'get_project_workforce_summary', 'get_project_payment_readiness', 'get_document_readiness', 'get_project_machinery_summary', 'get_project_contract_roster', 'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness', 'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog', 'get_project_site_request_queue', 'get_project_tender_decisions', 'get_project_staff_roster', 'get_project_act_readiness', 'get_bim_model_elements',
                 'get_published_report_financial_evidence', 'get_live_project_financial_evidence',
             ], true);
             $read = fn (): array|string => $tool instanceof \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\GetEstimateAnswerTool

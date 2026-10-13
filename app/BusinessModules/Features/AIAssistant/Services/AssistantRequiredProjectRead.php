@@ -41,6 +41,10 @@ final readonly class AssistantRequiredProjectRead
         if (($read = \App\BusinessModules\Features\AIAssistant\Services\FinancialEvidence\AssistantEstimateCrossSearchIntent::unitPriceRead($query)) !== null) { return $read; }
         $scope = AssistantRequestProjectScope::fromPlan($plan);
         $operational = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($query);
+        if (($operational['name'] ?? null) === 'get_project_tender_decisions'
+            && ($scope->projectId !== null || AssistantRequestProjectScope::organizationWide($query))) {
+            return ['name' => $operational['name'], 'arguments' => ['project_id' => $scope->projectId]];
+        }
         if ($operational !== null && $scope->projectId !== null) { return ['name' => $operational['name'], 'arguments' => ['project_id' => $scope->projectId]]; }
         if (\App\BusinessModules\Features\AIAssistant\Services\Documents\AssistantDocumentReadinessReader::matches($query)
             && (! $scope->requested || $scope->projectId !== null)) {

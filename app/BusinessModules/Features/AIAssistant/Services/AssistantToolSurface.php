@@ -47,6 +47,7 @@ final class AssistantToolSurface
             '/проект|project/iu' => ['get_project_snapshot'],
             '/внимани|приоритет|главн[а-яё]*\s+проблем|план[её]рк|риски\s+(?:проекта|объекта)/iu' => ['get_project_attention'],
             '/сотрудник|персонал|people|workforce/iu' => ['search_users'],
+            '/сотрудник|персонал|состав[а-яё]*\s+(?:объект|проект)|кто.*(?:числится|назначен)/iu' => ['get_project_staff_roster'],
             '/табел|кто\s+работал|сколько\s+часов|уч[её]т.*врем/iu' => ['get_project_workforce_summary'],
             '/сч[её]т|плат[её]ж|оплат/iu' => ['get_project_payment_readiness'],
             '/документ|файл/iu' => ['get_document_readiness'],
@@ -61,6 +62,9 @@ final class AssistantToolSurface
             '/производствен[а-яё]*\s+наряд|наряд[а-яё]*.*(?:принят|при[её]мк|закрыти|представлен)/iu' => ['get_project_production_readiness'],
             '/crm|сделк/iu' => ['get_project_crm_readiness'],
             '/отч[её]т|report/iu' => ['get_project_report_catalog'],
+            '/тендер/iu' => ['get_project_tender_decisions'],
+            '/заявк/iu' => ['get_project_site_request_queue'],
+            '/(?<!\pL)акт[а-яё]*.*(?:согласован|решени|одобрен)|(?:согласован|одобрен).*\bакт/iu' => ['get_project_act_readiness'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);
