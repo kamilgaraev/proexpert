@@ -35,10 +35,7 @@ final class QualityDefectWorkflowService
                 array_filter($problemFlags, static fn (array $flag): bool => $flag['severity'] === 'warning')
             )),
             meta: [
-                'overdue' => $defect->due_date !== null && $defect->due_date->isPast() && !in_array($defect->status, [
-                    QualityDefectStatusEnum::RESOLVED,
-                    QualityDefectStatusEnum::CANCELLED,
-                ], true),
+                'overdue' => $this->isOverdue($defect),
             ],
         );
     }
@@ -66,18 +63,15 @@ final class QualityDefectWorkflowService
             QualityDefectStatusEnum::CANCELLED,
         ], true)) {
             $flags[] = [
-                'code' => 'schedule_task_blocked_by_defect',
-                'severity' => 'blocker',
-                'message' => trans_message('quality_control.problem_flags.schedule_task_blocked_by_defect'),
+                'code' => 'schedule_task_has_open_defect',
+                'severity' => 'warning',
+                'message' => trans_message('quality_control.problem_flags.schedule_task_has_open_defect'),
                 'target' => 'schedule_task',
                 'target_id' => $defect->schedule_task_id,
             ];
         }
 
-        if ($defect->due_date !== null && $defect->due_date->isPast() && !in_array($defect->status, [
-            QualityDefectStatusEnum::RESOLVED,
-            QualityDefectStatusEnum::CANCELLED,
-        ], true)) {
+        if ($this->isOverdue($defect)) {
             $flags[] = [
                 'code' => 'quality_defect_overdue',
                 'severity' => 'warning',
@@ -98,6 +92,14 @@ final class QualityDefectWorkflowService
         }
 
         return $flags;
+    }
+
+    private function isOverdue(QualityDefect $defect): bool
+    {
+        return $defect->due_date !== null && $defect->due_date->lt(today()) && !in_array($defect->status, [
+            QualityDefectStatusEnum::RESOLVED,
+            QualityDefectStatusEnum::CANCELLED,
+        ], true);
     }
 
     private function stage(QualityDefectStatusEnum $status): string
