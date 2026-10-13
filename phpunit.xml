@@ -8,6 +8,11 @@
          stopOnFailure="true"
 >
     <testsuites>
+        <testsuite name="PtoProjectChainRegression">
+            <file>tests/Unit/Acting/PtoProjectChainRegressionTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ActReportsPreviewTest.php</file>
+            <file>tests/Feature/Api/V1/Admin/ScheduleTaskGanttResourceReadbackTest.php</file>
+        </testsuite>
         <testsuite name="AIAssistantIndexIntegration">
             <file>tests/Feature/AIAssistant/AssistantBimModelReaderTest.php</file>
             <file>tests/Feature/AIAssistant/AssistantDocumentIngestionTest.php</file>

@@ -48,7 +48,15 @@ class PerformanceActLine extends Model
     {
         return trim($value ?? '') !== ''
             ? $value
-            : self::unitFromSnapshot($this->basis_snapshot ?? []);
+            : (self::unitFromSnapshot($this->basis_snapshot ?? [])
+                ?? self::capturedUnitFromCompletedWork($this->completedWork));
+    }
+
+    public static function capturedUnitFromCompletedWork(?CompletedWork $work): ?string
+    {
+        $unit = $work?->additional_info['unit_of_measurement'] ?? null;
+
+        return is_string($unit) && trim($unit) !== '' ? trim($unit) : null;
     }
 
     public static function unitFromSnapshot(array $snapshot): ?string

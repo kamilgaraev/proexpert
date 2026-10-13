@@ -26,10 +26,10 @@ class ActReportExportService
         private readonly ExcelExporterService $excelExporter,
     ) {}
 
-    public function exportPdf(ContractPerformanceAct $act): array
+    public function exportPdf(ContractPerformanceAct $act, bool $preview = false): array
     {
         $act = $this->workflowService->recalculatePricedLines($act);
-        $path = $this->officialExportService->exportKS2ToPdf($act, $act->contract);
+        $path = $this->officialExportService->exportKS2ToPdf($act, $act->contract, $preview);
 
         return ['url' => $this->fileService->temporaryUrl($path, 15)];
     }
@@ -50,10 +50,10 @@ class ActReportExportService
         return ['url' => $this->fileService->temporaryUrl($path, 15)];
     }
 
-    public function exportKS3Pdf(ContractPerformanceAct $act): array
+    public function exportKS3Pdf(ContractPerformanceAct $act, bool $preview = false): array
     {
         $act = $this->workflowService->recalculatePricedLines($act);
-        $path = $this->officialExportService->exportKS3ToPdf($act, $act->contract);
+        $path = $this->officialExportService->exportKS3ToPdf($act, $act->contract, $preview);
 
         return ['url' => $this->fileService->temporaryUrl($path, 15)];
     }

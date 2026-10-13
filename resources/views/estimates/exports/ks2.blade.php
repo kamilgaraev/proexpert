@@ -12,6 +12,7 @@
     $formatMoney = static fn ($value): string => number_format((float) ($value ?? 0), 2, ',', ' ');
     $join = static fn (array $parts): string => implode(', ', array_values(array_filter($parts, static fn ($value): bool => trim((string) $value) !== '')));
     $workRows = collect($works ?? []);
+    $isDraft = (bool) ($is_draft ?? false);
 
     $actDate = $act->act_date ?? now();
     $periodStartDate = $period_start ?? $actDate;
@@ -48,6 +49,16 @@
         body {
             margin: 0;
             padding: 0;
+        }
+
+        .draft-watermark {
+            position: fixed;
+            left: 18%;
+            top: 42%;
+            color: rgba(176, 0, 0, 0.16);
+            font-size: 42pt;
+            font-weight: bold;
+            letter-spacing: 4mm;
         }
 
         body {
@@ -277,6 +288,10 @@
     </style>
 </head>
 <body>
+    @if($isDraft)
+        <div class="draft-watermark">ЧЕРНОВИК</div>
+        <div>Предварительная форма КС-2. Не подтверждает приёмку и оплату работ.</div>
+    @endif
     @include('pdf.partials.most-brand-footer')
     <div class="header-area">
         <div class="top-note">

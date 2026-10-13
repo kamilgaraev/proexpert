@@ -94,7 +94,7 @@ class ActReportService
             'contract.project',
             'contract.contractor',
             'completedWorks',
-            'lines',
+            'lines.completedWork',
             'files',
         ])->whereHas('contract', function (Builder $q) use ($organizationId): void {
             $this->contractAccessService->applyAccessibleScope($q, $organizationId);

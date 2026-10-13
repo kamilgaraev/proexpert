@@ -68,7 +68,12 @@ final class ActReportActionAccessService
         }
         foreach (['export_pdf' => ActReportAccessService::PERMISSION_EXPORT_PDF, 'export_excel' => ActReportAccessService::PERMISSION_EXPORT_EXCEL, 'download_pdf' => ActReportAccessService::PERMISSION_DOWNLOAD_PDF] as $action => $permission) {
             if ($allowed($permission)) {
-                $actions[] = $action;
+                $official = (bool) $act->is_approved && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
+                if ($action === 'download_pdf' || $official) {
+                    $actions[] = $action;
+                } elseif ($action === 'export_pdf' && in_array($act->status, [ContractPerformanceAct::STATUS_DRAFT, ContractPerformanceAct::STATUS_PENDING_APPROVAL, ContractPerformanceAct::STATUS_REJECTED], true)) {
+                    $actions[] = 'preview_pdf';
+                }
             }
         }
 
