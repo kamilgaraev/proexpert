@@ -942,7 +942,15 @@ final class ExecutiveDocumentationService
                 $workType->restore();
             }
 
-            $workType->fill($attributes)->save();
+            $properties = $workType->additional_properties;
+            $attributes['additional_properties'] = array_replace(
+                is_array($properties) ? $properties : [],
+                $attributes['additional_properties']
+            );
+            $workType->fill($attributes);
+            if ($workType->isDirty()) {
+                $workType->save();
+            }
         }
 
         return WorkType::query()
