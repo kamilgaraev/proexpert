@@ -21,6 +21,7 @@ use App\Http\Controllers\Controller;
 use App\Exceptions\BusinessLogicException;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\StoreExecutiveDocumentVersionRequest;
 use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\UpdateExecutiveDocumentRequest;
+use App\BusinessModules\Features\ExecutiveDocumentation\Http\Requests\UpdateExecutiveDocumentSetRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\CompletedWork;
 use App\Models\ConstructionJournal;
@@ -100,6 +101,24 @@ final class ExecutiveDocumentationController extends Controller
             return AdminResponse::success(new ExecutiveDocumentSetResource($set));
         } catch (\Throwable $e) {
             return $this->failed('show_set', $id, $e);
+        }
+    }
+
+    public function updateSet(UpdateExecutiveDocumentSetRequest $request, int $id): JsonResponse
+    {
+        try {
+            $set = $this->service->findSet($id, (int) $request->attributes->get('current_organization_id'));
+            if ($set === null) {
+                return AdminResponse::error(trans_message('executive_documentation.errors.not_found'), 404);
+            }
+
+            return AdminResponse::success(new ExecutiveDocumentSetResource(
+                $this->service->updateSet($set, (int) auth()->id(), $request->validated())
+            ));
+        } catch (DomainException) {
+            return AdminResponse::error(trans_message('executive_documentation.errors.set_metadata_locked'), 409);
+        } catch (\Throwable $e) {
+            return $this->failed('update_set', $id, $e);
         }
     }
 
