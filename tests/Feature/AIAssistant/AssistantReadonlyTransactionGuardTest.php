@@ -113,6 +113,20 @@ final class AssistantReadonlyTransactionGuardTest extends TestCase
         self::assertSame(0, DB::transactionLevel());
     }
 
+    public function test_native_report_catalog_runs_under_the_real_assistant_operation_guard(): void
+    {
+        self::assertSame(0, DB::transactionLevel());
+        $this->activate();
+        $authorizer = (new \ReflectionClass(\App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelCurrentReportScopeAuthorizer::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod($authorizer, 'transaction');
+        $result = $method->invoke($authorizer, static fn (): array => [
+            DB::transactionLevel(), DB::selectOne('SHOW transaction_isolation')->transaction_isolation,
+            DB::selectOne('SHOW transaction_read_only')->transaction_read_only,
+        ], true);
+        self::assertSame([1, 'repeatable read', 'on'], $result);
+        self::assertSame(0, DB::transactionLevel());
+    }
+
     private function activate(): void
     {
         $lifecycle = (new \ReflectionClass(AssistantRequestLifecycle::class))->newInstanceWithoutConstructor();
