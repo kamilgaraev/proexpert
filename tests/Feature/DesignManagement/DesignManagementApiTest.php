@@ -645,6 +645,84 @@ final class DesignManagementApiTest extends TestCase
         $this->postJson($url, $payload, $context->authHeaders())->assertForbidden();
     }
 
+    public function test_project_issue_http_preserves_document_page_annotations_without_camera(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->attachProjectUser($project, $context->user);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $package = DesignPackage::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+            'title' => 'Чертежи', 'status' => 'draft', 'metadata' => [],
+        ]);
+        $version = $this->storedVersion($package, $context->user);
+        $version->artifact->update(['artifact_type' => 'drawing_set']);
+        $version->update(['file_format' => 'pdf', 'source_mime_type' => 'application/pdf', 'source_original_name' => 'plans.pdf']);
+        $url = '/api/v1/admin/design-management/projects/'.$project->id.'/issues';
+        $headers = $context->authHeaders() + ['Idempotency-Key' => 'document_drawing_issue_0001'];
+        $annotations = ['schema_version' => 1, 'page_number' => 2, 'width' => 1200, 'height' => 800,
+            'strokes' => [['kind' => 'arrow', 'color' => '#FF0000', 'width' => 3,
+                'points' => [['x' => 0.1, 'y' => 0.2], ['x' => 0.8, 'y' => 0.9]]]]];
+        $payload = ['title' => 'Уточнить размер', 'severity' => 'minor', 'version_id' => $version->id, 'annotations' => $annotations];
+        $first = $this->postJson($url, $payload, $headers)->assertCreated()
+            ->assertJsonPath('data.context.annotations.page_number', 2)
+            ->assertJsonPath('data.context.annotations.strokes.0.color', '#ff0000');
+        $this->postJson($url, $payload, $headers)->assertCreated()->assertJsonPath('data.id', $first->json('data.id'));
+        $this->postJson($url, array_replace($payload, ['title' => 'Другой размер']), $headers)->assertConflict();
+        $this->getJson($url.'?version_id='.$version->id, $context->authHeaders())->assertOk()
+            ->assertJsonPath('data.0.context.annotations.page_number', 2);
+        self::assertSame(1, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
+        $this->postJson($url, array_replace($payload, ['camera' => ['position' => [1, 2, 3]]]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['annotations' => array_replace($annotations, ['page_number' => 0])]), $context->authHeaders())->assertUnprocessable();
+        $this->postJson($url, array_replace($payload, ['annotations' => array_replace_recursive($annotations, ['strokes' => [['points' => [['x' => 1.1, 'y' => 0], ['x' => 0, 'y' => 0]]]]])]), $context->authHeaders())->assertUnprocessable();
+        $version->update(['file_format' => 'ifc', 'source_mime_type' => 'application/octet-stream']);
+        $this->postJson($url, $payload, $context->authHeaders())->assertUnprocessable();
+    }
+
+    public function test_document_annotations_require_document_permission_and_consistent_sheet_page(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->attachProjectUser($project, $context->user);
+        $documentViewAllowed = true;
+        $strictReviewAllowed = true;
+        $this->allowAdminAccess([], ['project_manager'], static function (string $permission, ?array $scope) use (&$documentViewAllowed, &$strictReviewAllowed): bool {
+            return ($permission !== 'design-management.documents.view' || $documentViewAllowed)
+                && ($permission !== 'design-management.review' || ! ($scope['strict_project_scope'] ?? false) || $strictReviewAllowed);
+        });
+        $this->allowModuleAccess();
+        $package = DesignPackage::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id,
+            'created_by' => $context->user->id, 'updated_by' => $context->user->id,
+            'title' => 'Чертежи', 'status' => 'draft', 'metadata' => [],
+        ]);
+        $version = $this->storedVersion($package, $context->user);
+        $version->artifact->update(['artifact_type' => 'drawing_set']);
+        $version->update(['file_format' => 'pdf', 'source_mime_type' => 'application/pdf']);
+        $sheet = DesignDocumentSheet::query()->create([
+            'organization_id' => $context->organization->id, 'project_id' => $project->id, 'package_id' => $package->id,
+            'artifact_id' => $version->artifact_id, 'version_id' => $version->id,
+            'sheet_number' => 'АР-2', 'sheet_title' => 'План', 'file_page_number' => 2,
+        ]);
+        $url = '/api/v1/admin/design-management/projects/'.$project->id.'/issues';
+        $payload = ['title' => 'Проверить план', 'severity' => 'minor', 'sheet_id' => $sheet->id,
+            'annotations' => ['schema_version' => 1, 'page_number' => 1, 'width' => 1000, 'height' => 700, 'strokes' => []]];
+        $this->postJson($url, $payload, $context->authHeaders())->assertUnprocessable();
+        $payload['annotations']['page_number'] = 2;
+        $this->postJson($url, $payload, $context->authHeaders())->assertCreated();
+        $documentViewAllowed = false;
+        $this->postJson($url, $payload, $context->authHeaders())->assertUnprocessable();
+        $documentViewAllowed = true;
+        $strictReviewAllowed = false;
+        $this->postJson($url, $payload, $context->authHeaders())->assertUnprocessable();
+        $this->mock(FileService::class)->shouldReceive('temporaryUrl')->andReturn('https://files.example.test/plans.pdf');
+        $mobile = app(\App\Services\Mobile\MobilePtoService::class)->designPackage($context->user, (int) $context->organization->id, (int) $package->id);
+        self::assertFalse($mobile['files'][0]['can_annotate']);
+        self::assertSame(1, \App\BusinessModules\Features\QualityControl\Models\QualityDefect::query()->where('project_id', $project->id)->count());
+    }
+
     public function test_project_issue_http_preserves_independent_model_snapshot(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');
@@ -3780,12 +3858,13 @@ final class DesignManagementApiTest extends TestCase
         });
     }
 
-    private function allowAdminAccess(array $deniedPermissions = [], array $roleSlugs = ['project_manager']): void
+    private function allowAdminAccess(array $deniedPermissions = [], array $roleSlugs = ['project_manager'], ?callable $scopeCheck = null): void
     {
-        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($deniedPermissions, $roleSlugs): void {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($deniedPermissions, $roleSlugs, $scopeCheck): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturnUsing(
                 static fn (User $user, string $permission, ?array $context = null): bool => ! in_array($permission, $deniedPermissions, true)
+                    && ($scopeCheck === null || $scopeCheck($permission, $context))
             );
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn($roleSlugs);

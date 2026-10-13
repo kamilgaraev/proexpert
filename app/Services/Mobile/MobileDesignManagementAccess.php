@@ -6,6 +6,7 @@ namespace App\Services\Mobile;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionAccessService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignAccessService;
 use App\Exceptions\BusinessLogicException;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
@@ -14,7 +15,25 @@ use Illuminate\Support\Facades\Gate;
 
 final readonly class MobileDesignManagementAccess
 {
-    public function __construct(private MobileProjectAccessResolver $projects, private DesignModelSessionAccessService $access, private AuthorizationService $authorization) {}
+    public function __construct(private MobileProjectAccessResolver $projects, private DesignModelSessionAccessService $access, private AuthorizationService $authorization, private DesignAccessService $documents) {}
+
+    public function documentVersion(User $actor, int $organizationId, int $versionId): DesignArtifactVersion
+    {
+        $version = DesignArtifactVersion::query()->where('organization_id', $organizationId)->find($versionId);
+        if (! $version instanceof DesignArtifactVersion
+            || (! in_array($version->file_format, ['pdf', 'pdfa'], true)
+                && ! in_array($version->source_mime_type, ['image/png', 'image/jpeg', 'image/webp'], true))) {
+            throw new BusinessLogicException(trans_message('design_management.errors.version_not_found'), 404);
+        }
+        $this->project($actor, $organizationId, (int) $version->project_id, 'design-management.documents.view');
+        try {
+            $this->documents->assertVersion($version, $actor, 'design-management.documents.view', strictProjectScope: true);
+        } catch (DomainException $exception) {
+            throw new BusinessLogicException(trans_message('design_management.errors.version_not_found'), 404, $exception);
+        }
+
+        return $version;
+    }
 
     public function project(User $actor, int $organizationId, int $projectId, string $permission = 'design-management.models.view'): void
     {

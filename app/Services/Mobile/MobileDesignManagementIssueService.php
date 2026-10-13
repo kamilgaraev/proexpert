@@ -6,6 +6,7 @@ namespace App\Services\Mobile;
 
 use App\BusinessModules\Features\DesignManagement\Services\DesignIssueContextResolver;
 use App\BusinessModules\Features\DesignManagement\Models\DesignIfcModelElement;
+use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelSetRevision;
 use App\BusinessModules\Features\DesignManagement\Services\DesignProjectIssueService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelSessionPayloadValidator;
@@ -34,7 +35,10 @@ final readonly class MobileDesignManagementIssueService
         $projectId = (int) $filters['project_id'];
         $this->access->project($actor, $organizationId, $projectId, 'design-management.view');
         if (isset($filters['version_id'])) {
-            $version = $this->access->version($actor, $organizationId, (int) $filters['version_id']);
+            $candidate = DesignArtifactVersion::query()->where('organization_id', $organizationId)->find((int) $filters['version_id']);
+            $version = $candidate?->file_format === 'ifc'
+                ? $this->access->version($actor, $organizationId, (int) $filters['version_id'])
+                : $this->access->documentVersion($actor, $organizationId, (int) $filters['version_id']);
             if ((int) $version->project_id !== $projectId) {
                 throw new BusinessLogicException(trans_message('design_issues.errors.target_not_found'), 404);
             }
@@ -73,7 +77,9 @@ final readonly class MobileDesignManagementIssueService
         $projectId = (int) $payload['project_id'];
         $this->access->project($actor, $organizationId, $projectId, 'design-management.review');
         if (isset($payload['version_id'])) {
-            $version = $this->access->version($actor, $organizationId, (int) $payload['version_id']);
+            $version = isset($payload['annotations']['page_number'])
+                ? $this->access->documentVersion($actor, $organizationId, (int) $payload['version_id'])
+                : $this->access->version($actor, $organizationId, (int) $payload['version_id']);
             if ((int) $version->project_id !== $projectId) {
                 throw new BusinessLogicException(trans_message('design_issues.errors.target_not_found'), 422);
             }
@@ -246,6 +252,15 @@ final readonly class MobileDesignManagementIssueService
 
     private function assertContext(User $actor, int $organizationId, int $projectId, array $context): void
     {
+        if (isset($context['annotations']['page_number'])) {
+            $this->contexts->resolve($actor, $organizationId, $projectId, $context);
+            $document = $this->access->documentVersion($actor, $organizationId, (int) ($context['version_id'] ?? 0));
+            if ((int) $document->project_id !== $projectId) {
+                throw new BusinessLogicException(trans_message('design_issues.errors.target_not_found'), 422);
+            }
+
+            return;
+        }
         $versionIds = isset($context['view_models']) ? array_column($context['view_models'], 'version_id') : [];
         if (isset($context['model_set_revision_id'])) {
             $revision = DesignModelSetRevision::query()->findOrFail($context['model_set_revision_id']);

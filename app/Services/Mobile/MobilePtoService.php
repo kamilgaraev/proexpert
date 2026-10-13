@@ -381,6 +381,10 @@ final class MobilePtoService
     private function files(DesignPackage $package, int $organizationId, User $actor): array
     {
         $files = [];
+        $fileAccess = app(\App\BusinessModules\Features\DesignManagement\Services\DesignAccessService::class);
+        $mobileAccess = app(MobileDesignManagementAccess::class);
+        $canReview = $mobileAccess->can($actor, $organizationId, (int) $package->project_id, 'design-management.review')
+            && $mobileAccess->can($actor, $organizationId, (int) $package->project_id, 'design-management.documents.view');
 
         foreach ($package->artifacts as $artifact) {
             if (! $artifact instanceof DesignArtifact) {
@@ -394,7 +398,6 @@ final class MobilePtoService
             $artifact->loadMissing('section');
             $isStandaloneModel = $this->enumValue($artifact->artifact_type) === 'model' && ($artifact->section_id === null || $artifact->section === null || trim((string) $artifact->document_code) === '');
             $filePermission = $isStandaloneModel ? 'design-management.models.view' : 'design-management.documents.view';
-            $fileAccess = app(\App\BusinessModules\Features\DesignManagement\Services\DesignAccessService::class);
             $canDownload = $fileAccess->canAccessProject($actor, $organizationId, (int) $package->project_id, $filePermission);
             $downloadUrl = null;
             if ($canDownload) {
@@ -407,9 +410,12 @@ final class MobilePtoService
                 'artifact_id' => (int) $artifact->id,
                 'name' => (string) ($version->source_original_name ?: $version->title ?: $artifact->title),
                 'mime_type' => $mimeType,
-                'preview_url' => in_array($mimeType, ['application/pdf', 'image/jpeg', 'image/png'], true) ? $downloadUrl : null,
+                'preview_url' => in_array($mimeType, ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], true) ? $downloadUrl : null,
                 'download_url' => $downloadUrl,
                 'can_download' => $canDownload,
+                'can_annotate' => $canDownload && $canReview && ! $isStandaloneModel
+                    && in_array($mimeType, ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'], true),
+                'version_number' => (string) $version->version_number,
             ];
         }
 
