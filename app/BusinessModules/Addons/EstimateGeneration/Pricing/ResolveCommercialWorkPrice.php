@@ -45,7 +45,8 @@ final readonly class ResolveCommercialWorkPrice
                 || ($fact->value['work_item_key'] ?? null) !== ($workItem['key'] ?? null)
                 || ($fact->value['source_reference'] ?? null) !== $selection['source_reference']
                 || ($fact->value['source_hash'] ?? null) !== $selection['source_hash']
-                || ($fact->value['stale_accepted'] ?? false) !== ($selection['stale_accepted'] ?? false)) {
+                || ($fact->value['stale_accepted'] ?? false) !== ($selection['stale_accepted'] ?? false)
+                || ($fact->value['conditions_confirmation'] ?? []) !== ($selection['conditions_confirmation'] ?? [])) {
                 return null;
             }
         }
@@ -58,6 +59,11 @@ final readonly class ResolveCommercialWorkPrice
             return null;
         }
         $price['stale_accepted'] = ($selection['stale_accepted'] ?? false) === true;
+        $price = (new ConfirmedCommercialPriceConditions)->apply($price, $selection['conditions_confirmation'] ?? [],
+            (new CommercialPriceTargetRegion)->fromSession($session));
+        if ($price === null) {
+            return null;
+        }
 
         $price = $this->units->convert($price, $workItem['unit'] ?? null);
         if ($price === null) {

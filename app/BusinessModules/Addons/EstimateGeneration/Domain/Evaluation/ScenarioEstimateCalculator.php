@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Domain\Evaluation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ConfirmedCommercialPriceConditions;
 use Brick\Math\BigDecimal;
 use InvalidArgumentException;
 
@@ -102,6 +103,29 @@ final class ScenarioEstimateCalculator
                     'unit_price' => $hasSourcePrice ? (string) $unitPrice : null, 'total_cost' => $amount, 'pricing_status' => $status,
                     'money_breakdown' => $money];
             }
+            // Linking delivery does not invent its price: the linked position must be fully priced in this scenario.
+            $byKey = array_column($positions, null, 'key');
+            foreach ($positions as $positionIndex => $position) {
+                $price = $position['price_snapshot'];
+                $deliveryKey = is_array($price) ? ($price['delivery_work_item_key'] ?? null) : null;
+                $linked = is_string($deliveryKey) ? ($byKey[$deliveryKey] ?? null) : null;
+                if ($linked === null || $deliveryKey === $position['key'] || ($linked['work_key'] ?? null) !== 'delivery'
+                    || ! is_string($position['entity_id'] ?? null) || ($linked['entity_id'] ?? null) !== $position['entity_id']
+                    || ($linked['section'] ?? null) !== $position['section'] || ($linked['pricing_status'] ?? null) !== 'calculated'
+                    || ($linked['price_snapshot']['conditions_missing'] ?? []) !== [] || ($linked['money_breakdown'] ?? null) === null
+                    || ($linked['price_snapshot']['currency'] ?? null) !== ($price['currency'] ?? null)
+                    || $this->number($linked['total_cost'] ?? null)?->isGreaterThan(0) !== true) {
+                    continue;
+                }
+                $price['conditions_missing'] = array_values(array_diff($price['conditions_missing'] ?? [], ConfirmedCommercialPriceConditions::DELIVERY_CONDITIONS));
+                $price['delivery_cost_basis'] = ['work_item_key' => $deliveryKey, 'source_reference' => $linked['price_snapshot']['source_reference'],
+                    'source_hash' => $linked['price_snapshot']['source_hash'] ?? null];
+                $positions[$positionIndex]['price_snapshot'] = $price;
+            }
+            $resolvedByKey = array_column($positions, null, 'key');
+            $priceConditions = array_values(array_filter(array_map(static function (array $entry) use ($resolvedByKey): array {
+                return ['key' => $entry['key'], 'conditions' => $resolvedByKey[$entry['key']]['price_snapshot']['conditions_missing'] ?? $entry['conditions']];
+            }, $priceConditions), static fn (array $entry): bool => $entry['conditions'] !== []));
             $contingency = null;
             if (isset($scenario['contingency'])) {
                 if (! is_array($scenario['contingency'])) {
