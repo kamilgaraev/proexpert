@@ -34,9 +34,14 @@ final readonly class AssistantProjectSafetyReader extends AssistantProjectOperat
             $columns = ['id', 'title', 'status', 'severity', 'assigned_to_user_id', $type === 'safety_incident' ? 'occurred_at' : 'due_date'];
             $examplesQuery = (clone $query)->orderByRaw("CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END");
             if ($type !== 'safety_incident') { $examplesQuery->orderByRaw('due_date IS NULL')->orderBy('due_date'); }
-            $examples = $examplesQuery->orderBy('id')->limit(3)->select($columns)->get()->map(static fn ($row): array => $row->getAttributes())->all();
+            $owners = [];
+            $examples = $examplesQuery->orderBy('id')->limit(3)->select($columns)->with('assignedUser:id,name')->get()
+                ->map(static function ($row) use (&$owners): array {
+                    if ($row->assignedUser instanceof User) { $owners[(int) $row->assignedUser->id] = (string) $row->assignedUser->name; }
+                    return $row->getAttributes();
+                })->all();
             $sections[$label] = ['available' => true, 'total' => $total, 'severe' => $severe, 'overdue' => $overdue, 'examples' => $examples,
-                'owners' => $this->names($actor, $organizationId, array_column($examples, 'assigned_to_user_id'))];
+                'owners' => $owners];
         }
         $permits = $this->projectQuery($actor, $organizationId, $projectId, 'safety_work_permit');
         $permitCounts = $permits === null ? null : [

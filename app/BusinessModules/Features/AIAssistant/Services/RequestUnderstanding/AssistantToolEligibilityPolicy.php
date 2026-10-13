@@ -21,7 +21,7 @@ final class AssistantToolEligibilityPolicy
         'get_document_readiness',
         'get_project_machinery_summary',
         'get_project_handover_summary', 'get_project_journal_readiness', 'get_project_safety_summary', 'get_project_change_readiness', 'get_project_design_readiness',
-        'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness',
+        'get_project_proposal_readiness', 'get_project_executive_readiness', 'get_project_production_readiness', 'get_project_crm_readiness', 'get_project_report_catalog',
         'get_project_contract_roster',
         'resolve_estimate', 'get_estimate_financial_snapshot', 'get_estimate_positions', 'search_estimate_positions',
         'get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot',

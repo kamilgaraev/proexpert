@@ -3,6 +3,14 @@
 declare(strict_types=1);
 
 return [
+    'report_catalog_description' => 'Current published MOST report catalog available to the actor, with native authorization, titles and separate run permission. The selected project is checked; report data and runs are not created. Read only.',
+    'report_catalog_scope' => 'For project “:project” as of :date, the report catalog available to the current organization actor was checked. Published visible definitions: :count.',
+    'report_catalog_run_allowed' => 'running is permitted by the current catalog check',
+    'report_catalog_run_unconfirmed' => 'run permission is not confirmed',
+    'report_catalog_accepted' => 'For accepted work volume use “:title” (accepted_production_progress): select a project and period. Verify comparisons with acts in the report results for the selected basis; catalog entries do not prove work volume.',
+    'report_catalog_open' => 'Open [Reports](:url). Select the report and verify the available project parameters.',
+    'report_catalog_limit' => 'Definitions shown: :shown, up to 20. The complete available catalog is in Reports.',
+    'report_catalog_basis' => 'These are report definitions and current permissions, not report result rows. No run or file was created; view permission does not replace run permission.',
     'crm_description' => 'Selected project open CRM deals and unfinished activities. Complete counts, overdue deadlines, owners and up to 20 examples. Deal UUIDs are preserved. Amounts, contacts and correspondence bodies are not read. Read only.',
     'crm_scope' => 'CRM for project “:project” as of :date.',
     'crm_counts' => 'Total deals linked to the project: :total; open: :open.',
