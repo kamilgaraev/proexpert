@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Support\DesignBrand;
 use App\Domain\Authorization\Services\AuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -51,6 +52,9 @@ final class DesignCompositionRevisionResource extends JsonResource
     private function effectiveComposition(): array
     {
         $composition = is_array($this->composition) ? $this->composition : [];
+        if (array_key_exists('brand', $composition)) {
+            $composition['brand'] = DesignBrand::normalize($composition['brand']);
+        }
         $excluded = $this->resource->relationLoaded('exclusions') ? $this->exclusions->pluck('item_key')->all() : [];
         foreach (['sections', 'document_groups', 'items'] as $key) if (is_array($composition[$key] ?? null)) $composition[$key] = array_values(array_filter($composition[$key], static fn (mixed $item): bool => ! is_array($item) || ! in_array((string) ($item['code'] ?? ''), $excluded, true)));
         return $composition;

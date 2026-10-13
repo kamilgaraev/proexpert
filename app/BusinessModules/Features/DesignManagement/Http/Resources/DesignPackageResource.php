@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
+use App\BusinessModules\Features\DesignManagement\Support\DesignBrand;
 use BackedEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -30,6 +31,13 @@ final class DesignPackageResource extends JsonResource
             ? $activeArtifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) !== 'model')->values()
             : null;
         $availableActions = DesignPackageWorkflow::availableActions($package);
+        $projectStage = $this->enumValue($package->project_stage);
+        $composition = $package->relationLoaded('currentComposition') ? $package->currentComposition : null;
+        if ($composition !== null && ((int) $composition->package_id !== (int) $package->id
+            || (int) $composition->organization_id !== (int) $package->organization_id
+            || (int) $composition->project_id !== (int) $package->project_id)) {
+            $composition = null;
+        }
 
         return [
             'id' => $package->id,
@@ -43,6 +51,7 @@ final class DesignPackageResource extends JsonResource
             'object_type_label' => trans_message('design_management.object_types.'.$this->enumValue($package->object_type)),
             'normative_profile_code' => $package->normative_profile_code,
             'discipline' => $package->discipline,
+            'brand' => $projectStage === 'rd' ? DesignBrand::normalize($composition?->composition['brand'] ?? null) : null,
             'status' => $status,
             'status_label' => trans_message("design_management.statuses.packages.{$status}"),
             'planned_issue_date' => $package->planned_issue_date?->format('Y-m-d'),
@@ -50,7 +59,7 @@ final class DesignPackageResource extends JsonResource
             'issued_by' => $package->issued_by,
             'metadata' => $package->metadata ?? [],
             'composition_status' => $package->composition_status,
-            'composition_revision_number' => $package->composition_revision_id === null ? null : \App\BusinessModules\Features\DesignManagement\Models\DesignCompositionRevision::query()->whereKey($package->composition_revision_id)->where('package_id', $package->id)->value('revision_number'),
+            'composition_revision_number' => $composition?->revision_number,
             'composition_revision_id' => $package->composition_revision_id,
             'open_blocking_comments_count' => DesignPackageWorkflow::openBlockingCommentsCount($package),
             'project' => $this->whenLoaded('project', fn () => $package->project ? [
@@ -63,6 +72,7 @@ final class DesignPackageResource extends JsonResource
             'documents' => $documents !== null ? DesignArtifactResource::collection($documents) : null,
             'artifacts' => DesignArtifactResource::collection($this->whenLoaded('artifacts')),
             'sections' => DesignPackageSectionResource::collection($this->whenLoaded('sections')),
+            'document_groups' => $projectStage === 'rd' ? DesignPackageSectionResource::collection($this->whenLoaded('sections')) : null,
             'review_comments' => DesignReviewCommentResource::collection($this->whenLoaded('reviewComments')),
             'workflow_events' => DesignWorkflowEventResource::collection($this->whenLoaded('workflowEvents')),
             'completeness_is_fresh' => app(\App\BusinessModules\Features\DesignManagement\Services\DesignCompletenessService::class)->isFreshForPackage($package, $package->latestCompletenessCheck),
