@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'credit_snapshot_time' => 'This request balance snapshot was read at :time (UTC), before its final charge. Historical answers retain this time; a new question reads a new balance.',
     'organization_location' => 'Review organization details in the MOST account Organization section if you have access.',
     'packages_description' => 'Current organization packages using native expiry, commercial account, trial and renewal window semantics. Access source and period dates; no prices or payment operations.',
     'packages_heading' => 'Organization packages with current access: :count.',

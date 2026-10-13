@@ -6,12 +6,74 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Operational;
 
 use App\Models\Credits\AICreditLot;
 use App\BusinessModules\Features\BudgetEstimates\Services\Finance\FinanceDecimal;
+use App\BusinessModules\Features\AIAssistant\Models\AssistantRequest;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantCurrentRequest;
+use App\BusinessModules\Features\AIAssistant\Services\AssistantSourceReferenceIdentity;
+use Illuminate\Support\Str;
+use Illuminate\Auth\Access\AuthorizationException;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 final readonly class AssistantOrganizationCreditBalanceReader extends AssistantOrganizationOperationalReader
 {
     public const TYPE = 'live_organization_ai_credit_balance_projection';
+
+    public function read(User $actor, int $organizationId, array $arguments): array
+    {
+        if (app(AssistantCurrentRequest::class)->hasRequest() && $this->activeRequestId($actor, $organizationId) === null) { throw new AuthorizationException; }
+        $result = parent::read($actor, $organizationId, $arguments);
+        $requestId = $this->activeRequestId($actor, $organizationId);
+        if ($requestId !== null) {
+            $result['source_refs'][0]['origin_request_id'] = $requestId;
+            $time = \Carbon\CarbonImmutable::parse($result['source_refs'][0]['fetched_at'])->utc()->toIso8601String();
+            $result['server_formatted_answer'] .= "\n".trans_message('ai_assistant_operational.credit_snapshot_time', ['time' => $time]);
+        }
+
+        return $result;
+    }
+
+    public function matchesReference(User $actor, int $organizationId, array $ref): bool
+    {
+        if (($ref['entity_type'] ?? null) !== self::TYPE || ($ref['entity_id'] ?? null) !== $organizationId
+            || ($ref['organization_id'] ?? null) !== $organizationId || ($ref['actor_id'] ?? null) !== (int) $actor->id
+            || ! array_key_exists('project_id', $ref) || $ref['project_id'] !== null || ! is_string($ref['source_version'] ?? null)) { return false; }
+        $origin = $ref['origin_request_id'] ?? null;
+        if ($origin !== null && (! is_string($origin) || ! Str::isUuid($origin))) { return false; }
+        $active = $this->activeRequestId($actor, $organizationId);
+        if (app(AssistantCurrentRequest::class)->hasRequest()) { return $active !== null && $origin === $active && parent::matchesReference($actor, $organizationId, $ref); }
+        if ($origin === null && parent::matchesReference($actor, $organizationId, $ref)) { return true; }
+
+        return $this->access->withCurrentChecks($actor, $organizationId, function () use ($actor, $organizationId, $ref, $origin): bool {
+            if (! $this->access->canReadDomain($actor, $organizationId, 'assistant')) { return false; }
+            $query = AssistantRequest::query()->where('organization_id', $organizationId)->where('user_id', $actor->id)->where('status', 'completed');
+            if ($origin !== null) { $query->where('request_id', $origin); }
+            else {
+                if (! is_string($ref['fetched_at'] ?? null)) { return false; }
+                try { $at = \Carbon\CarbonImmutable::parse($ref['fetched_at'])->setTimezone((string) config('app.timezone', 'UTC'))->startOfSecond(); }
+                catch (\Throwable) { return false; }
+                $query->where('created_at', '<=', $at)->where('completed_at', '>=', $at)->where('created_at', '>=', $at->subHour())
+                    ->whereJsonContains('response->message->metadata->source_refs', [$ref]);
+            }
+            $requests = $query->limit(2)->get(['request_id', 'response']);
+            if ($requests->count() !== 1) { return false; }
+            $request = $requests->first();
+            $response = $request->response;
+            if (! is_array($response) || ($response['message']['metadata']['request_id'] ?? null) !== $request->request_id) { return false; }
+            $refs = $response['message']['metadata']['source_refs'] ?? null;
+            if (! is_array($refs)) { return false; }
+            $identity = AssistantSourceReferenceIdentity::key($ref);
+            foreach ($refs as $stored) {
+                if (is_array($stored) && hash_equals($identity, AssistantSourceReferenceIdentity::key($stored))) { return true; }
+            }
+
+            return false;
+        }, true);
+    }
+
+    private function activeRequestId(User $actor, int $organizationId): ?string
+    {
+        return app(AssistantCurrentRequest::class)->idFor($actor, $organizationId);
+    }
 
     public static function hasIntent(string $query): bool
     {
