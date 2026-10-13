@@ -82,6 +82,15 @@ final class EstimateGenerationSessionController extends Controller
     {
         try {
             $validated = $request->validated();
+            $creationRequestId = $validated['request_id'] ?? null;
+            $creationInput = $validated;
+            unset($creationInput['request_id']);
+            $replayed = $this->createSession->replay((int) $request->user()->current_organization_id, (int) $project->id,
+                $request->user(), $creationRequestId, $creationInput);
+            if ($replayed !== null) {
+                return AdminResponse::success((new EstimateGenerationSessionResource($replayed->load('documents')))->resolve(),
+                    trans_message('estimate_generation.session_created'), 200);
+            }
             $input = EstimateGenerationSessionInputData::fromValidated($validated);
             $generationMode = $input->generationMode->value;
             $pricePolicy = EstimatePricePolicy::from($validated['price_policy'] ?? EstimatePricePolicy::Normative->value);
@@ -116,13 +125,15 @@ final class EstimateGenerationSessionController extends Controller
                     ],
                 ]),
                 'problem_flags' => [],
-            ], $request->user());
+            ], $request->user(), $creationRequestId, $creationInput);
 
             return AdminResponse::success(
                 (new EstimateGenerationSessionResource($session->load('documents')))->resolve(),
                 trans_message('estimate_generation.session_created'),
                 201,
             );
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionCreationRequestConflict) {
+            return AdminResponse::error(trans_message('estimate_evaluation.session_creation_request_conflict'), 409);
         } catch (NormativeContextPinUnavailable) {
             return AdminResponse::error(trans_message('estimate_generation.normative_context_unavailable'), 422);
         } catch (InitialProjectFactValidationFailed $exception) {
@@ -144,6 +155,21 @@ final class EstimateGenerationSessionController extends Controller
 
             return AdminResponse::error(trans_message('estimate_generation.session_create_error'), 500);
         }
+    }
+
+    public function creationRequest(Request $request, Project $project, string $requestId): JsonResponse
+    {
+        return $this->safeReadResponse(function () use ($request, $project, $requestId): JsonResponse {
+            try {
+                $response = AdminResponse::success($this->createSession->readCreation((int) $request->user()->current_organization_id,
+                    (int) $project->id, $request->user(), $requestId));
+            } catch (\Illuminate\Auth\Access\AuthorizationException) {
+                return AdminResponse::error(trans_message('estimate_generation.access_denied'), 403);
+            }
+            $response->headers->set('Cache-Control', 'private, no-store');
+
+            return $response;
+        }, 'session_creation_receipt', ['project_id' => (int) $project->id]);
     }
 
     public function show(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse

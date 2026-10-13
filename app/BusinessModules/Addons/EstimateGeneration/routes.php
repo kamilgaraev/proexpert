@@ -30,6 +30,7 @@ Route::middleware([
         Route::get('/', [EstimateGenerationSessionController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('index');
         Route::get('/capabilities', [EstimateGenerationSessionController::class, 'capabilities'])->middleware('authorize:estimate_generation.create,project,project')->name('capabilities');
         Route::post('/', [EstimateGenerationSessionController::class, 'store'])->middleware('authorize:estimate_generation.create,project,project')->name('store');
+        Route::get('/creation-requests/{requestId}', [EstimateGenerationSessionController::class, 'creationRequest'])->whereUuid('requestId')->middleware('authorize:estimate_generation.create,project,project')->name('creation-request');
         Route::get('/{session}/documents', [EstimateGenerationDocumentController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.index');
         Route::post('/{session}/documents', [EstimateGenerationDocumentController::class, 'upload'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.store');
         Route::post('/{session}/documents/reuse', [EstimateGenerationDocumentController::class, 'reuse'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.reuse');

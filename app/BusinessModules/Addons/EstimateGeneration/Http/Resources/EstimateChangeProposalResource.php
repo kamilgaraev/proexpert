@@ -59,7 +59,7 @@ final class EstimateChangeProposalResource extends JsonResource
         $allowed = [
             'label', 'field', 'value', 'quantity', 'unit', 'area', 'technology', 'system', 'option',
             'section', 'row', 'total', 'price', 'name', 'reason', 'stable_key', 'decision_key',
-            'selected_option', 'response',
+            'selected_option', 'response', 'total_cost',
         ];
 
         return array_intersect_key($payload, array_flip($allowed));

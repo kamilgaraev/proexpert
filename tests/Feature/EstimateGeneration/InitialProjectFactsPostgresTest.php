@@ -134,6 +134,85 @@ final class InitialProjectFactsPostgresTest extends EstimateGenerationCanonicalP
         self::assertSame(0, DB::transactionLevel());
     }
 
+    public function test_creation_replay_preserves_one_session_and_its_initial_facts_without_reapplying_defaults(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $service = app(CreateEstimateGenerationSession::class);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $input = ['area' => '72.19'];
+        $first = $service->handle($attributes, $actor, $requestId, $input);
+        $counts = [EstimateGenerationSession::query()->count(), DB::table('estimate_generation_project_model_assertions')->count(),
+            DB::table('estimate_generation_evidence')->count()];
+        $attributes['input_payload']['regional_context'] = ['normative_dataset_version' => 'new-default-pin'];
+        $replay = $service->handle($attributes, $actor, $requestId, $input);
+        self::assertSame($first->id, $replay->id);
+        self::assertSame($counts, [EstimateGenerationSession::query()->count(), DB::table('estimate_generation_project_model_assertions')->count(),
+            DB::table('estimate_generation_evidence')->count()]);
+        self::assertArrayNotHasKey('regional_context', $replay->input_payload);
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+        self::assertSame($requestId, $first->creation_request_id);
+    }
+
+    public function test_creation_replay_rejects_changed_inputs_and_rechecks_revoked_access(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $service = app(CreateEstimateGenerationSession::class);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $first = $service->handle($attributes, $actor, $requestId);
+        $changed = $attributes;
+        $changed['input_payload']['area'] = '80';
+        try {
+            $service->handle($changed, $actor, $requestId);
+            self::fail('Changed replay created another session.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionCreationRequestConflict) {
+            self::addToAssertionCount(1);
+        }
+        $actor->forceFill(['is_active' => false])->save();
+        $this->expectException(AuthorizationException::class);
+        $service->handle($attributes, $actor, $requestId);
+    }
+
+    public function test_creation_request_cannot_be_rebound_to_another_project_or_rewritten_after_creation(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $service = app(CreateEstimateGenerationSession::class);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $first = $service->handle($attributes, $actor, $requestId);
+        $changed = $attributes;
+        $changed['project_id'] = Project::factory()->for(Organization::query()->findOrFail($attributes['organization_id']))->create()->id;
+        try {
+            $service->handle($changed, $actor, $requestId);
+            self::fail('Creation request was rebound to a second project.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionCreationRequestConflict) {
+            self::addToAssertionCount(1);
+        }
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $first->forceFill(['creation_request_hash' => str_repeat('a', 64)])->save();
+    }
+
+    public function test_creation_receipt_http_is_free_private_and_rechecks_actor_before_reading(): void
+    {
+        [$actor, $attributes] = $this->fixture();
+        $service = app(CreateEstimateGenerationSession::class);
+        $requestId = (string) \Illuminate\Support\Str::uuid();
+        $session = $service->handle($attributes, $actor, $requestId);
+        $project = Project::query()->findOrFail($attributes['project_id']);
+        $request = \Illuminate\Http\Request::create('/fixture/creation-request');
+        $request->setUserResolver(fn () => $actor);
+        $controller = app(\App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController::class);
+        $response = $controller->creationRequest($request, $project, $requestId);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(['request_id' => $requestId, 'status' => 'created', 'id' => $session->id, 'cost_units' => '0'],
+            $response->getData(true)['data']);
+        self::assertTrue($response->headers->hasCacheControlDirective('private'));
+        self::assertTrue($response->headers->hasCacheControlDirective('no-store'));
+        $unknown = $controller->creationRequest($request, $project, (string) \Illuminate\Support\Str::uuid());
+        self::assertSame('not_found', $unknown->getData(true)['data']['status']);
+        $actor->forceFill(['is_active' => false])->save();
+        self::assertSame(403, $controller->creationRequest($request, $project, $requestId)->getStatusCode());
+        self::assertSame(0, DB::table('estimate_generation_ai_usage')->count());
+    }
+
     private function fixture(bool $canCreate = true): array
     {
         $organization = Organization::factory()->create();

@@ -36,6 +36,7 @@ final class CanonicalEstimateCommandProposalResolver
                 throw new RuntimeException('estimate_generation.command_reference_invalid');
             }
             $payload['before'] = [
+                'label' => $fact['label'] ?? null,
                 'stable_key' => $target,
                 'entity_id' => $fact['entity_id'] ?? null,
                 'type' => $fact['type'] ?? null,
@@ -43,6 +44,8 @@ final class CanonicalEstimateCommandProposalResolver
                 'unit' => $fact['unit'] ?? null,
             ];
             $payload['after'] = [
+                'label' => $fact['label'] ?? null,
+                'unit' => $fact['unit'] ?? null,
                 'source_version' => $fact['source_version'] ?? null,
                 'value_fingerprint' => $fact['value_fingerprint'] ?? null,
                 'assertion_stable_key' => $fact['assertion_stable_key'] ?? $target,
@@ -58,8 +61,14 @@ final class CanonicalEstimateCommandProposalResolver
             if ($recommendation === null || $option === null || ($option['applicable'] ?? true) !== true || ($option['availability'] ?? 'available') !== 'available') {
                 throw new RuntimeException('estimate_generation.command_reference_invalid');
             }
-            $payload['before'] = ['decision_key' => $decisionKey, 'selected_option' => $recommendation['selected_option'] ?? null];
+            $previousId = $recommendation['selected_option'] ?? null;
+            $previous = is_string($previousId) ? $this->find($recommendation['options'] ?? [], 'id', $previousId, 'key') : null;
+            $label = $recommendation['label'] ?? $recommendation['question'] ?? null;
+            $payload['before'] = ['decision_key' => $decisionKey, 'selected_option' => $previousId,
+                'label' => $label, 'technology' => $previous['label'] ?? null];
             $payload['after'] = [
+                'label' => $label,
+                'technology' => $option['label'] ?? null,
                 'source_version' => $recommendation['source_version'] ?? '',
                 'planning_run_id' => (int) ($recommendation['planning_run_id'] ?? 0),
                 'decision_key' => $decisionKey,

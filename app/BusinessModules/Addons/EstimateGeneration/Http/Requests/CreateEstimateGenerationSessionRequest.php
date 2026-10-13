@@ -36,6 +36,7 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'request_id' => ['nullable', 'uuid'],
             'description' => ['nullable', 'string', 'max:10000'],
             'building_type' => ['nullable', 'string', 'max:255'],
             'generation_mode' => ['nullable', 'string', Rule::in(EstimateGenerationMode::values())],
