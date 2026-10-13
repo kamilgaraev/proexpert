@@ -485,6 +485,8 @@ final class ChangeManagementWorkflowTest extends TestCase
         $context = AdminApiTestContext::create(roleSlug: 'customer_viewer');
         $this->instance(AuthorizationService::class, \Mockery::mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('can')->andReturn(false);
+            $mock->shouldReceive('forCurrentChecks')->andReturnSelf();
+            $mock->shouldReceive('canCurrent')->andReturn(false);
         }));
         $rfi = new ChangeManagementRfi([
             'organization_id' => $context->organization->id,
@@ -534,6 +536,8 @@ final class ChangeManagementWorkflowTest extends TestCase
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);
             $mock->shouldReceive('can')->andReturn(true);
+            $mock->shouldReceive('forCurrentChecks')->andReturnSelf();
+            $mock->shouldReceive('canCurrent')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin', 'customer_owner']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(

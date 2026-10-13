@@ -11,6 +11,41 @@ final class AssistantRequiredProjectReadTest extends TestCase
 {
     use UsesAssistantUnitTranslations;
 
+    public function test_operational_director_reads_bind_project_and_do_not_replace_mixed_answers(): void
+    {
+        $queries = [
+            'get_project_journal_readiness' => 'Что у нас с журналами работ по объекту: есть ли записи, которые ещё не подписаны, и что нужно закрыть перед сдачей?',
+            'get_project_safety_summary' => 'Есть ли на нашем объекте открытые нарушения охраны труда или происшествия? Что самое срочное и кто должен этим заняться?',
+            'get_project_change_readiness' => 'Какие вопросы проектировщикам по нашему объекту ещё без ответа и какие изменения ждут согласования? Выдели то, что может задержать работы.',
+            'get_project_design_readiness' => 'Какие проектные комплекты на нашем объекте ещё не выпущены и что мешает выпуску: замечания, листы или согласования?',
+        ];
+        foreach ($queries as $tool => $query) {
+            $plan = $this->plan($query);
+            self::assertSame(['name' => $tool, 'arguments' => ['project_id' => 52]], AssistantRequiredProjectRead::fromPlan($plan));
+            self::assertSame(['project_id' => 52], AssistantRequiredProjectRead::bindArguments($plan, $tool, ['project_id' => 999]));
+            self::assertNotNull(AssistantRequiredProjectRead::decisionReader($tool, $query));
+            foreach (array_diff(array_keys($queries), [$tool]) as $other) { self::assertNull(AssistantRequiredProjectRead::decisionReader($other, $query)); }
+        }
+        foreach (['Что по журналам работ нашего объекта и сколько затрат за сентябрь?',
+            'Что по журналам работ нашего объекта и какие расходы за сентябрь?',
+            'Какие проектные комплекты нашего объекта не выпущены и какова прибыль?',
+            'Какие изменения нашего объекта ждут согласования и какая у них смета?',
+            'Что требует внимания по журналам работ и охране труда нашего объекта?',
+            'Что по журналам работ нашего объекта и какие происшествия?',
+            'Какие нарушения охраны труда нашего объекта и что ждём от поставщиков?',
+            'Какие открытые нарушения на нашем объекте и какие действующие договоры?',
+            'Какие происшествия на нашем объекте и какие действующие договоры?',
+            'Какие проектные комплекты нашего объекта готовы и какие счета оплачены?',
+            'Покажи изменения на согласовании и журнал работ нашего объекта.',
+            'Какие нарушения охраны труда нашего объекта и какие комплекты ПИР готовы?',
+            'Согласуй запись журнала работ нашего объекта.'] as $mixed) {
+            self::assertNull(\App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::intent($mixed));
+            self::assertNull(AssistantRequiredProjectRead::fromPlan($this->plan($mixed)));
+            foreach (array_keys($queries) as $tool) { self::assertNull(AssistantRequiredProjectRead::decisionReader($tool, $mixed)); }
+            self::assertNull(AssistantRequiredProjectRead::decisionReader('get_project_contract_roster', $mixed));
+        }
+    }
+
     public function test_handover_summary_binds_selected_project_and_preserves_other_requests(): void
     {
         $query = 'Что у нас по приёмке и передаче нашего объекта: какие зоны уже приняты, какие ещё в работе и что должно быть следующим шагом?';

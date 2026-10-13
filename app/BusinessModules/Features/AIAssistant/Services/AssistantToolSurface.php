@@ -52,6 +52,10 @@ final class AssistantToolSurface
             '/документ|файл/iu' => ['get_document_readiness'],
             '/техник|машин|механизм|machinery/iu' => ['get_project_machinery_summary'],
             '/при[её]мк|передач|зон[а-яё]*.*принят|handover/iu' => ['get_project_handover_summary'],
+            '/журнал|journal/iu' => ['get_project_journal_readiness'],
+            '/безопасност|охран|происшеств|нарушен|safety/iu' => ['get_project_safety_summary'],
+            '/изменен|проектировщик|rfi/iu' => ['get_project_change_readiness'],
+            '/комплект|нормконтрол|пир|design/iu' => ['get_project_design_readiness'],
         ] as $pattern => $tools) {
             if (preg_match($pattern, $signals)) {
                 array_push($selected, ...$tools);

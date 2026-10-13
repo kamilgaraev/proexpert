@@ -94,6 +94,10 @@ class AssistantSourceReferenceGuard
                 if (! app(AssistantProjectPaymentReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;
             }
+            if (($reader = \App\BusinessModules\Features\AIAssistant\Services\Operational\AssistantOperationalReaderRegistry::forReference($type)) !== null) {
+                if (! app($reader)->matchesReference($actor, $organizationId, $reference)) { return false; }
+                continue;
+            }
             if ($type === AssistantProjectHandoverReader::TYPE) {
                 if (! app(AssistantProjectHandoverReader::class)->matchesReference($actor, $organizationId, $reference)) { return false; }
                 continue;

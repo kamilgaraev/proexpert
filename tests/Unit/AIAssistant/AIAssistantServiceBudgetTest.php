@@ -407,6 +407,23 @@ class AIAssistantServiceBudgetTest extends TestCase
         self::assertNotEmpty((new \ReflectionProperty(AIAssistantService::class, 'activeToolResults'))->getValue($service));
     }
 
+    public function test_domain_validation_returns_safe_recoverable_codes_without_technical_failure(): void
+    {
+        app()->instance('validator', new \Illuminate\Validation\Factory(app('translator')));
+        $tool = $this->createMock(AIToolInterface::class);
+        $tool->method('getName')->willReturn('assistant_domain_search');
+        $tool->method('getParametersSchema')->willReturn(['type' => 'object', 'properties' => []]);
+        $tool->method('execute')->willThrowException(\Illuminate\Validation\ValidationException::withMessages([
+            'predicate' => ['unsupported_predicate'], 'secret_field' => ['PRIVATE-VALUE'], 'fields' => ['unsupported_field', 'PRIVATE-CONTENT'],
+        ]));
+        $registry = new AIToolRegistry; $registry->registerTool($tool); $failures = [];
+        $result = $this->makeService($registry, true)->exposeHandleToolCall(['name' => 'assistant_domain_search', 'arguments' => '{}'], [], $failures);
+        self::assertSame('invalid_arguments', $result['status']);
+        self::assertSame(['predicate' => ['unsupported_predicate'], 'fields' => ['unsupported_field']], $result['validation_errors']);
+        self::assertSame([], $result['source_refs']); self::assertSame([], $failures);
+        self::assertStringNotContainsString('PRIVATE', json_encode($result));
+    }
+
     public function test_current_object_requires_unique_reference_instead_of_raw_project_context(): void
     {
         $tool = $this->createMock(AIToolInterface::class);
