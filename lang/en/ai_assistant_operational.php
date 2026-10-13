@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 return [
+    'stock_open' => 'Open [Warehouse — Stock](/warehouse?tab=stock) and select the project warehouse in the Warehouse field. Stock at the project and materials held by responsible people are shown separately; available stock includes both.',
     'deliveries_description' => 'Open project material deliveries from all sources: full counts, overdue and missing planned dates, 20 examples. Read only.',
     'deliveries_unavailable' => 'Deliveries are unavailable in the current read scope; counts are unknown.',
     'deliveries_scope' => 'Expected deliveries for “:project” on :date.',

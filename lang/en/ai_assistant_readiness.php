@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 return [
     'description' => 'Current authorized document text-search readiness: complete status counts, up to three examples per status and next actions. Null project means all authorized organization documents. Metadata only; no content summary or content completeness claim.',
-    'scope_all' => 'Authorized organization document text-search readiness. Total: :total.',
-    'scope_project' => 'Authorized project #:project document text-search readiness. Total: :total.',
+    'scope_all' => 'Authorized organization file and document text-search readiness.',
+    'scope_project' => 'Authorized project #:project file and document text-search readiness.',
+    'file_counts' => 'Accessible files and attachments: :total. Text ready: :ready; awaiting processing: :pending; OCR required: :ocr; OCR processing: :ocr_processing; processing failed: :failed; text search unsupported: :unsupported; empty text: :empty; source file access review required: :review; attachment content and storage unverified: :unverified.',
+    'registered_counts' => 'Registered assistant documents: :total. Their statuses and examples follow. These documents and accessible files are counted separately; do not add the counts.',
     'window' => 'Shown :shown of :total documents in this status.',
     'queued' => 'Queued', 'queued_action' => 'Next action: wait for normal processing; inspect the file record if delayed.',
     'processing' => 'Processing', 'processing_action' => 'Next action: check processing completion in the file record.',
@@ -16,5 +18,5 @@ return [
     'damaged' => 'Damaged files', 'damaged_action' => 'Next action: check the source and upload a corrected copy.',
     'failed' => 'Processing failed', 'failed_action' => 'Next action: inspect the file error, resolve its cause and retry through the normal workflow.',
     'unknown' => 'Other status', 'unknown_action' => 'Next action: check the file record.',
-    'basis' => 'Registry status inventory, not a full-content verification. Counts are complete; filenames are examples. These statuses concern text search; BIM object indexing is checked separately.',
+    'basis' => 'File coverage includes accessible attachments not yet registered with the assistant. Statuses and filenames below refer to registered documents; filenames are examples. Full file contents were not verified. Text search and BIM object indexing are checked separately.',
 ];
