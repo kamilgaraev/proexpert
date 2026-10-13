@@ -20,6 +20,8 @@ class EstimateGenerationSession extends Model
         'organization_id',
         'project_id',
         'user_id',
+        'creation_request_id',
+        'creation_request_hash',
         'status',
         'processing_stage',
         'processing_progress',

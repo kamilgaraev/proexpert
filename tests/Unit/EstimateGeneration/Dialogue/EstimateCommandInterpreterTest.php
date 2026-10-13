@@ -268,13 +268,16 @@ final class EstimateCommandInterpreterTest extends TestCase
             'fingerprint' => 'sha256:'.str_repeat('a', 64),
             'facts' => [[
                 'stable_key' => 'fact:room:101:area', 'assertion_stable_key' => 'assertion:area:101',
+                'label' => 'Площадь пола помещения 101',
                 'value' => '40.0000', 'unit' => 'м²', 'source_version' => 'source-v4',
                 'value_fingerprint' => 'fingerprint-v4', 'decision_version' => 2,
             ]],
             'recommendations' => [[
                 'decision_key' => 'decision:roof', 'planning_run_id' => 55, 'decision_version' => 3,
+                'label' => 'Материал кровли',
                 'source_version' => 'source-v4', 'selected_option' => 'roof:metal',
-                'options' => [['id' => 'roof:soft', 'applicable' => true, 'availability' => 'available']],
+                'options' => [['id' => 'roof:soft', 'label' => 'Гибкая черепица', 'applicable' => true, 'availability' => 'available'],
+                    ['id' => 'roof:metal', 'label' => 'Металлочерепица', 'applicable' => true, 'availability' => 'available']],
             ]],
             'evidence' => [],
             'allowed_references' => [
@@ -290,12 +293,18 @@ final class EstimateCommandInterpreterTest extends TestCase
         self::assertSame('source-v4', $area->payload['after']['source_version']);
         self::assertSame('fingerprint-v4', $area->payload['after']['value_fingerprint']);
         self::assertSame(['value' => '50.0000', 'unit' => 'м²'], $area->payload['after']['value']);
+        self::assertSame('Площадь пола помещения 101', $area->payload['before']['label']);
+        self::assertSame('Площадь пола помещения 101', $area->payload['after']['label']);
+        self::assertSame('м²', $area->payload['after']['unit']);
 
         $roof = $resolver->resolve(new EstimateCommandInterpretation([
             'kind' => 'select_technology', 'version' => 'v1', 'decision_key' => 'decision:roof', 'option_id' => 'roof:soft',
         ]), $context);
         self::assertSame(55, $roof->payload['after']['planning_run_id']);
         self::assertSame('roof:soft', $roof->payload['after']['response']);
+        self::assertSame('Материал кровли', $roof->payload['after']['label']);
+        self::assertSame('Гибкая черепица', $roof->payload['after']['technology']);
+        self::assertSame('Металлочерепица', $roof->payload['before']['technology']);
         self::assertArrayNotHasKey('cost_delta', $roof->payload);
     }
 

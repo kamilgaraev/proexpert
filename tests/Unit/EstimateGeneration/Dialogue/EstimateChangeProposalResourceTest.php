@@ -19,7 +19,8 @@ final class EstimateChangeProposalResourceTest extends TestCase
             'interpretation_version' => 'v1',
             'dependency_keys' => ['quantity:room'],
             'command_excerpt' => 'Исправить площадь',
-            'before_payload' => ['area' => '100.0000', 'decision_key' => 'decision:roof', 'selected_option' => 'roof:metal', 'prompt' => 'secret'],
+            'before_payload' => ['area' => '100.0000', 'decision_key' => 'decision:roof', 'selected_option' => 'roof:metal', 'prompt' => 'secret',
+                'label' => 'Площадь пола', 'unit' => 'm2', 'total_cost' => '1000.00'],
             'after_payload' => ['area' => '110.0000', 'decision_key' => 'decision:roof', 'response' => 'roof:soft', 'exception' => 'internal'],
             'affected_payload' => ['count' => 1],
             'assumptions' => [],
@@ -43,7 +44,8 @@ final class EstimateChangeProposalResourceTest extends TestCase
 
         $payload = $resource->toArray(Request::create('/'));
 
-        self::assertSame(['area' => '100.0000', 'decision_key' => 'decision:roof', 'selected_option' => 'roof:metal'], $payload['before_payload']);
+        self::assertSame(['area' => '100.0000', 'decision_key' => 'decision:roof', 'selected_option' => 'roof:metal',
+            'label' => 'Площадь пола', 'unit' => 'm2', 'total_cost' => '1000.00'], $payload['before_payload']);
         self::assertSame(['area' => '110.0000', 'decision_key' => 'decision:roof', 'response' => 'roof:soft'], $payload['after_payload']);
         self::assertSame([['artifact_id' => 7, 'source_version' => 'source-v2', 'page' => 2, 'native_reference' => 'АР-2']], $payload['evidence']);
         self::assertArrayNotHasKey('interpretation_version', $payload);
