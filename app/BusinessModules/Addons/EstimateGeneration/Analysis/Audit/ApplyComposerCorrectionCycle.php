@@ -259,7 +259,7 @@ final readonly class ApplyComposerCorrectionCycle
             // Pricing ran before audit. No old rate, resources or accepted measurement may survive a repair.
             foreach (['price_snapshot', 'commercial_price_snapshot', 'evaluation_price_basis_quantity', 'price_source',
                 'pricing_finalized_at', 'pricing_blocker_message', 'quantity_evidence_id', 'quantity_evidence_fingerprint',
-                'quantity_evidence_source_version', 'materials', 'labor', 'machinery', 'other_resources'] as $field) {
+                'quantity_evidence_source_version', 'materials', 'labor', 'machinery', 'other_resources', 'equipment'] as $field) {
                 unset($item[$field]);
             }
             foreach (['unit_price', 'total_cost', 'work_cost', 'materials_cost', 'machinery_cost', 'labor_cost', 'other_cost'] as $field) {

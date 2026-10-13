@@ -43,6 +43,26 @@ final class WorkItemQuantityMapper
         return false;
     }
 
+    /** Select an exact canonical formula of this entity when a global alias is unavailable. */
+    public function mapForEntity(string $workKey, array $quantities, string $entityId): ?QuantityData
+    {
+        $matches = [];
+        foreach ($quantities as $raw) {
+            $quantity = $this->quantity($raw);
+            $purpose = $quantity === null ? null : (CurrentProjectDerivedQuantityService::FORMULA_PURPOSES[$quantity->formulaKey] ?? null);
+            if ($quantity === null || ! is_string($purpose) || ($quantity->formulaInputs['entity_id'] ?? null) !== $entityId
+                || $quantity->reviewBlockers !== [] || ($quantity->source === QuantitySource::Estimated && $quantity->assumptions === [])
+                || ! $this->acceptsExactSource($workKey, $purpose, $quantity->unit)) {
+                continue;
+            }
+            $identity = $quantity->toArray();
+            unset($identity['key']);
+            $matches[hash('sha256', \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode($identity))] = $quantity;
+        }
+
+        return count($matches) === 1 ? array_values($matches)[0] : null;
+    }
+
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
         $direct = $this->quantity($quantities[$workItemKey] ?? null);

@@ -61,18 +61,41 @@ final readonly class SaveManualProjectFacts
             $scope = [(int) $session->organization_id, $projectId, $sessionId];
             $sourceVersion = 'sha256:'.hash('sha256', 'manual-facts:v1:'.$sessionId);
             $previousEntities = $this->models->snapshot(...[...$scope, 10001])->entities;
+            $active = $this->models->snapshotForPlanning(...[...$scope, 10001])['snapshot'];
+            if (count($active->facts) > 10000) {
+                throw ValidationException::withMessages(['entities' => 'Разделите состав: предел фактов сессии превышен.']);
+            }
+            $activeEntities = array_column($active->entities, null, 'id');
             $entities = [];
             $byKey = [];
+            $seenIds = [];
             foreach ($input['entities'] as $index => $row) {
                 $key = $row['key'];
                 if (isset($byKey[$key])) {
                     throw ValidationException::withMessages(['entities.'.$index.'.key' => 'Ключ объекта повторяется.']);
                 }
                 $id = 'entity:'.hash('sha256', json_encode([$sessionId, 'manual', $row['type'], $key, $row['floor'] ?? null, $row['zone'] ?? null], JSON_THROW_ON_ERROR));
+                if (isset($row['existing_entity_id'])) {
+                    $existing = $activeEntities[$row['existing_entity_id']] ?? null;
+                    if ($existing === null || ($existing->attributes['semantic_type'] ?? $existing->type) !== $row['type']
+                        || ($row['parameters'] ?? []) === []
+                        || array_intersect(['name', 'floor', 'zone', 'parent_key', 'coverage'], array_keys($row)) !== []) {
+                        throw ValidationException::withMessages(['entities.'.$index.'.existing_entity_id' => 'Выберите доступный объект текущей сессии. Для ответа изменяются только его числовые параметры.']);
+                    }
+                    $id = $existing->id;
+                    $entities[$id] = $existing;
+                }
+                if (isset($seenIds[$id])) {
+                    throw ValidationException::withMessages(['entities.'.$index.'.key' => 'Объект повторяется в этом наборе.']);
+                }
+                $seenIds[$id] = true;
                 $byKey[$key] = $id;
             }
             foreach ($input['entities'] as $index => $row) {
                 $id = $byKey[$row['key']];
+                if (isset($row['existing_entity_id'])) {
+                    continue;
+                }
                 $type = $row['type'];
                 $attributes = ['semantic_type' => $type, 'identity' => ['manual_key' => $row['key']]];
                 foreach (['floor', 'zone'] as $field) {
@@ -104,6 +127,7 @@ final readonly class SaveManualProjectFacts
             $facts = $proofs = [];
             foreach ($input['entities'] as $index => $row) {
                 $entity = $entities[$byKey[$row['key']]];
+                $sourceVersion = $entity->sourceVersion;
                 $parameters = [];
                 if (array_key_exists('name', $row) || (($row['parameters'] ?? []) === [] && ($row['coverage'] ?? []) === [])) {
                     $name = $row['name'] ?? $row['key'];
@@ -178,9 +202,22 @@ final readonly class SaveManualProjectFacts
                             'source_artifact_id' => 'input:'.$sessionId, 'source_version' => $sourceVersion]], null, 'user_input', [$evidenceId], $requestId);
                 }
             }
-            $this->models->saveSourceModel(array_values($entities), $facts, array_values($proofs));
+            // Document objects retain their source version; each repository batch has one exact version.
+            $groups = [];
+            foreach ($entities as $entity) {
+                $groups[$entity->sourceVersion]['entities'][] = $entity;
+            }
             foreach ($facts as $fact) {
-                $this->models->applyDecision(new Decision('decision:'.hash('sha256', $requestId.'|'.$fact->id), ...[...$scope, $sourceVersion,
+                $groups[$fact->sourceVersion]['facts'][] = $fact;
+            }
+            foreach ($proofs as $proof) {
+                $groups[$proof->sourceVersion]['evidence'][] = $proof;
+            }
+            foreach ($groups as $group) {
+                $this->models->saveSourceModel($group['entities'], $group['facts'] ?? [], $group['evidence'] ?? []);
+            }
+            foreach ($facts as $fact) {
+                $this->models->applyDecision(new Decision('decision:'.hash('sha256', $requestId.'|'.$fact->id), ...[...$scope, $fact->sourceVersion,
                     'fact', $fact->supersedesFactId ?? $fact->id, $fact->id, 'user', (string) $actor->id, 'Пользователь подтвердил ручные исходные данные', $fact->version, $fact->evidenceIds]), $fact);
             }
             $preview = $this->quantities->previewInput(...$scope);
@@ -202,13 +239,15 @@ final readonly class SaveManualProjectFacts
     {
         $previous = null;
         foreach ($this->models->currentFacts(...[...$scope, $entity->id]) as $fact) {
-            if ($fact->type === $parameter && $fact->sourceVersion === $version) {
+            if (FactVocabulary::parameter($fact->type) === $parameter && $fact->sourceVersion === $version) {
+                if ($previous !== null) {
+                    throw ValidationException::withMessages(['entities' => 'Есть противоречивые значения параметра. Сначала подтвердите его источник.']);
+                }
                 $previous = $fact;
-                break;
             }
         }
 
         return new Fact('fact:'.hash('sha256', $requestId.'|'.$entity->id.'|'.$parameter), ...[...$scope, $version, $entity->id,
-            $parameter, $value, $unit, 0.0, $origin, 'confirmed', $evidence, ($previous?->version ?? 0) + 1, $previous?->id]);
+            $previous?->type ?? $parameter, $value, $unit, 0.0, $origin, 'confirmed', $evidence, ($previous?->version ?? 0) + 1, $previous?->id]);
     }
 }

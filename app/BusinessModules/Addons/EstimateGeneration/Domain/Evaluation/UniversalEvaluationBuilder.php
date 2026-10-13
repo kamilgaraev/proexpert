@@ -75,6 +75,11 @@ final readonly class UniversalEvaluationBuilder
         if ($positions === []) {
             throw new InvalidArgumentException('evaluation_result_has_no_work_scope');
         }
+        $parameterQuestions = (new EvaluationParameterQuestionBuilder)->candidates($positions, $snapshot,
+            $draft['quantity_coverage_warnings'] ?? []);
+        $parameterPositions = array_fill_keys(array_merge([], ...array_column($parameterQuestions, 'affected_position_keys')), true);
+        $questionCandidates = array_values(array_filter($questionCandidates, static fn (array $question): bool => ! str_starts_with($question['key'], 'quantity:') || ! isset($parameterPositions[$question['affected_position_keys'][0]])));
+        array_push($questionCandidates, ...$parameterQuestions);
         // Completeness describes the actual selected sections, never a whole project by implication.
         $coveredSections = array_values(array_unique(array_column($positions, 'section')));
         $scope = $scope === [] ? $coveredSections : array_values(array_unique(array_map(EvaluationSectionMap::forPackage(...), $scope)));

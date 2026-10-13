@@ -14,6 +14,25 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkItemQuantityMapperTest extends TestCase
 {
+    public function test_entity_fallback_uses_only_the_matching_formula_without_global_aliases_or_wall_ratios(): void
+    {
+        $floor = new QuantityData('quantity:floor', 'm2', '20', 'direct_floor_area', '1', ['entity_id' => 'room:1'],
+            QuantitySource::Evidenced, ['evidence:floor'], 'test');
+        $other = new QuantityData('quantity:other', 'm2', '80', 'direct_floor_area', '1', ['entity_id' => 'room:2'],
+            QuantitySource::Evidenced, ['evidence:other'], 'test');
+        $mapper = new WorkItemQuantityMapper;
+        self::assertSame($floor, $mapper->mapForEntity('finish.floor', [$floor, $other], 'room:1'));
+        self::assertNull($mapper->mapForEntity('finish.floor', [$floor, $other], 'room:missing'));
+        self::assertNull($mapper->mapForEntity('finish.paint', [$floor], 'room:1'));
+        $conflict = new QuantityData('quantity:conflict', 'm2', '30', 'floor_area', '1', ['entity_id' => 'room:1'],
+            QuantitySource::Evidenced, ['evidence:conflict'], 'test');
+        self::assertNull($mapper->mapForEntity('finish.floor', [$floor, $conflict], 'room:1'));
+        $assumed = new QuantityData('quantity:assumed', 'm2', '20', 'floor_area', '1', ['entity_id' => 'room:1'],
+            QuantitySource::Estimated, ['evidence:input'], 'test', ['fact:width']);
+        self::assertSame($assumed, $mapper->mapForEntity('finish.floor', [$assumed], 'room:1'));
+        self::assertSame(QuantitySource::Estimated, $mapper->mapForEntity('finish.floor', [$assumed], 'room:1')->source);
+    }
+
     #[Test]
     public function finish_floor_uses_confirmed_floor_area_as_estimation_basis(): void
     {

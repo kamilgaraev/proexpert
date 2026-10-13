@@ -32,6 +32,12 @@ final readonly class EvaluationDraftArithmeticRecalculator
     {
         $preview = $this->quantities->previewInput($context->organizationId, $context->projectId, $context->sessionId);
         $quantities = $preview['quantities'];
+        $quantitiesByEntity = [];
+        foreach ($quantities as $quantity) {
+            if ($quantity instanceof QuantityData && is_string($quantity->formulaInputs['entity_id'] ?? null)) {
+                $quantitiesByEntity[$quantity->formulaInputs['entity_id']][] = $quantity;
+            }
+        }
         $regional = $draft['regional_context'] ?? [];
         foreach ($draft['local_estimates'] ?? [] as $estimateIndex => $estimate) {
             foreach ($estimate['sections'] ?? [] as $sectionIndex => $section) {
@@ -49,12 +55,18 @@ final readonly class EvaluationDraftArithmeticRecalculator
                     if (! $explicitQuantity && ($item['metadata']['quantity_reset_required'] ?? false) === true) {
                         $quantity = null;
                     }
-                    $expectedEntity = $item['quantity_basis_details']['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
+                    $expectedEntity = $item['metadata']['scope_entity_id'] ?? $item['quantity_basis_details']['formula_inputs']['entity_id'] ?? $item['metadata']['entity_id'] ?? null;
                     if (! $explicitQuantity && $quantity !== null && is_string($expectedEntity) && ($quantity->formulaInputs['entity_id'] ?? null) !== $expectedEntity) {
                         $quantity = null;
                     }
+                    if (! $explicitQuantity && $quantity === null && is_string($expectedEntity)
+                        && ($item['metadata']['quantity_reset_required'] ?? false) !== true) {
+                        $workKey = $item['metadata']['requirement_key'] ?? $item['work_key'] ?? $item['key'];
+                        $quantity = $this->mapper->mapForEntity($workKey, $quantitiesByEntity[$expectedEntity] ?? [], $expectedEntity);
+                    }
                     $oldUnit = $item['unit'] ?? null;
                     $oldAmount = $item['quantity'] ?? null;
+                    $oldBasis = $item['quantity_basis_details'] ?? $item['quantity_evidence'] ?? null;
                     unset($item['quantity_evidence_id'], $item['quantity_evidence_fingerprint'], $item['quantity_evidence_source_version'], $item['quantity_evidence']);
                     $item['quantity'] = null;
                     $item['quantity_status'] = 'unknown';
@@ -78,7 +90,9 @@ final readonly class EvaluationDraftArithmeticRecalculator
                             $item['quantity_evidence_source_version'] = $node->sourceVersion;
                         }
                     }
-                    $changed = $oldAmount !== $item['quantity'];
+                    $changed = $oldAmount !== $item['quantity'] || $oldUnit !== ($item['unit'] ?? null)
+                        || \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['basis' => $oldBasis])
+                        !== \App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson::encode(['basis' => $item['quantity_basis_details']]);
                     if ($actor !== null && $session !== null && isset($session->input_payload['price_selections'][$item['key']])) {
                         $price = $this->commercial->resolve($actor, $session, $item, $snapshot, $decisions);
                         if ($price === null) {
